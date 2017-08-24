@@ -1,0 +1,296 @@
+*IF DEF,W06_1A                                                             TRHOU4.2     
+!                                                                          TRHOU4.3     
+! Description:                                                             TRHOU4.4     
+!  This subroutine is part of the wavetrain diagnostic output code         TRHOU4.5     
+!  developed by Anne Guillaume at MeteoFrance and ECMWF.                   TRHOU4.6     
+!  Introduced into the unified wave moel at UM4.1                          TRHOU4.7     
+!                                                                          TRHOU4.8     
+! Method:                                                                  TRHOU4.9     
+!                                                                          TRHOU4.10    
+!                                                                          TRHOU4.11    
+!                                                                          TRHOU4.12    
+! Current Code Owner: Martin Holt                                          TRHOU4.13    
+!                                                                          TRHOU4.14    
+! History:                                                                 TRHOU4.15    
+! Version   Date     Comment                                               TRHOU4.16    
+! -------   ----     -------                                               TRHOU4.17    
+! UM4.1    June 1996 Code introduced to UM.  M Holt                        TRHOU4.18    
+!                                                                          TRHOU4.19    
+! Code Description:                                                        TRHOU4.20    
+!   Language: FORTRAN 77 + common extensions.                              TRHOU4.21    
+!                                                                          TRHOU4.22    
+!- End of header                                                           TRHOU4.23    
+                                                                           TRHOU4.24    
+      SUBROUTINE TRHOU ( KNRJ, KBLO, KJS, KJL, KANG, KFRE,                 TRHOU4.25    
+     +                   KPICA, KPICF, KDANG, KNR )                        TRHOU4.26    
+                                                                           TRHOU4.27    
+C                                                                          TRHOU4.28    
+C Subroutine TRHOU                                                         TRHOU4.29    
+C                                                                          TRHOU4.30    
+C Purpose: to identify a single wave train given the position of           TRHOU4.31    
+C a maximum in energy as the starting point.                               TRHOU4.32    
+C                                                                          TRHOU4.33    
+C The algorithm scans away from the starting point marking values          TRHOU4.34    
+C within the wave train, ending the wave train when the values start       TRHOU4.35    
+C to increase of the wave train becomes joined only by a single            TRHOU4.36    
+C filament.                                                                TRHOU4.37    
+C                                                                          TRHOU4.38    
+C Modification History                                                     TRHOU4.39    
+C                                                                          TRHOU4.40    
+C Versions 1-4: A Guillame, ECMWF. 1991-1994. Original algorithm           TRHOU4.41    
+C Version  5  : S Foreman & M Holt, UK Met Office, February 1996           TRHOU4.42    
+C                                   Improve efficiency on C90              TRHOU4.43    
+C                                                                          TRHOU4.44    
+C Comments on coding                                                       TRHOU4.45    
+C As it stands, the code does not autotask effectively because of          TRHOU4.46    
+C dependencies in the outer loop. Stripmining the inner loop is the        TRHOU4.47    
+C only effective way of multitasking. In the wave model the stripmining    TRHOU4.48    
+C is effectively done before entry to the routine, making further          TRHOU4.49    
+C efficiencies difficult.                                                  TRHOU4.50    
+C                                                                          TRHOU4.51    
+C                                                                          TRHOU4.52    
+                                                                           TRHOU4.53    
+      IMPLICIT NONE                                                        TRHOU4.54    
+                                                                           TRHOU4.55    
+C                                                                          TRHOU4.56    
+C Arguments                                                                TRHOU4.57    
+C                                                                          TRHOU4.58    
+      INTEGER                                                              TRHOU4.59    
+     +       KBLO                      ! IN   Number of horizontal point   PXORDER.50    
+     +      ,KJS                       ! IN   Start point within array     TRHOU4.62    
+     +      ,KJL                       ! IN   End point in array           TRHOU4.63    
+     +      ,KANG                      ! IN   Number of angles             TRHOU4.64    
+     +      ,KFRE                      ! IN   Number of frequencies        TRHOU4.65    
+     +      ,KPICA (KBLO)              ! IN   Directions of the peaks      TRHOU4.66    
+     +      ,KPICF (KBLO)              ! IN   Frequencies of the peaks     TRHOU4.67    
+     +      ,KDANG    ! IN   Number of directions to search on each side   TRHOU4.68    
+     +       ,KNRJ (KBLO, KANG, KFRE)  ! IN   Normalised energy array      PXORDER.51    
+     +      ,KNR (KBLO, KANG, KFRE)    ! OUT  Mask: 1=in train, 0=out      TRHOU4.69    
+                                                                           TRHOU4.70    
+                                                                           TRHOU4.71    
+C                                                                          TRHOU4.72    
+C Local variables                                                          TRHOU4.73    
+C                                                                          TRHOU4.74    
+                                                                           TRHOU4.75    
+      INTEGER                                                              TRHOU4.76    
+     +       ang        ! Direction - loop counter                         TRHOU4.77    
+     +      ,ang_sweep  ! Sense of change in direction: loop counter       TRHOU4.78    
+     +      ,ang_lim    ! Limit of loop on direction                       TRHOU4.79    
+     +      ,ang_start  ! Starting point for direction loop                TRHOU4.80    
+     +      ,angle      ! Current direction                                TRHOU4.81    
+     +      ,angle_close ! Direction closer to peak                        TRHOU4.82    
+     +      ,angle_off  ! Offset to be used to look closer to peak         TRHOU4.83    
+     +      ,angle_this ! 1 if ang_off = 0                                 TRHOU4.84    
+     +      ,freq        ! Frequency loop counter                          TRHOU4.85    
+     +      ,freq_sweep  ! Sense of change of frequency: loop counter      TRHOU4.86    
+     +      ,freq_lim    ! Limit of loop oover frequency                   TRHOU4.87    
+     +      ,freq_start  ! Starting frequency displacement in sweep        TRHOU4.88    
+     +      ,frqcy       ! Current frequency                               TRHOU4.89    
+     +      ,frqcy_close ! Frequency closer to peak                        TRHOU4.90    
+     +      ,frqcy_off   ! Offset used to look closer to peak              TRHOU4.91    
+     +      ,frqcy_this  ! 1 if frqcy_off = 0                              TRHOU4.92    
+     +      ,max_around  ! Maximum energy around current                   TRHOU4.93    
+c                        ! direction and frequency,                        TRHOU4.94    
+c                        ! looking towards the peak                        TRHOU4.95    
+c                                                                          TRHOU4.96    
+C                                                                          TRHOU4.97    
+C Local arrays                                                             TRHOU4.98    
+C                                                                          TRHOU4.99    
+                                                                           TRHOU4.100   
+      INTEGER                                                              TRHOU4.101   
+     +       angle_is (-KANG:2*KANG) ! Mapping to array position           TRHOU4.102   
+     +      ,frqcy_is (-KFRE:2*KFRE) ! Mapping to array position           TRHOU4.103   
+                                                                           TRHOU4.104   
+                                                                           TRHOU4.105   
+                                                                           TRHOU4.106   
+      INTEGER  ! Debugging variables                                       TRHOU4.107   
+     +       j           ! Loop counter over horizontal points             TRHOU4.108   
+     +      ,k           ! Loop counter over freeq                         TRHOU4.109   
+     +      ,m           ! Loop counter over dir                           TRHOU4.110   
+                                                                           TRHOU4.111   
+c       WRITE(6,*)' '                                                      GIE0F403.654   
+c       WRITE(6,*)'array knrj on entry to routine trhou'                   GIE0F403.655   
+c       WRITE(6,*)'            spectrum'                                   GIE0F403.656   
+c       WRITE(6,*) ' '                                                     GIE0F403.657   
+c       do k=1,kfre                                                        TRHOU4.116   
+c        write(6,100) (knrj(1,m,k),m=1,kang)                               TRHOU4.117   
+c       enddo                                                              TRHOU4.118   
+c 100   format(16I10)                                                      TRHOU4.119   
+c       WRITE(6,*)' '                                                      GIE0F403.658   
+                                                                           TRHOU4.121   
+                                                                           TRHOU4.122   
+                                                                           TRHOU4.123   
+                                                                           TRHOU4.124   
+C                                                                          TRHOU4.125   
+C Fill the index arrays that will be used to convert from calculated       TRHOU4.126   
+C indexes to the actual positions in the array                             TRHOU4.127   
+C                                                                          TRHOU4.128   
+      DO frqcy = -KFRE, 2*KFRE                                             TRHOU4.129   
+                                                                           TRHOU4.130   
+       frqcy_is(frqcy) = MAX (frqcy, 1)   ! Map points below range         TRHOU4.131   
+       frqcy_is(frqcy) = MIN (frqcy_is(frqcy), KFRE) ! Points above        TRHOU4.132   
+                                                                           TRHOU4.133   
+      END DO     ! frqcy - setting frequency mapping                       TRHOU4.134   
+                                                                           TRHOU4.135   
+      DO angle = -KANG, 2*KANG                                             TRHOU4.136   
+                                                                           TRHOU4.137   
+       angle_is(angle) = MOD ( angle +(KANG-1), KANG ) +1                  TRHOU4.138   
+                                                                           TRHOU4.139   
+      END DO                                                               TRHOU4.140   
+                                                                           TRHOU4.141   
+                                                                           TRHOU4.142   
+C                                                                          TRHOU4.143   
+C Initialise the output array to zero (no point in wave train)             TRHOU4.144   
+C                                                                          TRHOU4.145   
+                                                                           TRHOU4.146   
+                                                                           TRHOU4.147   
+      DO freq = 1, KFRE                                                    TRHOU4.148   
+         DO ang = 1, KANG                                                  TRHOU4.149   
+            DO j = KJS, KJL                                                TRHOU4.150   
+               KNR(j,ang,freq) = 0                                         TRHOU4.151   
+            END DO                                                         TRHOU4.152   
+         END DO                                                            TRHOU4.153   
+      END DO                                                               TRHOU4.154   
+                                                                           TRHOU4.155   
+C                                                                          TRHOU4.156   
+C Initialise output array around the peaks -                               TRHOU4.157   
+C these values must be in the wave train unless there is no energy there   TRHOU4.158   
+C                                                                          TRHOU4.159   
+                                                                           TRHOU4.160   
+      DO freq = -1, 1                                                      TRHOU4.161   
+       DO ang = -1, 1                                                      TRHOU4.162   
+        DO j = KJS, KJL                                                    TRHOU4.163   
+                                                                           TRHOU4.164   
+         angle = angle_is( ang + KPICA(j) )                                TRHOU4.165   
+         frqcy = frqcy_is( freq + KPICF(j) )                               TRHOU4.166   
+                                                                           TRHOU4.167   
+         KNR(j,angle,frqcy) = MIN( KNRJ(j, angle, frqcy), 1 )              TRHOU4.168   
+                                                                           TRHOU4.169   
+        END DO                                                             TRHOU4.170   
+       END DO                                                              TRHOU4.171   
+      END DO                                                               TRHOU4.172   
+                                                                           TRHOU4.173   
+                                                                           TRHOU4.174   
+                                                                           TRHOU4.175   
+C                                                                          TRHOU4.176   
+C Sweep around the peaks that have already been identified                 TRHOU4.177   
+C Look each direction followed by each frequency.                          TRHOU4.178   
+C                                                                          TRHOU4.179   
+                                                                           TRHOU4.180   
+      DO freq_sweep = -1, 1, 2                                             TRHOU4.181   
+                                                                           TRHOU4.182   
+       freq_lim = (KFRE - 1) * freq_sweep                                  TRHOU4.183   
+                                                                           TRHOU4.184   
+       IF (freq_sweep .EQ. -1) THEN                                        TRHOU4.185   
+        freq_start = 0                                                     TRHOU4.186   
+       ELSE                                                                TRHOU4.187   
+        freq_start = 1                                                     TRHOU4.188   
+       END IF                                                              TRHOU4.189   
+                                                                           TRHOU4.190   
+                                                                           TRHOU4.191   
+       DO freq = freq_start, freq_lim, freq_sweep                          TRHOU4.192   
+                                                                           TRHOU4.193   
+        DO ang_sweep = -1, 1, 2                                            TRHOU4.194   
+                                                                           TRHOU4.195   
+         ang_lim = KDANG * ang_sweep ! Sweep KDANG directions eacy side    TRHOU4.196   
+                                                                           TRHOU4.197   
+         IF (freq .EQ. 0) THEN                                             TRHOU4.198   
+                                                                           TRHOU4.199   
+          ang_start = ang_sweep ! Do not need to include the peak point    TRHOU4.200   
+                                                                           TRHOU4.201   
+          frqcy_off = 0         ! Do not look other side of peak           TRHOU4.202   
+          frqcy_this = 1        ! and don't mask by present value          TRHOU4.203   
+                                                                           TRHOU4.204   
+         ELSE                                                              TRHOU4.205   
+                                                                           TRHOU4.206   
+          ang_start = 0  ! But do need to include other points             TRHOU4.207   
+                                                                           TRHOU4.208   
+          frqcy_off = freq_sweep ! Look towards peak                       TRHOU4.209   
+          frqcy_this = 0          ! Use appropriate spectral value         TRHOU4.210   
+                                                                           TRHOU4.211   
+         END IF                                                            TRHOU4.212   
+                                                                           TRHOU4.213   
+                                                                           TRHOU4.214   
+         DO ang = ang_start, ang_lim, ang_sweep                            TRHOU4.215   
+                                                                           TRHOU4.216   
+          IF (ang .EQ. 0) THEN                                             TRHOU4.217   
+                                                                           TRHOU4.218   
+           angle_off = 0    ! Don't look other side of spectral peak       TRHOU4.219   
+           angle_this = 1   ! Don't reject because point not set yet       TRHOU4.220   
+                                                                           TRHOU4.221   
+          ELSE                                                             TRHOU4.222   
+                                                                           TRHOU4.223   
+           angle_off = ang_sweep ! Look towards peak                       TRHOU4.224   
+           angle_this = 0        ! Include points closer to peak           TRHOU4.225   
+                                                                           TRHOU4.226   
+          END IF                                                           TRHOU4.227   
+                                                                           TRHOU4.228   
+                                                                           TRHOU4.229   
+          DO j = KJS, KJL                                                  TRHOU4.230   
+                                                                           TRHOU4.231   
+C                                                                          TRHOU4.232   
+C Define the positions relative to the current direction and frequency     TRHOU4.233   
+C                                                                          TRHOU4.234   
+                                                                           TRHOU4.235   
+           angle = angle_is( KPICA (j) + ang )    ! *_is converts to       TRHOU4.236   
+           frqcy = frqcy_is( KPICF (j) + freq )   ! position in array      TRHOU4.237   
+                                                                           TRHOU4.238   
+C                                                                          TRHOU4.239   
+C And the points closer to the peak                                        TRHOU4.240   
+C                                                                          TRHOU4.241   
+                                                                           TRHOU4.242   
+           angle_close = angle_is( angle - angle_off )                     TRHOU4.243   
+           frqcy_close = frqcy_is( frqcy - frqcy_off )                     TRHOU4.244   
+                                                                           TRHOU4.245   
+                                                                           TRHOU4.246   
+C                                                                          TRHOU4.247   
+C Seek the maximum of adjacent values closer to peak                       TRHOU4.248   
+C                                                                          TRHOU4.249   
+                                                                           TRHOU4.250   
+           max_around = MAX (                                              TRHOU4.251   
+                                                                           TRHOU4.252   
+     *           KNR(j,angle_close,frqcy) * KNRJ(j,angle_close,frqcy)      TRHOU4.253   
+     *         , KNR(j,angle,frqcy_close) * KNRJ(j,angle,frqcy_close)      TRHOU4.254   
+     *         , KNR(j,angle_close,frqcy_close)                            TRHOU4.255   
+     *                            * KNRJ(j,angle_close,frqcy_close)        TRHOU4.256   
+     *         )                                                           TRHOU4.257   
+                                                                           TRHOU4.258   
+                                                                           TRHOU4.259   
+                                                                           TRHOU4.260   
+C                                                                          TRHOU4.261   
+C Accept the point only if the energy not more than the surroundings       TRHOU4.262   
+C and if there is a continuous area to it                                  TRHOU4.263   
+C Take care near frequency and direction of peak not to reject             TRHOU4.264   
+C the point because it has not been examined yet - angle_this              TRHOU4.265   
+C and frqcy_this allow for this.                                           TRHOU4.266   
+C                                                                          TRHOU4.267   
+                                                                           TRHOU4.268   
+           KNR(j,angle,frqcy) =                                            TRHOU4.269   
+     +           MIN ( KNRJ(j,angle,frqcy), 1)                             TRHOU4.270   
+     *         * MIN ( MAX(max_around-KNRJ(j,angle,frqcy)+1, 0), 1)        TRHOU4.271   
+     *         * MAX( KNR(j,angle,frqcy_close), frqcy_this)                TRHOU4.272   
+     *         * MAX( KNR(j,angle_close,frqcy), angle_this)                TRHOU4.273   
+                                                                           TRHOU4.274   
+                                                                           TRHOU4.275   
+                                                                           TRHOU4.276   
+                                                                           TRHOU4.277   
+          END DO ! j          - over points                                TRHOU4.278   
+         END DO  ! ang        - over directions                            TRHOU4.279   
+        END DO   ! ang_sweep  - over direction sign                        TRHOU4.280   
+       END DO    ! freq       - over frequency                             TRHOU4.281   
+      END DO     ! freq_sweep - over frequency sign                        TRHOU4.282   
+                                                                           TRHOU4.283   
+                                                                           TRHOU4.284   
+c       WRITE(6,*)' '                                                      GIE0F403.659   
+c       WRITE(6,*)'array knr on exit from routine trhou'                   GIE0F403.660   
+c       WRITE(6,*)'             spectrum'                                  GIE0F403.661   
+c       WRITE(6,*) ' '                                                     GIE0F403.662   
+c       do k=1,kfre                                                        TRHOU4.289   
+c        write(6,100) (knr(1,m,k),m=1,kang)                                TRHOU4.290   
+c       enddo                                                              TRHOU4.291   
+c                                                                          TRHOU4.292   
+c       WRITE(6,*)' '                                                      GIE0F403.663   
+                                                                           TRHOU4.294   
+      RETURN                                                               TRHOU4.295   
+      END                                                                  TRHOU4.296   
+*ENDIF                                                                     TRHOU4.297   

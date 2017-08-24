@@ -1,0 +1,1268 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#
+# Script: qsconf
+#
+# Description: Unified Model global configuration script for versions
+#              of the UM at or later than 4.2.
+#
+# Interface and arguments:
+#
+# Author: Andy Brady
+# Owner:
+#
+# History:
+# Vn   	Date      Change
+# 4.2 	?.?.96	  Original Code.  (A Brady)   	
+# 4.4 	22.05.97  Some comments added.  (S Robertson)
+# 4.4   19.08.97  Ammended qsub time limits in line with changes to
+#                 queue limits.  (S Robertson)
+# 4.4.  22.08.97  Added code to prevent extra decks extracted due to
+#                 modification of a COMDECK being included in the
+#                 build directory of a small executable. (S Robertson)	
+# 4.4   15.12.97  Remove some unawanted messages.
+#                 Correct problems with new obj_xref and exec_xref
+#                 machine,section and compile tags. (A. Brady)
+# 4.5   07/09/98  Added include file to Makefile for compiler
+#                 variables etc.                     P.Burton
+# 4.5   12.11.98  Replaced NUPLIB with PROGLIB to be consistent with
+#                 toplevel SCRIPT. (R Hatcher)
+# 4.5   14.07.98  Moved functions to a separate file and autoloaded
+#                 them. (A Van der Wal)
+# Script called by: qsprelim | qsmncompile
+# Script calls: comp_parse
+#
+# Variables that can be imported:
+#       BUILDHOST identifies the system the UM is being built upon
+#                 e.g. CrPVPf77 machine and compiler
+#       COMPPARSE script which parses compiler options for different
+#                 systems
+#       COMPVARS  compiler information and compiler options (fortran,
+#                 loader, C compiler and deck specific options)
+#       EXECXREF  the exec_xref file to be used by qsconf (information
+#                 relating to the small executables)
+#       LOADPARSE exist to allow additional fucntionality to be added
+#       MAKEFILE  the resulting Makefile
+#       MAKEFILEEXECIN makefile template for the small executables
+#       MAKEFILEEXECINMID mid level makefile template for the small
+#                         executables
+#       MAKEFILEIN makefile template for UM sections
+#       MAKEFILEINBOT low level makefile template
+#       MAKEFILEINMID mid level makefile template
+#       MAKEFILEINTOP top level makefile template
+#       NPROC	  the number of processes to be run in parallel
+#       NUPCOMMD  command to invoke the nupdate utility
+#       PROGLIB	  the nupdate library
+#       OBJXREF	  the obj_xref file to be used by qsconf (information
+#                 relating to the UM sections)
+#       OUTDIR    directory in which
+#       TMPDIR    directory in which temporary files are created
+# 	UMDIR	  pathname for the UM files and directories
+#       VN 	  current version of the UM
+#
+# Local variables:
+#	BUILDEXEC build directory for small executables
+#       BUILDTMP  temporary directory into which nupdate extracts decks
+#       INFOLEVEL included to allow for proposed functionality
+#       MAKETMP   file
+#       MYDIR     the directory in which qsconf has been executed
+#       NUPTMP    identifier for fortran mod file used to extract
+#                 fortran decks with nupdate
+#       NUPTMPC   identifier for C mod file used to extract C decks
+#	OUTEXEC	  destination directory for the small executables
+#	OUTOBJ    the object file directory for the UM sections
+#	OUTSRC    the source directory for the UM sections
+#       SEDSCRIPT1 temp file
+#       SEDSCRIPT2 temp file
+#       TMPFILE1  temp file for output from nupdate source extraction
+#       TMPMAKE1  temp file for fortran makefile directives
+#       TMPMAKE2  temp file for C makefile directives
+#       TMPXREF  cut down version of obj_xref or exec_xref file for UM
+#                section or small exec being built
+#       TOP	 top level UM directory path i.e. $UMDIR/vn$VN
+#       UMVNDIR  top level UM directory path (in this case $TOP) ?
+#
+#---------------------------------------------
+# QSUB -r NewBld
+# QSUB -lT 6000
+# QSUB -lM 14Mw
+# QSUB -q prime
+# QSUB -eo
+# QSUB -nr
+# QSUB -J m
+# QSUB -ro
+
+# Number of exec make process to run in parallel
+# NOTE: Section makes can only run with NPROC=1
+#       Higher level makes should only be run with NPROC=1
+#       Both of the above cases are hardwired to 1 in the code.
+NPROC=${NPROC:-10}
+
+## Default variables
+UMDIR=${UMDIR:-/u/um1}
+VN=4.5
+OUTDIR=${OUTDIR:-$UMDIR/vn$VN}
+
+# Output directories/files
+MAKEFILE=${MAKEFILE:-Makefile}
+
+## set environment
+NUPCOMMD=${NUPCOMMD:-nupdate}
+
+## temporary files/directories
+if [ -z "$TMPDIR" ] ; then TMPDIR="/tmp" ; fi
+BUILDTMP="$TMPDIR/buildtmp.$$"
+MAKETMP="$TMPDIR/maketmp.$$"
+NUPTMP="$TMPDIR/nupdate.$$"
+NUPTMPC="$TMPDIR/nupdatec.$$"
+TMPXREF="$TMPDIR/tmpxref.$$"
+TMPFILE1="$TMPDIR/tmpfile1.$$"
+TMPMAKE1="$TMPDIR/tmpfile2.$$"
+TMPMAKE2="$TMPDIR/tmpfile3.$$"
+SEDSCRIPT1="$TMPDIR/tmpfile4.$$"
+SEDSCRIPT2="$TMPDIR/tmpfile5.$$"
+MYDIR=`pwd`
+INFOLEVEL=0
+
+. $UMDIR/vn$VN/scripts/setglobalvars
+autoload fupper flower upper lower gen_sed_string fnmycut fnlistopt \
+         fnmydiff fnusage expandpath mkdirhier
+
+cline=$*
+
+# parse command line options
+for arg in $cline
+do
+  case $arg in
+       '-quiet1') INFOLEVEL=1 ; shift ;;
+     '-sections') confsects="true" ; shift ;;
+        '-execs') confexecs="true" ; shift ;;
+        '-cemod') cemod='true' ; cemodfiles=$2 ; shift 2 ;;
+        '-csmod') csmod='true' ; csmodfiles=$2 ; shift 2 ;;
+        '-femod') femod='true' ; femodfiles=$2 ; shift 2 ;;
+        '-fsmod') fsmod='true' ; fsmodfiles=$2 ; shift 2 ;;
+       '-ignore') ignore_missing='true' ; shift ;;
+         '-objx') OBJXREF=$2 ; shift 2 ;;
+         '-xref') echo -e "Error: -xref is now obsolete. Use -objx."
+                  exit 1 ;;
+        '-execx') EXECXREF=$2 ; shift 2 ;;
+      '-compvar') COMPVARS=$2 ; shift 2 ;;
+       '-outdir') OUTDIR=$2 ; shift 2 ;;
+        '-umdir') UMDIR=$2 ; shift 2 ;;
+           '-vn') VN=$2 ; shift 2 ;;
+       '-cgopts') CGOPTS=$2 ; shift 2 ;;
+       '-defcom') DEFCOM=$2 ; shift 2 ;;
+    '-h'|'-help') fnusage ; exit ;;
+              -*) echo -e "Error: bad arg \"$1\". Try -help for more info."
+                  exit 1 ;;
+  esac
+done
+
+if [ "$INFOLEVEL" -lt 1 ]
+then
+  echo -e "\nqsconf($SECONDS): ***\tThis is          : \"$0\""
+  echo -e "qsconf($SECONDS): ***\tUsing CL options : \"$cline\"\n"
+fi
+
+# Input directories
+UMVNDIR="$UMDIR/vn$VN"
+PROGLIB=${PROGLIB:-$UMVNDIR/source/umpl}
+TOP="$UMVNDIR"
+
+# Output directories
+if [ -z "$OUTDIR" ] ; then OUTDIR="$TOP" ; fi
+
+## set environment
+COMPPARSE=${COMPARSE:-$TOP/scripts/comp_parse}
+LOADPARSE=${LOADPARSE:-$TOP/scripts/load_parse}
+
+# check that the following scripts exist if they are requested
+for umscript in $COMPPARSE $LOADPARSE
+do
+  if [ ! -f "$umscript" ]
+  then
+    echo -e "ERROR: Cannot find UM script \"$umscript\"."
+    echo -e "       Maybe -vn or -umdir are set wrong."
+    echo -e "       Maybe \$VN or \$UMDIR are set wrong."
+    echo -e "       May the script does not exist."
+    exit 1
+  fi
+done
+
+## Configuration files
+MAKEFILEEXECIN=${MAKEFILEEXECIN:-$TOP/scripts/Install/makefile_exec_in}
+MAKEFILEEXECINMID=\
+${MAKEFILEEXECINMID:-$TOP/scripts/Install/makefile_execmid_in}
+MAKEFILEINBOT=${MAKEFILEINBOT:-$TOP/scripts/Install/makefile_bot_in}
+MAKEFILEINMID=${MAKEFILEINMID:-$TOP/scripts/Install/makefile_mid_in}
+MAKEFILEINTOP=${MAKEFILEINTOP:-$TOP/scripts/Install/makefile_top_in}
+MAKEFILEIN=${MAKEFILEIN:-$TOP/scripts/Install/makefile_in}
+OBJXREF=${OBJXREF:-$TOP/source/obj_xref}
+COMPVARS=${COMPVARS:-$TOP/source/compile_vars}
+EXECXREF=${EXECXREF:-$TOP/source/exec_xref}
+
+for uminput in \
+   $MAKEFILEEXECIN \
+   $MAKEFILEEXECINMID \
+   $MAKEFILEINBOT \
+   $MAKEFILEINMID \
+   $MAKEFILEINTOP \
+   $MAKEFILEIN \
+   $OBJXREF \
+   $EXECXREF \
+   $COMPVARS
+do
+  if [ ! -f "$uminput" ]
+  then
+    echo -e "ERROR: Cannot find UM input file \"$uminput\"."
+    echo -e \
+"       Maybe -objx, -execx, -compvar, -vn, or -umdir is wrong."
+    echo -e "       Maybe \$VN or \$UMDIR are set wrong."
+    echo -e "       Maybe the UM input file does not exist."
+    exit 1
+  fi
+done
+
+if [ -z "$confsects" ] && [ -z "$confexecs" ]
+then
+  echo -e "ERROR: You need to specify options -sections and/or -execs"
+  echo -e "       Use option -help for more information"
+  exit 1
+fi
+
+for arg in cemod csmod femod fsmod
+do
+  xmod=`eval echo -e \\\$\$arg`
+  xmodfiles=`eval echo -e \\\$\$arg\files`
+  if [ "$xmod" = "true" ]
+  then
+    for file in `echo -e $xmodfiles | $UM_SED 's/,/ /g'`
+    do
+      if [ ! -r $file ]
+      then
+        if [ "$ignore_missing" = "true" ]
+        then
+          eval unset \$arg
+          echo -e \
+"WARNING: file \"$file\" not found. Ignoring option \"-$arg $file\".\n"
+        else
+          echo -e "ERROR: $arg file \"$file\" unreadable or not found" >&2
+          exit 1
+        fi
+      else
+        if [ "$INFOLEVEL" -lt 1 ]
+        then
+          echo -e \
+"qsconf($SECONDS): ***\tUsing $arg \"$file\" for src extraction\n"
+        fi
+      fi
+    done
+  fi
+done
+
+if test $# -ne 0
+then
+  sectfilt="`echo -e $* | $UM_SED -e 's/ /|/g' -e 's/,/|/g'`"
+  if [ $INFOLEVEL -lt 1 ]
+  then
+    echo -e "qsconf($SECONDS): ***\tUsing filter     : \"$sectfilt\"\n"
+  fi
+  buildall="false"
+else
+  sectfilt="."
+  buildall="true"
+fi
+
+# make output dir if necessary then expand OUTDIR
+mkdirhier $OUTDIR
+OUTDIR=`expandpath $OUTDIR`
+OBJXREF=`expandpath $OBJXREF`
+EXECXREF=`expandpath $EXECXREF`
+UMDIR=`expandpath $UMDIR`
+COMPVARS=`expandpath $COMPVARS`
+
+if [ "$INFOLEVEL" -lt 1 ]
+then
+  echo -e "qsconf($SECONDS): ***\tUM     dir is    : \"$UMDIR\""
+  echo -e "qsconf($SECONDS): ***\tUM version is    : \"$VN\""
+  echo -e "qsconf($SECONDS): ***\tOutput dir is    : \"$OUTDIR\""
+  echo -e "qsconf($SECONDS): ***\tExecXref   is    : \"$EXECXREF\""
+  echo -e "qsconf($SECONDS): ***\tObjXref    is    : \"$OBJXREF\""
+  echo -e "qsconf($SECONDS): ***\tCOMPVARS   is    : \"$COMPVARS\"\n"
+fi
+
+OUTSRC="$OUTDIR/src"
+OUTOBJ="$OUTDIR/obj"
+OUTEXEC="$OUTDIR/exec"
+BUILDEXEC="$OUTDIR/exec_build"
+
+## Step ??? -- find out what to build on
+BUILDHOST=${BUILDHOST:-T3E_f90}
+
+## the following environment variables are declared as lowercase
+typeset -l lfile
+typeset -l decklist
+
+# Global fortran compiler command and options
+line=`fnlistopt "$COMPVARS" "" FCOM`
+FORT=${line%:::*}
+FORTOPTS=${line#$FORT:::}
+
+# Global C-compiler command and options
+line=`fnlistopt "$COMPVARS" "" CCOM`
+CC=${line%:::*}
+CCOPTS=${line#$CC:::}
+
+# Global load command and options
+line=`fnlistopt "$COMPVARS" "" LCOM`
+LOAD=${line%:::*}
+LOADOPTS=${line#$LOAD:::}
+
+# From $COMPVARS, the central comp(ile)vars file, obtain a list of deck
+# names for which specific compiler options are given -> decklist.
+decklist=`$UM_GREP -E -v '^#|^\@|^\+\@' $COMPVARS |\
+             fnmycut 1 1 |\
+             $UM_SED 's/^+//g'|\
+             sort -u`
+
+###############################################
+# Configure Small Executables (small execs).
+###############################################
+
+if [ ! -z "$confexecs" ]
+then
+
+  if [ ! -z "$DEFCOM" ]
+  then
+    echo -e "WARNING: DEFCOM ignored when building executables."
+    echo -e "         Use option -help for more information.\n"
+  fi
+
+  if [ ! -z "$CGOPTS" ]
+  then
+    echo -e "WARNING: CGOPTS ignored when building executables."
+    echo -e "         Use option -help for more information.\n"
+  fi
+
+  echo -e "qsconf($SECONDS): ***\tConfiguring small executables"
+  makelistex=""
+
+  mkdirhier $BUILDEXEC
+
+  allexecs=""
+  typeset -l loopexec
+
+  # generate a list of the execs to be built
+  loopexec=`$UM_GREP -E -v '^MACHINE|^#|^$' $EXECXREF|\
+                 $UM_AWK '{print $1}'|\
+                 sort -u|$UM_GREP -E -i $sectfilt`
+
+  # loop over each exec in the list and initiate the build process
+  for exec in $loopexec
+  do
+    allexecs="$allexecs $exec"
+    echo -e "qsconf($SECONDS): ***\t  $exec"
+
+    # create a temporary cut down version of the exec_xref file for
+    # the given exec
+    $UM_GREP -E ^$exec $EXECXREF> $TMPXREF.$exec
+
+    # get a list of possible DEFS for the exec
+    defs=\
+`$UM_GREP -E \
+  "^$exec *DEFS *$BUILDHOST|^$exec *DEFS *ALL" $TMPXREF.$exec|\
+  $UM_SED 's/.* DEFS .* //g'|\
+            tr -s "\012" ","`
+
+    # parse the temporary exec_xref file for use of additional libraries
+    loadlibs=`$UM_GREP -E "$exec *UTIL" $TMPXREF.$exec|\
+                $UM_SED 's/.* UTIL *//g'|\
+                $UM_AWK '{print $0","}'|\
+                $UM_SED 's/,$//g'`
+
+    if [ ! -z "$loadlibs" ]
+    then
+      loadlibs=`echo -e $loadlibs | $UM_SED 's/,/ -l/g' |\
+        $UM_SED 's/^/-l/g'`
+    fi
+
+    # nupdate file of the C decks which comprise the small exec
+    $UM_GREP -E \
+      "^$exec *DECKC $BUILDHOST|^$exec *DECKC ALL" $TMPXREF.$exec|\
+      $UM_SED 's/^'$exec' *DECKC *.* /*C /g' > $NUPTMPC.$exec
+
+    # nupdate file of the fortran decks which comprise the small exec
+    $UM_GREP -E \
+      "^$exec *DECKS $BUILDHOST|^$exec *DECKS ALL" $TMPXREF.$exec|\
+      $UM_SED 's/^'$exec' *DECKS *.* /*C /g' > $NUPTMP.$exec
+
+    mkdir -p $BUILDEXEC/$exec\_dir 2> /dev/null
+
+    ## populate the build dir for the exec with C source files ##
+    if [ -s "$NUPTMPC.$exec" ]
+    then
+      cd $BUILDEXEC/$exec\_dir
+      # remove any pre-existing temporary build directory
+      rm -fr $BUILDTMP
+      # create a new temporary build driectory and move to it
+      mkdir -p $BUILDTMP
+      cd $BUILDTMP
+
+      echo -e "qsconf($SECONDS): ***\t    nupdate (c-code)"
+      if [ "$cemod" = "true" ]
+      then
+        # concatenate content of C mod file(s) with nupdate file
+        for file in `echo -e $cemodfiles | $UM_SED 's/,/ /g'`
+        do
+          cat $file >>$NUPTMPC.$exec
+        done
+      fi
+      # extract source code into temporary build directory
+      $NUPCOMMD -D -p $PROGLIB -i $NUPTMPC.$exec -d $defs \
+        1> $TMPFILE1 2> $TMPFILE1
+      if [ $? -ne 0 ]
+      then
+        echo -e
+        echo -e $NUPCOMMD -D -p $PROGLIB -i $NUPTMPC.$exec -d $defs
+        cat $TMPFILE1
+        exit 1
+      else
+
+#       Create a list of what C decks are used in this small executable
+#       from all those taken from the exec_xref file (which have had
+#       *C added) and new decks added in mods.  Decks not in this list
+#       must have been extracted by nupdate from comdeck modifications
+#       and so are not required here.  These deck files are removed
+#       from the compile directory so they do not cause compile
+#       failures.
+
+        requiredfiles=`$UM_GREP -E '^\*C |^\*DECK' $NUPTMPC.$exec |\
+ tr -s "," "\012" | $UM_SED 's/^\*C //g' | $UM_SED 's/^\*DECK//g' |\
+ tr -s "\012" ":"`
+        for file in `ls`
+        do
+          if [[ "$requiredfiles" != *"$file"* ]]
+          then
+            rm -f $file
+          fi
+        done
+        rm -f $TMPFILE1 $NUPTMPC.$exec *.log
+      fi
+
+      echo -e "qsconf($SECONDS): ***\t    source comparison"
+      for file in \
+`ls|\
+$UM_GREP -E -v "\.log$|^core\$|$exec\$|\.o\$|\.c\$|\.f\$|Makefile\$"`
+      do
+        lfile=$file.c
+        test=`fnmydiff $file $BUILDEXEC/$exec\_dir/$lfile`
+        if [ $test -eq 1 ]
+        then
+          # extracted vn. is different from user vn.
+          # move extracted vn. to user directory
+          mv -f $file $BUILDEXEC/$exec\_dir/$lfile
+        elif [ $test -ne 0 ]
+        then
+          # no user vn. of the file
+          # move extracted vn. to user directory
+          mv -f $file $BUILDEXEC/$exec\_dir/$lfile
+        else
+          # the extracted vn. is the same as the user vn.
+          # remove temporary extracted version
+          rm -f $file
+        fi
+      done
+    fi
+
+    ## populate the build dir for the exec with fortran source files ##
+    if [ -s "$NUPTMP.$exec" ]
+    then
+      cd $BUILDEXEC/$exec\_dir
+      # remove any pre-existing temporary build directory
+      rm -fr $BUILDTMP
+      # create a new temporary build driectory and move to it
+      mkdir -p $BUILDTMP
+      cd $BUILDTMP
+
+      echo -e "qsconf($SECONDS): ***\t    nupdate (fortran)"
+      if [ "$femod" = "true" ]
+      then
+        # concatenate content of fortran mod file(s) with nupdate file
+        for file in `echo -e $femodfiles | $UM_SED 's/,/ /g'`
+        do
+          cat $file >>$NUPTMP.$exec
+        done
+      fi
+      # extract source code into temporary build directory
+      $NUPCOMMD -D -p $PROGLIB -i $NUPTMP.$exec -d $defs \
+        1> $TMPFILE1 2> $TMPFILE1
+      if [ $? -ne 0 ]
+      then
+        echo -e
+        echo -e $NUPCOMMD -D -p $PROGLIB -i $NUPTMP.$exec -d $defs
+        cat $TMPFILE1
+        exit 1
+      else
+
+#       Create a list of what Fortran decks are used in this small
+#       executable from all those taken from the exec_xref file (which
+#       have had *C added) and new decks added in mods.  Decks not in
+#       this list must have been extracted by nupdate from comdeck
+#       modifications and so are not required here.
+#       These deck files are removed from the compile directory so
+#       they do not cause compile failures.
+
+        requiredfiles=`$UM_GREP -E '^\*C |^\*DECK' $NUPTMP.$exec |\
+ tr -s "," "\012" | $UM_SED 's/^\*C //g' | $UM_SED 's/^\*DECK//g' |\
+ tr -s "\012" ":"`
+
+        for file in `ls`
+        do
+          if [[ "$requiredfiles" != *"$file"* ]]
+          then
+            rm -f $file
+          fi
+        done
+        rm -f $TMPFILE1 $NUPTMP.$exec *.log
+      fi
+
+      echo -e "qsconf($SECONDS): ***\t    source comparison"
+      for file in \
+`ls |\
+ $UM_GREP -E -v "\.log$|^core\$|$exec\$|\.o\$|\.c\$|\.f\$|Makefile$"`
+      do
+        lfile=$file.f
+        test=`fnmydiff $file $BUILDEXEC/$exec\_dir/$lfile`
+        if [ $test -eq 1 ]
+        then
+          # extracted vn. is different from user vn.
+          # move extracted vn. to user directory
+          mv -f $file $BUILDEXEC/$exec\_dir/$lfile
+        elif [ $test -ne 0 ]
+        then
+          # no user vn. of the file
+          # move extracted vn. to user directory
+          mv -f $file $BUILDEXEC/$exec\_dir/$lfile
+        else
+          # the extracted vn. is the same as the user vn.
+          # remove temporary extracted version
+          rm -f $file
+        fi
+      done
+    fi
+
+## Create low level Makefile
+
+    # move to the build directory for the given small exec
+    cd $BUILDEXEC/$exec\_dir
+    echo -e "qsconf($SECONDS): ***\t    creating Makefile"
+    objs=""  # set initial list of object files to empty
+    rm -f $TMPMAKE1
+
+    # Create a makefile directive for each file in the build directory.
+    for file in `ls | $UM_GREP -E '\.f$|\.c$'`
+    do
+      if [ ! -d $file ]
+      then
+        name=${file%.[cf]}   # return file name
+        type=${file##$name.} # return file type
+        if [ "$type" = "f" ]
+        then
+          if [[ "$decklist" = *"$name"* ]]
+          then
+            # deck has specific compiler options, call fnlistopt to
+            # obtain them
+            echo -e \
+"qsconf($SECONDS): ***\t        Getting new comp opts for $name"
+            line=`fnlistopt "$COMPVARS" "$name" FCOM`
+            fort=${line%:::*}
+            opts=${line#$fort:::}
+
+            # Set the values of thisfort (the fortran compiler) and
+            # thisopts (the compiler options) by comparing the deck
+            # specific values with global values
+
+            if [ "$fort" != "$FORT" ]
+            then
+              thisfort=$fort
+            else
+              thisfort='$(FORT)'
+            fi
+            if [ "$opts" != "$FORTOPTS" ]
+            then
+              thisopts=$opts
+            else
+              thisopts='$(FORTOPTS)'
+            fi
+          else
+            # deck has no specific compiler options use global
+            # default values
+            thisfort='$(FORT)'
+            thisopts='$(FORTOPTS)'
+          fi
+
+          # create a makefile directive for the current file
+          echo -e \
+"$name.o: $file\n\t$thisfort $thisopts -c $file\n" >> $TMPMAKE1
+        elif [ "$type" = "c" ]
+        then
+          if [[ "$decklist" = *"$name"* ]]
+          then
+            # deck has specific compiler options, call fnlistopt to
+            # obtain them
+            echo -e \
+"qsconf($SECONDS): ***\t        Getting new comp opts for $name"
+            line=`fnlistopt "$COMPVARS" "$name" CCOM`
+            cc=${line%:::*}
+            opts=${line#$cc:::}
+
+            # set the values of thiscc (the c compiler) and thisopts
+            # (the compiler options) by comparing the deck specific
+            # values with global values
+
+            if [ "$cc" != "$CC" ]
+            then
+              thiscc=$cc
+            else
+              thiscc='$(CC)'
+            fi
+            if [ "$opts" != "$CCOPTS" ]
+            then
+              thisopts=$opts
+            else
+              thisopts='$(CCOPTS)'
+            fi
+          else
+            # the deck has no specific compiler options use
+            # global defaults
+            thiscc='$(CC)'
+            thisopts='$(CCOPTS)'
+          fi
+          # create a makefile directive for the current file
+          echo -e \
+"$name.o: $file\n\t$thiscc $thisopts -c $file\n" >> $TMPMAKE1
+        else
+          echo -e "ERROR: file type \"$type\" for \"$file\" is unknown."
+          exit 1
+        fi
+        # Maintain a list of object files which will be parsed
+        # directly into the Makefile.  objs is of the form,
+        # objs=abcalc1.o ac_ctl1.o
+        objs="$objs $name.o"
+      fi
+    done
+
+## Create the Makefile from makefileexec_in
+
+    echo -e "s^@nproc@^$NPROC^g"                   > $SEDSCRIPT1
+    echo -e `gen_sed_string "@objects@" "4" "$objs"`   >> $SEDSCRIPT1
+    echo -e "s^@fort@^$FORT^g"                     >> $SEDSCRIPT1
+    echo -e "s^@fortopts@^$FORTOPTS^g"             >> $SEDSCRIPT1
+    echo -e "s^@load@^$LOAD^g"                     >> $SEDSCRIPT1
+    echo -e "s^@loadopts@^$LOADOPTS $loadlibs^g"   >> $SEDSCRIPT1
+    echo -e "s^@cc@^$CC^g"                         >> $SEDSCRIPT1
+    echo -e "s^@ccopts@^$CCOPTS^g"                 >> $SEDSCRIPT1
+    echo -e "s^@binary@^$exec^g"                   >> $SEDSCRIPT1
+    echo -e "s^@outdir@^$OUTEXEC^g"                >> $SEDSCRIPT1
+    echo -e "s^@um_pe_label@^$UM_PE_LABEL^g"       >> $SEDSCRIPT1
+    echo -e "s^@.*@^^g"                            >> $SEDSCRIPT1
+    $UM_SED -f $SEDSCRIPT1 < $MAKEFILEEXECIN > $MAKEFILE
+
+    # append actual rules for making individual decks to the
+    # makefile
+    cat $TMPMAKE1 >> $MAKEFILE
+
+    rm -f $SEDSCRIPT1
+  done
+
+## Create mid level script Makefile
+
+  if [ "$buildall" = "true" ]
+  then
+    echo -e "qsconf($SECONDS): ***\t  creating top Makefile"
+    cp $MAKEFILEEXECINMID $MAKETMP
+    for exec in $allexecs
+    do
+      echo -e "$exec:" >> $MAKETMP
+      echo -e "\tcd $exec""_dir ;\c" >> $MAKETMP
+      echo -e \
+" \$(MAKE) FORT=\$(FORT) LOAD=\$(LOAD) CC=\$(CC)\n" >> $MAKETMP
+      echo -e "install-$exec: $exec"  >> $MAKETMP
+      echo -e "\tcd $exec""_dir ;\c" >> $MAKETMP
+      echo -e " \$(MAKE) install\n" >> $MAKETMP
+      install_list="$install_list install-$exec"
+      build_list="$build_list $exec"
+    done
+    echo -e "s^@install_list@^$install_list^g"     > $SEDSCRIPT1
+    echo -e "s^@nproc@^1^g"                        >> $SEDSCRIPT1
+    echo -e "s^@fort@^$FORT^g"                     >> $SEDSCRIPT1
+    echo -e "s^@fortopts@^$FORTOPTS^g"             >> $SEDSCRIPT1
+    echo -e "s^@load@^$LOAD^g"                     >> $SEDSCRIPT1
+    echo -e "s^@loadopts@^$LOADOPTS $loadlibs^g"   >> $SEDSCRIPT1
+    echo -e "s^@cc@^$CC^g"                         >> $SEDSCRIPT1
+    echo -e "s^@ccopts@^$CCOPTS^g"                 >> $SEDSCRIPT1
+    echo -e "s^@build_list@^$build_list^g"         >> $SEDSCRIPT1
+    $UM_SED -f $SEDSCRIPT1 < $MAKETMP > $BUILDEXEC/$MAKEFILE
+  fi
+
+  echo -e \
+"qsconf($SECONDS): ***\tFinished configuring small executables\n"
+# Return to the initiating directory in case OUTSRC is
+# relative to it.
+  cd $MYDIR
+fi
+
+###############################################
+# Configure Sections.
+###############################################
+
+if [ ! -z "$confsects" ]
+then
+
+  # if CGOPTS does not have a value, set it to the string "."
+  # which implies any compile option is acceptable.
+  if [ -z "$CGOPTS" ]
+  then
+    CGOPTS="."
+  fi
+
+  mkdirhier $OUTSRC
+  if [ "$INFOLEVEL" -lt 1 ]
+  then
+    echo -e "qsconf($SECONDS): ***\tSetting switches"
+  fi
+  for switch in \
+    `cat $OBJXREF|$UM_GREP DEF_SWITCHES| $UM_SED 's/DEF_SWITCHES *//g'`
+  do
+    OLDIFS=$IFS
+    IFS=:
+    set $switch
+    IFS=$OLDIFS
+    eval tmp_${2}=$1
+    eval tmp_${1}=$2
+  done
+
+  if [ "$INFOLEVEL" -lt 1 ]
+  then
+    echo -e "qsconf($SECONDS): ***\tFinished setting switches\n"
+  fi
+
+  if [ "$INFOLEVEL" -lt 1 ]
+  then
+    echo -e "qsconf($SECONDS): ***\tSetting general options"
+  fi
+
+  # set the general compile options for the build.  If -cgopts
+  # is given an argument, build the given type i.e. normal, apprentice
+  # or debug.  The default is build all types.
+  loopswitch=`$UM_GREP -E 'COMP_GEN_OPTS '$BUILDHOST $OBJXREF|\
+                   $UM_SED 's/COMP_GEN_OPTS '$BUILDHOST' *//g'|\
+                   $UM_GREP -E -i $CGOPTS`
+  if [ -z "$loopswitch" ]
+  then
+    echo -e "ERROR: Could not find any COMP_GEN_OPTS to match." >&2
+    echo -e "       Maybe -cgopts is incorrectly specified." >&2
+    echo -e "       Maybe the ObjXref file is incorrect." >&2
+    echo -e "       See -help for more information." >&2
+    exit 1
+  fi
+
+  for switch in $loopswitch
+  do
+    if [ "$INFOLEVEL" -lt 1 ]
+    then
+      echo -e "qsconf($SECONDS): ***\t  Will build COMP_GEN_OPT $switch"
+    fi
+    # set up an equality between the switch id and its name e.g.
+    # n:normal -> tmp_normal=n and tmp_n=normal
+    eval `echo -e $switch|$UM_AWK -F: '{print "tmp_"$2"="$1}'`
+    eval `echo -e $switch|$UM_AWK -F: '{print "tmp_"$1"="$2}'`
+  done
+  if [ "$INFOLEVEL" -lt 1 ]
+  then
+    echo -e "qsconf($SECONDS): ***\tFinished setting general options\n"
+  fi
+
+  if [ "$INFOLEVEL" -lt 1 ]
+  then
+    echo -e "qsconf($SECONDS): ***\tLooping over source sections"
+  fi
+
+  typeset -l loopsect
+
+  # create a list of the sections to be built (default is all sections)
+
+  str='^COMP_GEN_OPTS|^DEF_SWITCHES|^#|^$|^MACHINE|^SECTION|^COMPILE'
+  loopsect=`$UM_GREP -E -v $str $OBJXREF|\
+                 $UM_AWK '{print $1}'|\
+                 sort -u|$UM_GREP -E -i $sectfilt`
+
+  # build each section requested
+  for sect in $loopsect
+  do
+    makelistbt=""
+    echo -e "qsconf($SECONDS): ***\t  Configuring section $sect"
+
+    # create a cut down obj_xref file for the section being built
+    $UM_GREP -E -i ^$sect $OBJXREF > $TMPXREF.$sect
+
+    if [ -z "$DEFCOM" ]
+    then
+      # there are no user defined def combinations
+
+      # create a list of buildtypes for section e.g. in section A02_1B
+      # A02_1B BUILD OTHER    G0_n G0_d A6_n A6_d Gp_n Gp_d A6Gp_n
+      # A6Gp_d G0 A6 A6Gp will be built in three different ways.
+
+      buildtypes=`$UM_GREP -E \
+         -i "^$sect BUILD $BUILDHOST" $TMPXREF.$sect|\
+         $UM_SED 's/^.* BUILD '$BUILDHOST' *//g' |\
+         $UM_SED 's/_.//g' |\
+         expand| $UM_SED 's/  */ /g' | tr -s " " "\012"|\
+                        sort -u`
+
+      # loopopts is all possible build combinations and types for the
+      # section e.g for A02_1B Gp_n Gp_d Gp_a A6Gp_n A6Gp_d A6Gp_a
+      loopopts=`$UM_GREP -E \
+         -i "^$sect BUILD $BUILDHOST" $TMPXREF.$sect|\
+         $UM_SED 's/^.* BUILD '$BUILDHOST' *//g'`
+    else
+      # use user specified buildtypes
+      buildtypes=${DEFCOM%_?}
+      options=$CGOPTS
+    fi
+
+    for buildtype in $buildtypes
+    do
+      objs=""
+      if [ -z "$DEFCOM" ]
+      then
+        options=""
+        for opt in $loopopts
+        do
+          # given opt is of the form Gp_n test that Gp is a valid
+          # build combination and n (normal) a valid build
+          test=`echo -e $opt |$UM_AWK -F_ '{print $1}'`
+          if [ "$test" = "$buildtype" ]
+          then
+            options="$options `echo -e $opt |\
+                     $UM_AWK -F_ '{print "$tmp_"$2}'`"
+          fi
+        done
+        options=`eval echo -e $options`
+
+        if [ -z "$options" ]
+        then
+          echo -e "\nWARNING: No valid COMP_GEN_OPTS for this section."
+          echo -e "WARNING: There may be an error in the ObjXref file."
+          echo -e "WARNING: Continuing.\n"
+        fi
+      fi
+
+      defs=`echo -e $buildtype |\
+              $UM_AWK '{for (i=1 ; i < length($0) ; i=i+2) {
+                          printf "$tmp_%s ", substr($0,i,2)
+                         }}'`
+      defsd=""
+      for def in $defs
+      do
+        tmp=`eval echo -e $def`
+        if [ "$tmp" != "" ]
+        then
+          defsd="$defsd $tmp"
+        else
+          defmsg=`echo -e $def | $UM_SED 's/[^_]*_//g'`
+          echo -e "\nERROR: Unknown id $defmsg in $sect in ObjXref">&2
+          exit 1
+        fi
+      done
+      defsdc=`echo -e $defsd | $UM_SED 's/ /,/g'`
+      srcdir="$OUTSRC/$sect/$buildtype"
+      objdir="$OUTOBJ/$sect/$buildtype"
+
+      echo -e \
+"qsconf($SECONDS): ***\t    $buildtype: `upper $sect`$defsd\t"
+
+      rm -f $NUPTMPC.$sect $NUPTMPC.$sect	# ????????????
+
+      # nupdate file of the C decks which comprise the section
+      $UM_GREP -E -i "^$sect DECKC" $TMPXREF.$sect|\
+        $UM_SED 's/^.* DECKC */*C /g' > $NUPTMPC.$sect
+
+      # nupdate file of the fortran decks which comprise the section
+      $UM_GREP -E -i "^$sect DECKS" $TMPXREF.$sect|\
+        $UM_SED 's/^.* DECKS */*C /g' > $NUPTMP.$sect
+
+      for opt in `upper $options`
+      do
+        if [ ! -d $srcdir/$opt ]
+        then
+          mkdir -p $srcdir/$opt 2> /dev/null
+          mkdir -p $objdir 2> /dev/null
+
+
+        # set up the directory structure between src and obj.  Check
+        # first that the source directory exists e.g a02_1b/Gp/NORMAL
+        # Create a link from obj if it does not already exist.
+
+
+          if [ ! -h "$objdir/$opt" ]
+          then
+            ln -s ../../../src/$sect/$buildtype/$opt $objdir/.
+            RET=$?
+            if test $RET -eq 0
+            then
+              :
+            else
+              exit $RET
+            fi
+          fi
+        else
+          if [ -h "$objdir/$opt" ]
+          then
+              :
+          else
+            ln -s ../../../src/$sect/$buildtype/$opt $objdir/.
+          fi
+        fi
+      done
+
+      ## populate the build dir for the exec with C source files ##
+      if [ -s "$NUPTMPC.$sect" ]
+      then
+        cd $srcdir
+        rm -fr $BUILDTMP
+        # remove any pre-existing temporary build directory
+        mkdir -p $BUILDTMP
+        # create a new temporary build driectory and move to it
+        cd $BUILDTMP
+
+        echo -e "qsconf($SECONDS): ***\t      nupdate (c-code)"
+        if [ "$csmod" = "true" ]
+        then
+          for file in `echo -e $csmodfiles | $UM_SED 's/,/ /g'`
+          do
+            # concatenate content of C mod file(s) with nupdate file
+            cat $file >>$NUPTMPC.$sect
+          done
+        fi
+
+        # extract source code into temporary build directory
+        $NUPCOMMD -D -p $PROGLIB -i $NUPTMPC.$sect \
+          -d `upper $sect`,$defsdc \
+          1> $TMPFILE1 2> $TMPFILE1
+
+        if [ $? -ne 0 ]
+        then
+          echo -e
+          echo -e $NUPCOMMD -D -p $PROGLIB -i $NUPTMPC.$sect \
+-d `upper $sect`,$defsdc
+          cat $TMPFILE1
+          exit 1
+        else
+#       Create a list of what C decks are used in this section
+#       from all those taken from the obj_xref file (which
+#       have had *C added) and new decks added in mods.  Decks not in
+#       this list must have been extracted by nupdate from comdeck
+#       modifications and so are not required here.
+#       These deck files are removed from the compile directory so
+#       they do not cause compile failures.
+
+        requiredfiles=`$UM_GREP -E '^\*C |^\*DECK' $NUPTMPC.$sect |\
+ tr -s "," "\012" | $UM_SED 's/^\*C //g' | $UM_SED 's/^\*DECK//g' |\
+ tr -s "\012" ":"`
+
+        for file in `ls`
+        do
+          if [[ "$requiredfiles" != *"$file"* ]]
+          then
+            rm -f $file
+          fi
+        done
+
+          rm -f $NUPTMPC.$sect $TMPFILE1 *.log
+        fi
+
+        echo -e "qsconf($SECONDS): ***\t      source comparison"
+        for file in \
+          `ls | $UM_GREP -E -v '\.log$|^core$|\.o$|\.c$|\.f$|Makefile'`
+        do
+          if [ ! -d $file ]
+          then
+            lfile=$file.c
+            test=`fnmydiff $file $srcdir/$lfile`
+            if [ $test -eq 1 ]
+            then
+              # extracted vn. is different from user vn.
+              # move extracted vn. to user directory
+              mv -f $file  $srcdir/$lfile
+            elif [ $test -ne 0 ]
+            then
+              # no user vn. of the file
+              # move extracted vn. to user directory
+              mv -f $file  $srcdir/$lfile
+            else
+              # the extracted vn. is the same as the user vn.
+              # remove temporary extracted version
+              rm -f $file
+            fi
+          fi
+        done
+      fi
+
+    ## populate the build dir for the exec with fortran source files ##
+      if [ -s "$NUPTMP.$sect" ]
+      then
+        cd $srcdir
+        # remove any pre-existing temporary build directory
+        rm -fr $BUILDTMP
+        # create a new temporary build driectory and move to it
+        mkdir -p $BUILDTMP
+        cd $BUILDTMP
+
+        echo -e "qsconf($SECONDS): ***\t      nupdate (fortran)"
+        if [ "$fsmod" = "true" ]
+        then
+          for file in `echo -e $fsmodfiles | $UM_SED 's/,/ /g'`
+          do
+          # concatenate content of fortran mod file(s) with nupdate file
+            cat $file >>$NUPTMP.$sect
+          done
+        fi
+
+        # extract source code into temporary build directory
+        $NUPCOMMD -D -p $PROGLIB -i $NUPTMP.$sect \
+          -d `upper $sect`,$defsdc \
+          1> $TMPFILE1 2> $TMPFILE1
+
+        if [ $? -ne 0 ]
+        then
+          echo -e
+          echo -e $NUPCOMMD -D -p $PROGLIB -i $NUPTMP.$sect \
+-d `upper $sect`,$defsdc
+          cat $TMPFILE1
+          exit 1
+        else
+#       Create a list of what Fortran are used in this section
+#       from all those taken from the obj_xref file (which
+#       have had *C added) and new decks added in mods.  Decks not in
+#       this list must have been extracted by nupdate from comdeck
+#       modifications and so are not required here.
+#       These deck files are removed from the compile directory so
+#       they do not cause compile failures.
+
+        requiredfiles=`$UM_GREP -E '^\*C |^\*DECK' $NUPTMP.$sect |\
+ tr -s "," "\012" | $UM_SED 's/^\*C //g' | $UM_SED 's/^\*DECK//g' |\
+ tr -s "\012" ":"`
+
+        for file in `ls`
+        do
+          if [[ "$requiredfiles" != *"$file"* ]]
+          then
+            rm -f $file
+          fi
+        done
+
+          rm -f $NUPTMP.$sect $TMPFILE1 *.log
+        fi
+
+        echo -e "qsconf($SECONDS): ***\t      source comparison"
+        for file in \
+          `ls | $UM_GREP -E -v '\.log$|^core$|\.o$|\.c$|\.f$|Makefile'`
+        do
+          if [ ! -d $file ]
+          then
+            lfile=$file.f
+            test=`fnmydiff $file $srcdir/$lfile`
+            if [ $test -eq 1 ]
+            then
+              # extracted vn. is different from user vn.
+              # move extracted vn. to user directory
+              mv -f $file $srcdir/$lfile
+            elif [ $test -ne 0 ]
+            then
+              # no user vn. of the file
+              # move extracted vn. to user directory
+              mv -f $file $srcdir/$lfile
+            else
+              # the extracted vn. is the same as the user vn.
+              # remove temporary extracted version
+              rm -f $file
+            fi
+          fi
+        done
+      fi
+
+      cd $srcdir
+
+      for file in `ls | $UM_GREP -E '\.f$|\.c$'`
+      do
+        name=${file%.[cf]}   # return file name
+        type=${file##$name.} # return file type
+        if [ "$type" = "f" ]
+        then
+          if [[ "$decklist" = *"$name"* ]]
+          then
+            # deck has specific compiler options, call fnlistopt to
+            # obtain them
+            echo -e \
+"qsconf($SECONDS): ***\t        Getting new comp opts for $name"
+            line=`fnlistopt "$COMPVARS" "$name" FCOM`
+            fort=${line%:::*}
+            opts=${line#$fort:::}
+
+            # Set the values of thisfort (the fortran compiler) and
+            # thisopts (the compiler options) by comparing the deck
+            # specific values with global values
+
+            if [ "$fort" != "$FORT" ]
+            then
+              thisfort=$fort
+            else
+              thisfort='$(FORT)'
+            fi
+            if [ "$opts" != "$FORTOPTS" ]
+            then
+              thisopts=$opts
+            else
+              thisopts='$(FORTOPTS)'
+            fi
+          else
+            # the deck has no specific compiler options use global
+            # defaults
+            thisfort='$(FORT)'
+            thisopts='$(FORTOPTS)'
+          fi
+
+          for opt in `upper $options`
+          do
+            ob=$opt/$name.o
+            fop=`$COMPPARSE $BUILDHOST $FORT $opt`
+            cat <<EOF >> $TMPMAKE2
+$ob: $name.$type
+	$thisfort $thisopts $fop -c $name.$type
+	@if test -f $name.T;then echo -e "	mv -f $name.T $opt/.";\
+	mv -f $name.T $opt/. ; fi
+	mv -f $name.o $ob
+
+EOF
+            objs="$objs $ob"
+          done
+        else
+          if [[ "$decklist" = *"$name"* ]]
+          then
+             # deck has specific compiler options, call fnlistopt to
+             # obtain them
+            echo -e \
+"qsconf($SECONDS): ***\t        Getting new comp opts for $name"
+            line=`fnlistopt "$COMPVARS" "$name" CCOM`
+            cc=${line%:::*}
+            opts=${line#$cc:::}
+
+            # Set the values of thiscc (the C compiler) and thisopts
+            # (the compiler options) by comparing the deck specific
+            # values with global values
+
+            if [ "$cc" != "$CC" ]
+            then
+              thiscc=$cc
+            else
+              thiscc='$(CC)'
+            fi
+            if [ "$opts" != "$CCOPTS" ]
+            then
+              thisopts=$opts
+            else
+              thisopts='$(CCOPTS)'
+            fi
+          else
+            # the deck has no specific compiler options use global
+            # defaults
+            thiscc='$(CC)'
+            thisopts='$(CCOPTS)'
+          fi
+
+          for opt in `upper $options`
+          do
+            ob=$opt/$name.o
+            fop=`$COMPPARSE $BUILDHOST $CC $opt`
+            cat <<EOF >> $TMPMAKE2
+$ob: $name.$type
+	$thiscc $thisopts $fop -c $name.$type
+	@if test -f $name.T;then echo -e "	mv -f $name.T $opt/.";\
+	mv -f $name.T $opt/. ; fi
+	mv -f $name.o $ob
+
+EOF
+            objs="$objs $ob"
+          done
+        fi
+      done
+
+      echo -e "s^@nproc@^1^g"                        >  $SEDSCRIPT2
+      echo -e `gen_sed_string "@objects@" "4" "$objs"`   >> $SEDSCRIPT2
+      echo -e "s^@fort@^$FORT^g"                     >> $SEDSCRIPT2
+      echo -e "s^@fortopts@^$FORTOPTS^g"             >> $SEDSCRIPT2
+      echo -e "s^@cc@^$CC^g"                         >> $SEDSCRIPT2
+      echo -e "s^@ccopts@^$CCOPTS^g"                 >> $SEDSCRIPT2
+      echo -e "s^@.*@$^^g"                           >> $SEDSCRIPT2
+
+      # parse input makefile
+      $UM_SED -f $SEDSCRIPT2 < $MAKEFILEINBOT \
+        > $OUTSRC/$sect/$buildtype/$MAKEFILE
+
+      # append actual rules for making individual decks to
+      # makefile
+      if [ -f "$TMPMAKE2" ]
+      then
+        cat $TMPMAKE2 >> $OUTSRC/$sect/$buildtype/$MAKEFILE
+        rm -f $TMPMAKE2
+      fi
+
+      rm -f $SEDSCRIPT2
+      makelistbt="$makelistbt $buildtype"
+    done
+
+    rm -f $TMPXREF.$sect
+    makelistsn="$makelistsn $sect"
+
+## Create mid level Makefile
+    if [ ! -z "$buildtype" ]
+    then
+      $UM_SED "s^@buildtype_list@^$makelistbt^g" < $MAKEFILEINMID \
+        > $OUTSRC/$sect/$MAKEFILE
+    fi
+
+  done
+  if [ "$INFOLEVEL" -lt 1 ]
+  then
+    echo -e \
+"qsconf($SECONDS): ***\tFinished looping over source sections\n"
+  fi
+
+## Create top object level Makefile
+  if [ "$buildall" = "true" ]
+  then
+    $UM_SED "s^@section_list@^$makelistsn^g" < $MAKEFILEINTOP > \
+      $OUTSRC/$MAKEFILE
+  fi
+
+## Create top level Makefile, if this was complete build.
+  if [ "$buildall" = "true" ]
+  then
+    cp $MAKEFILEIN $TOP/Makefile
+  fi
+fi
+
+if [ "$INFOLEVEL" -lt 1 ]
+then
+  echo -e "qsconf($SECONDS): ***\tFinished configuration\n"
+fi

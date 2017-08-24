@@ -1,0 +1,185 @@
+*IF DEF,C96_1B                                                             GATFML1B.2     
+*IF DEF,T3E,AND,DEF,MPP                                                    GATFML1B.3     
+C *****************************COPYRIGHT******************************     GATFML1B.4     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    GATFML1B.5     
+C                                                                          GATFML1B.6     
+C Use, duplication or disclosure of this code is subject to the            GATFML1B.7     
+C restrictions as set forth in the contract.                               GATFML1B.8     
+C                                                                          GATFML1B.9     
+C                Meteorological Office                                     GATFML1B.10    
+C                London Road                                               GATFML1B.11    
+C                BRACKNELL                                                 GATFML1B.12    
+C                Berkshire UK                                              GATFML1B.13    
+C                RG12 2SZ                                                  GATFML1B.14    
+C                                                                          GATFML1B.15    
+C If no contract has been raised with this copy of the code, the use,      GATFML1B.16    
+C duplication or disclosure of it is strictly prohibited.  Permission      GATFML1B.17    
+C to do so must first be obtained in writing from the Head of Numerical    GATFML1B.18    
+C Modelling at the above address.                                          GATFML1B.19    
+C ******************************COPYRIGHT******************************    GATFML1B.20    
+!                                                                          GATFML1B.21    
+! Description:                                                             GATFML1B.22    
+!  Takes 1 or more levels of a model field that have been decomposed       GATFML1B.23    
+!  over a group of processors, and gathers the data together so that       GATFML1B.24    
+!  one complete global level is contained on one processor.  Processors    GATFML1B.25    
+!  can hold one or more such levels, as determined by the 'LOCAL_LEVEL'    GATFML1B.26    
+!  array, which gives the index for each level on the processor to         GATFML1B.27    
+!  which it is sent.  For one level per PE, the setting of the values      GATFML1B.28    
+!  LOCAL_LEVEL(1...GLOBAL_LEVELS) should all be one.  Successive ones      GATFML1B.29    
+!  obviously range from 1 upwards.                                         GATFML1B.30    
+!                                                                          GATFML1B.31    
+! Method:                                                                  GATFML1B.32    
+!  This routine uses SHMEM_PUT directly for each row, and staggers the     GATFML1B.33    
+!  target PE's, based on the identity of the sending PE.                   GATFML1B.34    
+!                                                                          GATFML1B.35    
+! Current Code Owner: Paul Burton                                          GATFML1B.36    
+!                                                                          GATFML1B.37    
+! History:                                                                 GATFML1B.38    
+!  Model    Date      Modification history:                                GATFML1B.39    
+!  version                                                                 GATFML1B.40    
+!    4.5    18/09/97  New code optimised for the T3E                       GATFML1B.41    
+!                       Author: P.Burton                                   GATFML1B.42    
+!                                                                          GATFML1B.43    
+! Subroutine Interface:                                                    GATFML1B.44    
+      SUBROUTINE GATHER_FIELD_ML(LOCAL_FIELD,GLOBAL_FIELD,                 GATFML1B.45    
+     &                        LOCAL_ROW_LEN,LOCAL_ROWS,LOCAL_LEVS,         GATFML1B.46    
+     &                        GLOBAL_ROW_LEN,GLOBAL_ROWS,GLOBAL_LEVS,      GATFML1B.47    
+     &                        PE_FOR_LEVEL,LOCAL_LEVEL,PROC_GROUP,         GATFML1B.48    
+     &                        INFO)                                        GATFML1B.49    
+                                                                           GATFML1B.50    
+      IMPLICIT NONE                                                        GATFML1B.51    
+!                                                                          GATFML1B.52    
+! Subroutine Arguments:                                                    GATFML1B.53    
+                                                                           GATFML1B.54    
+      INTEGER                                                              GATFML1B.55    
+     &  LOCAL_ROW_LEN    ! IN length of rows in local part of field        GATFML1B.56    
+     &, LOCAL_ROWS       ! IN number of rows in local part of field        GATFML1B.57    
+     &, LOCAL_LEVS       ! IN number of levels in local field              GATFML1B.58    
+     &, GLOBAL_ROW_LEN   ! IN length of rows in global field               GATFML1B.59    
+     &, GLOBAL_ROWS      ! IN number of rows in global field               GATFML1B.60    
+     &, GLOBAL_LEVS      ! IN number of levels in global field             GATFML1B.61    
+     &, PE_FOR_LEVEL(LOCAL_LEVS)                                           GATFML1B.62    
+                         ! IN PE to gather each level to                   GATFML1B.63    
+     &, LOCAL_LEVEL(LOCAL_LEVS)                                            GATFML1B.64    
+                         ! IN level index of level on gather pe            GATFML1B.65    
+     &, PROC_GROUP       ! IN group ID of processors involved here         GATFML1B.66    
+     &, INFO             ! OUT return code from comms                      GATFML1B.67    
+                                                                           GATFML1B.68    
+      REAL                                                                 GATFML1B.69    
+     &  LOCAL_FIELD(LOCAL_ROW_LEN,LOCAL_ROWS,LOCAL_LEVS)                   GATFML1B.70    
+!                        ! IN local part of field                          GATFML1B.71    
+     &, GLOBAL_FIELD(GLOBAL_ROW_LEN,GLOBAL_ROWS,GLOBAL_LEVS)               GATFML1B.72    
+!                        ! OUT (on PE GATHER_PE) global field              GATFML1B.73    
+                                                                           GATFML1B.74    
+! Parameters and Common blocks                                             GATFML1B.75    
+                                                                           GATFML1B.76    
+*CALL PARVARS                                                              GATFML1B.77    
+*CALL GCCOM                                                                GATFML1B.78    
+                                                                           GATFML1B.79    
+! Local variables                                                          GATFML1B.80    
+                                                                           GATFML1B.81    
+      INTEGER                                                              GATFML1B.82    
+     &  fld_type         ! Field type - P or U only                        GATFML1B.83    
+     &, level            ! loop index for levels                           GATFML1B.84    
+                                                                           GATFML1B.85    
+      INTEGER                                                              GATFML1B.86    
+     &  n_rows_to_put    ! Number of rows to send                          GATFML1B.87    
+     & ,j                ! loop index for rows                             GATFML1B.88    
+     & ,real_level       ! The actual level to send - PE's                 GATFML1B.89    
+                         ! traverse the levels using their                 GATFML1B.90    
+                         ! PE numbers as an offset to reduce               GATFML1B.91    
+                         ! network contention                              GATFML1B.92    
+                                                                           GATFML1B.93    
+c--array to hold the address of the global fields on each PE               GATFML1B.94    
+      INTEGER                                                              GATFML1B.95    
+     &  address_global_field(0:MAXPROC)                                    GATFML1B.96    
+                                                                           GATFML1B.97    
+      COMMON /shmem_align_address/                                         GATFML1B.98    
+     &  address_global_field                                               GATFML1B.99    
+                                                                           GATFML1B.100   
+c--remote global field on other PE's, whose address is set up              GATFML1B.101   
+c  by a CRAY type pointer, after exchanging remote addresses               GATFML1B.102   
+      REAL                                                                 GATFML1B.103   
+     & remote_GLOBAL_FIELD(GLOBAL_ROW_LEN, GLOBAL_ROWS, GLOBAL_LEVS)       GATFML1B.104   
+                                                                           GATFML1B.105   
+      POINTER (PTR_remote_GLOBAL_FIELD, remote_GLOBAL_FIELD)               GATFML1B.106   
+                                                                           GATFML1B.107   
+                                                                           GATFML1B.108   
+!-------------------------------------------------------                   GATFML1B.109   
+                                                                           GATFML1B.110   
+                                                                           GATFML1B.111   
+c--determine what type of field we are gathering                           GATFML1B.112   
+      IF (GLOBAL_ROWS .EQ. glsize(2)) THEN                                 GATFML1B.113   
+        fld_type=fld_type_p                                                GATFML1B.114   
+      ELSEIF (GLOBAL_ROWS .EQ. glsize(2)-1) THEN                           GATFML1B.115   
+        fld_type=fld_type_u                                                GATFML1B.116   
+c--not a P or U field - return an error code                               GATFML1B.117   
+      ELSE                                                                 GATFML1B.118   
+        WRITE(6,*) 'Bad field type in GATHER_FIELD_ML'                     GATFML1B.119   
+        info=-1                                                            GATFML1B.120   
+        GOTO 9999                                                          GATFML1B.121   
+      ENDIF                                                                GATFML1B.122   
+                                                                           GATFML1B.123   
+c--based on the field type, determine the number of rows                   GATFML1B.124   
+c  to send to the gathering PE.  The only case that needs                  GATFML1B.125   
+c  consideration is a U field for a PE along the bolltom                   GATFML1B.126   
+c  of the grid.                                                            GATFML1B.127   
+      IF (atbase .AND. (fld_type .EQ. fld_type_u)) THEN                    GATFML1B.128   
+        n_rows_to_put=LOCAL_ROWS-2*Offy-1                                  GATFML1B.129   
+      ELSE                                                                 GATFML1B.130   
+        n_rows_to_put=LOCAL_ROWS-2*Offy                                    GATFML1B.131   
+      ENDIF                                                                GATFML1B.132   
+                                                                           GATFML1B.133   
+c--store the address of the global field I am collecting                   GATFML1B.134   
+c  (sending PE's must get this before they send data)                      GATFML1B.135   
+      address_global_field(mype)=LOC(GLOBAL_FIELD)                         GATFML1B.136   
+                                                                           GATFML1B.137   
+c--ensure everyone has set the address of their global fields              GATFML1B.138   
+      CALL barrier()                                                       GATFML1B.139   
+                                                                           GATFML1B.140   
+c--loop over the number of rows to put                                     GATFML1B.141   
+      DO j=Offy+1,Offy+n_rows_to_put                                       GATFML1B.142   
+                                                                           GATFML1B.143   
+c--loop over the levels to send, using our PE number as an                 GATFML1B.144   
+c  offset to reduce network contention and spread the work                 GATFML1B.145   
+c  out of different PE's                                                   GATFML1B.146   
+        DO level=1+mype,LOCAL_LEVS+mype                                    GATFML1B.147   
+                                                                           GATFML1B.148   
+c--compute the real level to send                                          GATFML1B.149   
+          real_level=MOD(level-1,LOCAL_LEVS)+1                             GATFML1B.150   
+                                                                           GATFML1B.151   
+c--first row for this level?  If so, we must find the remote               GATFML1B.152   
+c  address of the global field into which the data is to be sent           GATFML1B.153   
+          IF (j .eq. Offy+1) THEN                                          GATFML1B.154   
+                                                                           GATFML1B.155   
+            CALL shmem_get(                                                GATFML1B.156   
+     &        address_GLOBAL_FIELD(PE_FOR_LEVEL(real_level)),              GATFML1B.157   
+     &        address_GLOBAL_FIELD(PE_FOR_LEVEL(real_level)),              GATFML1B.158   
+     &        1,PE_FOR_LEVEL(real_level))                                  GATFML1B.159   
+                                                                           GATFML1B.160   
+          ENDIF                                                            GATFML1B.161   
+                                                                           GATFML1B.162   
+c--set up the remote address of the global field                           GATFML1B.163   
+          PTR_remote_GLOBAL_FIELD=                                         GATFML1B.164   
+     &      address_GLOBAL_FIELD(PE_FOR_LEVEL(real_level))                 GATFML1B.165   
+                                                                           GATFML1B.166   
+c--send the data off to the collecting PE for this level                   GATFML1B.167   
+          CALL shmem_put(                                                  GATFML1B.168   
+     &      remote_GLOBAL_FIELD(datastart(1),datastart(2)+j-Offy-1,        GATFML1B.169   
+     &                         LOCAL_LEVEL(real_level)),                   GATFML1B.170   
+     &      LOCAL_FIELD(Offx+1,j,real_level),                              GATFML1B.171   
+     &      LOCAL_ROW_LEN-2*Offx,PE_FOR_LEVEL(real_level))                 GATFML1B.172   
+                                                                           GATFML1B.173   
+        ENDDO ! level                                                      GATFML1B.174   
+      ENDDO ! j                                                            GATFML1B.175   
+                                                                           GATFML1B.176   
+c--wait for everyone to finish sending their data                          GATFML1B.177   
+      CALL barrier()                                                       GATFML1B.178   
+                                                                           GATFML1B.179   
+9999  continue                                                             GATFML1B.180   
+                                                                           GATFML1B.181   
+                                                                           GATFML1B.182   
+      RETURN                                                               GATFML1B.183   
+      END                                                                  GATFML1B.184   
+*ENDIF                                                                     GATFML1B.185   
+*ENDIF                                                                     GATFML1B.186   

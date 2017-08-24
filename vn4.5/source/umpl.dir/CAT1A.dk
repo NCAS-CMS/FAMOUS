@@ -1,0 +1,442 @@
+*IF DEF,A15_1A                                                             CAT1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.775   
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.776   
+C                                                                          GTS2F400.777   
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.778   
+C restrictions as set forth in the contract.                               GTS2F400.779   
+C                                                                          GTS2F400.780   
+C                Meteorological Office                                     GTS2F400.781   
+C                London Road                                               GTS2F400.782   
+C                BRACKNELL                                                 GTS2F400.783   
+C                Berkshire UK                                              GTS2F400.784   
+C                RG12 2SZ                                                  GTS2F400.785   
+C                                                                          GTS2F400.786   
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.787   
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.788   
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.789   
+C Modelling at the above address.                                          GTS2F400.790   
+C ******************************COPYRIGHT******************************    GTS2F400.791   
+C                                                                          GTS2F400.792   
+CLL  SUBROUTINE CAT-----------------------------------------------------   CAT1A.3     
+CLL                                                                        CAT1A.4     
+CLL  PURPOSE:   Calculates clear air turbulence                            CAT1A.5     
+CLL  Tested under compiler CFT77                                           CAT1A.6     
+CLL  Tested under OS version 5.1                                           CAT1A.7     
+CLL                                                                        CAT1A.8     
+CLL  Author J.T.Heming            Date: 22/02/91                           CAT1A.9     
+CLL D.Forrester <- programmer of some or all of previous code or changes   CAT1A.10    
+CLL                                                                        CAT1A.11    
+CLL  Model            Modification history from model version 3.0:         CAT1A.12    
+CLL version  Date                                                          CAT1A.13    
+CLL   4.2    Oct. 96  T3E migration: *DEF CRAY removed                     GSS4F402.40    
+CLL                                   S.J.Swarbrick                        GSS4F402.41    
+!LL   4.5    Apr. 98  Add start-end arguments to V_INT calls.              GSM1F405.569   
+!LL                   Removed unnecessary SWAPBOUNDS calls.                GSM1F405.570   
+!LL                   WARNING: CAT does not initialise NS MPP halos of     GSM1F405.571   
+!LL                   CAT_PROB. S.D.Mullerworth                            GSM1F405.572   
+CLL   4.5   05/02/98  Alter CAT probability calculation.                   GDR8F405.58    
+CLL                    Clare Bysouth and Tim Westmacott.                   GDR8F405.59    
+CLL                                                                        CAT1A.14    
+CLL  Logical component number: D413                                        CAT1A.15    
+CLL                                                                        CAT1A.16    
+CLL  Project task:                                                         CAT1A.17    
+CLL                                                                        CAT1A.18    
+CLL  Programming standard: U M DOC  Paper NO. 4,                           CAT1A.19    
+CLL                                                                        CAT1A.20    
+CLL  External documentation:                                               CAT1A.21    
+CLL                                                                        CAT1A.22    
+CLLEND------------------------------------------------------------------   CAT1A.23    
+C                                                                          CAT1A.24    
+C*L  ARGUMENTS:---------------------------------------------------------   CAT1A.25    
+      SUBROUTINE CAT(                                                      CAT1A.26    
+*CALL ARGFLDPT                                                             GSM3F403.333   
+*IF DEF,MPP                                                                GSM3F403.334   
+! MPP For relating local array to global array                             GSM1F405.573   
+     &      GLSIZE,                                                        GSM3F403.336   
+*ENDIF                                                                     GSM3F403.337   
+C data in                                                                  CAT1A.27    
+     & U,V,PUV,PSTAR,PRESS_REQD,MAX_WIND_P,                                CAT1A.28    
+C data out                                                                 CAT1A.29    
+     & CAT_PROB,                                                           CAT1A.30    
+C constants in                                                             CAT1A.31    
+     & P_FIELD,U_FIELD,P_LEVELS,ROW_LENGTH,P_ROWS,SEC_U_LATITUDE,          CAT1A.32    
+     & AK,BK,EW_SPACE,NS_SPACE)                                            CAT1A.33    
+C*L                                                                        CAT1A.34    
+C-----------------------------------------------------------------------   CAT1A.35    
+      IMPLICIT NONE                                                        CAT1A.36    
+C-----------------------------------------------------------------------   CAT1A.37    
+      EXTERNAL  V_INT,P_TO_UV,H_GRAD,SPLINE,EVAL_SP                        CAT1A.39    
+C*----------------------------------------------------------------------   CAT1A.40    
+      INTEGER                                                              CAT1A.41    
+     * P_FIELD                       ! IN  NO OF POINTS ON P/T GRID        CAT1A.42    
+     *,U_FIELD                       ! IN  NO OF POINTS ON U/V GRID        CAT1A.43    
+     *,P_LEVELS                      ! IN  NO OF MODEL LEVELS              CAT1A.44    
+     *,P_ROWS                        ! IN  NO OF ROWS ON P/T GRID          CAT1A.45    
+     *,ROW_LENGTH                    ! IN  NO OF COLUMNS                   CAT1A.46    
+     &,GLSIZE                        ! IN  GLOBAL NO OF ROWS               GSM3F403.338   
+                                                                           GSM3F403.339   
+C-----------------------------------------------------------------------   CAT1A.47    
+      REAL                                                                 CAT1A.48    
+     * U(U_FIELD,P_LEVELS)           ! IN  U FIELD   AT FULL LEVELS        CAT1A.49    
+     *,V(U_FIELD,P_LEVELS)           ! IN  V FIELD   AT FULL LEVELS        CAT1A.50    
+     *,PRESS_REQD(U_FIELD)           ! IN/OUT  PRESSURE AT WHICH TO        GSM1F405.574   
+     &                               ! CALCULATE CAT (modified by          GSM1F405.575   
+     &                               ! routine)                            GSM1F405.576   
+     *,MAX_WIND_P(U_FIELD)           ! IN PRESSURE OF MAXIMUM WIND         CAT1A.53    
+     *,CAT_PROB(U_FIELD)             ! OUT CAT PROBABILITY                 CAT1A.54    
+     *                               !                                     CAT1A.55    
+     *,PUV(U_FIELD,P_LEVELS)         ! IN  PRESS FIELD AT U/V POINTS       CAT1A.56    
+     *,PSTAR(P_FIELD)                ! IN  SURFACE PRESSURE FIELD          CAT1A.57    
+     *,SEC_U_LATITUDE(U_FIELD)       ! IN  1/COS(LAT) AT U/V POINTS        CAT1A.58    
+     *,AK(P_LEVELS)                  ! IN  A ARRAY AT FULL LEVELS          CAT1A.59    
+     *,BK(P_LEVELS)                  ! IN  B ARRAY AT FULL LEVELS          CAT1A.60    
+     *,EW_SPACE                      ! IN  LONGITUDE GRID SPACING          CAT1A.61    
+     *,NS_SPACE                      ! IN  LATITUDE GRID SPACING           CAT1A.62    
+     *                               !     BOTH THE ABOVE IN DEGREES       CAT1A.63    
+C*                                                                         CAT1A.64    
+C*L                                                                        CAT1A.65    
+C-----------------------------------------------------------------------   CAT1A.66    
+C Local Variables                                                          CAT1A.67    
+C-----------------------------------------------------------------------   CAT1A.68    
+      INTEGER                                                              CAT1A.69    
+     * I,K                        ! LOOP COUNTERS                          CAT1A.70    
+     & ,GLOBAL_ROW_NO             ! To store global no of local row        GSM3F403.340   
+     & ,S_HEM_TOP                 ! Global row no of first s.hem row       GSM3F403.341   
+C-----------------------------------------------------------------------   CAT1A.71    
+      REAL                                                                 CAT1A.72    
+     * HORIZ_SHEAR(U_FIELD)       ! HORIZONTAL WIND SHEAR                  CAT1A.73    
+     *,VERT_SHEAR(U_FIELD)        ! VERTICAL WIND SHEAR                    CAT1A.74    
+     *,ETA(P_LEVELS)              ! ETA VALUES                             CAT1A.75    
+     *,TEMP_REQD                  ! ICAO TEMPERATURE OF PRESS_REQD         CAT1A.76    
+     *,WORK1(U_FIELD,P_LEVELS)    ! 3-DIMENSIONAL WORKSPACE                CAT1A.77    
+     *,WORK2(U_FIELD,P_LEVELS)    ! 3-DIMENSIONAL WORKSPACE                CAT1A.78    
+     *,WORK3(U_FIELD,P_LEVELS)    ! 3-DIMENSIONAL WORKSPACE                CAT1A.79    
+     *,WORK4(U_FIELD)             ! 2-DIMENSIONAL WORKSPACE                CAT1A.80    
+     *,WORK5(U_FIELD)             ! 2-DIMENSIONAL WORKSPACE                CAT1A.81    
+     *,ALPHA                      ! WORK VARIABLE                          CAT1A.82    
+     *,PLEV(17)                   ! ARRAY OF STANDARD PRESSURES            CAT1A.84    
+     *,TEMP(17)                   ! ARRAY OF ICAO TEMPERATURES             CAT1A.85    
+     *,EVAL(8)                    ! ARRAY OF CAT PREDICTION INDEX VALUES   CAT1A.86    
+     *,CATVAL(8)                  ! ARRAY OF CAT PROBABILITY VALUES        CAT1A.87    
+C-----------------------------------------------------------------------   CAT1A.88    
+      LOGICAL                                                              CAT1A.89    
+     * FOUND(U_FIELD)             ! USED IN INTERPOLATIONS                 CAT1A.90    
+                                                                           GSM3F403.342   
+*CALL TYPFLDPT                                                             GSM3F403.343   
+C-----------------------------------------------------------------------   CAT1A.91    
+CL    Constants required     G=acceleration due to gravity                 CAT1A.92    
+CL                           R=gas constant                                CAT1A.93    
+CL                           PREF=reference pressure                       CAT1A.94    
+C-----------------------------------------------------------------------   CAT1A.95    
+*CALL C_G                                                                  CAT1A.96    
+*CALL C_R_CP                                                               CAT1A.97    
+C-----------------------------------------------------------------------   CAT1A.98    
+C*L   DATA FOR LOCAL ARRAYS                                                CAT1A.99    
+C-----------------------------------------------------------------------   CAT1A.100   
+      DATA PLEV/100000.,95000.,85000.,70000.,50000.,40000.,30000.,         CAT1A.101   
+     + 25000.,20000.,15000.,10000.,7000.,5000.,3000.,2000.,1000.,999./     CAT1A.102   
+      DATA TEMP/287.,285.,279.,269.,252.,241.,229.,                        CAT1A.103   
+     + 221.,217.,217.,217.,217.,217.,220.,223.,228.,230./                  CAT1A.104   
+      DATA EVAL/5.0,7.5,10.0,15.0,20.0,25.0,65.0,99.0/                     GDR8F405.60    
+      DATA CATVAL/0.0,1.75,2.0,2.5,3.0,3.5,7.5,7.5/                        GDR8F405.61    
+C*----------------------------------------------------------------------   CAT1A.107   
+CL    Interpolate the U field onto the required level                      CAT1A.108   
+C     Stored in WORK5. WORK1 and WORK3 are dummy arguments                 CAT1A.109   
+C-----------------------------------------------------------------------   CAT1A.110   
+      CALL V_INT(PUV,PRESS_REQD,U,WORK5,                                   CAT1A.111   
+     &  U_FIELD,P_LEVELS,WORK1,WORK3,.FALSE.                               GSM1F405.577   
+     &  ,FIRST_VALID_PT,LAST_U_VALID_PT)                                   GSM1F405.578   
+C-----------------------------------------------------------------------   CAT1A.113   
+CL    Interpolate the V field onto the required level                      CAT1A.114   
+C     Stored in WORK4. WORK1 and WORK3 are dummy arguments                 CAT1A.115   
+C-----------------------------------------------------------------------   CAT1A.116   
+      CALL V_INT(PUV,PRESS_REQD,V,WORK4,                                   CAT1A.117   
+     &  U_FIELD,P_LEVELS,WORK1,WORK3,.FALSE.                               GSM1F405.579   
+     &  ,FIRST_VALID_PT,LAST_U_VALID_PT)                                   GSM1F405.580   
+C-----------------------------------------------------------------------   CAT1A.119   
+CL    For calculation of vertical shear - if PRESS_REQD < 30mb above or    CAT1A.120   
+CL    below MAX_WIND_P set PRESS_REQD to 30mb below or above its present   CAT1A.121   
+CL    value where the vertical shear has a more representative value.      CAT1A.122   
+C-----------------------------------------------------------------------   CAT1A.123   
+      DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                      GSM1F405.581   
+        IF((MAX_WIND_P(I)-PRESS_REQD(I)).LT.3000.0.AND.                    CAT1A.125   
+     &     (MAX_WIND_P(I)-PRESS_REQD(I)).GE.0.0)THEN                       CAT1A.126   
+          PRESS_REQD(I)=PRESS_REQD(I)-3000.0                               CAT1A.127   
+        ELSEIF((PRESS_REQD(I)-MAX_WIND_P(I)).LT.3000.0.AND.                CAT1A.128   
+     &         (PRESS_REQD(I)-MAX_WIND_P(I)).GT.0.0)THEN                   CAT1A.129   
+          PRESS_REQD(I)=PRESS_REQD(I)+3000.0                               CAT1A.130   
+        ENDIF                                                              CAT1A.131   
+      ENDDO                                                                CAT1A.132   
+C=======================================================================   CAT1A.133   
+C                                                                          CAT1A.134   
+C=======================================================================   CAT1A.135   
+CL 1. CALCULATION OF HORIZONTAL WIND SHEAR AT REQUIRED P-LEVEL             CAT1A.136   
+C-----------------------------------------------------------------------   CAT1A.137   
+C                                                                          CAT1A.138   
+C               (    dU       dU       dV       dV)                        CAT1A.139   
+C  Horizontal = (U*V*-- - U*U*-- + V*V*-- - U*V*--) / (U*U+V*V)            CAT1A.140   
+C  wind shear   (    dX       dY       dX       dY)                        CAT1A.141   
+C                                                                          CAT1A.142   
+C-----------------------------------------------------------------------   CAT1A.143   
+CL    Calculation of dU/dX,dU/dY,dV/dX & dV/dY                             CAT1A.144   
+C-----------------------------------------------------------------------   CAT1A.145   
+C     WORK1(I,1) holds dU/dX         WORK2(I,1) holds dU/dY                CAT1A.146   
+C     WORK1(I,2) holds dV/dX         WORK2(I,2) holds dV/dY                CAT1A.147   
+C-----------------------------------------------------------------------   CAT1A.148   
+      CALL H_GRAD(                                                         CAT1A.149   
+*CALL ARGFLDPT                                                             GSM3F403.344   
+     &     WORK5,U_FIELD,SEC_U_LATITUDE,ROW_LENGTH,EW_SPACE,NS_SPACE,      CAT1A.150   
+     &     WORK1(1,1),WORK2(1,1))                                          CAT1A.151   
+C                                                                          CAT1A.152   
+      CALL H_GRAD(                                                         CAT1A.153   
+*CALL ARGFLDPT                                                             GSM3F403.345   
+     &     WORK4,U_FIELD,SEC_U_LATITUDE,ROW_LENGTH,EW_SPACE,NS_SPACE,      CAT1A.154   
+     &     WORK1(1,2),WORK2(1,2))                                          CAT1A.155   
+                                                                           GSM1F405.582   
+C-----------------------------------------------------------------------   CAT1A.156   
+CL    Calculation of HORIZ_SHEAR in m/s per 100km (i.e. per s x10E-5)      CAT1A.157   
+C-----------------------------------------------------------------------   CAT1A.158   
+                                                                           CAT1A.159   
+      DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                      GSM3F403.361   
+        HORIZ_SHEAR(I)=((WORK5(I)*WORK4(I))*WORK1(I,1)-                    GSM3F403.362   
+     &    (WORK5(I)*WORK5(I))*WORK2(I,1))+                                 GSM3F403.363   
+     &    ((WORK4(I)*WORK4(I))*WORK1(I,2)-(WORK5(I)*WORK4(I))              GSM3F403.364   
+     &    *WORK2(I,2))                                                     GSM3F403.365   
+        HORIZ_SHEAR(I)=(HORIZ_SHEAR(I)/(WORK5(I)*WORK5(I)                  GSM3F403.366   
+     &    +WORK4(I)*WORK4(I)))*100000.0                                    GSM3F403.367   
+      ENDDO                                                                CAT1A.166   
+C                                                                          CAT1A.167   
+CL    Change sign of horizontal shear in s.hem of global model             CAT1A.168   
+C                                                                          CAT1A.169   
+*IF DEF,GLOBAL                                                             CAT1A.170   
+*IF DEF,MPP                                                                GSM3F403.368   
+C First row of southern hemisphere relative to global grid                 GSM3F403.369   
+      S_HEM_TOP=(GLSIZE-1)/2+1                                             GSM3F403.370   
+C Loop over all local rows, convert to global grid and check if            GSM3F403.371   
+C in Southern hemisphere                                                   GSM3F403.372   
+      DO I=FIRST_ROW,U_LAST_ROW+1                                          GSM3F403.373   
+        GLOBAL_ROW_NO=I+FIRST_GLOBAL_ROW_NUMBER-1-NS_Halo                  GSM3F403.374   
+        IF (GLOBAL_ROW_NO.GE.S_HEM_TOP) THEN                               GSM3F403.375   
+          DO K=(I-1)*ROW_LENGTH+1,I*ROW_LENGTH                             GSM3F403.376   
+            HORIZ_SHEAR(K)=-HORIZ_SHEAR(K)                                 GSM3F403.377   
+          ENDDO                                                            GSM3F403.378   
+        ENDIF                                                              GSM3F403.379   
+      ENDDO                                                                GSM3F403.380   
+*ELSE                                                                      GSM3F403.381   
+      DO I=1+U_FIELD/2,U_FIELD                                             CAT1A.171   
+        HORIZ_SHEAR(I)=-HORIZ_SHEAR(I)                                     CAT1A.172   
+      ENDDO                                                                CAT1A.173   
+*ENDIF                                                                     GSM3F403.382   
+*ENDIF                                                                     CAT1A.174   
+C=======================================================================   CAT1A.175   
+C                                                                          CAT1A.176   
+C=======================================================================   CAT1A.177   
+CL 2. CALCULATION OF VERTICAL WIND SHEAR AT REQUIRED P-LEVEL               CAT1A.178   
+C-----------------------------------------------------------------------   CAT1A.179   
+C                                                                          CAT1A.180   
+C               (dU   dU   dV   dV)       dP                               CAT1A.181   
+C  Vertical   = (-- * -- + -- * --)**0.5 *--                               CAT1A.182   
+C  wind shear   (dP   dP   dP   dP)       dH                               CAT1A.183   
+C                                                                          CAT1A.184   
+C-----------------------------------------------------------------------   CAT1A.185   
+CL    Calculate true A value (AK/PREF)- stored in WORK3                    CAT1A.186   
+C-----------------------------------------------------------------------   CAT1A.187   
+      DO K=1,P_LEVELS                                                      CAT1A.188   
+        ALPHA=AK(K)/PREF                                                   GSM3F403.383   
+        DO I=1,U_FIELD                                                     CAT1A.189   
+          WORK3(I,K)=ALPHA                                                 GSM3F403.384   
+        ENDDO                                                              CAT1A.191   
+      ENDDO                                                                CAT1A.192   
+C-----------------------------------------------------------------------   CAT1A.193   
+CL    Calculate ETA values                                                 CAT1A.194   
+C-----------------------------------------------------------------------   CAT1A.195   
+      DO K=1,P_LEVELS                                                      CAT1A.196   
+        ETA(K)=WORK3(1,K)+BK(K)                                            CAT1A.197   
+      ENDDO                                                                CAT1A.198   
+C-----------------------------------------------------------------------   CAT1A.199   
+CL    Calculation of dAK/dETA at ETA levels using cubic spline             CAT1A.200   
+C-----------------------------------------------------------------------   CAT1A.201   
+C     WORK3 holds AK values,WORK1 holds dAK/dETA values                    CAT1A.202   
+C     WORK4 & 5 are dummy arguments                                        CAT1A.203   
+C-----------------------------------------------------------------------   CAT1A.204   
+      CALL SPLINE(ETA,WORK3,U_FIELD,P_LEVELS,WORK2)                        CAT1A.205   
+      DO K=1,P_LEVELS                                                      CAT1A.206   
+        CALL EVAL_SP(ETA,WORK3,WORK2,U_FIELD,P_LEVELS,ETA(K),WORK4,        CAT1A.207   
+     *       WORK1(1,K),WORK5)                                             CAT1A.208   
+      ENDDO                                                                CAT1A.209   
+C-----------------------------------------------------------------------   CAT1A.210   
+CL    Calculation of dP/dETA at ETA levels                                 CAT1A.211   
+C-----------------------------------------------------------------------   CAT1A.212   
+C     P=(AK*PREF)+(BK*PSTAR)        ETA=AK+BK                              CAT1A.213   
+C =>  dP/dETA = (PREF*dAK/dETA) + PSTAR *(1-dAK/dETA)                      CAT1A.214   
+C                                                                          CAT1A.215   
+C-----------------------------------------------------------------------   CAT1A.216   
+CL    Interpolate PSTAR onto U/V points - held in WORK5                    CAT1A.217   
+C-----------------------------------------------------------------------   CAT1A.218   
+      CALL P_TO_UV(PSTAR,WORK5,P_FIELD,U_FIELD,ROW_LENGTH,P_ROWS)          CAT1A.219   
+C-----------------------------------------------------------------------   CAT1A.220   
+CL    dP/dETA held in WORK1                                                CAT1A.221   
+C-----*********************---------------------------------------------   CAT1A.222   
+      DO K=1,P_LEVELS                                                      CAT1A.223   
+        DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                    GSM3F403.388   
+          WORK1(I,K)=PREF*WORK1(I,K)+WORK5(I)*(1.0-WORK1(I,K))             CAT1A.225   
+        ENDDO                                                              CAT1A.226   
+      ENDDO                                                                CAT1A.227   
+C=======================================================================   CAT1A.228   
+C                                                                          CAT1A.229   
+C=======================================================================   CAT1A.230   
+CL    Calculation of dU/dETA at ETA levels using a cubic spline            CAT1A.231   
+C-----------------------------------------------------------------------   CAT1A.232   
+C     WORK2 holds dU/dETA values. WORK4 & 5 are dummy arguments.           CAT1A.233   
+C-----------------------------------------------------------------------   CAT1A.234   
+      CALL SPLINE(ETA,U,U_FIELD,P_LEVELS,WORK3)                            CAT1A.235   
+      DO K=1,P_LEVELS                                                      CAT1A.236   
+        CALL EVAL_SP(ETA,U,WORK3,U_FIELD,P_LEVELS,ETA(K),WORK4,            CAT1A.237   
+     *       WORK2(1,K),WORK5)                                             CAT1A.238   
+      ENDDO                                                                CAT1A.239   
+C-----------------------------------------------------------------------   CAT1A.240   
+CL    Calculation of dU/dP at ETA levels                                   CAT1A.241   
+C-----------------------------------------------------------------------   CAT1A.242   
+C     dU/dP = (dU/dETA) / (dP/dETA)                                        CAT1A.243   
+C-----------------------------------------------------------------------   CAT1A.244   
+CL    dU/dP at ETA levels held in WORK2                                    CAT1A.245   
+C-----*********************************---------------------------------   CAT1A.246   
+      DO K=1,P_LEVELS                                                      CAT1A.247   
+        DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                    GSM3F403.389   
+          WORK2(I,K)=WORK2(I,K)/WORK1(I,K)                                 CAT1A.249   
+        ENDDO                                                              CAT1A.250   
+      ENDDO                                                                CAT1A.251   
+C-----------------------------------------------------------------------   CAT1A.252   
+CL    Calculation of dU/dP at required P-level - held in WORK5             CAT1A.253   
+C--------------------*****************************************----------   CAT1A.254   
+      CALL V_INT(PUV,PRESS_REQD,WORK2,WORK5,                               CAT1A.255   
+     & U_FIELD,P_LEVELS,WORK1,WORK4,.FALSE.,FIRST_FLD_PT,LAST_U_FLD_PT)    GSM1F405.583   
+C=======================================================================   CAT1A.257   
+C                                                                          CAT1A.258   
+C=======================================================================   CAT1A.259   
+CL    Calculation of dV/dETA at ETA levels using a cubic spline            CAT1A.260   
+C-----------------------------------------------------------------------   CAT1A.261   
+C     WORK2 holds dV/dETA values. WORK4 & VERT_SHEAR are dummy arguments   CAT1A.262   
+C-----------------------------------------------------------------------   CAT1A.263   
+      CALL SPLINE(ETA,V,U_FIELD,P_LEVELS,WORK3)                            CAT1A.264   
+      DO K=1,P_LEVELS                                                      CAT1A.265   
+        CALL EVAL_SP(ETA,V,WORK3,U_FIELD,P_LEVELS,ETA(K),WORK4,            CAT1A.266   
+     *       WORK2(1,K),VERT_SHEAR)                                        CAT1A.267   
+      ENDDO                                                                CAT1A.268   
+C-----------------------------------------------------------------------   CAT1A.269   
+CL    Calculation of dV/dP at ETA levels                                   CAT1A.270   
+C-----------------------------------------------------------------------   CAT1A.271   
+C     dV/dP = (dV/dETA) / (dP/dETA)                                        CAT1A.272   
+C-----------------------------------------------------------------------   CAT1A.273   
+CL    dV/dP at ETA levels held in WORK2                                    CAT1A.274   
+C-----*********************************---------------------------------   CAT1A.275   
+      DO K=1,P_LEVELS                                                      CAT1A.276   
+        DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                    GSM3F403.390   
+          WORK2(I,K)=WORK2(I,K)/WORK1(I,K)                                 CAT1A.278   
+        ENDDO                                                              CAT1A.279   
+      ENDDO                                                                CAT1A.280   
+C-----------------------------------------------------------------------   CAT1A.281   
+CL    Calculation of dV/dP at required p-level - held in WORK4             CAT1A.282   
+C--------------------*****************************************----------   CAT1A.283   
+      CALL V_INT(PUV,PRESS_REQD,WORK2,WORK4,                               CAT1A.284   
+     & U_FIELD,P_LEVELS,WORK1,WORK3,.FALSE.,FIRST_FLD_PT,LAST_U_FLD_PT)    GSM1F405.584   
+C=======================================================================   CAT1A.286   
+C                                                                          CAT1A.287   
+C=======================================================================   CAT1A.288   
+CL    Calculation of dP/dH at required P level using ICAO standard atmos   CAT1A.289   
+C-----------------------------------------------------------------------   CAT1A.290   
+CL    Reset pressures greater than 1000mb or less than 10mb                CAT1A.291   
+C-----------------------------------------------------------------------   CAT1A.292   
+      DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                      GSM3F403.391   
+        IF(PRESS_REQD(I).GT.100000.) PRESS_REQD(I)=100000.                 CAT1A.294   
+        IF(PRESS_REQD(I).LT.1000.) PRESS_REQD(I)=1000.                     CAT1A.295   
+        FOUND(I)=.FALSE.                                                   CAT1A.296   
+      ENDDO                                                                CAT1A.297   
+C-----------------------------------------------------------------------   CAT1A.298   
+CL    Find the first value of PLEV which is less than PRESS_REQD           CAT1A.299   
+C-----------------------------------------------------------------------   CAT1A.300   
+CL *** Following loop labelled to workaround fmp mistranslation            CAT1A.301   
+C-----------------------------------------------------------------------   CAT1A.302   
+      DO 50 K=1,16                                                         CAT1A.303   
+        DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                    GSM3F403.392   
+          IF((PLEV(K+1).LT.PRESS_REQD(I)).AND.(.NOT.FOUND(I))) THEN        CAT1A.305   
+            FOUND(I)=.TRUE.                                                CAT1A.306   
+C-----------------------------------------------------------------------   CAT1A.307   
+CL    Calculate the ICAO temperature by interpolation                      CAT1A.308   
+CL    ALPHA=Interpolation weight                                           CAT1A.309   
+C-----------------------------------------------------------------------   CAT1A.310   
+            ALPHA=ALOG(PRESS_REQD(I)/PLEV(K))                              CAT1A.315   
+     *       /ALOG(PLEV(K+1)/PLEV(K))                                      CAT1A.316   
+            TEMP_REQD=ALPHA*TEMP(K+1)+(1.-ALPHA)*TEMP(K)                   CAT1A.318   
+C-----------------------------------------------------------------------   CAT1A.319   
+CL    Calculation of  dP/dH                                                CAT1A.320   
+C     P=Rho*R*T             dP/dH=-Rho*g                                   CAT1A.321   
+C     => dP/dH=-g*P/(R*T)                                                  CAT1A.322   
+CL    dP/dH - held in ALPHA                                                CAT1A.323   
+C-----*********************---------------------------------------------   CAT1A.324   
+CL  Sign of ALPHA changed                                                  CAT1A.325   
+            ALPHA=+G*PRESS_REQD(I)/(R*TEMP_REQD)                           CAT1A.326   
+C=======================================================================   CAT1A.327   
+C                                                                          CAT1A.328   
+C=======================================================================   CAT1A.329   
+CL    Calculation of VERT_SHEAR in m/s per km (i.e. per s x10E-3)          CAT1A.330   
+C-----------------------------------------------------------------------   CAT1A.331   
+            VERT_SHEAR(I)=((WORK5(I)*WORK5(I)+WORK4(I)*WORK4(I))**0.5)     CAT1A.332   
+     &      *ALPHA*1000.0                                                  CAT1A.333   
+CL    Modify VERT_SHEAR if too large                                       CAT1A.334   
+              IF(VERT_SHEAR(I).GT.6.0) THEN                                CAT1A.335   
+                VERT_SHEAR(I)=0.67*VERT_SHEAR(I)+1.0                       CAT1A.336   
+              ELSEIF(VERT_SHEAR(I).GT.1.0) THEN                            CAT1A.337   
+                VERT_SHEAR(I)=0.80*VERT_SHEAR(I)+0.2                       CAT1A.338   
+              ENDIF                                                        CAT1A.339   
+          ENDIF                                                            CAT1A.340   
+        ENDDO                                                              CAT1A.341   
+ 50   CONTINUE                                                             CAT1A.342   
+C=======================================================================   CAT1A.343   
+C                                                                          CAT1A.344   
+C=======================================================================   CAT1A.345   
+CL 3. CALCULATE CAT PREDICTOR INDEX E - held in WORK1                      CAT1A.346   
+C-----------------------------------------------------------------------   CAT1A.347   
+      DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                      GSM3F403.393   
+        WORK1(I,1)=1.25*HORIZ_SHEAR(I)+0.25*VERT_SHEAR(I)*VERT_SHEAR(I)    CAT1A.349   
+     &      +10.5                                                          CAT1A.350   
+        FOUND(I)=.FALSE.                                                   CAT1A.351   
+      ENDDO                                                                CAT1A.352   
+C-----------------------------------------------------------------------   CAT1A.353   
+CL    If E is less than 5.0 CAT_PROB is set to 0.0                         CAT1A.354   
+CL    If E is greater than 65.0 CAT_PROB is set to 7.5                     GDR8F405.62    
+C-----------------------------------------------------------------------   CAT1A.356   
+      DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                      GSM3F403.394   
+        IF(WORK1(I,1).LE.5.0) THEN                                         CAT1A.358   
+          CAT_PROB(I)=0.0                                                  CAT1A.359   
+          FOUND(I)=.TRUE.                                                  CAT1A.360   
+        ELSEIF(WORK1(I,1).GE.65.0)THEN                                     GDR8F405.63    
+          CAT_PROB(I)=7.5                                                  CAT1A.362   
+          FOUND(I)=.TRUE.                                                  CAT1A.363   
+        ENDIF                                                              CAT1A.364   
+      ENDDO                                                                CAT1A.365   
+C-----------------------------------------------------------------------   CAT1A.366   
+CL    Find the first value of EVAL which is greater than E                 CAT1A.367   
+C-----------------------------------------------------------------------   CAT1A.368   
+CL *** Following loop labelled to workaround fmp mistranslation            CAT1A.369   
+C-----------------------------------------------------------------------   CAT1A.370   
+      DO 100 K=1,7                                                         CAT1A.371   
+        DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                    GSM3F403.395   
+          IF((EVAL(K+1).GT.WORK1(I,1)).AND.(.NOT.FOUND(I))) THEN           CAT1A.373   
+            FOUND(I)=.TRUE.                                                CAT1A.374   
+C-----------------------------------------------------------------------   CAT1A.375   
+CL    Calculate the CAT probability by interpolation                       CAT1A.376   
+CL    ALPHA=Interpolation weight                                           CAT1A.377   
+C-----------------------------------------------------------------------   CAT1A.378   
+            ALPHA=(WORK1(I,1)-EVAL(K))/(EVAL(K+1)-EVAL(K))                 CAT1A.379   
+            CAT_PROB(I)=ALPHA*CATVAL(K+1)+(1.-ALPHA)*CATVAL(K)             CAT1A.380   
+          ENDIF                                                            CAT1A.381   
+        ENDDO                                                              CAT1A.382   
+ 100  CONTINUE                                                             CAT1A.383   
+C=======================================================================   CAT1A.384   
+C     END OF SUBROUTINE CAT                                                CAT1A.385   
+C=======================================================================   CAT1A.386   
+      RETURN                                                               CAT1A.387   
+      END                                                                  CAT1A.388   
+C=======================================================================   CAT1A.389   
+*ENDIF                                                                     CAT1A.390   

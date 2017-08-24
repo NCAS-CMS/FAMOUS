@@ -1,0 +1,652 @@
+*IF DEF,A13_1A,OR,DEF,A13_1B                                               ATJ0F402.25    
+C ******************************COPYRIGHT******************************    GTS2F400.2179  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.2180  
+C                                                                          GTS2F400.2181  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.2182  
+C restrictions as set forth in the contract.                               GTS2F400.2183  
+C                                                                          GTS2F400.2184  
+C                Meteorological Office                                     GTS2F400.2185  
+C                London Road                                               GTS2F400.2186  
+C                BRACKNELL                                                 GTS2F400.2187  
+C                Berkshire UK                                              GTS2F400.2188  
+C                RG12 2SZ                                                  GTS2F400.2189  
+C                                                                          GTS2F400.2190  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.2191  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.2192  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.2193  
+C Modelling at the above address.                                          GTS2F400.2194  
+C ******************************COPYRIGHT******************************    GTS2F400.2195  
+C                                                                          GTS2F400.2196  
+CLL   SUBROUTINE DIF_CTL ------------------------------------------        DIFCTL1A.3     
+CLL                                                                        DIFCTL1A.4     
+CLL   PURPOSE:   CALCULATES AND ADDS DIFFUSION INCREMENTS TO U,V, QT       DIFCTL1A.5     
+CLL              AND THETAL USING EQUATIONS (47) AND (48). ONE MORE        DIFCTL1A.6     
+CLL              PRESSURE THAN VELOCITY ROW IS UPDATED.                    DIFCTL1A.7     
+CLL                                                                        DIFCTL1A.8     
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  DIFCTL1A.9     
+CLL                                                                        DIFCTL1A.10    
+CLL   WRITTEN  BY M.H MAWSON.                                              DIFCTL1A.11    
+CLL                                                                        DIFCTL1A.12    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         DIFCTL1A.13    
+CLL VERSION  DATE                                                          DIFCTL1A.14    
+CLL                                                                        DIFCTL1A.15    
+CLL   3.4    07/08/94 Directives inserted to improve parallel              AAD2F304.1     
+CLL                   efficiency on C90.                                   AAD2F304.2     
+CLL                   Authors: A. Dickinson, D. Salmond                    AAD2F304.3     
+CLL                   Reviewer: M. Mawson                                  AAD2F304.4     
+!     3.5    28/03/95 MPP code: Change updateable area,                    APB0F305.1161  
+!                     add halo updates.   P.Burton                         APB0F305.1162  
+CLL                                                                        AAD2F304.5     
+                                                                           ATD1F400.350   
+CLL  4.0  02/02/95: SET EFFECTIVE DIFFUSION TO ZERO WHENEVER               ATD1F400.351   
+CLL             SLOPE IS CONSIDERED TOO STEEP. THIS REDUCES EXCESSIVE      ATD1F400.352   
+CLL             PRECIPITATION OVER STEEP OROGRAPHY PROVIDED                ATD1F400.353   
+CLL             PRESSURE_TEST IS SET TO AN APPROPRIATE ALTITUDE            ATD1F400.354   
+CLL             E.G. 20000Pa (200hPa)                                      ATD1F400.355   
+CLL             Author:  T. DAVIES FR.   Reviewer: M. MAWSON               ATD1F400.356   
+!     4.1    07/05/96 Added MPP code and TYPFLDPT arguments  P.Burton      APB0F401.1443  
+C     vn4.3    Mar. 97   T3E migration : optimisation changes              GSS1F403.580   
+C                                       D.Salmond                          GSS1F403.581   
+CLL                                                                        ATD1F400.357   
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       DIFCTL1A.16    
+CLL                         STANDARD B. VERSION 2, DATED 18/01/90          DIFCTL1A.17    
+CLL                                                                        DIFCTL1A.18    
+CLL   SYSTEM COMPONENTS COVERED: P13                                       DIFCTL1A.19    
+CLL                                                                        DIFCTL1A.20    
+CLL   SYSTEM TASK: P1                                                      DIFCTL1A.21    
+CLL                                                                        DIFCTL1A.22    
+CLL   DOCUMENTATION:       THE EQUATIONS USED ARE (47) AND (48)            DIFCTL1A.23    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER            DIFCTL1A.24    
+CLL                        NO. 10 M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON    DIFCTL1A.25    
+CLLEND-------------------------------------------------------------        DIFCTL1A.26    
+C                                                                          DIFCTL1A.27    
+C*L   ARGUMENTS:---------------------------------------------------        DIFCTL1A.28    
+      SUBROUTINE DIF_CTL                                                   DIFCTL1A.29    
+     1                  (PSTAR,U,V,THETAL,QT,RS_SQUARED_DELTAP,K1,K2,      DIFCTL1A.30    
+     2                   KEXP_K1,KEXP_K2,                                  DIFCTL1A.31    
+     &                   DELTA_AK,DELTA_BK,AK,BK,ADVECTION_TIMESTEP,       ATD1F400.358   
+     3                   COS_U_LATITUDE,COS_P_LATITUDE,SEC_U_LATITUDE,     DIFCTL1A.33    
+     4                   SEC_P_LATITUDE,LONGITUDE_STEP_INVERSE,P_FIELD,    DIFCTL1A.34    
+     5                   LATITUDE_STEP_INVERSE,U_FIELD,ROW_LENGTH,         APB0F401.1444  
+*CALL ARGFLDPT                                                             APB0F401.1445  
+     6                   P_LEVELS,Q_LEVELS,                                APB0F401.1446  
+     7                   COS_U_LONGITUDE,SIN_U_LONGITUDE,                  ATD1F400.359   
+     8                   PRESSURE_ALTITUDE,L_TRACER_THETAL_QT)             ATD1F400.360   
+                                                                           DIFCTL1A.38    
+      IMPLICIT NONE                                                        DIFCTL1A.39    
+                                                                           DIFCTL1A.40    
+      INTEGER                                                              DIFCTL1A.41    
+     *  U_FIELD            !IN DIMENSION OF FIELDS ON VELOCITY GRID        DIFCTL1A.42    
+     *, P_FIELD            !IN DIMENSION OF FIELDS ON PRESSURE GRID        DIFCTL1A.43    
+     *, P_LEVELS           !IN NUMBER OF MODEL LEVELS.                     DIFCTL1A.44    
+     *, Q_LEVELS           !IN NUMBER OF MOIST MODEL LEVELS.               DIFCTL1A.45    
+     *, ROW_LENGTH         !IN NUMBER OF POINTS PER ROW                    DIFCTL1A.46    
+     &, KEXP_K1(P_LEVELS)  !IN. EXPONENT OF DIFFUSION SCHEME FOR U,V       DIFCTL1A.49    
+     &                     !    AND THETAL FIELDS.                         DIFCTL1A.50    
+     &, KEXP_K2(Q_LEVELS)  !IN. EXPONENT OF DIFFUSION SCHEME FOR           DIFCTL1A.51    
+     &                     !    QT FIELD.                                  DIFCTL1A.52    
+                                                                           APB0F401.1447  
+! All TYPFLDPT arguments are intent IN                                     APB0F401.1448  
+*CALL TYPFLDPT                                                             APB0F401.1449  
+                                                                           DIFCTL1A.53    
+      REAL                                                                 DIFCTL1A.54    
+     * U(U_FIELD,P_LEVELS)       !INOUT U VELOCITY FIELD.                  DIFCTL1A.55    
+     *,V(U_FIELD,P_LEVELS)       !INOUT V VELOCITY FIELD.                  DIFCTL1A.56    
+     *,THETAL(P_FIELD,P_LEVELS)  !INOUT THETAL FIELD.                      DIFCTL1A.57    
+     *,QT(P_FIELD,Q_LEVELS)      !INOUT QT FIELD.                          DIFCTL1A.58    
+                                                                           DIFCTL1A.59    
+      REAL                                                                 DIFCTL1A.60    
+     * PSTAR(P_FIELD)            !IN PSTAR FIELD.                          DIFCTL1A.61    
+     *,RS_SQUARED_DELTAP(P_FIELD,P_LEVELS) !IN RS*RS*DELTA P               DIFCTL1A.62    
+     *,COS_U_LATITUDE(U_FIELD)   !IN COS(LAT) AT U POINTS.                 DIFCTL1A.63    
+     *,COS_P_LATITUDE(P_FIELD)   !IN COS(LAT) AT P POINTS.                 DIFCTL1A.64    
+     *,SEC_U_LATITUDE(U_FIELD)   !IN 1/COS(LAT) AT U POINTS.               DIFCTL1A.65    
+     *,SEC_P_LATITUDE(P_FIELD)   !IN 1/COS(LAT) AT P POINTS.               DIFCTL1A.66    
+     *,COS_U_LONGITUDE(ROW_LENGTH) !IN COS(LONGITUDE) AT U POINTS.         DIFCTL1A.67    
+     *,SIN_U_LONGITUDE(ROW_LENGTH) !IN SIN(LONGITUDE) AT U POINTS.         DIFCTL1A.68    
+                                                                           DIFCTL1A.69    
+      REAL                                                                 DIFCTL1A.70    
+     * DELTA_AK(P_LEVELS)       !IN LAYER THICKNESS                        DIFCTL1A.71    
+     *,DELTA_BK(P_LEVELS)       !IN LAYER THICKNESS                        DIFCTL1A.72    
+     *,AK(P_LEVELS)             !LAYER AK'S                                ATD1F400.361   
+     *,BK(P_LEVELS)             !LAYER BK'S                                ATD1F400.362   
+     *,K1(P_LEVELS)             !IN DIFFUSION COEFF SEE EQ. (45)           DIFCTL1A.73    
+     *,K2(P_LEVELS)             !IN DIFFUSION COEFF SEE EQ. (45)           DIFCTL1A.74    
+     *,LONGITUDE_STEP_INVERSE   !IN 1/(DELTA LAMDA)                        DIFCTL1A.75    
+     *,LATITUDE_STEP_INVERSE    !IN 1/(DELTA PHI)                          DIFCTL1A.76    
+     *,ADVECTION_TIMESTEP       !IN                                        DIFCTL1A.77    
+     *, PRESSURE_ALTITUDE       ! ALTITUDE FOR HIGHEST SLOPE TEST          ATD1F400.363   
+                                                                           DIFCTL1A.78    
+      LOGICAL                                                              ATD1F400.364   
+     * L_TRACER_THETAL_QT       ! T if tracer advn. for thetal,qt          ATD1F400.365   
+C*---------------------------------------------------------------------    DIFCTL1A.79    
+                                                                           DIFCTL1A.80    
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    DIFCTL1A.81    
+C DEFINE LOCAL ARRAYS: 13 ARE REQUIRED                                     DIFCTL1A.82    
+      REAL                                                                 DIFCTL1A.83    
+     * DIFFUSION_COEFFICIENT(P_FIELD)    !HOLDS EAST-WEST DIFFUSION        DIFCTL1A.84    
+     *                                   ! COEFFICIENT                     DIFCTL1A.85    
+     *,DIFFUSION_COEFFICIENT2(P_FIELD)   !HOLDS NORTH-SOUTH DIFFUSION      DIFCTL1A.86    
+     *                                   ! COEFFICIENT                     DIFCTL1A.87    
+     *,QT_INC(P_FIELD)                   ! HOLDS QT INCREMENT              DIFCTL1A.88    
+     *,THETAL_INC(P_FIELD)               ! HOLDS THETAL INCREMENT          DIFCTL1A.89    
+     *,RS_SQUARED_DELTAP_U_GRID(U_FIELD) ! RS*RS*DELTA P AT U POINTS.      DIFCTL1A.90    
+     *,RECIP_RS_SQUARED_DELTAP(P_FIELD)  ! 1./RS*RS*DELTA P                DIFCTL1A.91    
+     *,PSTAR_UV(U_FIELD)                 ! HOLDS PRESSURE AT U POINTS.     DIFCTL1A.92    
+     *,FIELD1(P_FIELD)                   ! GENERAL WORK-SPACE              DIFCTL1A.93    
+     *,FIELD2(P_FIELD)                   ! GENERAL WORK-SPACE              DIFCTL1A.94    
+     *, PRESSURE(P_FIELD,P_LEVELS)    !3-D PRESSURE ARRAY FOR TESTING      ATD1F400.366   
+     *     ! SLOPE. LEVEL_P=1 IS SURFACE, LEVEL_P=K IS LEVEL K-1           ATD1F400.367   
+     *     ! FOR UV POINTS PRESSURE RE-CALCULATED TO UV POINTS             ATD1F400.368   
+     *, DIFFUSION_EW(P_FIELD,P_LEVELS)                                     GSS1F403.582   
+!HOLDS EFFECTIVE EAST-WEST DIFFUSION                                       GSS1F403.583   
+     *                                   ! COEFFICIENT                     ATD1F400.370   
+     *, DIFFUSION_NS(P_FIELD,P_LEVELS)                                     GSS1F403.584   
+!HOLDS EFFECTIVE NORTH-SOUTH DIFFUSION                                     GSS1F403.585   
+     *                                   ! COEFFICIENT                     ATD1F400.372   
+     *,COS_FUNCTION_U(U_FIELD)                                             DIFCTL1A.97    
+     *,COS_FUNCTION_P(P_FIELD)                                             DIFCTL1A.98    
+                                                                           DIFCTL1A.99    
+C*---------------------------------------------------------------------    DIFCTL1A.100   
+C DEFINE LOCAL VARIABLES                                                   DIFCTL1A.101   
+      INTEGER                                                              DIFCTL1A.102   
+     &  START_U_UPDATE   ! First U point to be updated                     APB0F401.1450  
+     &, END_U_UPDATE     ! Last U point to be updated                      APB0F401.1451  
+                                                                           DIFCTL1A.111   
+      REAL                                                                 DIFCTL1A.112   
+     * SCALAR,PRESSURE_TEST                                                ATD1F400.373   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        DIFCTL1A.114   
+      INTEGER                                                              DIFCTL1A.115   
+     *  I,J,K,LEVEL_BASE                                                   ATD1F400.374   
+                                                                           DIFCTL1A.117   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    DIFCTL1A.118   
+      EXTERNAL                                                             DIFCTL1A.119   
+     *  TH_Q_DIF,UV_DIF,P_TO_UV,COEFF_TH_Q,COEFF_UV                        ATD1F400.375   
+C*---------------------------------------------------------------------    DIFCTL1A.125   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD                             DIFCTL1A.126   
+CL---------------------------------------------------------------------    DIFCTL1A.127   
+CL    INTERNAL STRUCTURE.                                                  DIFCTL1A.128   
+CL---------------------------------------------------------------------    DIFCTL1A.129   
+CL                                                                         DIFCTL1A.130   
+CL---------------------------------------------------------------------    DIFCTL1A.131   
+CL    SECTION 1.     INITIALISE LOCAL VARIABLES AND INTERPOLATE PSTAR      DIFCTL1A.132   
+CL                   ONTO U-GRID.                                          DIFCTL1A.133   
+CL---------------------------------------------------------------------    DIFCTL1A.134   
+                                                                           DIFCTL1A.135   
+C****************************************************************          ATD1F400.376   
+C     SET PRESSURE_TEST TO PRESSURE_ALTITUDE ABOVE WHICH HEIGHT            ATD1F400.377   
+C     NO SLOPE TESTING FOR EFFECTIVE DIFFUSION                             ATD1F400.378   
+C***************************************************************           ATD1F400.379   
+      PRESSURE_TEST=PRESSURE_ALTITUDE                                      ATD1F400.380   
+                                                                           ATD1F400.381   
+! Diffusion is a bit different from the other dynamics routines.           APB0F401.1452  
+! START_U_UPDATE and END_U_UPDATE are different for global and LAM         APB0F401.1453  
+! models - for the global model they include the polar rows,               APB0F401.1454  
+! but for the LAM they miss the Northern and Southern rows. So             APB0F401.1455  
+! for this section of code only, we will keep the START_U_UPDATE           APB0F401.1456  
+! and END_U_UPDATE, rather than using TYPFLDPT equivalents.                APB0F401.1457  
+                                                                           APB0F401.1458  
+*IF DEF,GLOBAL                                                             APB0F401.1459  
+! Update U field over entire field, including poles                        APB0F401.1460  
+      START_U_UPDATE=FIRST_FLD_PT                                          APB0F401.1461  
+      END_U_UPDATE=LAST_U_FLD_PT                                           APB0F401.1462  
+*ELSE                                                                      APB0F401.1463  
+! Update U field, missing top and bottom rows                              APB0F401.1464  
+      START_U_UPDATE=START_POINT_NO_HALO                                   APB0F401.1465  
+      END_U_UPDATE=END_U_POINT_NO_HALO                                     APB0F401.1466  
+*ENDIF                                                                     APB0F401.1467  
+      SCALAR = LATITUDE_STEP_INVERSE*LATITUDE_STEP_INVERSE/                DIFCTL1A.147   
+     1           (LONGITUDE_STEP_INVERSE*LONGITUDE_STEP_INVERSE)           DIFCTL1A.148   
+      DO I=FIRST_VALID_PT,LAST_U_VALID_PT                                  APB0F401.1468  
+        COS_FUNCTION_U(I) = COS_U_LATITUDE(I)*COS_U_LATITUDE(I)*SCALAR     DIFCTL1A.150   
+        COS_FUNCTION_P(I) = COS_P_LATITUDE(I)*COS_P_LATITUDE(I)*SCALAR     DIFCTL1A.151   
+      END DO                                                               DIFCTL1A.152   
+                                                                           DIFCTL1A.153   
+      DO I=LAST_U_VALID_PT+1,LAST_P_VALID_PT                               APB0F401.1469  
+        COS_FUNCTION_P(I) = COS_P_LATITUDE(I)*COS_P_LATITUDE(I)*SCALAR     DIFCTL1A.155   
+      END DO                                                               DIFCTL1A.156   
+                                                                           DIFCTL1A.157   
+CL    CALL P_TO_UV                                                         DIFCTL1A.158   
+C STORE PSTAR ON U GRID IN PSTAR_UV.                                       DIFCTL1A.159   
+                                                                           DIFCTL1A.160   
+      CALL P_TO_UV(PSTAR,PSTAR_UV,P_FIELD,U_FIELD,ROW_LENGTH,tot_P_ROWS)   APB0F401.1470  
+*IF DEF,MPP                                                                APB0F401.1471  
+! Get correct values in halos                                              APB0F401.1472  
+      CALL SWAPBOUNDS(PSTAR_UV,ROW_LENGTH,tot_U_ROWS,EW_Halo,NS_Halo,1)    APB0F401.1473  
+*ENDIF                                                                     APB0F401.1474  
+                                                                           DIFCTL1A.162   
+CL    MAKE 3-D PRESSURE ARRAY AT P POINTS                                  ATD1F400.382   
+CL    LEVEL_P=1 SURFACE, LEVEL_P=K IS LEVEL K-1                            ATD1F400.383   
+CL    ONLY NEED P_LEVELS AS SURFACES SHOULD BE PRESSURE SURFACES           ATD1F400.384   
+CL    NEAR TOP OF MODEL SO TESTING UNNECESSARY                             ATD1F400.385   
+C****************************************************************          ATD1F400.386   
+C    IF USING TRACER ADVECTION OF THETAL AND QT THEN DIFFUSION IS          ATD1F400.387   
+C    CALLED FOR TOP LEVEL THETAL AND FOR ALL U'S AND V'S ONLY              ATD1F400.388   
+C     NOTE STEEP SLOPE TEST SHOULD BE DISABLED BY APPROPRIATE              ATD1F400.389   
+C     SETTING OF PRESSURE ALTITUDE WHICH MEANS THAT PRESSURES              ATD1F400.390   
+C    DO NOT NEED CALCULATING FOR PRESSURE ARRAY                            ATD1F400.391   
+C***************************************************************           ATD1F400.392   
+                                                                           ATD1F400.393   
+      IF(.NOT.L_TRACER_THETAL_QT)THEN                                      ATD1F400.394   
+                                                                           ATD1F400.395   
+CL    FIRST LEVEL                                                          ATD1F400.396   
+      DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                  APB0F401.1475  
+        PRESSURE(I,1)=PSTAR(I)                                             ATD1F400.398   
+       END DO                                                              ATD1F400.399   
+CL OTHER LEVELS                                                            ATD1F400.400   
+      DO K=2,P_LEVELS                                                      ATD1F400.401   
+       DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                 APB0F401.1476  
+        PRESSURE(I,K)=AK(K-1)+BK(K-1)*PSTAR(I)                             ATD1F400.403   
+       END DO                                                              ATD1F400.404   
+      END DO                                                               ATD1F400.405   
+                                                                           ATD1F400.406   
+C  POINTER FOR DIFFUSION LEVEL START                                       ATD1F400.407   
+       LEVEL_BASE=1                                                        ATD1F400.408   
+                                                                           ATD1F400.409   
+      ELSE                                                                 ATD1F400.410   
+CLL                                                                        ATD1F400.411   
+C    IF USING TRACER ADVECTION OF THETAL AND QT THEN DIFFUSION IS          ATD1F400.412   
+C    CALLED FOR TOP LEVEL THETAL AND FOR ALL U'S AND V'S ONLY              ATD1F400.413   
+C     LEVEL_BASE IS THEN SET TO P_LEVELS OTHERWISE SET TO 1                ATD1F400.414   
+C    IF NECESSARY THE TEST COULD BE MADE ON THE VALUE OF THE               ATD1F400.415   
+C    DIFFUSION COEFFICIENT K1 FOR EACH LEVEL                               ATD1F400.416   
+C     NOTE STEEP SLOPE TEST SHOULD BE DISABLED BY APPROPRIATE              ATD1F400.417   
+C     SETTING OF PRESSURE ALTITUDE WHICH MEANS THAT PRESSURES              ATD1F400.418   
+C    DO NOT NEED CALCULATING FOR PRESSURE ARRAY                            ATD1F400.419   
+CLL                                                                        ATD1F400.420   
+       LEVEL_BASE=P_LEVELS                                                 ATD1F400.421   
+                                                                           ATD1F400.422   
+      END IF                                                               ATD1F400.423   
+                                                                           AAD2F304.6     
+cmic$ do all shared (advection_timestep, cos_function_u)                   ATD1F400.424   
+cmic$*       shared (cos_u_latitude, cos_u_longitude)                      ATD1F400.425   
+cmic$*       shared (delta_ak, delta_bk, end_u_update, k1)                 APB0F401.1477  
+cmic$*       shared (ak, bk, kexp_k1, latitude_step_inverse)               ATD1F400.426   
+cmic$*       shared (longitude_step_inverse, p_field, u_field, p_levels)   ATD1F400.427   
+cmic$*       shared (pstar_uv, thetal, row_length)                         APB0F401.1478  
+cmic$*       shared (rs_squared_deltap, sec_p_latitude)                    ATD1F400.429   
+cmic$*       shared (start_u_update)                                       APB0F401.1479  
+*CALL CMICFLD                                                              APB0F401.1480  
+cmic$*       shared ( pressure, pressure_test, level_base)                 ATD1F400.431   
+cmic$*       private (diffusion_coefficient, diffusion_coefficient2)       AAD2F304.16    
+cmic$*       private ( field1, i, j, k, scalar, thetal_inc)                ATD1F400.432   
+cmic$*       private ( diffusion_ew, diffusion_ns)                         ATD1F400.433   
+cmic$*       private (recip_rs_squared_deltap)                             ATD1F400.434   
+                                                                           DIFCTL1A.164   
+      DO K=LEVEL_BASE,P_LEVELS                                             ATD1F400.435   
+                                                                           DIFCTL1A.166   
+CL                                                                         DIFCTL1A.167   
+CL---------------------------------------------------------------------    DIFCTL1A.168   
+CL    SECTION 2.     CALCULATE DIFFUSION OF THETAL.                        ATD1F400.436   
+CL                   ADD ON INCREMENT TO ALL POINTS EXCEPT POLES           DIFCTL1A.180   
+CL                   WHICH WOULD HAVE BEEN DONE INSIDE TH_Q_DIF.           DIFCTL1A.181   
+CL---------------------------------------------------------------------    DIFCTL1A.182   
+                                                                           DIFCTL1A.183   
+C SET DIFFUSION COEFFICIENT AND COPY THETAL INTO FIELD1.                   DIFCTL1A.184   
+        DO  I=FIRST_VALID_PT,LAST_U_VALID_PT                               APB0F401.1481  
+          DIFFUSION_COEFFICIENT2(I) = K1(K)*                               DIFCTL1A.186   
+     1                           (DELTA_AK(K)+DELTA_BK(K)*PSTAR_UV(I))     DIFCTL1A.187   
+          DIFFUSION_COEFFICIENT(I) = COS_FUNCTION_U(I)*                    DIFCTL1A.188   
+     2                               DIFFUSION_COEFFICIENT2(I)             DIFCTL1A.189   
+        END DO                                                             ATD1F400.438   
+                                                                           DIFCTL1A.197   
+C CALL COEFF_TH_Q FOR EFFECTIVE DIFFUSION COEFFICIENT FOR THETAL           ATD1F400.441   
+C AVERAGING IS DONE AS REQUIRED IN EQUATION(48).                           ATD1F400.442   
+C COEFFICIENTS ARE SET TO ZERO FOR STEEP SLOPES                            ATD1F400.443   
+C VALUES ARE IN DIFFUSION_EW AND DIFFUSION_NS                              ATD1F400.444   
+       CALL COEFF_TH_Q                                                     ATD1F400.445   
+     1                  (DIFFUSION_EW(1,K),DIFFUSION_NS(1,K),              GSS1F403.586   
+     2                   PRESSURE,K,PRESSURE_TEST,AK,BK,                   ATD1F400.447   
+     3                   COS_U_LATITUDE,ROW_LENGTH,                        APB0F401.1483  
+*CALL ARGFLDPT                                                             APB0F401.1484  
+     5                   LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,     ATD1F400.450   
+     6                   P_FIELD,U_FIELD,P_LEVELS,                         ATD1F400.451   
+     7                   DIFFUSION_COEFFICIENT,DIFFUSION_COEFFICIENT2)     ATD1F400.452   
+      ENDDO                                                                GSS1F403.587   
+                                                                           APB0F401.1485  
+*IF DEF,MPP                                                                APB0F401.1486  
+      CALL SWAPBOUNDS(DIFFUSION_EW,ROW_LENGTH,tot_P_ROWS,                  APB0F401.1487  
+     &                   EW_Halo,NS_Halo,P_LEVELS)                         GSS1F403.588   
+      CALL SWAPBOUNDS(DIFFUSION_NS,ROW_LENGTH,tot_P_ROWS,                  APB0F401.1489  
+     &                   EW_Halo,NS_Halo,P_LEVELS)                         GSS1F403.589   
+*ENDIF                                                                     APB0F401.1491  
+                                                                           APB0F401.1492  
+                                                                           ATD1F400.453   
+      DO K=LEVEL_BASE,P_LEVELS                                             GSS1F403.590   
+        DO  I=FIRST_VALID_PT,LAST_P_VALID_PT                               GSS1F403.591   
+          FIELD1(I) = THETAL(I,K)                                          GSS1F403.592   
+          RECIP_RS_SQUARED_DELTAP(I) = 1./RS_SQUARED_DELTAP(I,K)           GSS1F403.593   
+        END DO                                                             GSS1F403.594   
+C LOOP THROUGH CODE KEXP_K1 TIMES. THE ORDER OF THE DIFFUSION SCHEME IS    ATD1F400.454   
+C DEL TO THE POWER 2*KEXP_K1.                                              ATD1F400.455   
+        DO  J=1,KEXP_K1(K)                                                 ATD1F400.456   
+                                                                           ATD1F400.457   
+*IF -DEF,GLOBAL                                                            APB0F401.1493  
+CL   ZERO INCREMENTS FOR FIRST AND LAST ROW                                ATD1F400.458   
+CL   OVERWRITTEN BY POLAR IN GLOBAL MODELS                                 ATD1F400.459   
+*IF DEF,MPP                                                                APB0F401.1494  
+          IF (at_top_of_LPG) THEN                                          APB0F401.1495  
+*ENDIF                                                                     APB0F401.1496  
+            DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                  APB0F401.1497  
+              THETAL_INC(I)=0.0                                            APB0F401.1498  
+            ENDDO                                                          APB0F401.1499  
+*IF DEF,MPP                                                                APB0F401.1500  
+          ENDIF                                                            APB0F401.1501  
+          IF (at_base_of_LPG) THEN                                         APB0F401.1502  
+*ENDIF                                                                     APB0F401.1503  
+            DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1              APB0F401.1504  
+              THETAL_INC(I)=0.0                                            APB0F401.1505  
+            ENDDO                                                          APB0F401.1506  
+*IF DEF,MPP                                                                APB0F401.1507  
+          ENDIF                                                            APB0F401.1508  
+*ENDIF                                                                     APB0F401.1509  
+*ENDIF                                                                     APB0F401.1510  
+                                                                           ATD1F400.464   
+CL      CALL TH_Q_DIF                                                      ATD1F400.465   
+CL                                                                         ATD1F400.466   
+CL---------------------------------------------------------------------    ATD1F400.467   
+CL    NEW VERSION INCLUDES PRESSURE TEST ON SLOPES                         ATD1F400.468   
+          CALL TH_Q_DIF(FIELD1,THETAL_INC,                                 ATD1F400.469   
+     &                  SEC_P_LATITUDE,ROW_LENGTH,                         APB0F401.1511  
+*CALL ARGFLDPT                                                             APB0F401.1512  
+     &                  P_FIELD,U_FIELD,                                   ATD1F400.472   
+     &                  DIFFUSION_EW(1,K),DIFFUSION_NS(1,K))               GSS1F403.595   
+                                                                           ATD1F400.474   
+C DE-MASS-WEIGHT INCREMENT AND COPY INTO FIELD1 SO THAT IT CAN BE FED      ATD1F400.475   
+C BACK INTO TH_Q_DIF.                                                      ATD1F400.476   
+         DO I=FIRST_FLD_PT,LAST_P_FLD_PT                                   APB0F401.1513  
+            FIELD1(I) = THETAL_INC(I)*RECIP_RS_SQUARED_DELTAP(I)           ATD1F400.478   
+         END DO                                                            ATD1F400.479   
+                                                                           APB0F401.1514  
+*IF DEF,MPP                                                                APB0F401.1515  
+         if(j.ne.KEXP_K1(K))then                                           GSS1F403.596   
+         CALL SWAPBOUNDS(FIELD1,ROW_LENGTH,tot_P_ROWS,                     APB0F401.1516  
+     &                   EW_Halo,NS_Halo,1)                                APB0F401.1517  
+         endif                                                             GSS1F403.597   
+*ENDIF                                                                     APB0F401.1518  
+                                                                           ATD1F400.480   
+C  END OF DIFFUSION SWEEPS                                                 ATD1F400.481   
+      END DO                                                               ATD1F400.482   
+                                                                           ATD1F400.483   
+CL ADD FINAL INCREMENT ONTO THETAL FIELD.                                  ATD1F400.484   
+        SCALAR = (-1)**KEXP_K1(K)                                          ATD1F400.485   
+        DO  I=FIRST_VALID_PT,LAST_P_VALID_PT                               APB0F401.1519  
+          THETAL(I,K) = THETAL(I,K) - FIELD1(I) * ADVECTION_TIMESTEP       ATD1F400.487   
+     &                   *SCALAR                                           ATD1F400.488   
+        END DO                                                             ATD1F400.489   
+                                                                           ATD1F400.490   
+CL END LOOP OVER P_LEVELS FOR THETAL                                       ATD1F400.491   
+      END DO                                                               ATD1F400.492   
+*IF DEF,MPP                                                                GSS1F403.598   
+         CALL SWAPBOUNDS                                                   GSS1F403.599   
+     1  (THETAL,ROW_LENGTH,tot_P_ROWS,                                     GSS1F403.600   
+     &                   EW_Halo,NS_Halo,P_LEVELS)                         GSS1F403.601   
+*ENDIF                                                                     GSS1F403.602   
+                                                                           DIFCTL1A.228   
+CL                                                                         DIFCTL1A.229   
+CL---------------------------------------------------------------------    DIFCTL1A.230   
+CL    SECTION 4.     CALCULATE DIFFUSION OF QT AND                         DIFCTL1A.231   
+CL                   ADD ON INCREMENT TO ALL POINTS EXCEPT POLES           DIFCTL1A.232   
+CL                   WHICH WOULD HAVE BEEN DONE INSIDE TH_Q_DIF.           DIFCTL1A.233   
+CL---------------------------------------------------------------------    DIFCTL1A.234   
+                                                                           DIFCTL1A.235   
+      IF(.NOT.L_TRACER_THETAL_QT)THEN                                      ATD1F400.493   
+                                                                           ATD1F400.494   
+cmic$ do all shared (advection_timestep, cos_function_u)                   ATD1F400.495   
+cmic$*       shared (cos_u_latitude, cos_u_longitude)                      ATD1F400.496   
+cmic$*       shared (delta_ak, delta_bk, end_u_update)                     APB0F401.1520  
+cmic$*       shared (ak, bk, k2, kexp_k2, latitude_step_inverse)           ATD1F400.498   
+cmic$*       shared (longitude_step_inverse, p_field, u_field, p_levels)   ATD1F400.499   
+cmic$*       shared (pstar_uv, q_levels, qt, row_length)                   APB0F401.1521  
+cmic$*       shared (rs_squared_deltap, sec_p_latitude)                    ATD1F400.501   
+cmic$*       shared (start_u_update)                                       APB0F401.1522  
+*CALL CMICFLD                                                              APB0F401.1523  
+cmic$*       shared (pressure, pressure_test)                              ATD1F400.503   
+cmic$*       private ( field1, i, j, k, scalar, qt_inc)                    ATD1F400.504   
+cmic$*       private ( diffusion_ew, diffusion_ns)                         ATD1F400.505   
+cmic$*       private (diffusion_coefficient, diffusion_coefficient2)       ATD1F400.506   
+cmic$*       private (recip_rs_squared_deltap)                             ATD1F400.507   
+                                                                           ATD1F400.508   
+      DO K=1,Q_LEVELS                                                      ATD1F400.509   
+                                                                           DIFCTL1A.237   
+C SET DIFFUSION COEFFICIENT AND COPY QT INTO FIELD1.                       DIFCTL1A.238   
+          DO  I=FIRST_VALID_PT,LAST_U_VALID_PT                             APB0F401.1524  
+            DIFFUSION_COEFFICIENT2(I) = K2(K)*                             DIFCTL1A.240   
+     1                            (DELTA_AK(K)+DELTA_BK(K)*PSTAR_UV(I))    DIFCTL1A.241   
+            DIFFUSION_COEFFICIENT(I) = COS_FUNCTION_U(I)*                  DIFCTL1A.242   
+     2                                 DIFFUSION_COEFFICIENT2(I)           DIFCTL1A.243   
+          END DO                                                           ATD1F400.512   
+                                                                           ATD1F400.513   
+                                                                           ATD1F400.517   
+C CALL COEFF_TH_Q FOR EFFECTIVE DIFFUSION COEFFICIENT FOR QT               ATD1F400.518   
+C AVERAGING IS DONE AS REQUIRED IN EQUATION(48).                           ATD1F400.519   
+C COEFFICIENTS ARE SET TO ZERO FOR STEEP SLOPES                            ATD1F400.520   
+C VALUES ARE IN DIFFUSION_EW AND DIFFUSION_NS                              ATD1F400.521   
+       CALL COEFF_TH_Q                                                     ATD1F400.522   
+     1                  (DIFFUSION_EW(1,K),DIFFUSION_NS(1,K),              GSS1F403.603   
+     2                   PRESSURE,K,PRESSURE_TEST,AK,BK,                   ATD1F400.524   
+     3                   COS_U_LATITUDE,ROW_LENGTH,                        APB0F401.1526  
+*CALL ARGFLDPT                                                             APB0F401.1527  
+     5                   LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,     ATD1F400.527   
+     6                   P_FIELD,U_FIELD,P_LEVELS,                         ATD1F400.528   
+     7                   DIFFUSION_COEFFICIENT,DIFFUSION_COEFFICIENT2)     ATD1F400.529   
+      ENDDO                                                                GSS1F403.604   
+                                                                           APB0F401.1528  
+*IF DEF,MPP                                                                APB0F401.1529  
+      CALL SWAPBOUNDS(DIFFUSION_EW,ROW_LENGTH,tot_P_ROWS,                  APB0F401.1530  
+     &                   EW_Halo,NS_Halo,Q_LEVELS)                         GSS1F403.605   
+      CALL SWAPBOUNDS(DIFFUSION_NS,ROW_LENGTH,tot_P_ROWS,                  APB0F401.1532  
+     &                   EW_Halo,NS_Halo,Q_LEVELS)                         GSS1F403.606   
+*ENDIF                                                                     APB0F401.1534  
+                                                                           ATD1F400.530   
+C LOOP THROUGH CODE KEXP_K2 TIMES. THE ORDER OF THE DIFFUSION SCHEME IS    ATD1F400.531   
+C DEL TO THE POWER 2*KEXP_K2.                                              ATD1F400.532   
+      DO K=1,Q_LEVELS                                                      GSS1F403.607   
+          DO  I=FIRST_VALID_PT,LAST_P_VALID_PT                             GSS1F403.608   
+          FIELD1(I) = QT(I,K)                                              GSS1F403.609   
+          RECIP_RS_SQUARED_DELTAP(I) = 1./RS_SQUARED_DELTAP(I,K)           GSS1F403.610   
+          END DO                                                           GSS1F403.611   
+          DO J=1,KEXP_K2(K)                                                ATD1F400.533   
+                                                                           ATD1F400.534   
+*IF -DEF,GLOBAL                                                            APB0F401.1535  
+CL   ZERO INCREMENTS FOR FIRST AND LAST ROW                                ATD1F400.535   
+CL   OVERWRITTEN BY POLAR IN GLOBAL MODELS                                 ATD1F400.536   
+*IF DEF,MPP                                                                APB0F401.1536  
+          IF (at_top_of_LPG) THEN                                          APB0F401.1537  
+*ENDIF                                                                     APB0F401.1538  
+            DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                  APB0F401.1539  
+              QT_INC(I)=0.0                                                APB0F401.1540  
+            ENDDO                                                          APB0F401.1541  
+*IF DEF,MPP                                                                APB0F401.1542  
+          ENDIF                                                            APB0F401.1543  
+          IF (at_base_of_LPG) THEN                                         APB0F401.1544  
+*ENDIF                                                                     APB0F401.1545  
+            DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1              APB0F401.1546  
+              QT_INC(I)=0.0                                                APB0F401.1547  
+            ENDDO                                                          APB0F401.1548  
+*IF DEF,MPP                                                                APB0F401.1549  
+          ENDIF                                                            APB0F401.1550  
+*ENDIF                                                                     APB0F401.1551  
+*ENDIF                                                                     APB0F401.1552  
+                                                                           ATD1F400.541   
+CL      CALL TH_Q_DIF AT A MOIST LEVEL.                                    ATD1F400.542   
+                                                                           ATD1F400.543   
+CL                                                                         ATD1F400.544   
+CL---------------------------------------------------------------------    ATD1F400.545   
+CL    NEW VERSION INCLUDES PRESSURE TEST ON SLOPES                         ATD1F400.546   
+            CALL TH_Q_DIF(FIELD1,QT_INC,                                   ATD1F400.547   
+     &                    SEC_P_LATITUDE,ROW_LENGTH,                       APB0F401.1553  
+*CALL ARGFLDPT                                                             APB0F401.1554  
+     &                    P_FIELD,U_FIELD,                                 ATD1F400.550   
+     &                    DIFFUSION_EW(1,K),DIFFUSION_NS(1,K))             GSS1F403.612   
+C                                                                          ATD1F400.552   
+CL---------------------------------------------------------------------    ATD1F400.553   
+C DE-MASS-WEIGHT INCREMENT AND COPY INTO FIELD1 SO THAT IT CAN BE FED      ATD1F400.554   
+C BACK INTO TH_Q_DIF.                                                      ATD1F400.555   
+            DO I=FIRST_FLD_PT,LAST_P_FLD_PT                                APB0F401.1555  
+              FIELD1(I) = QT_INC(I)*RECIP_RS_SQUARED_DELTAP(I)             ATD1F400.557   
+            END DO                                                         ATD1F400.558   
+*IF DEF,MPP                                                                APB0F401.1556  
+         if(J.ne.KEXP_K2(K))then                                           GSS1F403.613   
+         CALL SWAPBOUNDS(FIELD1,ROW_LENGTH,tot_P_ROWS,                     APB0F401.1557  
+     &                   EW_Halo,NS_Halo,1)                                APB0F401.1558  
+         endif                                                             GSS1F403.614   
+*ENDIF                                                                     APB0F401.1559  
+                                                                           ATD1F400.559   
+C  END OF DIFFUSION SWEEPS                                                 ATD1F400.560   
+         END DO                                                            ATD1F400.561   
+                                                                           ATD1F400.562   
+CL ADD FINAL INCREMENT ONTO QT FIELD.                                      ATD1F400.563   
+          SCALAR = (-1)**KEXP_K2(K)                                        ATD1F400.564   
+          DO I=FIRST_VALID_PT,LAST_P_VALID_PT                              APB0F401.1560  
+            QT(I,K) = QT(I,K) - FIELD1(I) * ADVECTION_TIMESTEP             ATD1F400.566   
+     &                     *SCALAR                                         ATD1F400.567   
+          END DO                                                           ATD1F400.568   
+                                                                           ATD1F400.569   
+CL END LOOP OVER P_LEVELS FOR  QT                                          ATD1F400.570   
+       END DO                                                              ATD1F400.571   
+*IF DEF,MPP                                                                GSS1F403.615   
+         CALL SWAPBOUNDS                                                   GSS1F403.616   
+     1  (QT,ROW_LENGTH,tot_P_ROWS,                                         GSS1F403.617   
+     &                   EW_Halo,NS_Halo,Q_LEVELS)                         GSS1F403.618   
+*ENDIF                                                                     GSS1F403.619   
+CL END IF TEST FOR NO DIFFUSION WITH TRACER ADVECTION                      ATD1F400.572   
+      END IF                                                               ATD1F400.573   
+                                                                           ATD1F400.574   
+CL   MAKE 3-D PRESSURE ARRAY AT UV POINTS                                  ATD1F400.575   
+CL   LEVEL_P=1 SURFACE, LEVEL_P=K IS LEVEL K-1                             ATD1F400.576   
+CL    ONLY NEED P_LEVELS AS SURFACES SHOULD BE PRESSURE SURFACES           ATD1F400.577   
+CL    NEAR TOP OF MODEL SO TESTING UNNECESSARY                             ATD1F400.578   
+CL   FIRST LEVEL                                                           ATD1F400.579   
+      DO I=FIRST_VALID_PT,LAST_U_VALID_PT                                  APB0F401.1561  
+        PRESSURE(I,1)=PSTAR_UV(I)                                          ATD1F400.581   
+       END DO                                                              ATD1F400.582   
+CL OTHER LEVELS                                                            ATD1F400.583   
+      DO K=2,P_LEVELS                                                      ATD1F400.584   
+       DO I=FIRST_VALID_PT,LAST_U_VALID_PT                                 APB0F401.1562  
+        PRESSURE(I,K)=AK(K-1)+BK(K-1)*PSTAR_UV(I)                          ATD1F400.586   
+       END DO                                                              ATD1F400.587   
+      END DO                                                               ATD1F400.588   
+                                                                           ATD1F400.589   
+CL LOOP OVER P_LEVELS FOR U AND V                                          ATD1F400.590   
+cmic$ do all shared (advection_timestep, cos_function_p)                   ATD1F400.591   
+cmic$*       shared (cos_p_latitude, cos_u_longitude, sin_u_longitude)     ATD1F400.592   
+cmic$*       shared (delta_ak, delta_bk, end_u_update)                     APB0F401.1563  
+cmic$*       shared (ak, bk, k1, kexp_k1, latitude_step_inverse)           ATD1F400.594   
+cmic$*       shared (longitude_step_inverse, p_field, u_field, p_levels)   ATD1F400.595   
+cmic$*       shared (pstar, u, v, row_length)                              APB0F401.1564  
+cmic$*       shared (rs_squared_deltap, sec_u_latitude)                    ATD1F400.597   
+cmic$*       shared (start_u_update)                                       APB0F401.1565  
+*CALL CMICFLD                                                              APB0F401.1566  
+cmic$*       shared (pressure, pressure_test)                              ATD1F400.599   
+cmic$*       private ( field1, field2, i, j, k, scalar)                    ATD1F400.600   
+cmic$*       private ( diffusion_ew, diffusion_ns)                         ATD1F400.601   
+cmic$*       private (diffusion_coefficient, diffusion_coefficient2)       ATD1F400.602   
+cmic$*       private (rs_squared_deltap_u_grid)                            ATD1F400.603   
+                                                                           ATD1F400.604   
+      DO K=1,P_LEVELS                                                      ATD1F400.605   
+CL                                                                         ATD1F400.607   
+CL---------------------------------------------------------------------    ATD1F400.608   
+CL    SECTION 5.     SET DIFFUSION_COEFFICIENTS ON P GRID.                 DIFCTL1A.286   
+CL                   THEN CALCULATE DIFFUSION OF U AND V.                  DIFCTL1A.287   
+CL---------------------------------------------------------------------    DIFCTL1A.288   
+                                                                           DIFCTL1A.289   
+C SET DIFFUSION COEFFICIENT                                                DIFCTL1A.290   
+        DO  I=FIRST_VALID_PT,LAST_P_VALID_PT                               APB0F401.1568  
+          DIFFUSION_COEFFICIENT2(I) = K1(K)*                               DIFCTL1A.292   
+     1                           (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))        DIFCTL1A.293   
+          DIFFUSION_COEFFICIENT(I) = COS_FUNCTION_P(I)*                    DIFCTL1A.294   
+     2                         DIFFUSION_COEFFICIENT2(I)                   DIFCTL1A.295   
+        END DO                                                             ATD1F400.617   
+C CALL COEFF_UV FOR EFFECTIVE DIFFUSION COEFFICIENT FOR U AND V            ATD1F400.618   
+C AVERAGING IS DONE AS REQUIRED IN EQUATION(48).                           ATD1F400.619   
+C COEFFICIENTS ARE SET TO ZERO FOR STEEP SLOPES                            ATD1F400.620   
+C VALUES ARE RETURNED IN DIFFUSION_EW AND DIFFUSION_NS                     ATD1F400.621   
+      CALL COEFF_UV                                                        ATD1F400.622   
+     1                 (DIFFUSION_EW(1,K),DIFFUSION_NS(1,K),               GSS1F403.620   
+     2                 PRESSURE,K,PRESSURE_TEST,AK,BK,                     ATD1F400.624   
+     3                 COS_P_LATITUDE,START_U_UPDATE,END_U_UPDATE,         APB0F401.1570  
+     &                 ROW_LENGTH,                                         APB0F401.1571  
+*CALL ARGFLDPT                                                             APB0F401.1572  
+     4                 LATITUDE_STEP_INVERSE,                              APB0F401.1573  
+     5                 LONGITUDE_STEP_INVERSE,P_FIELD,U_FIELD,P_LEVELS,    ATD1F400.627   
+     6                 DIFFUSION_COEFFICIENT,DIFFUSION_COEFFICIENT2)       ATD1F400.628   
+                                                                           APB0F401.1574  
+      ENDDO                                                                GSS1F403.621   
+                                                                           GSS1F403.622   
+*IF DEF,MPP                                                                APB0F401.1575  
+      CALL SWAPBOUNDS(DIFFUSION_EW,ROW_LENGTH,tot_P_ROWS,                  APB0F401.1576  
+     &                   EW_Halo,NS_Halo,P_LEVELS)                         GSS1F403.623   
+      CALL SWAPBOUNDS(DIFFUSION_NS,ROW_LENGTH,tot_P_ROWS,                  APB0F401.1578  
+     &                   EW_Halo,NS_Halo,P_LEVELS)                         GSS1F403.624   
+*ENDIF                                                                     APB0F401.1580  
+                                                                           APB0F401.1581  
+      DO K=1,P_LEVELS                                                      GSS1F403.625   
+CL                                                                         GSS1F403.626   
+CL---------------------------------------------------------------------    GSS1F403.627   
+CL    SECTION 4.     INTERPOLATE RS_SQUARED_DELTAP TO U GRID.              GSS1F403.628   
+CL---------------------------------------------------------------------    GSS1F403.629   
+                                                                           ATD1F400.629   
+C INTERPOLATE RS_SQUARED_DELTAP TO U GRID.                                 GSS1F403.630   
+                                                                           GSS1F403.631   
+        CALL P_TO_UV(RS_SQUARED_DELTAP(1,K),RS_SQUARED_DELTAP_U_GRID,      GSS1F403.632   
+     *                P_FIELD,U_FIELD,ROW_LENGTH,tot_P_ROWS)               GSS1F403.633   
+        DO I=FIRST_VALID_PT,LAST_U_VALID_PT                                GSS1F403.634   
+          FIELD1(I) = U(I,K)                                               GSS1F403.635   
+          FIELD2(I) = V(I,K)                                               GSS1F403.636   
+        END DO                                                             GSS1F403.637   
+                                                                           GSS1F403.638   
+                                                                           GSS1F403.639   
+C LOOP THROUGH CODE KEXP_K1 TIMES. THE ORDER OF THE DIFFUSION SCHEME IS    ATD1F400.630   
+C DEL TO THE POWER 2*KEXP_K1.                                              ATD1F400.631   
+                                                                           ATD1F400.632   
+        DO J=1,KEXP_K1(K)                                                  ATD1F400.633   
+CL    CALL UV_DIF FOR U &V                                                 ATD1F400.634   
+                                                                           ATD1F400.635   
+        CALL UV_DIF(FIELD1,FIELD2,RS_SQUARED_DELTAP_U_GRID,                ATD1F400.636   
+     *              SEC_U_LATITUDE,START_U_UPDATE,END_U_UPDATE,            ATD1F400.637   
+     &              ROW_LENGTH,                                            APB0F401.1582  
+*CALL ARGFLDPT                                                             APB0F401.1583  
+     *              P_FIELD,U_FIELD,                                       APB0F401.1584  
+     *              DIFFUSION_EW(1,K),DIFFUSION_NS(1,K))                   GSS1F403.640   
+*IF DEF,MPP                                                                APB0F401.1585  
+      if(j.ne.KEXP_K1(K))then                                              GSS1F403.641   
+      CALL SWAPBOUNDS(FIELD1,ROW_LENGTH,tot_P_ROWS,                        APB0F401.1586  
+     &                EW_Halo,NS_Halo,1)                                   APB0F401.1587  
+      CALL SWAPBOUNDS(FIELD2,ROW_LENGTH,tot_P_ROWS,                        APB0F401.1588  
+     &                EW_Halo,NS_Halo,1)                                   APB0F401.1589  
+      endif                                                                GSS1F403.642   
+*ENDIF                                                                     APB0F401.1590  
+                                                                           ATD1F400.640   
+C    FIELD1 AND FIELD2 NOW CONTAIN DIFFUSED QUANTITIES WHICH CAN           ATD1F400.641   
+C     BE USED IN FURTHER DIFFUSION SWEEPS                                  ATD1F400.642   
+                                                                           ATD1F400.643   
+CL   END OF DIFFUSION SWEEPS                                               ATD1F400.644   
+        END DO                                                             ATD1F400.645   
+CL ADD FINAL INCREMENT ONTO WIND FIELDS.                                   DIFCTL1A.331   
+        SCALAR = (-1)**KEXP_K1(K)                                          DIFCTL1A.332   
+! Loop over field, missing top and bottom rows and halos                   APB0F401.1591  
+        DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                       APB0F401.1592  
+          U(I,K) = U(I,K) - FIELD1(I) * ADVECTION_TIMESTEP                 DIFCTL1A.334   
+     &                     *SCALAR                                         DIFCTL1A.335   
+          V(I,K) = V(I,K) - FIELD2(I) * ADVECTION_TIMESTEP                 DIFCTL1A.336   
+     &                     *SCALAR                                         DIFCTL1A.337   
+        END DO                                                             ATD1F400.647   
+CL END LOOP OVER P_LEVELS                                                  DIFCTL1A.339   
+                                                                           DIFCTL1A.340   
+       END DO                                                              ATD1F400.648   
+                                                                           GSS1F403.643   
+*IF DEF,MPP                                                                GSS1F403.644   
+      CALL SWAPBOUNDS                                                      GSS1F403.645   
+     1  (U,ROW_LENGTH,tot_P_ROWS,                                          GSS1F403.646   
+     &                EW_Halo,NS_Halo,P_LEVELS)                            GSS1F403.647   
+      CALL SWAPBOUNDS                                                      GSS1F403.648   
+     1  (V,ROW_LENGTH,tot_P_ROWS,                                          GSS1F403.649   
+     &                EW_Halo,NS_Halo,P_LEVELS)                            GSS1F403.650   
+*ENDIF                                                                     GSS1F403.651   
+                                                                           DIFCTL1A.342   
+CL    END OF ROUTINE DIF_CTL                                               DIFCTL1A.343   
+                                                                           DIFCTL1A.344   
+      RETURN                                                               DIFCTL1A.345   
+      END                                                                  DIFCTL1A.346   
+*ENDIF                                                                     DIFCTL1A.347   

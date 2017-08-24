@@ -1,0 +1,224 @@
+*IF DEF,OCEAN                                                              CONVADJ.2     
+C *****************************COPYRIGHT******************************     CONVADJ.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    CONVADJ.4     
+C                                                                          CONVADJ.5     
+C Use, duplication or disclosure of this code is subject to the            CONVADJ.6     
+C restrictions as set forth in the contract.                               CONVADJ.7     
+C                                                                          CONVADJ.8     
+C                Meteorological Office                                     CONVADJ.9     
+C                London Road                                               CONVADJ.10    
+C                BRACKNELL                                                 CONVADJ.11    
+C                Berkshire UK                                              CONVADJ.12    
+C                RG12 2SZ                                                  CONVADJ.13    
+C                                                                          CONVADJ.14    
+C If no contract has been raised with this copy of the code, the use,      CONVADJ.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      CONVADJ.16    
+C to do so must first be obtained in writing from the Head of Numerical    CONVADJ.17    
+C Modelling at the above address.                                          CONVADJ.18    
+C ******************************COPYRIGHT******************************    CONVADJ.19    
+CLL                                                                        CONVADJ.20    
+CLL   Subroutine : CONVADJ                                                 CONVADJ.21    
+CLL                                                                        CONVADJ.22    
+CLL   Author : M J Roberts                                                 CONVADJ.23    
+CLL                                                                        CONVADJ.24    
+CLL   Modification history:                                                CONVADJ.25    
+CLL   20/3/97 implemented at UM vn 4.3                                     CONVADJ.26    
+!LL   4.5     17/09/98 Update calls to timer, required because of          GPB8F405.88    
+!LL                    new barrier inside timer.         P.Burton          GPB8F405.89    
+CLL                                                                        CONVADJ.27    
+CLL   Programming standards use Cox naming convention for Cox variables    CONVADJ.28    
+CLL   with the addition that lower case variables are local to the         CONVADJ.29    
+CLL   routine.                                                             CONVADJ.30    
+CLL   Otherwise follows UM doc paper 4 version 1.                          CONVADJ.31    
+CLL                                                                        CONVADJ.32    
+CLL   This routine performs a convective adjustment of the water column    CONVADJ.33    
+CLL   such that, given an unstable profile, the dense water will be        CONVADJ.34    
+CLL   moved down the water column to a depth at which it is stable, and    CONVADJ.35    
+CLL   the intervening boxes shuffled upwards, rather than working          CONVADJ.36    
+CLL   downwards as previously.                                             CONVADJ.37    
+CLL   The algorithm is due to V. Roussenov (Uni. Sophia), and this code    CONVADJ.38    
+CLL   adapted from a MOM update.                                           CONVADJ.39    
+CLL                                                                        CONVADJ.40    
+CLL   External documentation:                                              CONVADJ.41    
+CLL                                                                        CONVADJ.42    
+CLL   Subroutine dependencies.  This routine defines the statement         CONVADJ.43    
+CLL   function 'dens'. This function performs the same calculation         CONVADJ.44    
+CLL   as STATEC, but on a single set of (T,S,K) values. Any change         CONVADJ.45    
+CLL   to STATEC should therefore be reflected in the definition of         CONVADJ.46    
+CLL   dens.                                                                CONVADJ.47    
+CLL                                                                        CONVADJ.48    
+CLLEND------------------------------------------------------------------   CONVADJ.49    
+C*                                                                         CONVADJ.50    
+C*L   -----------------Arguments----------------------------------------   CONVADJ.51    
+C                                                                          CONVADJ.52    
+      SUBROUTINE CONVADJ(                                                  CONVADJ.53    
+     *                    IMT,KM,NT,                                       CONVADJ.54    
+     *                    KMT,DZ,TA,                                       CONVADJ.55    
+     *                    ITT,ISROUS,IEROUS                                CONVADJ.56    
+     *                   )                                                 CONVADJ.57    
+C                                                                          CONVADJ.58    
+      IMPLICIT NONE                                                        CONVADJ.59    
+C                                                                          CONVADJ.60    
+*CALL COCSTATE                                                             CONVADJ.61    
+*CALL OTIMER                                                               CONVADJ.62    
+C                                                                          CONVADJ.63    
+C     Define constants for array sizes                                     CONVADJ.64    
+C                                                                          CONVADJ.65    
+C                                                                          CONVADJ.66    
+      INTEGER                                                              CONVADJ.67    
+     +   IMT      ! IN  Number of points in first dimension of arrays      CONVADJ.68    
+     +,  KM       ! IN  Number of points in vertical                       CONVADJ.69    
+     +,  NT       ! IN  Number of tracers                                  CONVADJ.70    
+     +,  ITT      ! IN  Timestep number                                    CONVADJ.71    
+     +,  ISROUS   ! IN  starting index of columns to be convected          CONVADJ.72    
+     +,  IEROUS   ! IN  finishing index of columns to be convected         CONVADJ.73    
+C                                                                          CONVADJ.74    
+      INTEGER                                                              CONVADJ.75    
+     +   KMT (IMT)! IN  Number of gridpoints in column                     CONVADJ.76    
+C                                                                          CONVADJ.77    
+C     Physical arguments                                                   CONVADJ.78    
+C                                                                          CONVADJ.79    
+      REAL                                                                 CONVADJ.80    
+     +   DZ(KM)               ! IN     Thickness of tracer gridbox (cm)    CONVADJ.81    
+     +,  TA (IMT,KM,NT)       ! INOUT  Array of tracers                    CONVADJ.82    
+C                                                                          CONVADJ.83    
+C     LOCALLY defined variables and arrays                                 CONVADJ.84    
+C                                                                          CONVADJ.85    
+      INTEGER                                                              CONVADJ.86    
+     +   i                    !  Zonal index for loops                     CONVADJ.87    
+     +,  k                    !  Vert loop index & dummy vble in stmt fn   CONVADJ.88    
+     +,  l                    !  Vertical loop index                       CONVADJ.89    
+     +,  l1                   !  l+1 within loops                          CONVADJ.90    
+     +,  m                    !  Tracer number in loops                    CONVADJ.91    
+     +,  n                    !  loop counter                              CONVADJ.92    
+     +,  ncon                 !  number of loops thru convection           CONVADJ.93    
+     +,  ncons                !  loop counter for loops thru convection    CONVADJ.94    
+     +,  kcon                 !  Max no of levels at this location         CONVADJ.95    
+     +,  itop                 !  top box to look for instability           CONVADJ.96    
+     +,  lcon                 !  Counts levels down                        CONVADJ.97    
+     +,  lcona                !  Top level of a convective part of         CONVADJ.98    
+C                                water column                              CONVADJ.99    
+     +,  lconb                !  Lower level of a convective part of       CONVADJ.100   
+C                                water column                              CONVADJ.101   
+C                                                                          CONVADJ.102   
+      REAL                                                                 CONVADJ.103   
+     +    dens                 ! Statement fn to calculate density         CONVADJ.104   
+     +,   tq,sq                ! Dummy vbles in stmt fn dens               CONVADJ.105   
+     +,   rhoup(imt,km)        ! Density referenced to same level          CONVADJ.106   
+     +,   rholo(imt,km)        ! Density referenced to level below         CONVADJ.107   
+     +,   rho                  ! Density of rholo referenced to new box    CONVADJ.108   
+C                                (note that densities are not absolute!)   CONVADJ.109   
+     +,   dztdif               ! Difference of layer thicknesses           CONVADJ.110   
+     +,   trasum(nt)           ! Sum of layer tracer values                CONVADJ.111   
+     +,   tramix               ! Mixed tracer value after convection       CONVADJ.112   
+     +,   tra(nt)              ! Mixed tracer value before convection      CONVADJ.113   
+c                                                                          CONVADJ.114   
+c         This function has been taken from STATE to allow direct          CONVADJ.115   
+c         use of dens (instead of wasteful calls to STATEC).               CONVADJ.116   
+c         Referencing to the appropriate levels is taken care of           CONVADJ.117   
+c         in the calculation of rhoup and rholo below (1311 loop).         CONVADJ.118   
+c-----------------------------------------------------------------------   CONVADJ.119   
+c     statement function dens                                              CONVADJ.120   
+c-----------------------------------------------------------------------   CONVADJ.121   
+c                                                                          CONVADJ.122   
+        dens(tq,sq,k) = (C(k,1) + (C(k,4) + C(k,7)*sq)*sq                  CONVADJ.123   
+     $                 +(C(k,3) + C(k,8)*sq + C(k,6)*tq)*tq)*tq            CONVADJ.124   
+     $                 +(C(k,2) + (C(k,5) + C(k,9)*sq)*sq)*sq              CONVADJ.125   
+                                                                           CONVADJ.126   
+c-----------------------------------------------------------------------   CONVADJ.127   
+      IF (L_OTIMER) CALL TIMER('CONVADJ',103)                              GPB8F405.90    
+c                                                                          CONVADJ.129   
+c  *****  Define NCON, the number of times to convect                      CONVADJ.130   
+c                                                                          CONVADJ.131   
+      NCON=5                                                               CONVADJ.132   
+c                                                                          CONVADJ.133   
+c             find density for entire slab for stability determination     CONVADJ.134   
+c                                                                          CONVADJ.135   
+        do 1500 ncons=1,ncon                                               CONVADJ.136   
+        do 1320 l=1,km-1                                                   CONVADJ.137   
+          do 1310 i=ISROUS,IEROUS                                          CONVADJ.138   
+            l1=l+1                                                         CONVADJ.139   
+            rhoup(i,l1) = dens(ta(i,l1,1)-to(l1),ta(i,l1,2)-so(l1),l1)     CONVADJ.140   
+            rholo(i,l)  = dens(ta(i,l ,1)-to(l1),ta(i,l ,2)-so(l1),l1)     CONVADJ.141   
+1310      continue                                                         CONVADJ.142   
+1320    continue                                                           CONVADJ.143   
+c                                                                          CONVADJ.144   
+c        Do the slab column by column; note that 'goto 1500'               CONVADJ.145   
+c        finishes a particular column and moves to the next one.           CONVADJ.146   
+c                                                                          CONVADJ.147   
+      do 1500 i=ISROUS,IEROUS                                              CONVADJ.148   
+        kcon = kmt(i)                                                      CONVADJ.149   
+        if (kcon.eq.0) goto 1500                                           CONVADJ.150   
+        itop=1                                                             CONVADJ.151   
+c                                                                          CONVADJ.152   
+c        1. initial search for uppermost unstable pair; if none is         CONVADJ.153   
+c           found, move on to next column                                  CONVADJ.154   
+c                                                                          CONVADJ.155   
+1325     continue                                                          CONVADJ.156   
+        lcon=0                                                             CONVADJ.157   
+         do 1330 k=kcon-1,itop,-1                                          CONVADJ.158   
+1330    if(rholo(i,k).gt.rhoup(i,k+1)) lcon=k                              CONVADJ.159   
+                                                                           CONVADJ.160   
+        if(lcon.eq.0) goto 1500                                            CONVADJ.161   
+c                                                                          CONVADJ.162   
+c  found an unstable column                                                CONVADJ.163   
+c                                                                          CONVADJ.164   
+        lcona = lcon                                                       CONVADJ.165   
+        lconb = lcon + 1                                                   CONVADJ.166   
+        l1    = kcon+1                                                     CONVADJ.167   
+c                                                                          CONVADJ.168   
+c        2. must now find what box to mix the denser (upper) water         CONVADJ.169   
+c           in with. The density of the upper box is recalulated           CONVADJ.170   
+c           starting 2 boxes down referenced to this box and these         CONVADJ.171   
+c           densities compared. The unstable box will be mixed in with     CONVADJ.172   
+c           the box above the first denser box found.                      CONVADJ.173   
+c                                                                          CONVADJ.174   
+c        2a. calculate density referenced to new box and check for         CONVADJ.175   
+c            stability                                                     CONVADJ.176   
+c                                                                          CONVADJ.177   
+1340    l1=l1-1                                                            CONVADJ.178   
+        rho  = dens(ta(i,lcona ,1)-to(l1),ta(i,lcona ,2)-so(l1),l1)        CONVADJ.179   
+        if (rho .le. rhoup(i,l1) .and. l1 .gt. lconb) goto 1340            CONVADJ.180   
+c                                                                          CONVADJ.181   
+c        2b. found the box. replace water in lower box                     CONVADJ.182   
+c                                                                          CONVADJ.183   
+c       l1=l1-1                                                            CONVADJ.184   
+        dztdif = dz(l1) - dz(lcona)                                        CONVADJ.185   
+        do 1350 m=1,nt                                                     CONVADJ.186   
+          tra(m)=ta(i,l1,m)                                                CONVADJ.187   
+          trasum(m) = ta(i,lcona,m)*dz(lcona) +ta(i,l1,m)*dztdif           CONVADJ.188   
+          tramix = trasum(m) / dz(l1)                                      CONVADJ.189   
+          ta(i,l1,m) = tramix                                              CONVADJ.190   
+1350    continue                                                           CONVADJ.191   
+c                                                                          CONVADJ.192   
+c        2c. now shuffle up all intervening boxes.                         CONVADJ.193   
+c                                                                          CONVADJ.194   
+        do 1355 m=1,nt                                                     CONVADJ.195   
+          do 1355 k=l1-1,lcona,-1                                          CONVADJ.196   
+            dztdif = dz(k) - dz(lcona)                                     CONVADJ.197   
+            trasum(m) = tra(m)*dz(lcona) +ta(i,k,m)*dztdif                 CONVADJ.198   
+            tramix = trasum(m) / dz(k)                                     CONVADJ.199   
+            tra(m)=ta(i,k,m)                                               CONVADJ.200   
+            ta(i,k,m) = tramix                                             CONVADJ.201   
+1355    continue                                                           CONVADJ.202   
+                                                                           CONVADJ.203   
+       if ( lcon .lt. kcon-1) then                                         CONVADJ.204   
+                                                                           CONVADJ.205   
+c  recalculate density                                                     CONVADJ.206   
+                                                                           CONVADJ.207   
+        do 1360 l=1,km-1                                                   CONVADJ.208   
+            l1=l+1                                                         CONVADJ.209   
+            rhoup(i,l1) = dens(ta(i,l1,1)-to(l1),ta(i,l1,2)-so(l1),l1)     CONVADJ.210   
+            rholo(i,l)  = dens(ta(i,l ,1)-to(l1),ta(i,l ,2)-so(l1),l1)     CONVADJ.211   
+1360      continue                                                         CONVADJ.212   
+          itop=lcona+1                                                     CONVADJ.213   
+          goto 1325                                                        CONVADJ.214   
+       endif                                                               CONVADJ.215   
+                                                                           CONVADJ.216   
+1500  continue                                                             CONVADJ.217   
+                                                                           CONVADJ.218   
+      IF (L_OTIMER) CALL TIMER('CONVADJ',104)                              GPB8F405.91    
+                                                                           CONVADJ.220   
+      RETURN                                                               CONVADJ.221   
+      END                                                                  CONVADJ.222   
+*ENDIF                                                                     CONVADJ.223   

@@ -1,0 +1,889 @@
+*IF DEF,A12_1C,AND,DEF,MPP                                                 THADV1C.2     
+C *****************************COPYRIGHT******************************     THADV1C.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    THADV1C.4     
+C                                                                          THADV1C.5     
+C Use, duplication or disclosure of this code is subject to the            THADV1C.6     
+C restrictions as set forth in the contract.                               THADV1C.7     
+C                                                                          THADV1C.8     
+C                Meteorological Office                                     THADV1C.9     
+C                London Road                                               THADV1C.10    
+C                BRACKNELL                                                 THADV1C.11    
+C                Berkshire UK                                              THADV1C.12    
+C                RG12 2SZ                                                  THADV1C.13    
+C                                                                          THADV1C.14    
+C If no contract has been raised with this copy of the code, the use,      THADV1C.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      THADV1C.16    
+C to do so must first be obtained in writing from the Head of Numerical    THADV1C.17    
+C Modelling at the above address.                                          THADV1C.18    
+C ******************************COPYRIGHT******************************    THADV1C.19    
+CLL   SUBROUTINE TH_ADV -------------------------------------------        THADV1C.20    
+CLL                                                                        THADV1C.21    
+CLL   PURPOSE:  CALCULATES MASS-WEIGHTED INCREMENTS TO THETAL              THADV1C.22    
+CLL DUE TO ADVECTION  BY USING EQUATION (35) TO CALCULATE PROVISIONAL      THADV1C.23    
+CLL VALUES OF THETAL AT THE NEW TIME-LEVEL, AND THEN RECALCULATING THE     THADV1C.24    
+CLL ADVECTION TERMS ON THE RIGHT-HAND SIDE OF (35) USING THESE             THADV1C.25    
+CLL PROVISIONAL VALUES. THE FINAL INCREMENTS ARE CALCULATED AS IN          THADV1C.26    
+CLL EQUATION (40). THOSE REQUIRING FILTERING ARE FILTERED AND ALL THE      THADV1C.27    
+CLL INCREMENTS ARE ADDED ONTO THE FIELDS USING (40).  IF RUNNING A         THADV1C.28    
+CLL GLOBAL MODEL POLAR IS CALLED TO UPDATE POLAR VALUES.                   THADV1C.29    
+CLL                                                                        THADV1C.30    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  THADV1C.31    
+CLL   VERSION FOR CRAY Y-MP                                                THADV1C.32    
+CLL                                                                        THADV1C.33    
+CLL MM, DR      <- PROGRAMMER OF SOME OR ALL OF PREVIOUS CODE OR CHANGES   THADV1C.34    
+CLL MPP CODE ADDED BY P.BURTON                                             THADV1C.35    
+CLL                                                                        THADV1C.36    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 4.1:         THADV1C.37    
+CLL VERSION  DATE                                                          THADV1C.38    
+CLL                                                                        THADV1C.39    
+CLL 4.1      07/12/95 New version of routine specifically for MPP          THADV1C.40    
+CLL                   P.Burton                                             THADV1C.41    
+!LL   4.2    16/08/96  Add TYPFLDPT arguments to FILTER subroutine         APB0F402.42    
+!LL                    and make the FILTER_WAVE_NUMBER arrays              APB0F402.43    
+!LL                    globally sized                       P.Burton       APB0F402.44    
+!LL   4.2    10/01/97  Initialise unprocessed points in THETAL_PROV.       ADR2F402.1     
+!LL                    D. Robinson.                                        ADR2F402.2     
+!LL 4.3      24/04/97 Fixes to 4th order calculations   P.Burton           GPB5F403.17    
+C     vn4.3    Mar. 97   T3E migration : optimisation changes              GSS1F403.706   
+C                                       D.Salmond                          GSS1F403.707   
+CLL                                                                        THADV1C.42    
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       THADV1C.43    
+CLL                         STANDARD B.                                    THADV1C.44    
+CLL                                                                        THADV1C.45    
+CLL   SYSTEM COMPONENTS COVERED: P121                                      THADV1C.46    
+CLL                                                                        THADV1C.47    
+CLL   SYSTEM TASK: P1                                                      THADV1C.48    
+CLL                                                                        THADV1C.49    
+CLL   DOCUMENTATION:       THE EQUATIONS USED ARE (35) AND (40)            THADV1C.50    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER NO. 10     THADV1C.51    
+CLL                        M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON           THADV1C.52    
+CLL                                                                        THADV1C.53    
+CLLEND-------------------------------------------------------------        THADV1C.54    
+                                                                           THADV1C.55    
+C*L   ARGUMENTS:---------------------------------------------------        THADV1C.56    
+      SUBROUTINE TH_ADV                                                    THADV1C.57    
+     1              (THETAL,PSTAR_OLD,PSTAR,U_MEAN,V_MEAN,                 THADV1C.58    
+     2              SEC_P_LATITUDE,ETADOT_MEAN,RS,DELTA_AK,DELTA_BK,       THADV1C.59    
+     3              LATITUDE_STEP_INVERSE,ADVECTION_TIMESTEP,NU_BASIC,     THADV1C.60    
+     4              LONGITUDE_STEP_INVERSE,NORTHERN_FILTERED_P_ROW,        THADV1C.61    
+     5              SOUTHERN_FILTERED_P_ROW,P_LEVELS,                      THADV1C.62    
+     6              U_FIELD,P_FIELD,ROW_LENGTH,                            THADV1C.63    
+*CALL ARGFLDPT                                                             THADV1C.64    
+     7              TRIGS,IFAX,FILTER_WAVE_NUMBER_P_ROWS,SEC_U_LATITUDE,   THADV1C.65    
+     8              AKH,BKH,QCL,QCF,P_EXNER,OMEGA,                         THADV1C.66    
+     9              Q_LEVELS,AK,BK,L_SECOND,                               THADV1C.67    
+     &              extended_address,                                      GSS1F403.708   
+     &              LWHITBROM)                                             THADV1C.68    
+                                                                           THADV1C.69    
+      IMPLICIT NONE                                                        THADV1C.70    
+                                                                           THADV1C.71    
+! All TYPFLDPT arguments are intent IN                                     THADV1C.72    
+*CALL TYPFLDPT                                                             THADV1C.73    
+                                                                           THADV1C.74    
+      INTEGER                                                              THADV1C.75    
+     *  P_FIELD            !IN DIMENSION OF FIELDS ON PRESSSURE GRID.      THADV1C.76    
+     *, U_FIELD            !IN DIMENSION OF FIELDS ON VELOCITY GRID        THADV1C.77    
+     *, P_LEVELS           !IN NUMBER OF PRESSURE LEVELS.                  THADV1C.78    
+     *, Q_LEVELS           !IN NUMBER OF MOIST LEVELS.                     THADV1C.79    
+     *, ROW_LENGTH         !IN NUMBER OF POINTS PER ROW                    THADV1C.80    
+     *, NORTHERN_FILTERED_P_ROW !IN ROW ON WHICH FILTERING STOPS           THADV1C.81    
+     *, SOUTHERN_FILTERED_P_ROW !IN ROW ON WHICH FILTERING STARTS AGAIN.   THADV1C.82    
+     &, FILTER_WAVE_NUMBER_P_ROWS(GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH)        APB0F402.45    
+     &       ! LAST WAVE NUMBER NOT TO BE CHOPPED                          APB0F402.46    
+     *, IFAX(10)           !IN HOLDS FACTORS OF ROW_LENGTH USED BY         THADV1C.85    
+     *                     ! FILTERING.                                    THADV1C.86    
+                                                                           THADV1C.87    
+C LOGICAL VARIABLE                                                         THADV1C.88    
+      LOGICAL                                                              THADV1C.89    
+     *  L_SECOND     ! SET TO TRUE IF NU_BASIC IS ZERO.                    THADV1C.90    
+     & ,LWHITBROM                                                          THADV1C.91    
+      INTEGER extended_address(P_FIELD)                                    GSS1F403.709   
+                                                                           THADV1C.92    
+      REAL                                                                 THADV1C.93    
+     * THETAL(P_FIELD,P_LEVELS)  !INOUT THETAL FIELD                       THADV1C.94    
+     *                           ! MASS-WEIGHTED ON OUTPUT.                THADV1C.95    
+                                                                           THADV1C.96    
+      REAL                                                                 THADV1C.97    
+     * U_MEAN(U_FIELD,P_LEVELS) !IN AVERAGED MASS-WEIGHTED U VELOCITY      THADV1C.98    
+     *                          !   FROM ADJUSTMENT STEP                   THADV1C.99    
+     *,V_MEAN(U_FIELD,P_LEVELS) !IN AVERAGED MASS-WEIGHTED V VELOCITY      THADV1C.100   
+     *                          !   * COS(LAT) FROM ADJUSTMENT STEP        THADV1C.101   
+     *,ETADOT_MEAN(P_FIELD,P_LEVELS)  !IN AVERAGED MASS-WEIGHTED           THADV1C.102   
+     *                          !VERTICAL VELOCITY FROM ADJUSTMENT STEP    THADV1C.103   
+     *,PSTAR(P_FIELD)           !IN PSTAR FIELD AT NEW TIME-LEVEL          THADV1C.104   
+     *,PSTAR_OLD(P_FIELD)       !IN PSTAR AT PREVIOUS TIME-LEVEL           THADV1C.105   
+     *,RS(P_FIELD,P_LEVELS)     !IN RS FIELD                               THADV1C.106   
+     *,QCL(P_FIELD,Q_LEVELS)    !IN. PRIMARY ARRAY FOR QCL                 THADV1C.107   
+     *,QCF(P_FIELD,Q_LEVELS)    !IN. PRIMARY ARRAY FOR QCF                 THADV1C.108   
+     *,OMEGA(U_FIELD,P_LEVELS)  !IN. TRUE VERTICAL VELOCITY DP/DT          THADV1C.109   
+     *,P_EXNER(P_FIELD,P_LEVELS+1) !IN. PRIMARY ARRAY FOR EXNER FUNCTION   THADV1C.110   
+                                                                           THADV1C.111   
+      REAL                                                                 THADV1C.112   
+     * DELTA_AK(P_LEVELS)      !IN LAYER THICKNESS                         THADV1C.113   
+     *,DELTA_BK(P_LEVELS)      !IN LAYER THICKNESS                         THADV1C.114   
+     *,AK(P_LEVELS)            !IN HYBRID CO-ORDINATE AT FULL LEVELS       THADV1C.115   
+     *,BK(P_LEVELS)            !IN HYBRID CO-ORDINATE AT FULL LEVELS       THADV1C.116   
+     *,AKH(P_LEVELS+1)         !IN HYBRID CO-ORDINATE AT HALF LEVELS       THADV1C.117   
+     *,BKH(P_LEVELS+1)         !IN HYBRID CO-ORDINATE AT HALF LEVELS       THADV1C.118   
+     *,SEC_P_LATITUDE(P_FIELD) !IN 1/COS(LAT) AT P POINTS (2-D ARRAY)      THADV1C.119   
+     *,SEC_U_LATITUDE(U_FIELD) !IN 1/COS(LAT) AT U POINTS (2-D ARRAY)      THADV1C.120   
+     *,LONGITUDE_STEP_INVERSE  !IN 1/(DELTA LAMDA)                         THADV1C.121   
+     *,LATITUDE_STEP_INVERSE   !IN 1/(DELTA PHI)                           THADV1C.122   
+     *,ADVECTION_TIMESTEP      !IN                                         THADV1C.123   
+     *,NU_BASIC                !IN STANDARD NU TERM FOR MODEL RUN.         THADV1C.124   
+     *,TRIGS(ROW_LENGTH)       !IN HOLDS TRIGONOMETRIC FUNCTIONS USED      THADV1C.125   
+     *                         ! IN FILTERING.                             THADV1C.126   
+                                                                           THADV1C.127   
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    THADV1C.128   
+C DEFINE LOCAL ARRAYS: 24 ARE REQUIRED.                                    THADV1C.129   
+      REAL                                                                 THADV1C.130   
+     &    OMEGA_P(P_FIELD,P_LEVELS)    ! HOLDS OMEGA AT P POINTS.          THADV1C.131   
+                                                                           THADV1C.132   
+      REAL                                                                 THADV1C.133   
+     * THETAL_FIRST_INC(P_FIELD,P_LEVELS) ! HOLDS THETAL INCREMENT         THADV1C.134   
+     *                           ! RETURNED BY FIRST CALL TO ADV_P_GD      THADV1C.135   
+     *,THETAL_SECOND_INC(P_FIELD)! HOLDS THETAL INCREMENT                  THADV1C.136   
+     *                           ! RETURNED BY SECOND CALL TO ADV_P_GD     THADV1C.137   
+     *,THETAL_PROV(P_FIELD,P_LEVELS) ! HOLDS PROVISIONAL VALUE OF          THADV1C.138   
+     *                           ! THETAL                                  THADV1C.139   
+                                                                           THADV1C.140   
+      REAL                                                                 THADV1C.141   
+     * THETAL_INCREMENT(P_FIELD,P_LEVELS) !HOLDS INCREMENT TO THETAL       THADV1C.142   
+     *,ZERO(P_FIELD)             !A FIELD OF ZEROES USED WHERE VERTICAL    THADV1C.143   
+     *                           !VELOCITY IS ZERO.                        THADV1C.144   
+                                                                           THADV1C.145   
+      REAL                                                                 THADV1C.146   
+     * NUX(P_FIELD,P_LEVELS) !COURANT NBR DEPENDENT NU AT P PTS USED       THADV1C.147   
+     *                    ! IN EAST-WEST ADVECTION.                        THADV1C.148   
+     *,NUY(P_FIELD,P_LEVELS) !COURANT NBR DEPENDENT NU AT P PTS USED       THADV1C.149   
+     *                    ! IN NORTH-SOUTH ADVECTION.                      THADV1C.150   
+                                                                           THADV1C.151   
+      REAL NUX_MIN(upd_P_ROWS), ! minimum value of NUX along a row         THADV1C.152   
+     &     NUY_MIN(ROW_LENGTH)  ! min of NUY along a column                THADV1C.153   
+                                                                           THADV1C.154   
+      REAL                                                                 THADV1C.155   
+     * BRSP(P_FIELD,P_LEVELS) !MASS TERM AT LEVEL K                        THADV1C.156   
+                                                                           THADV1C.157   
+! Work space required to allow the use of Fourth Order Advection           THADV1C.158   
+! U/V_MEAN_COPY and T_COPY arrays are defined with an extra halo           THADV1C.159   
+! this is required for the bigger stencil of the 4th order operator.       THADV1C.160   
+      REAL U_MEAN_COPY((ROW_LENGTH+2*extra_EW_Halo)*                       THADV1C.161   
+     &                 (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS),             THADV1C.162   
+     &  !    Copy of U_MEAN with extra halo space for 4th order            THADV1C.163   
+     &      V_MEAN_COPY((ROW_LENGTH+2*extra_EW_Halo)*                      THADV1C.164   
+     &                  (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS),            THADV1C.165   
+     &  !    Copy of V_MEAN with extra halo space for 4th order            THADV1C.166   
+     &      T_COPY((ROW_LENGTH+2*extra_EW_Halo)*                           THADV1C.167   
+     &             (tot_P_ROWS+2*extra_NS_Halo),P_LEVELS)                  THADV1C.168   
+     &  !    Copy of THETAL with extra halo space for 4th order            THADV1C.169   
+                                                                           THADV1C.170   
+      INTEGER  extended_P_FIELD,                                           THADV1C.171   
+     &         extended_U_FIELD                                            THADV1C.172   
+!  These are the sizes of the arrays with the extra halos                  THADV1C.173   
+C*---------------------------------------------------------------------    THADV1C.174   
+C DEFINE LOCAL VARIABLES                                                   THADV1C.175   
+      INTEGER                                                              THADV1C.176   
+     *  P_POINTS_UPDATE    ! NUMBER OF P POINTS TO BE UPDATED.             THADV1C.177   
+     *                     !  = ROWS*ROWLENGTH                             THADV1C.178   
+     *, U_POINTS_UPDATE    ! NUMBER OF U POINTS TO BE UPDATED.             THADV1C.179   
+     *                     !  = (ROWS-1)*ROWLENGTH                         THADV1C.180   
+     *, P_POINTS_REQUIRED  ! NUMBER OF P POINTS AT WHICH VALUES ARE        THADV1C.181   
+     *                     ! NEEDED TO UPDATE AT P_POINTS_UPDATE           THADV1C.182   
+     *, U_POINTS_REQUIRED  ! NUMBER OF U POINTS AT WHICH VALUES ARE        THADV1C.183   
+     *                     ! NEEDED TO UPDATE AT U_POINTS_UPDATE           THADV1C.184   
+     *, START_U_REQUIRED   ! FIRST U POINT OF VALUES REQUIRED TO UPDATE    THADV1C.185   
+     *                     ! AT P POINTS UPDATE.                           THADV1C.186   
+     *, END_U_REQUIRED     ! LAST U POINT OF REQUIRED VALUES.              THADV1C.187   
+                                                                           THADV1C.188   
+      INTEGER I_start,I_end  ! loop bounds                                 THADV1C.189   
+      INTEGER info  ! return code from comms                               THADV1C.190   
+                                                                           THADV1C.191   
+C REAL SCALARS                                                             THADV1C.192   
+      REAL                                                                 THADV1C.193   
+     & SCALAR1,SCALAR2,CONST1,LC_LF,TIMESTEP                               THADV1C.194   
+     &,PK, PK1         ! Pressure at half levels k and k1 (k1=k-1)         THADV1C.195   
+     &,P_EXNER_FULL    ! Exner pressure at full model level                THADV1C.196   
+                                                                           THADV1C.197   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        THADV1C.198   
+      INTEGER                                                              THADV1C.199   
+     &  I,J,K1,IK,K                                                        THADV1C.200   
+     *, FILTER_SPACE ! HORIZONTAL DIMENSION OF SPACE NEEDED IN FILTERING   THADV1C.201   
+     *               ! ROUTINE.                                            THADV1C.202   
+                                                                           THADV1C.203   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    THADV1C.204   
+      EXTERNAL ADV_P_GD,POLAR,UV_TO_P,FILTER                               THADV1C.205   
+*IF DEF,CRAY                                                               THADV1C.206   
+      INTEGER ISMIN                                                        THADV1C.207   
+      EXTERNAL ISMIN                                                       THADV1C.208   
+*ENDIF                                                                     THADV1C.209   
+C*---------------------------------------------------------------------    THADV1C.210   
+CL    CALL COMDECK TO GET PHYSICAL CONSTANTS USED.                         THADV1C.211   
+                                                                           THADV1C.212   
+*CALL C_THADV                                                              THADV1C.213   
+                                                                           THADV1C.214   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD.                            THADV1C.215   
+CL---------------------------------------------------------------------    THADV1C.216   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       THADV1C.217   
+CL---------------------------------------------------------------------    THADV1C.218   
+CL                                                                         THADV1C.219   
+                                                                           THADV1C.220   
+*CALL P_EXNERC                                                             THADV1C.221   
+                                                                           THADV1C.222   
+CL---------------------------------------------------------------------    THADV1C.223   
+CL    SECTION 1.     INITIALISATION                                        THADV1C.224   
+CL---------------------------------------------------------------------    THADV1C.225   
+C INCLUDE LOCAL CONSTANTS FROM GENERAL CONSTANTS BLOCK                     THADV1C.226   
+                                                                           THADV1C.227   
+      LC_LF = LC + LF                                                      THADV1C.228   
+      P_POINTS_UPDATE   = upd_P_ROWS*ROW_LENGTH                            THADV1C.229   
+      U_POINTS_UPDATE   = upd_U_ROWS*ROW_LENGTH                            THADV1C.230   
+      P_POINTS_REQUIRED = (upd_P_ROWS+2)*ROW_LENGTH                        THADV1C.231   
+      U_POINTS_REQUIRED = (upd_U_ROWS+2)*ROW_LENGTH                        THADV1C.232   
+      START_U_REQUIRED  = START_POINT_NO_HALO-ROW_LENGTH                   THADV1C.233   
+      END_U_REQUIRED    = END_U_POINT_NO_HALO+ROW_LENGTH                   THADV1C.234   
+                                                                           THADV1C.235   
+                                                                           THADV1C.236   
+C *IF -DEF,NOWHBR replaced by LWHITBROM logical                            THADV1C.237   
+      IF (LWHITBROM) THEN                                                  THADV1C.238   
+CL    CALCULATE BRSP TERM AT LEVEL K                                       THADV1C.239   
+                                                                           THADV1C.240   
+      K=1                                                                  THADV1C.241   
+! Loop over entire field                                                   THADV1C.242   
+      DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                  THADV1C.243   
+        BRSP(I,K)=(3.*RS(I,K)+RS(I,K+1))*(RS(I,K)-RS(I,K+1))               THADV1C.244   
+     *                *BKH(K+1)*.25*(PSTAR(I)-PSTAR_OLD(I))                THADV1C.245   
+      ENDDO                                                                THADV1C.246   
+      K=P_LEVELS                                                           THADV1C.247   
+! Loop over entire field                                                   THADV1C.248   
+      DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                  THADV1C.249   
+        BRSP(I,K)=-(3.*RS(I,K)+RS(I,K-1))*(RS(I,K)-RS(I,K-1))              THADV1C.250   
+     *                *BKH(K)*.25*(PSTAR(I)-PSTAR_OLD(I))                  THADV1C.251   
+      ENDDO                                                                THADV1C.252   
+                                                                           THADV1C.253   
+      DO K=2,P_LEVELS -1                                                   THADV1C.254   
+! Loop over entire field                                                   THADV1C.255   
+        DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                THADV1C.256   
+          BRSP(I,K)=((3.*RS(I,K)+RS(I,K+1))*(RS(I,K)-RS(I,K+1))*BKH(K+1)   THADV1C.257   
+     *              *.25*(PSTAR(I)-PSTAR_OLD(I)))                          THADV1C.258   
+     *              -((3.*RS(I,K)+RS(I,K-1))*(RS(I,K)-RS(I,K-1))*BKH(K)    THADV1C.259   
+     *              *.25*(PSTAR(I)-PSTAR_OLD(I)))                          THADV1C.260   
+        ENDDO                                                              THADV1C.261   
+                                                                           THADV1C.262   
+      ENDDO                                                                THADV1C.263   
+      END IF                                                               THADV1C.264   
+C *ENDIF                                                                   THADV1C.265   
+                                                                           THADV1C.266   
+      DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                  THADV1C.267   
+        ZERO(I) = 0.                                                       THADV1C.268   
+      ENDDO                                                                THADV1C.269   
+                                                                           THADV1C.270   
+! In order to use the same call to adv_p_gd for both the second and        THADV1C.271   
+! fourth order advection, U/V_MEAN are copied into _COPY arrays.           THADV1C.272   
+! In the case of second order advection some of the work space is          THADV1C.273   
+! wasted as there is more halo than we need.                               THADV1C.274   
+                                                                           THADV1C.275   
+! Calculate the size of the extended arrays which contain an               THADV1C.276   
+! extra halo:                                                              THADV1C.277   
+      extended_U_FIELD=(ROW_LENGTH+2*extra_EW_Halo)*                       THADV1C.278   
+     &                 (tot_U_ROWS+2*extra_NS_Halo)                        THADV1C.279   
+      extended_P_FIELD=(ROW_LENGTH+2*extra_EW_Halo)*                       THADV1C.280   
+     &                 (tot_P_ROWS+2*extra_NS_Halo)                        THADV1C.281   
+                                                                           THADV1C.282   
+      IF (L_SECOND) THEN                                                   THADV1C.283   
+                                                                           THADV1C.284   
+! Copy U/V_MEAN to U/V_MEAN_COPY with the same sized halos                 THADV1C.285   
+        CALL COPY_FIELD(U_MEAN,U_MEAN_COPY,                                THADV1C.286   
+     &                  U_FIELD,extended_U_FIELD,                          THADV1C.287   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    THADV1C.288   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.289   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.290   
+     &                  .FALSE.)                                           THADV1C.291   
+        CALL COPY_FIELD(V_MEAN,V_MEAN_COPY,                                THADV1C.292   
+     &                  U_FIELD,extended_U_FIELD,                          THADV1C.293   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    THADV1C.294   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.295   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.296   
+     &                  .FALSE.)                                           THADV1C.297   
+                                                                           THADV1C.298   
+      ELSE  ! if its fourth order:                                         THADV1C.299   
+                                                                           THADV1C.300   
+        CALL COPY_FIELD(U_MEAN,U_MEAN_COPY,                                THADV1C.301   
+     &                  U_FIELD,extended_U_FIELD,                          THADV1C.302   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    THADV1C.303   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.304   
+     &                  halo_4th,halo_4th,                                 THADV1C.305   
+     &                  .TRUE.)                                            THADV1C.306   
+        CALL COPY_FIELD(V_MEAN,V_MEAN_COPY,                                THADV1C.307   
+     &                  U_FIELD,extended_U_FIELD,                          THADV1C.308   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    THADV1C.309   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.310   
+     &                  halo_4th,halo_4th,                                 THADV1C.311   
+     &                  .TRUE.)                                            THADV1C.312   
+        CALL COPY_FIELD(THETAL,T_COPY,                                     THADV1C.313   
+     &                  P_FIELD,extended_P_FIELD,                          THADV1C.314   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    THADV1C.315   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.316   
+     &                  halo_4th,halo_4th,                                 THADV1C.317   
+     &                  .TRUE.)                                            THADV1C.318   
+                                                                           THADV1C.319   
+       ENDIF ! IF (L_SECOND)                                               THADV1C.320   
+                                                                           THADV1C.321   
+CL LOOP OVER P_LEVELS+1.                                                   THADV1C.322   
+CL    ON 1 TO P_LEVELS PROVISIONAL VALUES OF THE FIELD ARE CALCULATED.     THADV1C.323   
+CL    ON 2 TO P_LEVELS+1 THE FINAL INCREMENTS ARE CALCULATED AND ADDED     THADV1C.324   
+CL    ON. THE REASON FOR THIS LOGIC IS THAT THE PROVISIONAL VALUE AT       THADV1C.325   
+CL    LEVEL K+1 IS NEEDED BEFORE THE FINAL INCREMENT AT LEVEL K CAN BE     THADV1C.326   
+CL    CALCULATED.                                                          THADV1C.327   
+                                                                           THADV1C.328   
+      DO K=1,P_LEVELS+1                                                    THADV1C.329   
+CL SET TIMESTEP APPROPRIATE TO LEVEL                                       THADV1C.330   
+                                                                           THADV1C.331   
+        TIMESTEP = ADVECTION_TIMESTEP                                      THADV1C.332   
+CL IF NOT AT P_LEVELS+1 THEN                                               THADV1C.333   
+        IF(K.LE.P_LEVELS) THEN                                             THADV1C.334   
+                                                                           THADV1C.335   
+CL---------------------------------------------------------------------    THADV1C.336   
+CL    SECTION 2.     CALCULATE COURANT NUMBER DEPENDENT NU IF IN           THADV1C.337   
+CL                   FORECAST MODE.                                        THADV1C.338   
+CL                   CALCULATE                                             THADV1C.339   
+CL                   PROVISIONAL VALUES OF THETAL AT NEW TIME-LEVEL.       THADV1C.340   
+CL---------------------------------------------------------------------    THADV1C.341   
+                                                                           THADV1C.342   
+C ---------------------------------------------------------------------    THADV1C.343   
+CL    SECTION 2.1    SET NU TO NU_BASIC DEPENDENT ON MAX COURANT           THADV1C.344   
+CL                   NUMBER.                                               THADV1C.345   
+C ---------------------------------------------------------------------    THADV1C.346   
+CL    IF NU_BASIC IS ZERO THEN DO NOT BOTHER TO CALCULATE NU               THADV1C.347   
+          IF(.NOT.L_SECOND) THEN                                           THADV1C.348   
+CL    CALCULATE COURANT NUMBER                                             THADV1C.349   
+C NOTE: RS AND TRIG TERMS WILL BE INCLUDED AFTER INTERPOLATION TO P        THADV1C.350   
+C       GRID.                                                              THADV1C.351   
+CL    CALL UV_TO_P TO MOVE MEAN VELOCITIES ONTO P GRID                     THADV1C.352   
+                                                                           THADV1C.353   
+          CALL UV_TO_P(U_MEAN(START_U_REQUIRED,K),                         THADV1C.354   
+     *                 NUX(START_POINT_NO_HALO,K),U_POINTS_REQUIRED,       THADV1C.355   
+     *                 P_POINTS_UPDATE,ROW_LENGTH,upd_P_ROWS+1)            THADV1C.356   
+                                                                           THADV1C.357   
+          CALL UV_TO_P(V_MEAN(START_U_REQUIRED,K),                         THADV1C.358   
+     *                 NUY(START_POINT_NO_HALO,K),U_POINTS_REQUIRED,       THADV1C.359   
+     *                 P_POINTS_UPDATE,ROW_LENGTH,upd_P_ROWS+1)            THADV1C.360   
+                                                                           THADV1C.361   
+CL    CALCULATE NU FROM COURANT NUMBER INCLUDING TRIG AND RS TERMS.        THADV1C.362   
+          DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                     THADV1C.363   
+            NUX(I,K) = NUX(I,K)*LONGITUDE_STEP_INVERSE                     THADV1C.364   
+            NUY(I,K) = NUY(I,K)*LATITUDE_STEP_INVERSE                      THADV1C.365   
+            SCALAR1 = TIMESTEP/(RS(I,K)*                                   THADV1C.366   
+     *                RS(I,K)*(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))      THADV1C.367   
+            SCALAR2 = SEC_P_LATITUDE(I)*SCALAR1                            THADV1C.368   
+            SCALAR1 = SCALAR1*SCALAR1                                      THADV1C.369   
+            SCALAR2 = SCALAR2*SCALAR2                                      THADV1C.370   
+            NUX(I,K) = (1. - NUX(I,K)*NUX(I,K)*SCALAR2)*NU_BASIC           THADV1C.371   
+            NUY(I,K) = (1. - NUY(I,K)*NUY(I,K)*SCALAR1)*NU_BASIC           THADV1C.372   
+          ENDDO                                                            THADV1C.373   
+                                                                           THADV1C.374   
+! Set NUX equal to minimum value along each row                            THADV1C.375   
+                                                                           THADV1C.376   
+          DO J=FIRST_ROW,FIRST_ROW+upd_P_ROWS-1                            THADV1C.377   
+            I_start=(J-1)*ROW_LENGTH+FIRST_ROW_PT ! start and end of rpw   THADV1C.378   
+            I_end=(J-1)*ROW_LENGTH+LAST_ROW_PT    ! missing out halos      THADV1C.379   
+! Calculate minimum along this row                                         THADV1C.380   
+*IF DEF,CRAY                                                               THADV1C.381   
+            IK=ISMIN(I_end-I_start+1,NUX(I_start,K),1)                     THADV1C.382   
+            SCALAR1=NUX(IK+I_start-1,K)                                    THADV1C.383   
+*ELSE                                                                      THADV1C.384   
+            SCALAR1=NUX(I_start,K)                                         THADV1C.385   
+            DO I=I_start+1,I_end                                           THADV1C.386   
+              IF (NUX(I,K) .LT. SCALAR1) SCALAR1=NUX(I,K)                  THADV1C.387   
+            ENDDO                                                          THADV1C.388   
+*ENDIF                                                                     THADV1C.389   
+            NUX_MIN(J-FIRST_ROW+1)=SCALAR1                                 THADV1C.390   
+! The indexing of NUX_MIN goes from 1..ROWS                                THADV1C.391   
+          ENDDO ! J : loop over rows                                       THADV1C.392   
+                                                                           THADV1C.393   
+! So far we have only calculated the minimum along our local               THADV1C.394   
+! part of the row. Now we must find the minimum of all the                 THADV1C.395   
+! local minimums along the row                                             THADV1C.396   
+          CALL GCG_RMIN(upd_P_ROWS,GC_ROW_GROUP,info,NUX_MIN)              THADV1C.397   
+                                                                           THADV1C.398   
+! and now set all values of NUX to the minimum along the row               THADV1C.399   
+          DO J=FIRST_ROW,FIRST_ROW+upd_P_ROWS-1                            THADV1C.400   
+            IF (NUX_MIN(J-FIRST_ROW+1) .LT. 0.0)                           THADV1C.401   
+     &        NUX_MIN(J-FIRST_ROW+1)=0.0                                   THADV1C.402   
+                                                                           THADV1C.403   
+            I_start=(J-1)*ROW_LENGTH+1  ! beginning and                    THADV1C.404   
+            I_end=J*ROW_LENGTH          ! end of row                       THADV1C.405   
+                                                                           THADV1C.406   
+            DO I=I_start,I_end                                             THADV1C.407   
+              NUX(I,K)=NUX_MIN(J-FIRST_ROW+1)                              THADV1C.408   
+            ENDDO                                                          THADV1C.409   
+                                                                           THADV1C.410   
+          ENDDO ! J : loop over rows                                       THADV1C.411   
+                                                                           THADV1C.412   
+! Set NUY equal to minimum value along each column                         THADV1C.413   
+                                                                           THADV1C.414   
+          DO J=FIRST_ROW_PT,LAST_ROW_PT                                    GPB5F403.18    
+            I_start=(FIRST_ROW-1)*ROW_LENGTH+J                             THADV1C.417   
+! I_start points to the beginning of column J                              THADV1C.418   
+                                                                           THADV1C.419   
+! Calculate the minimum along this column                                  THADV1C.420   
+*IF DEF,CRAY                                                               THADV1C.421   
+            IK=ISMIN(upd_P_ROWS,NUY(I_start,K),ROW_LENGTH)                 THADV1C.422   
+            SCALAR1=NUY((IK-1)*ROW_LENGTH+I_start,K)                       GPB5F403.19    
+*ELSE                                                                      THADV1C.424   
+            I_end=I_start+(upd_P_ROWS-1)*ROW_LENGTH                        GPB5F403.20    
+! I_end points to the end of column J                                      THADV1C.426   
+            SCALAR1=NUY(I_start,K)                                         THADV1C.427   
+            DO I=I_start+ROW_LENGTH,I_end,ROW_LENGTH                       THADV1C.428   
+              IF (NUY(I,K) .LT. SCALAR1) SCALAR1=NUY(I,K)                  THADV1C.429   
+            ENDDO                                                          THADV1C.430   
+*ENDIF                                                                     THADV1C.431   
+            NUY_MIN(J)=SCALAR1                                             THADV1C.432   
+                                                                           THADV1C.433   
+          ENDDO ! J : loop over columns                                    THADV1C.434   
+! Once again, this is only the minimum along our local part                THADV1C.435   
+! of each column. We must now find the miniumum of all the local           THADV1C.436   
+! minimums along the column                                                THADV1C.437   
+          CALL GCG_RMIN(ROW_LENGTH-2*EW_Halo,GC_COL_GROUP,info,            GPB5F403.21    
+     &                  NUY_MIN(EW_Halo+1))                                GPB5F403.22    
+                                                                           THADV1C.439   
+! and now set all values of NUY to the minimum along the column            THADV1C.440   
+          DO J=FIRST_ROW_PT,LAST_ROW_PT                                    GPB5F403.23    
+            IF (NUY_MIN(J) .LT. 0.0) NUY_MIN(J)=0.0                        THADV1C.443   
+                                                                           THADV1C.444   
+            I_start=(FIRST_ROW-1)*ROW_LENGTH+J                             THADV1C.445   
+            I_end=I_start+(upd_P_ROWS-1)*ROW_LENGTH                        GPB5F403.24    
+                                                                           THADV1C.447   
+            DO I=I_start,I_end,ROW_LENGTH                                  THADV1C.448   
+              NUY(I,K)=NUY_MIN(J)                                          THADV1C.449   
+            ENDDO                                                          THADV1C.450   
+                                                                           THADV1C.451   
+          ENDDO ! J : loop over columns                                    THADV1C.452   
+                                                                           THADV1C.453   
+        ENDIF  ! IF its fourth order advection                             THADV1C.454   
+                                                                           THADV1C.455   
+                                                                           THADV1C.456   
+C ---------------------------------------------------------------------    THADV1C.457   
+CL    SECTION 2.2    CALL ADV_P_GD TO OBTAIN FIRST INCREMENT DUE TO        THADV1C.458   
+CL                   ADVECTION.                                            THADV1C.459   
+C ---------------------------------------------------------------------    THADV1C.460   
+                                                                           THADV1C.461   
+CL    CALL ADV_P_GD FOR THETAL.                                            THADV1C.462   
+          K1=K+1                                                           THADV1C.463   
+                                                                           THADV1C.464   
+          IF(K.EQ.P_LEVELS) THEN                                           THADV1C.465   
+C PASS ANY THETAL VALUES AS THOSE APPARENTLY AT LEVEL K+1 AS ETADOT        THADV1C.466   
+C IS SET TO ZERO BY USING ARRAY ZERO.                                      THADV1C.467   
+            K1 = K-1                                                       THADV1C.468   
+                                                                           THADV1C.469   
+          CALL ADV_P_GD(THETAL(1,K1),THETAL(1,K),THETAL(1,K1),             THADV1C.470   
+     *                  U_MEAN_COPY(1,K),V_MEAN_COPY(1,K),                 THADV1C.471   
+     &                  ETADOT_MEAN(1,K),ZERO,SEC_P_LATITUDE,              THADV1C.472   
+     *                  THETAL_FIRST_INC(1,K),NUX(1,K),NUY(1,K),P_FIELD,   THADV1C.473   
+     *                  U_FIELD,ROW_LENGTH,                                THADV1C.474   
+*CALL ARGFLDPT                                                             THADV1C.475   
+     &                  TIMESTEP,LATITUDE_STEP_INVERSE,                    THADV1C.476   
+     *                  LONGITUDE_STEP_INVERSE,SEC_U_LATITUDE,             THADV1C.477   
+     *                  BRSP(1,K),L_SECOND,LWHITBROM,                      THADV1C.478   
+     &                  T_COPY(1,K),extended_P_FIELD,extended_U_FIELD,     GSS1F403.710   
+     &                  extended_address)                                  GSS1F403.711   
+          ELSE IF(K.EQ.1)THEN                                              THADV1C.480   
+                                                                           THADV1C.481   
+C PASS ANY THETAL VALUES FOR LEVEL K-1 AS ETADOT AT LEVEL 1                THADV1C.482   
+C IS SET TO ZERO BY USING ARRAY ZERO.                                      THADV1C.483   
+          CALL ADV_P_GD(THETAL(1,K1),THETAL(1,K),THETAL(1,K1),             THADV1C.484   
+     *                  U_MEAN_COPY(1,K),V_MEAN_COPY(1,K),ZERO,            THADV1C.485   
+     *                  ETADOT_MEAN(1,K1),                                 THADV1C.486   
+     *                  SEC_P_LATITUDE,THETAL_FIRST_INC(1,K),              THADV1C.487   
+     *                  NUX(1,K),NUY(1,K),                                 THADV1C.488   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        THADV1C.489   
+*CALL ARGFLDPT                                                             THADV1C.490   
+     &                  TIMESTEP,                                          THADV1C.491   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      THADV1C.492   
+     *                  SEC_U_LATITUDE,BRSP(1,K),L_SECOND,LWHITBROM,       THADV1C.493   
+     &                  T_COPY(1,K),extended_P_FIELD,extended_U_FIELD,     GSS1F403.712   
+     &                  extended_address)                                  GSS1F403.713   
+          ELSE                                                             THADV1C.495   
+          CALL ADV_P_GD(THETAL(1,K-1),THETAL(1,K),THETAL(1,K1),            THADV1C.496   
+     *                  U_MEAN_COPY(1,K),V_MEAN_COPY(1,K),                 THADV1C.497   
+     &                  ETADOT_MEAN(1,K),ETADOT_MEAN(1,K1),                THADV1C.498   
+     *                  SEC_P_LATITUDE,THETAL_FIRST_INC(1,K),              THADV1C.499   
+     *                  NUX(1,K),NUY(1,K),                                 THADV1C.500   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        THADV1C.501   
+*CALL ARGFLDPT                                                             THADV1C.502   
+     &                  TIMESTEP,                                          THADV1C.503   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      THADV1C.504   
+     *                  SEC_U_LATITUDE,BRSP(1,K),L_SECOND,LWHITBROM,       THADV1C.505   
+     &                  T_COPY(1,K),extended_P_FIELD,extended_U_FIELD,     GSS1F403.714   
+     &                  extended_address)                                  GSS1F403.715   
+                                                                           THADV1C.507   
+          END IF                                                           THADV1C.508   
+                                                                           THADV1C.509   
+                                                                           THADV1C.510   
+C ---------------------------------------------------------------------    THADV1C.511   
+CL    SECTION 2.3    REMOVE MASS-WEIGHTING FROM INCREMENT AND ADD ONTO     THADV1C.512   
+CL                   FIELD TO OBTAIN PROVISIONAL VALUE.                    THADV1C.513   
+C ---------------------------------------------------------------------    THADV1C.514   
+                                                                           THADV1C.515   
+          DO I=1,START_POINT_NO_HALO-1                                     ADR2F402.3     
+            THETAL_PROV(I,K) = 0.0                                         ADR2F402.4     
+          ENDDO                                                            ADR2F402.5     
+                                                                           ADR2F402.6     
+          DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                     THADV1C.516   
+            SCALAR1 = RS(I,K)*RS(I,K)                                      THADV1C.517   
+     *                      *(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I))        THADV1C.518   
+            THETAL_FIRST_INC(I,K)=THETAL_FIRST_INC(I,K)/SCALAR1            THADV1C.519   
+            THETAL_PROV(I,K) = THETAL(I,K)- THETAL_FIRST_INC(I,K)          THADV1C.520   
+          ENDDO                                                            THADV1C.521   
+                                                                           THADV1C.522   
+          DO I=END_P_POINT_NO_HALO+1,P_FIELD                               ADR2F402.7     
+            THETAL_PROV(I,K) = 0.0                                         ADR2F402.8     
+          ENDDO                                                            ADR2F402.9     
+                                                                           ADR2F402.10    
+*IF DEF,GLOBAL                                                             THADV1C.523   
+CL   GLOBAL MODEL CALCULATE PROVISIONAL POLAR VALUE.                       THADV1C.524   
+          IF (at_top_of_LPG) THEN                                          THADV1C.525   
+! North Pole                                                               THADV1C.526   
+            DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                  THADV1C.527   
+              THETAL_PROV(I,K) = THETAL(I,K)                               THADV1C.528   
+              THETAL_FIRST_INC(I,K) = -THETAL_FIRST_INC(I,K)/              THADV1C.529   
+     &                         (RS(I,K)*RS(I,K)*                           THADV1C.530   
+     &                         (DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))     THADV1C.531   
+            ENDDO                                                          THADV1C.532   
+          ENDIF                                                            THADV1C.533   
+                                                                           THADV1C.534   
+          IF (at_base_of_LPG) THEN                                         THADV1C.535   
+! South Pole                                                               THADV1C.536   
+            DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1              THADV1C.537   
+              THETAL_PROV(I,K) = THETAL(I,K)                               THADV1C.538   
+              THETAL_FIRST_INC(I,K) = -THETAL_FIRST_INC(I,K)/              THADV1C.539   
+     &                         (RS(I,K)*RS(I,K)*                           THADV1C.540   
+     &                         (DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))     THADV1C.541   
+            ENDDO                                                          THADV1C.542   
+          ENDIF                                                            THADV1C.543   
+                                                                           THADV1C.544   
+*ELSE                                                                      THADV1C.545   
+CL    LIMITED AREA MODEL THEN SET PROVISIONAL VALUES ON BOUNDARIES         THADV1C.546   
+CL    TO FIELD VALUES AT OLD TIME LEVEL.                                   THADV1C.547   
+      IF (at_top_of_LPG) THEN                                              THADV1C.548   
+        DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                      THADV1C.549   
+          THETAL_PROV(I,K) = THETAL(I,K)                                   THADV1C.550   
+        ENDDO                                                              THADV1C.551   
+      ENDIF                                                                THADV1C.552   
+      IF (at_base_of_LPG) THEN                                             THADV1C.553   
+        DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                  THADV1C.554   
+          THETAL_PROV(I,K) = THETAL(I,K)                                   THADV1C.555   
+        ENDDO                                                              THADV1C.556   
+      ENDIF                                                                THADV1C.557   
+*ENDIF                                                                     THADV1C.558   
+        END IF                                                             THADV1C.559   
+CL END CONDITIONAL ON LEVEL BEING LESS THAN P_LEVELS+1                     THADV1C.560   
+      ENDDO                                                                THADV1C.561   
+                                                                           THADV1C.562   
+*IF DEF,GLOBAL                                                             THADV1C.563   
+                                                                           THADV1C.564   
+      CALL POLAR(THETAL_PROV,THETAL_FIRST_INC,THETAL_FIRST_INC,            THADV1C.565   
+*CALL ARGFLDPT                                                             THADV1C.566   
+     &           P_FIELD,P_FIELD,P_FIELD,                                  THADV1C.567   
+     &           TOP_ROW_START,P_BOT_ROW_START,                            THADV1C.568   
+     &           ROW_LENGTH,P_LEVELS)                                      THADV1C.569   
+*ENDIF                                                                     THADV1C.570   
+                                                                           THADV1C.571   
+      IF (L_SECOND) THEN                                                   THADV1C.572   
+                                                                           THADV1C.573   
+! Do a halo update on the THETAL_PROV array                                THADV1C.574   
+! that has just been calculated                                            THADV1C.575   
+        CALL SWAPBOUNDS(THETAL_PROV,ROW_LENGTH,tot_P_ROWS,                 THADV1C.576   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          THADV1C.577   
+!        CALL SET_SIDES(THETAL_PROV,P_FIELD,ROW_LENGTH,P_LEVELS,           THADV1C.578   
+!     &                 fld_type_p)                                        THADV1C.579   
+                                                                           THADV1C.580   
+      ELSE  ! fourth order advection                                       THADV1C.581   
+                                                                           THADV1C.582   
+! Copy THETAL_PROV into T_COPY which has double halos for fourth           THADV1C.583   
+! order advection, and do swap to fill these halos                         THADV1C.584   
+        CALL COPY_FIELD(THETAL_PROV,T_COPY,                                THADV1C.585   
+     &                  P_FIELD,extended_P_FIELD,                          THADV1C.586   
+     &                  ROW_LENGTH,tot_P_ROWS,P_LEVELS,                    THADV1C.587   
+     &                  EW_Halo,NS_Halo,                                   THADV1C.588   
+     &                  halo_4th,halo_4th,                                 THADV1C.589   
+     &                  .TRUE.)                                            THADV1C.590   
+                                                                           THADV1C.591   
+      ENDIF                                                                THADV1C.592   
+                                                                           THADV1C.593   
+! Set up OMEGA_P array                                                     THADV1C.594   
+! (Was SECTION 3.2):                                                       THADV1C.595   
+!    SECTION 3.2    INTERPOLATE OMEGA TO P GRID AND CALCULATE              THADV1C.596   
+!                   REMAINING TERM IN ADVECTION EQUATION.                  THADV1C.597   
+!                   CALCULATE TOTAL MASS-WEIGHTED INCREMENT TO FIELD.      THADV1C.598   
+                                                                           THADV1C.599   
+            DO K1=1,P_LEVELS                                               THADV1C.600   
+              CALL UV_TO_P(OMEGA(START_U_REQUIRED,K1),                     THADV1C.601   
+     &                     OMEGA_P(START_POINT_NO_HALO,K1),                THADV1C.602   
+     &                     U_POINTS_REQUIRED,                              THADV1C.603   
+     &                     P_POINTS_UPDATE,ROW_LENGTH,upd_P_ROWS+1)        THADV1C.604   
+*IF DEF,GLOBAL                                                             THADV1C.605   
+              IF (at_top_of_LPG) THEN                                      THADV1C.606   
+                DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1              THADV1C.607   
+                  OMEGA_P(I,K1)=0.                                         THADV1C.608   
+                ENDDO                                                      THADV1C.609   
+              ENDIF                                                        THADV1C.610   
+                                                                           THADV1C.611   
+              IF (at_base_of_LPG) THEN                                     THADV1C.612   
+                DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1          THADV1C.613   
+                  OMEGA_P(I,K1)=0.                                         THADV1C.614   
+                ENDDO                                                      THADV1C.615   
+              ENDIF                                                        THADV1C.616   
+*ENDIF                                                                     THADV1C.617   
+            ENDDO                                                          THADV1C.618   
+*IF DEF,GLOBAL                                                             THADV1C.619   
+                                                                           THADV1C.620   
+              CALL POLAR(OMEGA_P,OMEGA_P,OMEGA_P,                          THADV1C.621   
+*CALL ARGFLDPT                                                             THADV1C.622   
+     &                   P_FIELD,P_FIELD,P_FIELD,                          THADV1C.623   
+     &                   START_POINT_NO_HALO,                              THADV1C.624   
+     &                   END_P_POINT_NO_HALO-ROW_LENGTH+1,                 THADV1C.625   
+     &                   ROW_LENGTH,P_LEVELS)                              THADV1C.626   
+*ENDIF                                                                     THADV1C.627   
+                                                                           THADV1C.628   
+CL BEGIN CONDITIONAL ON LEVEL BEING GREATER THAN 1                         THADV1C.629   
+                                                                           THADV1C.630   
+      DO K=1,P_LEVELS+1                                                    THADV1C.631   
+        IF(K.GT.1) THEN                                                    THADV1C.632   
+CL---------------------------------------------------------------------    THADV1C.633   
+CL    SECTION 3.     ALL WORK IN THIS SECTION PERFORMED AT LEVEL-1.        THADV1C.634   
+CL                   CALCULATE SECOND INCREMENT DUE TO ADVECTION.          THADV1C.635   
+CL                   CALCULATE TOTAL INCREMENT TO FIELD AND FILTER         THADV1C.636   
+CL                   WHERE NECESSARY THEN UPDATE FIELD.                    THADV1C.637   
+CL                   THE POLAR INCREMENTS ARE THEN CALCULATED AND ADDED    THADV1C.638   
+CL                   ON BY CALLING POLAR.                                  THADV1C.639   
+CL---------------------------------------------------------------------    THADV1C.640   
+                                                                           THADV1C.641   
+         TIMESTEP = ADVECTION_TIMESTEP                                     THADV1C.642   
+                                                                           THADV1C.643   
+         CONST1 = R/(CP*CP)*TIMESTEP                                       THADV1C.644   
+C ---------------------------------------------------------------------    THADV1C.645   
+CL    SECTION 3.1    CALL ADV_P_GD TO OBTAIN SECOND INCREMENT DUE TO       THADV1C.646   
+CL                   ADVECTION.                                            THADV1C.647   
+C ---------------------------------------------------------------------    THADV1C.648   
+                                                                           THADV1C.649   
+CL    CALL ADV_P_GD FOR THETAL.                                            THADV1C.650   
+          K1=K-1                                                           THADV1C.651   
+C K1 HOLDS K-1.                                                            THADV1C.652   
+          IF(K.GT.P_LEVELS) THEN                                           THADV1C.653   
+C THE ZERO VERTICAL FLUX AT THE TOP IS ENSURED BY PASSING ETADOT AS        THADV1C.654   
+C ZERO.                                                                    THADV1C.655   
+                                                                           THADV1C.656   
+          CALL ADV_P_GD(THETAL_PROV(1,K-2),THETAL_PROV(1,K-1),             THADV1C.657   
+     *                  THETAL_PROV(1,K-2),                                THADV1C.658   
+     *                  U_MEAN_COPY(1,K1),V_MEAN_COPY(1,K1),               THADV1C.659   
+     &                  ETADOT_MEAN(1,K-1),ZERO,SEC_P_LATITUDE,            THADV1C.660   
+     *                  THETAL_SECOND_INC,NUX(1,K-1),NUY(1,K-1),P_FIELD,   THADV1C.661   
+     *                  U_FIELD,ROW_LENGTH,                                THADV1C.662   
+*CALL ARGFLDPT                                                             THADV1C.663   
+     &                  TIMESTEP,LATITUDE_STEP_INVERSE,                    THADV1C.664   
+     *                  LONGITUDE_STEP_INVERSE,SEC_U_LATITUDE,             THADV1C.665   
+     *                  BRSP(1,K-1),L_SECOND,LWHITBROM,                    THADV1C.666   
+     &                  T_COPY(1,K-1),extended_P_FIELD,extended_U_FIELD,   GSS1F403.716   
+     &                  extended_address)                                  GSS1F403.717   
+                                                                           THADV1C.668   
+          ELSE IF(K.EQ.2) THEN                                             THADV1C.669   
+C THE ZERO VERTICAL FLUX AT THE BOTTOM IS ENSURED BY PASSING ETADOT AS     THADV1C.670   
+C ZERO.                                                                    THADV1C.671   
+          CALL ADV_P_GD(THETAL_PROV(1,K),THETAL_PROV(1,K-1),               THADV1C.672   
+     *                  THETAL_PROV(1,K),                                  THADV1C.673   
+     *                  U_MEAN_COPY(1,K1),V_MEAN_COPY(1,K1),ZERO,          THADV1C.674   
+     *                  ETADOT_MEAN(1,K),                                  THADV1C.675   
+     *                  SEC_P_LATITUDE,THETAL_SECOND_INC,                  THADV1C.676   
+     *                  NUX(1,K-1),NUY(1,K-1),                             THADV1C.677   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        THADV1C.678   
+*CALL ARGFLDPT                                                             THADV1C.679   
+     &                  TIMESTEP,                                          THADV1C.680   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      THADV1C.681   
+     *                  SEC_U_LATITUDE,                                    THADV1C.682   
+     *                  BRSP(1,K-1),L_SECOND,LWHITBROM,                    THADV1C.683   
+     &                  T_COPY(1,K-1),extended_P_FIELD,extended_U_FIELD,   GSS1F403.718   
+     &                  extended_address)                                  GSS1F403.719   
+          ELSE                                                             THADV1C.685   
+                                                                           THADV1C.686   
+          CALL ADV_P_GD(THETAL_PROV(1,K-2),THETAL_PROV(1,K-1),             THADV1C.687   
+     *                  THETAL_PROV(1,K),                                  THADV1C.688   
+     *                  U_MEAN_COPY(1,K1),V_MEAN_COPY(1,K1),               THADV1C.689   
+     &                  ETADOT_MEAN(1,K-1),ETADOT_MEAN(1,K),               THADV1C.690   
+     *                  SEC_P_LATITUDE,THETAL_SECOND_INC,                  THADV1C.691   
+     *                  NUX(1,K-1),NUY(1,K-1),                             THADV1C.692   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        THADV1C.693   
+*CALL ARGFLDPT                                                             THADV1C.694   
+     &                  TIMESTEP,                                          THADV1C.695   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      THADV1C.696   
+     *                  SEC_U_LATITUDE,                                    THADV1C.697   
+     *                  BRSP(1,K-1),L_SECOND,LWHITBROM,                    THADV1C.698   
+     &                  T_COPY(1,K-1),extended_P_FIELD,extended_U_FIELD,   GSS1F403.720   
+     &                  extended_address)                                  GSS1F403.721   
+          END IF                                                           THADV1C.700   
+                                                                           THADV1C.701   
+                                                                           THADV1C.702   
+C TOTAL MASS-WEIGHTED HORIZONTAL AND VERTICAL INCREMENTS ARE CALCULATED    THADV1C.703   
+C SEPARATELY.                                                              THADV1C.704   
+                                                                           THADV1C.705   
+          IF(K.LT.Q_LEVELS+2) THEN                                         THADV1C.706   
+            DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                   THADV1C.707   
+                                                                           THADV1C.708   
+              PK  = AKH(K)  + BKH(K) *PSTAR(I)                             THADV1C.709   
+              PK1 = AKH(K1) + BKH(K1)*PSTAR(I)  !  K1 = K-1                THADV1C.710   
+              P_EXNER_FULL = P_EXNER_C                                     THADV1C.711   
+     *        (P_EXNER(I,K),P_EXNER(I,K1),PK,PK1,KAPPA)                    THADV1C.712   
+                                                                           THADV1C.713   
+              THETAL_INCREMENT(I,K1) = .5*(THETAL_SECOND_INC(I) +          THADV1C.714   
+     *                       THETAL_FIRST_INC(I,K-1)*RS(I,K1)*RS(I,K1)     THADV1C.715   
+     *                      *(DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I)))         THADV1C.716   
+     *                      -(LC*QCL(I,K1)+LC_LF*QCF(I,K1))*CONST1*        THADV1C.717   
+     &                       OMEGA_P(I,K1)/((AK(K1)+BK(K1)*PSTAR(I))       THADV1C.718   
+     *                       *(P_EXNER_FULL))                              THADV1C.719   
+                                                                           THADV1C.720   
+            ENDDO                                                          THADV1C.721   
+          ELSE                                                             THADV1C.722   
+            DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                   THADV1C.723   
+              THETAL_INCREMENT(I,K1) = .5*(THETAL_SECOND_INC(I) +          THADV1C.724   
+     *                       THETAL_FIRST_INC(I,K-1)*RS(I,K1)*RS(I,K1)     THADV1C.725   
+     *                      *(DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I)))         THADV1C.726   
+            ENDDO                                                          THADV1C.727   
+          END IF                                                           THADV1C.728   
+                                                                           THADV1C.729   
+C ---------------------------------------------------------------------    THADV1C.730   
+CL    SECTION 3.3    IF GLOBAL MODEL CALCULATE POLAR INCREMENTS.           THADV1C.731   
+CL                   IF LIMITED AREA MASS-WEIGHT BOUNDARIES.               THADV1C.732   
+C ---------------------------------------------------------------------    THADV1C.733   
+                                                                           THADV1C.734   
+CL    GLOBAL MODEL CALCULATE POLAR INCREMENT.                              THADV1C.735   
+CL    CALCULATE MERIDIONAL FLUX AROUND POLES BY ADDING THE TWO             THADV1C.736   
+CL    INCREMENTS AND ALSO MASS-WEIGHTING POLAR FIELDS.                     THADV1C.737   
+C NEGATIVE SIGN BEFORE FIRST INCS IS DUE TO THEIR SIGN HAVING BEEN         THADV1C.738   
+C CHANGED PRIOR TO THE CALCULATION OF THE INTERMEDIATE VALUE.              THADV1C.739   
+          IF (at_top_of_LPG) THEN                                          THADV1C.740   
+! Northern boundary/pole                                                   THADV1C.741   
+            IF (K.LT.Q_LEVELS+2) THEN                                      THADV1C.742   
+              DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                THADV1C.743   
+                SCALAR1 = RS(I,K1)*RS(I,K1)*                               THADV1C.744   
+     &            (DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I))                     THADV1C.745   
+*IF DEF,GLOBAL                                                             THADV1C.746   
+                PK  = AKH(K)  + BKH(K) *PSTAR(I)                           THADV1C.747   
+                PK1 = AKH(K1) + BKH(K1)*PSTAR(I)  !  K1 = K-1              THADV1C.748   
+                P_EXNER_FULL = P_EXNER_C(P_EXNER(I,K),                     THADV1C.749   
+     &                                   P_EXNER(I,K1),PK,PK1,KAPPA)       THADV1C.750   
+                                                                           THADV1C.751   
+                THETAL_INCREMENT(I,K1) = -.5*(THETAL_SECOND_INC(I)         THADV1C.752   
+     &                           - THETAL_FIRST_INC(I,K-1)*SCALAR1)        THADV1C.753   
+     &                           +(LC*QCL(I,K1)+LC_LF*QCF(I,K1))*CONST1*   THADV1C.754   
+     &                           OMEGA_P(I,K1)/((AK(K1)+BK(K1)*PSTAR(I))   THADV1C.755   
+     &                           *P_EXNER_FULL)                            THADV1C.756   
+*ENDIF                                                                     THADV1C.757   
+                THETAL(I,K1) = THETAL(I,K1)*SCALAR1                        THADV1C.758   
+              ENDDO                                                        THADV1C.759   
+            ELSE  ! (IF K.GE.Q_LEVELS+2)                                   THADV1C.760   
+              DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                THADV1C.761   
+                SCALAR1 = RS(I,K1)*RS(I,K1)*                               THADV1C.762   
+     &                    (DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I))             THADV1C.763   
+*IF DEF,GLOBAL                                                             THADV1C.764   
+                THETAL_INCREMENT(I,K1) = -.5*(THETAL_SECOND_INC(I)         THADV1C.765   
+     &                              - THETAL_FIRST_INC(I,K-1)*SCALAR1)     THADV1C.766   
+*ENDIF                                                                     THADV1C.767   
+                THETAL(I,K1) = THETAL(I,K1)*SCALAR1                        THADV1C.768   
+              ENDDO                                                        THADV1C.769   
+            ENDIF ! (K.LT.Q_LEVELS+2)                                      THADV1C.770   
+          ENDIF ! (attop)                                                  THADV1C.771   
+                                                                           THADV1C.772   
+          IF (at_base_of_LPG) THEN                                         THADV1C.773   
+! Southern boundary/pole                                                   THADV1C.774   
+            IF (K.LT.Q_LEVELS+2) THEN                                      THADV1C.775   
+              DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1            THADV1C.776   
+                SCALAR2 = RS(I,K1)*RS(I,K1)*                               THADV1C.777   
+     &            (DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I))                     THADV1C.778   
+*IF DEF,GLOBAL                                                             THADV1C.779   
+                PK  = AKH(K)  + BKH(K) *PSTAR(I)                           THADV1C.780   
+                PK1 = AKH(K1) + BKH(K1)*PSTAR(I)  !  K1 = K-1              THADV1C.781   
+                P_EXNER_FULL = P_EXNER_C(P_EXNER(I,K),                     THADV1C.782   
+     &                                   P_EXNER(I,K1),PK,PK1,KAPPA)       THADV1C.783   
+                                                                           THADV1C.784   
+                THETAL_INCREMENT(I,K1) = -.5*(THETAL_SECOND_INC(I)         THADV1C.785   
+     &                           - THETAL_FIRST_INC(I,K-1)*SCALAR2)        THADV1C.786   
+     &                           +(LC*QCL(I,K1)+LC_LF*QCF(I,K1))*CONST1*   THADV1C.787   
+     &                           OMEGA_P(I,K1)/((AK(K1)+BK(K1)*PSTAR(I))   THADV1C.788   
+     &                           *P_EXNER_FULL)                            THADV1C.789   
+*ENDIF                                                                     THADV1C.790   
+                THETAL(I,K1) = THETAL(I,K1)*SCALAR2                        THADV1C.791   
+              ENDDO                                                        THADV1C.792   
+            ELSE  ! (IF K.GE.Q_LEVELS+2)                                   THADV1C.793   
+              DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1            THADV1C.794   
+                SCALAR2 = RS(I,K1)*RS(I,K1)*                               THADV1C.795   
+     &                    (DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I))             THADV1C.796   
+                THETAL(I,K1) = THETAL(I,K1)*SCALAR2                        THADV1C.797   
+*IF DEF,GLOBAL                                                             THADV1C.798   
+                THETAL_INCREMENT(I,K1) = -.5*(THETAL_SECOND_INC(I)         THADV1C.799   
+     &                              - THETAL_FIRST_INC(I,K-1)*SCALAR2)     THADV1C.800   
+*ENDIF                                                                     THADV1C.801   
+              ENDDO                                                        THADV1C.802   
+            ENDIF ! (K.LT.Q_LEVELS+2)                                      THADV1C.803   
+          ENDIF ! (atbase)                                                 THADV1C.804   
+                                                                           THADV1C.805   
+CL END CONDITIONAL LEVEL GREATER THAN ONE                                  THADV1C.806   
+        END IF                                                             THADV1C.807   
+                                                                           THADV1C.808   
+CL END LOOP OVER P_LEVELS+1                                                THADV1C.809   
+      enddo                                                                THADV1C.810   
+                                                                           THADV1C.811   
+CL---------------------------------------------------------------------    THADV1C.812   
+CL    SECTION 4      IF GLOBAL MODEL THEN FILTER INCREMENTS AND            THADV1C.813   
+CL                   UPDATE POLAR VALUES BY CALLING POLAR.                 THADV1C.814   
+CL                   UPDATE ALL OTHER VALUES.                              THADV1C.815   
+CL---------------------------------------------------------------------    THADV1C.816   
+                                                                           THADV1C.817   
+*IF DEF,GLOBAL                                                             THADV1C.818   
+                                                                           THADV1C.819   
+C ---------------------------------------------------------------------    THADV1C.820   
+CL    SECTION 4.1    CALL FILTER TO DO FILTERING.                          THADV1C.821   
+C ---------------------------------------------------------------------    THADV1C.822   
+                                                                           THADV1C.823   
+C SET FILTER_SPACE WHICH IS ROW_LENGTH+2 TIMES THE NUMBER OF ROWS TO       THADV1C.824   
+C BE FILTERED.                                                             THADV1C.825   
+                                                                           THADV1C.826   
+      FILTER_SPACE = (ROW_LENGTH+2)*(NORTHERN_FILTERED_P_ROW-1+            THADV1C.827   
+     *                tot_P_ROWS-SOUTHERN_FILTERED_P_ROW)                  THADV1C.828   
+CL    CALL FILTER FOR THETAL INCREMENTS                                    THADV1C.829   
+                                                                           THADV1C.830   
+      CALL FILTER(THETAL_INCREMENT,P_FIELD,P_LEVELS,                       APB0F402.47    
+     &            FILTER_SPACE,ROW_LENGTH,                                 APB0F402.48    
+*CALL ARGFLDPT                                                             APB0F402.49    
+     &            FILTER_WAVE_NUMBER_P_ROWS,TRIGS,IFAX,                    APB0F402.50    
+     *            NORTHERN_FILTERED_P_ROW,SOUTHERN_FILTERED_P_ROW)         THADV1C.834   
+                                                                           THADV1C.835   
+C ---------------------------------------------------------------------    THADV1C.836   
+CL    SECTION 4.2    CALL POLAR TO UPDATE POLAR VALUES                     THADV1C.837   
+C ---------------------------------------------------------------------    THADV1C.838   
+                                                                           THADV1C.839   
+      CALL POLAR(THETAL,THETAL_INCREMENT,THETAL_INCREMENT,                 THADV1C.840   
+*CALL ARGFLDPT                                                             THADV1C.841   
+     &           P_FIELD,P_FIELD,P_FIELD,                                  THADV1C.842   
+     &           TOP_ROW_START,P_BOT_ROW_START,                            THADV1C.843   
+     &           ROW_LENGTH,P_LEVELS)                                      THADV1C.844   
+                                                                           THADV1C.845   
+*ENDIF                                                                     THADV1C.846   
+C ---------------------------------------------------------------------    THADV1C.847   
+CL    SECTION 4.3    UPDATE ALL OTHER POINTS.                              THADV1C.848   
+C   OUTPUT IS MASS-WEIGHTED.                                               THADV1C.849   
+C   INCREMENTS ARE ALREADY MASS-WEIGHTED                                   THADV1C.850   
+C ---------------------------------------------------------------------    THADV1C.851   
+                                                                           THADV1C.852   
+      DO K=1,P_LEVELS                                                      THADV1C.853   
+C UPDATE THETAL.                                                           THADV1C.854   
+CFPP$ SELECT(CONCUR)                                                       THADV1C.855   
+        DO I= START_POINT_NO_HALO,END_P_POINT_NO_HALO                      THADV1C.856   
+          THETAL(I,K)=THETAL(I,K)*RS(I,K)*RS(I,K)*                         THADV1C.857   
+     &        (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))-THETAL_INCREMENT(I,K)     THADV1C.858   
+        ENDDO                                                              THADV1C.859   
+      ENDDO                                                                THADV1C.860   
+                                                                           THADV1C.861   
+CL    END OF ROUTINE TH_ADV                                                THADV1C.862   
+                                                                           THADV1C.863   
+      RETURN                                                               THADV1C.864   
+      END                                                                  THADV1C.865   
+*ENDIF                                                                     THADV1C.866   

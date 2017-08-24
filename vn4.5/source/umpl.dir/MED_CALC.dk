@@ -1,0 +1,325 @@
+*IF DEF,OCEAN                                                              MED_CALC.2     
+C *****************************COPYRIGHT******************************     MED_CALC.3     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    MED_CALC.4     
+C                                                                          MED_CALC.5     
+C Use, duplication or disclosure of this code is subject to the            MED_CALC.6     
+C restrictions as set forth in the contract.                               MED_CALC.7     
+C                                                                          MED_CALC.8     
+C                Meteorological Office                                     MED_CALC.9     
+C                London Road                                               MED_CALC.10    
+C                BRACKNELL                                                 MED_CALC.11    
+C                Berkshire UK                                              MED_CALC.12    
+C                RG12 2SZ                                                  MED_CALC.13    
+C                                                                          MED_CALC.14    
+C If no contract has been raised with this copy of the code, the use,      MED_CALC.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      MED_CALC.16    
+C to do so must first be obtained in writing from the Head of Numerical    MED_CALC.17    
+C Modelling at the above address.                                          MED_CALC.18    
+C ******************************COPYRIGHT******************************    MED_CALC.19    
+CLL                                                                        MED_CALC.20    
+CLL   Subroutine : MED_CALC                                                MED_CALC.21    
+CLL                                                                        MED_CALC.22    
+CLL   Author : M J Roberts                                                 MED_CALC.23    
+CLL                                                                        MED_CALC.24    
+CLL   Modification history:                                                MED_CALC.25    
+CLL   Implemented at UM vn 4.5 20 May 1998                                 MED_CALC.26    
+CLL                                                                        MED_CALC.27    
+CLL   Programming standards use Cox naming convention for Cox variables    MED_CALC.28    
+CLL   with the addition that lower case variables are local to the         MED_CALC.29    
+CLL   routine.                                                             MED_CALC.30    
+CLL                                                                        MED_CALC.31    
+CLL   This routine takes two tracer points each in the Atlantic and        MED_CALC.32    
+CLL   Mediterranean, calculates an average value, and then calculates      MED_CALC.33    
+CLL   a tendency based on the difference between the average value and     MED_CALC.34    
+CLL   the value at each point. This tendency is then passed down to        MED_CALC.35    
+CLL   subroutine TRACER for updating the tracer values.                    MED_CALC.36    
+CLL                                                                        MED_CALC.37    
+CLL   The points to be mixed are hardwired in OSETCON. This routine will   MED_CALC.38    
+CLL   work for any set of four (as in HADCM3) or two (HADCM2) points.      MED_CALC.39    
+CLL                                                                        MED_CALC.40    
+CLLEND-----------------------------------------------------------------    MED_CALC.41    
+C*                                                                         MED_CALC.42    
+C*L   -----------------Arguments---------------------------------------    MED_CALC.43    
+C                                                                          MED_CALC.44    
+      SUBROUTINE MED_CALC(                                                 MED_CALC.45    
+*CALL ARGSIZE                                                              MED_CALC.46    
+*CALL ARGD1                                                                MED_CALC.47    
+*CALL ARGDUMO                                                              MED_CALC.48    
+*CALL ARGPTRO                                                              MED_CALC.49    
+*CALL ARGOCALL                                                             MED_CALC.50    
+*CALL ARGOINDX                                                             MED_CALC.51    
+     &  NSLAB_ARG                                                          MED_CALC.52    
+     & ,TENDIN,ATTEND,HUDTEND                                              MED_CALC.53    
+     & ,tendfrc,imsend,jmsend,lev_top,lev_bot,inflow_top                   MED_CALC.54    
+     &,L_OMEDADV,J_PE_IND_OUT,medorhud                                     MED_CALC.55    
+     &  )                                                                  MED_CALC.56    
+C                                                                          MED_CALC.57    
+c  Subroutine med_outflow. Calculate the tracer tendencies produced        MED_CALC.58    
+C  by the Mediterranean outflow parameterization. These tendencies are     MED_CALC.59    
+C  passed to TRACER to update TA.                                          MED_CALC.60    
+c                                                                          MED_CALC.61    
+c                                                                          MED_CALC.62    
+      IMPLICIT NONE                                                        MED_CALC.63    
+C                                                                          MED_CALC.64    
+*CALL TYPSIZE                                                              MED_CALC.65    
+*CALL OARRYSIZ                                                             MED_CALC.66    
+*CALL TYPD1                                                                MED_CALC.67    
+*CALL TYPDUMO                                                              MED_CALC.68    
+*CALL TYPPTRO                                                              MED_CALC.69    
+*CALL TYPOINDX                                                             PXORDER.26    
+*CALL TYPOCALL                                                             MED_CALC.70    
+*CALL OTIMER                                                               MED_CALC.72    
+                                                                           MED_CALC.73    
+C Input and Output variables                                               MED_CALC.74    
+       REAL TENDIN(KM,NT,4)  ! Will contain the tracer tendencies for      MED_CALC.75    
+C                               both Atlantic and Med points               MED_CALC.76    
+       REAL ATTEND(KM,NT,4)  ! Will contain the tracer tendencies for      MED_CALC.77    
+       REAL HUDTEND(KM,NT,4)  ! Will contain the tracer tendencies for     MED_CALC.78    
+                                                                           MED_CALC.79    
+C Input variables                                                          MED_CALC.80    
+       INTEGER NSLAB_ARG,J_PE_IND_OUT(4),medorhud                          MED_CALC.81    
+       REAL tendfrc   ! Fraction of gridboxes mixed                        MED_CALC.82    
+                                                                           MED_CALC.83    
+C Local variables                                                          MED_CALC.84    
+       INTEGER PE_RECV,PE_SEND,tag,info  ! variables used in MPP coding    MED_CALC.85    
+                                                                           MED_CALC.86    
+       INTEGER                                                             MED_CALC.87    
+     +  m,k,n,i         ! indexing variables                               MED_CALC.88    
+     +, index_med(4)  ! used for indexing points in slab                   MED_CALC.89    
+     +, jread_med     ! local row to read data from dump                   MED_CALC.90    
+     +, LABS_MED      ! Unit number for disk, depends if mixing timestep   MED_CALC.91    
+     &, nmedpt        ! Number of points mixed                             MED_CALC.92    
+     &, imedpt        ! Loop index over such points                        MED_CALC.93    
+     &, kmoffset      ! Offset into slab of data                           MED_CALC.94    
+     &, imsend(4),jmsend(4)  ! values of imout,jmout to search for         MED_CALC.95    
+c                            ! in READ_REM                                 MED_CALC.96    
+       INTEGER                                                             MED_CALC.97    
+     &  lev_top       ! top levels in which there is flow                  MED_CALC.98    
+     & ,lev_bot       ! bottom level in which there is flow                MED_CALC.99    
+                                                                           MED_CALC.100   
+       REAL                                                                MED_CALC.101   
+     +  FXA1,FXA2,FXB1,FXB2,FX  ! local constants                          MED_CALC.102   
+     +, TMED(KM,NT)           ! mean tracer value of Atl and Med points    MED_CALC.103   
+                                                                           MED_CALC.104   
+       REAL                                                                MED_CALC.105   
+     &  TBMED(NSLAB_ARG),TBPMED(NSLAB_ARG)   !  slabs read from dump for   MED_CALC.106   
+     &, TBPPMED(NSLAB_ARG),TBPPPMED(NSLAB_ARG)  ! rows needed for calc     MED_CALC.107   
+                                                                           MED_CALC.108   
+       REAL                                                                MED_CALC.109   
+     &  dytcst2,dytcst3,dytcst4  !  dyt*cst for j's on their PE's          MED_CALC.110   
+                                                                           MED_CALC.111   
+       LOGICAL L_OMEDADV  ! advective Med outflow param                    MED_CALC.112   
+     &        ,inflow_top ! true if inflow to marginal sea is at           MED_CALC.113   
+C                         ! surface                                        MED_CALC.114   
+C*--------------------------------------------------------------------     MED_CALC.115   
+C  BEGIN EXECUTABLE CODE                                                   MED_CALC.116   
+C---------------------------------------------------------------------     MED_CALC.117   
+      IF (L_OTIMER) CALL TIMER('MED_CALC',103)                             MED_CALC.118   
+                                                                           MED_CALC.119   
+C these variables will hold tracer values from possibly remote PE's        MED_CALC.120   
+         do n=1,nslab                                                      MED_CALC.121   
+          TBMED(n)=0.                                                      MED_CALC.122   
+          TBPMED(n)=0.                                                     MED_CALC.123   
+          TBPPMED(n)=0.                                                    MED_CALC.124   
+          TBPPPMED(n)=0.                                                   MED_CALC.125   
+         enddo                                                             MED_CALC.126   
+C                                                                          MED_CALC.127   
+C set label of disk to read, dependent on mixing timestep                  MED_CALC.128   
+          IF (MIX.EQ.1) THEN                                               MED_CALC.129   
+            LABS_MED=LABS(NDISK)                                           MED_CALC.130   
+          ELSE                                                             MED_CALC.131   
+            LABS_MED=LABS(NDISKB)                                          MED_CALC.132   
+          ENDIF                                                            MED_CALC.133   
+                                                                           MED_CALC.134   
+C need to read rows for each application of the overflow process           MED_CALC.135   
+                                                                           MED_CALC.136   
+          CALL READ_REM(                                                   MED_CALC.137   
+*CALL ARGSIZE                                                              MED_CALC.138   
+*CALL ARGD1                                                                MED_CALC.139   
+*CALL ARGDUMO                                                              MED_CALC.140   
+*CALL ARGPTRO                                                              MED_CALC.141   
+*CALL ARGOCALL                                                             MED_CALC.142   
+*CALL ARGOINDX                                                             MED_CALC.143   
+     &  NSLAB_ARG                                                          MED_CALC.144   
+     & ,tendfrc,imsend,jmsend,TBPMED,TBPPMED,TBPPPMED                      MED_CALC.145   
+     & ,dytcst2,dytcst3,dytcst4,labs_med,J_PE_IND_OUT )                    MED_CALC.146   
+                                                                           MED_CALC.147   
+*IF DEF,MPP                                                                MED_CALC.148   
+C do the Med outflow calculation on this PE                                MED_CALC.149   
+        if ((jst.le.jmsend(1)).and.(jfin.ge.jmsend(1))) then               MED_CALC.150   
+        jread_med=jmsend(1)-J_OFFSET                                       MED_CALC.151   
+*ELSE                                                                      MED_CALC.152   
+        jread_med=jmsend(1)                                                MED_CALC.153   
+*ENDIF                                                                     MED_CALC.154   
+C                                                                          MED_CALC.155   
+C  Get tracers for J=jmsend(1)                                             MED_CALC.156   
+C                                                                          MED_CALC.157   
+             CALL UMREAD(                                                  MED_CALC.158   
+*CALL ARGSIZE                                                              MED_CALC.159   
+*CALL ARGD1                                                                MED_CALC.160   
+*CALL ARGDUMO                                                              MED_CALC.161   
+*CALL ARGPTRO                                                              MED_CALC.162   
+     &            LABS_MED,jread_med,TBMED                                 MED_CALC.163   
+     &,           NDISKB,NDISK,NDISKA,FKMP,FKMQ )                          MED_CALC.164   
+                                                                           MED_CALC.165   
+C                                                                          MED_CALC.166   
+C Do Mediterranean Outflow calculations                                    MED_CALC.167   
+C--------------------------------------                                    MED_CALC.168   
+                                                                           MED_CALC.169   
+C On first row with a med mixing point, calculate areas                    MED_CALC.170   
+C of each box.                                                             MED_CALC.171   
+c                                                                          MED_CALC.172   
+         FXA1=DXT(imsend(1))*DYT(jread_med)*CST(jread_med)                 MED_CALC.173   
+         FXA2=DXT(imsend(2))*dytcst2                                       MED_CALC.174   
+         if (jmsend(3).eq.0) then                                          MED_CALC.175   
+           nmedpt=2                                                        MED_CALC.176   
+           FX=1.0/(FXA1+FXA2)                                              MED_CALC.177   
+         else                                                              MED_CALC.178   
+           FXB1=DXT(imsend(3))*dytcst3                                     MED_CALC.179   
+           FXB2=DXT(imsend(4))*dytcst4                                     MED_CALC.180   
+           nmedpt=4                                                        MED_CALC.181   
+           FX=1.0/(FXA1+FXA2+FXB1+FXB2)                                    MED_CALC.182   
+         endif                                                             MED_CALC.183   
+                                                                           MED_CALC.184   
+      IF (.NOT.L_OMEDADV) THEN                                             MED_CALC.185   
+C apply the old HADCM3-type Mediterranean outflow param                    MED_CALC.186   
+C                                                                          MED_CALC.187   
+C  Define mixed value (lagged one timestep), and compute mixing            MED_CALC.188   
+C  tendencies at Atlantic and Med points.                                  MED_CALC.189   
+C                                                                          MED_CALC.190   
+         DO M=1,NT                                                         MED_CALC.191   
+           DO K=1,NMEDLEV                                                  MED_CALC.192   
+             kmoffset=((k-1)*imt)+((m-1)*imt*km)                           MED_CALC.193   
+             do imedpt=1,nmedpt                                            MED_CALC.194   
+               index_med(imedpt)=imsend(imedpt)+kmoffset                   MED_CALC.195   
+             enddo                                                         MED_CALC.196   
+             tendin(k,m,1)=TBMED(index_med(1))                             MED_CALC.197   
+             tendin(k,m,2)=TBPMED(index_med(2))                            MED_CALC.198   
+             if (nmedpt.eq.2) then                                         MED_CALC.199   
+               tmed(k,m)=FX*(FXA1*TENDIN(k,m,1)+FXA2*TENDIN(k,m,2))        MED_CALC.200   
+             else                                                          MED_CALC.201   
+               tendin(k,m,3)=TBPPMED(index_med(3))                         MED_CALC.202   
+               tendin(k,m,4)=TBPPPMED(index_med(4))                        MED_CALC.203   
+               tmed(k,m)=FX*(FXA1*TENDIN(k,m,1)+FXA2*TENDIN(k,m,2)         MED_CALC.204   
+     &         + FXB1*TENDIN(k,m,3)+FXB2*TENDIN(k,m,4))                    MED_CALC.205   
+             endif                                                         MED_CALC.206   
+             do imedpt=1,nmedpt                                            MED_CALC.207   
+               tendin(k,m,imedpt)=tendfrc*(TMED(K,M)-TENDIN(k,m,imedpt))   MED_CALC.208   
+             enddo                                                         MED_CALC.209   
+           ENDDO                                                           MED_CALC.210   
+         ENDDO                                                             MED_CALC.211   
+                                                                           MED_CALC.212   
+       do m=1,nt                                                           MED_CALC.213   
+         do i=1,4                                                          MED_CALC.214   
+           do k=1,km                                                       MED_CALC.215   
+             ATTEND(k,m,i)=TENDIN(k,m,i)                                   MED_CALC.216   
+           enddo                                                           MED_CALC.217   
+         enddo                                                             MED_CALC.218   
+       enddo                                                               MED_CALC.219   
+                                                                           MED_CALC.220   
+      ELSE        ! L_OMEDADV=true                                         MED_CALC.221   
+                                                                           MED_CALC.222   
+C apply the new, HADCM4-type advective inflow/outflow param                MED_CALC.223   
+                                                                           MED_CALC.224   
+C set up the upstream temperature values which will be used                MED_CALC.225   
+C to calculate the zonal flux divergence for the Med outflow               MED_CALC.226   
+                                                                           MED_CALC.227   
+c if the inflow is at the surface                                          MED_CALC.228   
+      if (inflow_top) then                                                 MED_CALC.229   
+                                                                           MED_CALC.230   
+         DO M=1,NT                                                         MED_CALC.231   
+           DO K=1,NMEDLEV                                                  MED_CALC.232   
+             kmoffset=((k-1)*imt)+((m-1)*imt*km)                           MED_CALC.233   
+             do imedpt=1,nmedpt                                            MED_CALC.234   
+               index_med(imedpt)=imsend(imedpt)+kmoffset                   MED_CALC.235   
+             enddo                                                         MED_CALC.236   
+             if (k.le.lev_top) then                                        MED_CALC.237   
+               TENDIN(k,m,1)=(TBMED(index_med(1)))*FXB1*4.*FX              MED_CALC.238   
+               TENDIN(k,m,2)=(TBPMED(index_med(2)))*FXB2*4.*FX             MED_CALC.239   
+               TENDIN(k,m,3)=TENDIN(k,m,1)*FXA1/FXB1                       MED_CALC.240   
+               TENDIN(k,m,4)=TENDIN(k,m,2)*FXA2/FXB2                       MED_CALC.241   
+             else if (k.eq.lev_bot) then                                   MED_CALC.242   
+               TENDIN(k,m,1)=TBPPMED(index_med(3))*FXB1*4.*FX              MED_CALC.243   
+               TENDIN(k,m,2)=TBPPPMED(index_med(4))*FXB2*4.*FX             MED_CALC.244   
+             else                                                          MED_CALC.245   
+               TENDIN(k,m,1)=TBMED(index_med(1))*FXB1*4.*FX                MED_CALC.246   
+               TENDIN(k,m,2)=TBPMED(index_med(2))*FXB2*4.*FX               MED_CALC.247   
+               TENDIN(k,m,3)=TBPPMED(index_med(3))*FXA1*4.*FX              MED_CALC.248   
+               TENDIN(k,m,4)=TBPPPMED(index_med(4))*FXA2*4.*FX             MED_CALC.249   
+             endif                                                         MED_CALC.250   
+           ENDDO                                                           MED_CALC.251   
+           TENDIN(lev_bot,m,3)=TENDIN(lev_bot,m,1)*FXA1/FXB1               MED_CALC.252   
+           TENDIN(lev_bot,m,4)=TENDIN(lev_bot,m,2)*FXA2/FXB2               MED_CALC.253   
+         ENDDO                                                             MED_CALC.254   
+                                                                           MED_CALC.255   
+       do m=1,nt                                                           MED_CALC.256   
+         do i=1,4                                                          MED_CALC.257   
+           do k=1,km                                                       MED_CALC.258   
+             ATTEND(k,m,i)=TENDIN(k,m,i)                                   MED_CALC.259   
+           enddo                                                           MED_CALC.260   
+         enddo                                                             MED_CALC.261   
+       enddo                                                               MED_CALC.262   
+                                                                           MED_CALC.263   
+      else  ! inflow at bottom                                             MED_CALC.264   
+                                                                           MED_CALC.265   
+         DO M=1,NT                                                         MED_CALC.266   
+           DO K=1,NMEDLEV                                                  MED_CALC.267   
+             kmoffset=((k-1)*imt)+((m-1)*imt*km)                           MED_CALC.268   
+             do imedpt=1,nmedpt                                            MED_CALC.269   
+               index_med(imedpt)=imsend(imedpt)+kmoffset                   MED_CALC.270   
+             enddo                                                         MED_CALC.271   
+c properties of near-surface flow                                          MED_CALC.272   
+             if (k.le.lev_top) then                                        MED_CALC.273   
+               TENDIN(k,m,1)=(TBMED(index_med(1)))*FXB1*4.*FX              MED_CALC.274   
+               TENDIN(k,m,2)=(TBPMED(index_med(2)))*FXB2*4.*FX             MED_CALC.275   
+               TENDIN(k,m,3)=TENDIN(k,m,1)*FXA1/FXB1                       MED_CALC.276   
+               TENDIN(k,m,4)=TENDIN(k,m,2)*FXA2/FXB2                       MED_CALC.277   
+             else if (k.eq.lev_bot) then                                   MED_CALC.278   
+               TENDIN(k,m,1)=TBPPMED(index_med(3))*FXB1*4.*FX              MED_CALC.279   
+               TENDIN(k,m,2)=TBPPPMED(index_med(4))*FXB2*4.*FX             MED_CALC.280   
+             else                                                          MED_CALC.281   
+               TENDIN(k,m,1)=TBMED(index_med(1))*FXB1*4.*FX                MED_CALC.282   
+               TENDIN(k,m,2)=TBPMED(index_med(2))*FXB2*4.*FX               MED_CALC.283   
+               TENDIN(k,m,3)=TBPPMED(index_med(3))*FXA1*4.*FX              MED_CALC.284   
+               TENDIN(k,m,4)=TBPPPMED(index_med(4))*FXA2*4.*FX             MED_CALC.285   
+             endif                                                         MED_CALC.286   
+           ENDDO                                                           MED_CALC.287   
+           TENDIN(lev_bot,m,3)=TENDIN(lev_bot,m,1)*FXA1/FXB1               MED_CALC.288   
+           TENDIN(lev_bot,m,4)=TENDIN(lev_bot,m,2)*FXA2/FXB2               MED_CALC.289   
+         ENDDO                                                             MED_CALC.290   
+      endif  ! inflow_top                                                  MED_CALC.291   
+      ENDIF  ! L_OMEDADV                                                   MED_CALC.292   
+                                                                           MED_CALC.293   
+       do m=1,nt                                                           MED_CALC.294   
+         do i=1,4                                                          MED_CALC.295   
+           do k=1,km                                                       MED_CALC.296   
+             HUDTEND(k,m,i)=TENDIN(k,m,i)                                  MED_CALC.297   
+           enddo                                                           MED_CALC.298   
+         enddo                                                             MED_CALC.299   
+       enddo                                                               MED_CALC.300   
+                                                                           MED_CALC.301   
+*IF DEF,MPP                                                                MED_CALC.302   
+         endif ! on processor local to jmsend(1)                           MED_CALC.303   
+*ENDIF                                                                     MED_CALC.304   
+c then need to send the values in TENDIN,ATTEND and HUDTEND back to the    MED_CALC.305   
+c appropriate PE's                                                         MED_CALC.306   
+                                                                           MED_CALC.307   
+          CALL SEND_REM(                                                   MED_CALC.308   
+*CALL ARGSIZE                                                              MED_CALC.309   
+*CALL ARGD1                                                                MED_CALC.310   
+*CALL ARGDUMO                                                              MED_CALC.311   
+*CALL ARGPTRO                                                              MED_CALC.312   
+*CALL ARGOCALL                                                             MED_CALC.313   
+*CALL ARGOINDX                                                             MED_CALC.314   
+     &  NSLAB_ARG                                                          MED_CALC.315   
+     & ,TENDIN,ATTEND,HUDTEND                                              MED_CALC.316   
+     & ,imsend,jmsend,J_PE_IND_OUT,medorhud )                              MED_CALC.317   
+                                                                           MED_CALC.318   
+                                                                           MED_CALC.319   
+       IF (L_OTIMER) CALL TIMER('MED_CALC',104)                            MED_CALC.320   
+                                                                           MED_CALC.321   
+       RETURN                                                              MED_CALC.322   
+       END                                                                 MED_CALC.323   
+                                                                           MED_CALC.324   
+*ENDIF                                                                     MED_CALC.325   
+                                                                           MED_CALC.326   

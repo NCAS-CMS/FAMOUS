@@ -1,0 +1,445 @@
+*IF DEF,C84_1A                                                             MUSPAC1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.6085  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.6086  
+C                                                                          GTS2F400.6087  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.6088  
+C restrictions as set forth in the contract.                               GTS2F400.6089  
+C                                                                          GTS2F400.6090  
+C                Meteorological Office                                     GTS2F400.6091  
+C                London Road                                               GTS2F400.6092  
+C                BRACKNELL                                                 GTS2F400.6093  
+C                Berkshire UK                                              GTS2F400.6094  
+C                RG12 2SZ                                                  GTS2F400.6095  
+C                                                                          GTS2F400.6096  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.6097  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.6098  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.6099  
+C Modelling at the above address.                                          GTS2F400.6100  
+C ******************************COPYRIGHT******************************    GTS2F400.6101  
+C                                                                          GTS2F400.6102  
+CLL  Routine: MULTI_SPATIAL --------------------------------------------   MUSPAC1A.3     
+CLL                                                                        MUSPAC1A.4     
+CLL  Purpose: Control routine for spatial processing when extracting a     MUSPAC1A.5     
+CLL           timeseries within STASH.  Calls SPATIAL to extract global    MUSPAC1A.6     
+CLL           mean samples from subdomains pointed to by the mother        MUSPAC1A.7     
+CLL           STASHlist record using weighting and masking codes from      MUSPAC1A.8     
+CLL           the STASHlist record within each subdomain.  The list of     MUSPAC1A.9     
+CLL           subdomains is held as part of the STASH control file.        MUSPAC1A.10    
+CLL           They may be in terms of gridpoints, or latitude/longitude    MUSPAC1A.11    
+CLL           relative to the grid coordinates.  All timeseries samples    MUSPAC1A.12    
+CLL           at a given step are appended to the output field.            MUSPAC1A.13    
+CLL           On the first timestep it fills the entire output             TJ140193.62    
+CLL            vector to missing data (apart from values for the           TJ140193.63    
+CLL            first timestep and computes extra data for the time-        TJ140193.64    
+CLL            series -- tis prevents time meaning routines                TJ140193.65    
+CLL            failing due to uninitialised data.                          TJ140193.66    
+CLL            however as a result of this the output vector length        TJ140193.67    
+CLL            will change from timestep to timestep                       TJ140193.68    
+CLL                                                                        MUSPAC1A.14    
+CLL  Author:   S.Tett/T.Johns                                              MUSPAC1A.15    
+CLL                                                                        MUSPAC1A.16    
+CLL  Tested under compiler:   cft77                                        MUSPAC1A.17    
+CLL  Tested under OS version: UNICOS 5.1                                   MUSPAC1A.18    
+CLL                                                                        MUSPAC1A.19    
+CLL  Model            Modification history from model version 3.0:         MUSPAC1A.20    
+CLL version  Date                                                          MUSPAC1A.21    
+CLL   3.1  24/02/93  Correct outstanding problems with timeseries (ST).    TJ140193.69    
+CLL   3.2    13/07/93 Changed CHARACTER*(*) to CHARACTER*(80) for          TS150793.198   
+CLL                   portability.  Author Tracey Smith.                   TS150793.199   
+CLL   3.3  30/03/94  Pass explicit size dimension lenout for declaring     TJ300394.30    
+CLL                  fieldout output array.  Author Tim Johns.             TJ300394.31    
+CLL   3.3  17/09/93  Correct level-dependent mass-weighting probs (TCJ).   TJ170993.56    
+!LL   4.3  7/3/97    Added code for MPP functionality    P.Burton          GPB0F403.1740  
+!LL   4.4  18/06/97  MPP: Fixed call to GLOBAL_TO_LOCAL_RC, where          GPB1F404.18    
+!LL                  row and column arguments were in wrong                GPB1F404.19    
+!LL                  order.                                 P.Burton       GPB1F404.20    
+!LL                  MPP: All PEs must contain real data in fieldout       GPB1F404.21    
+!LL                                                         P.Burton       GPB1F404.22    
+!LL   4.4  6/8/97    Corrected top_left_pe calculation  P.Burton           GPB1F404.124   
+CLL                                                                        MUSPAC1A.22    
+!LL   4.4  27/11/96  New option mean timeseries. R A Stratton.             GRS1F404.237   
+!LL   4.5  06/01/97  Fix for MPP timeseries: Inserted sync. before         GPB0F405.1     
+!LL                  send/receive for correct NAM/SHMEM operation          GPB0F405.2     
+!LL                                                       P.Burton         GPB0F405.3     
+CLL  Programming standard: UM Doc Paper 3, version 2 (7/9/90)              MUSPAC1A.23    
+CLL                                                                        MUSPAC1A.24    
+CLL  Logical components covered: D71                                       MUSPAC1A.25    
+CLL                                                                        MUSPAC1A.26    
+CLL  Project task: D7                                                      MUSPAC1A.27    
+CLL                                                                        MUSPAC1A.28    
+CLL  External documentation:                                               MUSPAC1A.29    
+CLL    Unified Model Doc Paper C4 - Storage handling and diagnostic        MUSPAC1A.30    
+CLL                                 system (STASH)                         MUSPAC1A.31    
+CLL                                                                        MUSPAC1A.32    
+C*L  Interface and arguments: ------------------------------------------   MUSPAC1A.33    
+C                                                                          MUSPAC1A.34    
+      SUBROUTINE MULTI_SPATIAL(fieldin,vx,vy,vz,gr,st_grid,lcyclic,        GPB0F403.1741  
+     +     lmasswt,horiz_size,num_vert_levels,                             TJ170993.58    
+     +     pexner,pstar,delta_ak,delta_bk,                                 MUSPAC1A.37    
+     +     cos_p_latitude,cos_u_latitude,land,                             MUSPAC1A.38    
+     +     row_length,p_rows,u_rows,p_levels,                              MUSPAC1A.39    
+     +     fieldout,lenout,amdi,                                           TJ300394.32    
+     +     control,control_size,                                           MUSPAC1A.41    
+     +     stash_series,series_entry_size,no_records,                      MUSPAC1A.42    
+     +     num_stash_levels,index_lev,level_list,start_ts,extraw,          TJ140193.70    
+     +     n_rows_out,n_cols_out,                                          MUSPAC1A.44    
+     +     real_hd,len_realhd,int_hd,len_inthd,                            MUSPAC1A.45    
+     +     ocean,                                                          MUSPAC1A.46    
+     +     icode,errmssg)                                                  MUSPAC1A.47    
+C                                                                          MUSPAC1A.48    
+      IMPLICIT NONE                                                        MUSPAC1A.49    
+C                                                                          MUSPAC1A.50    
+      INTEGER vx,vy,vz          ! IN size of fieldin                       MUSPAC1A.51    
+      INTEGER gr                ! IN ppxref gridtype code                  GPB0F403.1742  
+      INTEGER st_grid           ! IN STASH internal gridtype code          MUSPAC1A.52    
+      LOGICAL lcyclic           ! IN TRUE if cyclic EW BCs                 MUSPAC1A.53    
+      LOGICAL lmasswt           ! IN TRUE if level-dep mass-wts OK         TJ170993.59    
+      INTEGER row_length,p_rows,u_rows,p_levels ! IN size parameters       MUSPAC1A.54    
+      REAL fieldin(vx*vy*vz)    ! IN data field                            MUSPAC1A.55    
+      INTEGER horiz_size        ! OUT no. of points in horizontal slice    MUSPAC1A.56    
+      INTEGER num_vert_levels   ! OUT no of horizontal slices.             MUSPAC1A.57    
+      INTEGER num_stash_levels  ! IN size of vertical levels list.         MUSPAC1A.58    
+      INTEGER index_lev(num_stash_levels) ! IN offsets for each horiz fi   MUSPAC1A.59    
+      INTEGER level_list(num_stash_levels) ! IN level for each horiz. fi   MUSPAC1A.60    
+      REAL                                                                 MUSPAC1A.61    
+     &    pexner(row_length,p_rows,p_levels+1), ! IN exner pressure        MUSPAC1A.62    
+     &    pstar(row_length,p_rows),             ! IN surf pressure         MUSPAC1A.63    
+     &    delta_ak(p_levels),                   ! IN hybrid coords         MUSPAC1A.64    
+     &    delta_bk(p_levels),                   ! IN hybrid coords         MUSPAC1A.65    
+     &    cos_p_latitude(row_length,p_rows),    ! IN p-grid area fn        MUSPAC1A.66    
+     &    cos_u_latitude(row_length,u_rows)     ! IN u-grid area fn        MUSPAC1A.67    
+      LOGICAL land(row_length,p_rows)           ! IN land mask             MUSPAC1A.68    
+      LOGICAL ocean                             ! IN true if ocean         MUSPAC1A.69    
+      INTEGER lenout               ! IN max size of output field           TJ300394.33    
+      REAL fieldout(lenout)        ! OUT output field                      TJ300394.34    
+      REAL amdi                    ! IN missing data indicator             MUSPAC1A.71    
+      INTEGER len_realhd           ! IN size of real header                MUSPAC1A.72    
+      INTEGER len_inthd            ! IN size of integer header             MUSPAC1A.73    
+      REAL real_hd(len_realhd)     ! IN real header                        MUSPAC1A.74    
+      INTEGER int_hd(len_inthd)    ! IN integer header                     MUSPAC1A.75    
+      INTEGER control_size         ! IN size of control array              MUSPAC1A.76    
+      INTEGER control(control_size)! IN control array (mostly not used)    MUSPAC1A.77    
+      INTEGER series_entry_size    ! IN no of entries in each record.      MUSPAC1A.78    
+      INTEGER no_records           ! IN no of records to process.          MUSPAC1A.79    
+      INTEGER extraw               ! OUT no of words required by extra d   MUSPAC1A.80    
+      INTEGER n_rows_out,n_cols_out! OUT data-set size and extent          MUSPAC1A.81    
+      LOGICAL start_ts             ! IN true if first time-series timest   TJ140193.71    
+      INTEGER stash_series(series_entry_size,no_records) ! IN              MUSPAC1A.83    
+C IN control data for calls to spatial                                     MUSPAC1A.84    
+      INTEGER icode                       ! OUT error code                 MUSPAC1A.85    
+      CHARACTER*(80) errmssg              ! OUT error message              TS150793.200   
+C*----------------------------------------------------------------------   MUSPAC1A.87    
+C Parameters                                                               MUSPAC1A.88    
+C                                                                          MUSPAC1A.89    
+*CALL STPARAM                                                              MUSPAC1A.90    
+*CALL STERR                                                                MUSPAC1A.91    
+*IF DEF,MPP                                                                GPB0F403.1743  
+*CALL GCCOM                                                                GPB0F403.1744  
+*CALL PARVARS                                                              GPB0F403.1745  
+*ENDIF                                                                     GPB0F403.1746  
+C*L                                                                        MUSPAC1A.92    
+C Subroutines called                                                       MUSPAC1A.93    
+C                                                                          MUSPAC1A.94    
+      EXTERNAL SPATIAL                                                     MUSPAC1A.95    
+      EXTERNAL STASH_COMP_GRID,EXTRA_MAKE_VECTOR,EXTRA_TS_INFO             MUSPAC1A.96    
+C*                                                                         MUSPAC1A.97    
+C Local variables                                                          MUSPAC1A.98    
+C                                                                          MUSPAC1A.99    
+      INTEGER fake_record(control_size) ! fake_record for SPATIAL call     MUSPAC1A.100   
+      INTEGER pp_ptr ! ptr to pp_field for where output from spatial goe   MUSPAC1A.102   
+      INTEGER i,j                       ! loop variable                    MUSPAC1A.103   
+      INTEGER data_size                 ! size of data.                    MUSPAC1A.104   
+      INTEGER index_size                                                   MUSPAC1A.105   
+      INTEGER base_level        !   reference model level                  MUSPAC1A.106   
+      INTEGER kl ! loop count for levels                                   MUSPAC1A.108   
+      INTEGER stash_list_start ! the start address in index_levs for lev   MUSPAC1A.109   
+      INTEGER stash_list_end ! the end address in index_levs for levels    MUSPAC1A.110   
+      INTEGER what_process ! what kind of processing is requested          MUSPAC1A.111   
+      INTEGER what_mask ! what mask is wanted.                             MUSPAC1A.112   
+      INTEGER extra_start ! start address in fieldout for extra data       MUSPAC1A.113   
+      REAL bdx,bzx,bdy,bzy ! grid descriptors                              MUSPAC1A.114   
+*IF DEF,MPP                                                                GPB0F403.1747  
+                                                                           MUSPAC1A.115   
+      INTEGER                                                              GPB0F403.1748  
+     &  proc_top_left_x ! processor co-ords of processor at top left       GPB0F403.1749  
+     &, proc_top_left_y ! corner of subarea                                GPB0F403.1750  
+     &, top_left_pe     ! processor id of this processor                   GPB0F403.1751  
+     &, dummy1,dummy2   ! unused return variables from                     GPB0F403.1752  
+!                         GLOBAL_TO_LOCAL_RC                               GPB0F403.1753  
+     &, info            ! GCOM return variable                             GPB0F403.1754  
+                                                                           GPB0F403.1755  
+      REAL                                                                 GPB0F403.1756  
+     &  global_mean ! global mean returned by call to SPATIAL              GPB0F403.1757  
+      COMMON /MPP_STATIC_VAR/ global_mean  !must be memory aligned         GPB0F403.1758  
+!                                           to allow fast shmem            GPB0F403.1759  
+                                                                           GPB0F403.1760  
+*ENDIF                                                                     GPB0F403.1761  
+                                                                           GPB0F403.1762  
+CL----------------------------------------------------------------------   MUSPAC1A.116   
+CL 1. Error checking                                                       MUSPAC1A.117   
+CL                                                                         MUSPAC1A.118   
+C  Check we are in fact doing a time series. Error if not.                 MUSPAC1A.119   
+      IF ((control(st_proc_no_code).ne.st_time_series_code).and.           GRS1F404.238   
+     &   (control(st_proc_no_code).ne.st_time_series_mean)) THEN           GRS1F404.239   
+        icode=st_unknown                                                   MUSPAC1A.121   
+        write(errmssg,99)control(st_proc_no_code)                          MUSPAC1A.122   
+99      format(3x,'MULTI_SP : unexpected call to extract timeseries',i5)   MUSPAC1A.123   
+        goto 999            ! jump to return                               MUSPAC1A.124   
+      ENDIF                                                                MUSPAC1A.125   
+CL----------------------------------------------------------------------   MUSPAC1A.126   
+CL 2. Workout what kind of processing we are doing and what mask is used   MUSPAC1A.127   
+CL                                                                         MUSPAC1A.128   
+       what_mask=mod(control(st_gridpoint_code),block_size)                MUSPAC1A.129   
+       what_process=control(st_gridpoint_code)-what_mask                   MUSPAC1A.130   
+       extraw=0                                                            TJ140193.72    
+CL note that the first word in fieldout is assumed to be                   MUSPAC1A.131   
+CL the word where the first spatial domain mean for this timeseries        MUSPAC1A.132   
+CL  will be stored                                                         MUSPAC1A.133   
+CL                                                                         TJ140193.73    
+CL Next we compute the grid discriptors -- as used by extra data           TJ140193.74    
+       IF (start_ts) THEN ! compute grid descrip                           TJ140193.75    
+         extraw=6*(no_records+1)                                           MUSPAC1A.136   
+         extra_start=control(st_output_length)-extraw+1                    TJ140193.76    
+         CALL STASH_COMP_GRID(bzx,bzy,bdx,bdy,0,st_grid,ocean,             MUSPAC1A.137   
+     &     1,1,real_hd,len_realhd,int_hd,len_inthd,extract_base+1,         MUSPAC1A.138   
+     &     icode,errmssg)                                                  MUSPAC1A.139   
+       ENDIF                                                               MUSPAC1A.140   
+CL 3. Set up pseudo STASH record to be passed to SPATIAL on each call      MUSPAC1A.141   
+CL    to extract a sample from the input field.                            MUSPAC1A.142   
+CL                                                                         MUSPAC1A.143   
+      fake_record(st_input_bottom)=control(st_input_bottom)                MUSPAC1A.144   
+      fake_record(st_input_top)=control(st_input_top)                      MUSPAC1A.145   
+      fake_record(st_weight_code)=control(st_weight_code)                  MUSPAC1A.146   
+C doing a field mean on this sub-domain with mask specified by control.    MUSPAC1A.147   
+      pp_ptr=1                                                             MUSPAC1A.148   
+CL----------------------------------------------------------------------   MUSPAC1A.149   
+CL 4. Loop over samples and extract global mean within subdomain for       MUSPAC1A.150   
+CL    each, appending to output field                                      MUSPAC1A.151   
+CL                                                                         MUSPAC1A.152   
+      DO i=1,no_records ! loop over sub domains                            MUSPAC1A.153   
+        data_size=stash_series(series_size,i)                              MUSPAC1A.154   
+CL 4.1 Do preliminary verifications on stash_series                        MUSPAC1A.155   
+CL 4.1.1 Gridtype code                                                     MUSPAC1A.156   
+        IF (stash_series(series_grid_type,i).ne.series_grid_code) THEN     MUSPAC1A.157   
+C                                                                          MUSPAC1A.158   
+C NB: Latitude/longitude range conversion to gridpoint range needs to      MUSPAC1A.159   
+C     be added                                                             MUSPAC1A.160   
+C                                                                          MUSPAC1A.161   
+          icode=st_not_supported                                           MUSPAC1A.162   
+          errmssg='MULTI_SP : only support grid point processing'          MUSPAC1A.163   
+          goto 999                                                         MUSPAC1A.164   
+        ENDIF                                                              MUSPAC1A.165   
+CL ---------------------------------------------------------------------   MUSPAC1A.166   
+CL 5. Set up the fake record domain info depending on what kind of         MUSPAC1A.167   
+CL    "primary" processing is requested.                                   MUSPAC1A.168   
+CL    As far as stash is concerned everything looks like a global mean     MUSPAC1A.169   
+CL    here and it is just a question of setting up the fake record         MUSPAC1A.170   
+CL    correctly.                                                           MUSPAC1A.171   
+CL                                                                         MUSPAC1A.172   
+        fake_record(st_gridpoint_code)=                                    MUSPAC1A.173   
+     &    (stash_series(series_proc_code,i)/block_size)*block_size         MUSPAC1A.174   
+     &      +what_mask                                                     MUSPAC1A.175   
+        IF (what_process.eq.extract_base) THEN ! an extract                MUSPAC1A.176   
+          fake_record(st_north_code)=stash_series(series_north,i)          MUSPAC1A.177   
+          fake_record(st_south_code)=stash_series(series_south,i)          MUSPAC1A.178   
+          fake_record(st_west_code)= stash_series(series_west,i)           MUSPAC1A.179   
+          fake_record(st_east_code)= stash_series(series_east,i)           MUSPAC1A.180   
+          stash_list_start=stash_series(series_list_start,i)               MUSPAC1A.181   
+          stash_list_end=stash_series(series_list_end,i)                   MUSPAC1A.182   
+          fake_record(st_input_bottom)=stash_list_start                    MUSPAC1A.183   
+          fake_record(st_input_top)=stash_list_end                         MUSPAC1A.184   
+        ELSEIF (what_process.eq.zonal_mean_base) THEN ! a zonal_mean       MUSPAC1A.185   
+          fake_record(st_north_code)=stash_series(series_north,i)          MUSPAC1A.186   
+          fake_record(st_south_code)=stash_series(series_south,i)          MUSPAC1A.187   
+          fake_record(st_west_code)= control(st_west_code)                 MUSPAC1A.188   
+          fake_record(st_east_code)= control(st_east_code)                 MUSPAC1A.189   
+          stash_list_start=stash_series(series_list_start,i)               MUSPAC1A.190   
+          stash_list_end=stash_series(series_list_end,i)                   MUSPAC1A.191   
+          fake_record(st_input_bottom)=stash_list_start                    MUSPAC1A.192   
+          fake_record(st_input_top)=stash_list_end                         MUSPAC1A.193   
+        ELSEIF (what_process.eq.merid_mean_base) THEN ! a merid_mean       MUSPAC1A.194   
+          fake_record(st_north_code)= control(st_north_code)               MUSPAC1A.195   
+          fake_record(st_south_code)= control(st_south_code)               MUSPAC1A.196   
+          fake_record(st_east_code)=stash_series(series_east,i)            MUSPAC1A.197   
+          fake_record(st_west_code)=stash_series(series_west,i)            MUSPAC1A.198   
+          stash_list_start=stash_series(series_list_start,i)               MUSPAC1A.199   
+          stash_list_end=stash_series(series_list_end,i)                   MUSPAC1A.200   
+          fake_record(st_input_bottom)=stash_list_start                    MUSPAC1A.201   
+          fake_record(st_input_top)=stash_list_end                         MUSPAC1A.202   
+        ELSEIF (what_process.eq.vert_mean_base) THEN ! a vert_mean         MUSPAC1A.203   
+          fake_record(st_north_code)=stash_series(series_north,i)          MUSPAC1A.204   
+          fake_record(st_south_code)=stash_series(series_south,i)          MUSPAC1A.205   
+          fake_record(st_east_code)=stash_series(series_east,i)            MUSPAC1A.206   
+          fake_record(st_west_code)=stash_series(series_west,i)            MUSPAC1A.207   
+          stash_list_start=1                                               MUSPAC1A.208   
+          stash_list_end=num_stash_levels                                  MUSPAC1A.209   
+          fake_record(st_input_bottom)=stash_list_start                    MUSPAC1A.210   
+          fake_record(st_input_top)=stash_list_end                         MUSPAC1A.211   
+        ELSEIF (what_process.eq.field_mean_base) THEN ! a field_mean       MUSPAC1A.212   
+          fake_record(st_north_code)=control(st_north_code)                MUSPAC1A.213   
+          fake_record(st_south_code)=control(st_south_code)                MUSPAC1A.214   
+          fake_record(st_east_code)=control(st_east_code)                  MUSPAC1A.215   
+          fake_record(st_west_code)=control(st_west_code)                  MUSPAC1A.216   
+          stash_list_start=1                                               MUSPAC1A.217   
+          stash_list_end=num_stash_levels                                  MUSPAC1A.218   
+          fake_record(st_input_bottom)=stash_list_start                    MUSPAC1A.219   
+          fake_record(st_input_top)=stash_list_end                         MUSPAC1A.220   
+        ELSE ! error code...                                               MUSPAC1A.221   
+          icode=unknown_processing                                         MUSPAC1A.222   
+          write(errmssg,111) 'unknown processing option',what_process      MUSPAC1A.223   
+          goto 999 ! jump to error return                                  MUSPAC1A.224   
+        ENDIF                                                              MUSPAC1A.225   
+CL Check record (south > north and west < east)                            MUSPAC1A.226   
+        IF (fake_record(st_north_code).gt.                                 MUSPAC1A.227   
+     +    fake_record(st_south_code))then                                  MUSPAC1A.228   
+          write(errmssg,101)fake_record(st_north_code),                    MUSPAC1A.229   
+     +       fake_record(st_south_code),i                                  MUSPAC1A.230   
+          icode=st_bad_array_param                                         MUSPAC1A.231   
+          goto 999 ! error exit                                            MUSPAC1A.232   
+        ENDIF                                                              MUSPAC1A.233   
+        IF (fake_record(st_west_code).gt.                                  MUSPAC1A.234   
+     +    fake_record(st_east_code))then                                   MUSPAC1A.235   
+          write(errmssg,102)fake_record(st_west_code),                     MUSPAC1A.236   
+     +       fake_record(st_east_code),i                                   MUSPAC1A.237   
+          icode=st_bad_array_param                                         MUSPAC1A.238   
+          goto 999 ! error exit                                            MUSPAC1A.239   
+        ENDIF                                                              MUSPAC1A.240   
+                                                                           MUSPAC1A.241   
+*IF DEF,MPP                                                                GPB0F403.1763  
+! Figure out which processor is at the top-left of the subdomain           GPB0F403.1764  
+! that SPATIAL will process. This is the one that will send the            GPB0F403.1765  
+! global sum to PE 0 for storage                                           GPB0F403.1766  
+                                                                           GPB0F403.1767  
+        CALL GLOBAL_TO_LOCAL_RC(gr,                                        GPB0F403.1768  
+     &    fake_record(st_west_code),fake_record(st_north_code),            GPB1F404.23    
+     &    proc_top_left_x, proc_top_left_y,                                GPB0F403.1770  
+     &    dummy1,dummy2)                                                   GPB0F403.1771  
+                                                                           GPB0F403.1772  
+        top_left_pe=proc_top_left_x+proc_top_left_y*nproc_x                GPB1F404.125   
+                                                                           GPB0F403.1774  
+*ENDIF                                                                     GPB0F403.1775  
+C                                                                          MUSPAC1A.243   
+C NB: At present timeseries samples are global (ie. 3D) means, so          MUSPAC1A.244   
+C     there is no levels loop outside the call to SPATIAL here -           MUSPAC1A.245   
+C     this may be extended at some point to allow multi-level              MUSPAC1A.246   
+C     timeseries sampling inside a levels loop                             MUSPAC1A.247   
+C                                                                          MUSPAC1A.248   
+C     n_cols_out and n_rows_out are recalculated within SPATIAL but are    TJ300394.35    
+C     now appropriate for an individual timeseries sample, not the whole   TJ300394.36    
+C     field.  They are reset for the whole field after subdomain loop.     TJ300394.37    
+C                                                                          TJ300394.38    
+        lcyclic=.false.                                                    MUSPAC1A.249   
+        base_level=control(st_input_bottom)+index_lev(1)-1                 MUSPAC1A.250   
+        CALL SPATIAL(fieldin,vx,vy,vz,gr,st_grid,lcyclic,lmasswt,          GPB0F403.1776  
+     +       n_cols_out,n_rows_out,base_level,                             MUSPAC1A.253   
+     +       level_list(stash_list_start),                                 MUSPAC1A.254   
+     +       index_lev(stash_list_start),                                  MUSPAC1A.255   
+     +       (stash_list_end+1-stash_list_start),                          MUSPAC1A.256   
+     +       pexner,pstar,delta_ak,delta_bk,                               MUSPAC1A.257   
+     +       cos_p_latitude,cos_u_latitude,land,                           MUSPAC1A.258   
+     +       row_length,p_rows,u_rows,p_levels,                            MUSPAC1A.259   
+*IF -DEF,MPP                                                               GPB0F403.1777  
+     +       fieldout(pp_ptr),(lenout+1-pp_ptr),                           TJ300394.39    
+*ELSE                                                                      GPB0F403.1778  
+     +       global_mean,1,                                                GPB0F403.1779  
+*ENDIF                                                                     GPB0F403.1780  
+     +       fake_record,control_size,amdi,                                MUSPAC1A.261   
+     +       icode,errmssg)                                                MUSPAC1A.262   
+        IF (icode.ne.0) goto 999 ! got some error so jump to return        MUSPAC1A.263   
+*IF DEF,MPP                                                                GPB0F403.1781  
+                                                                           GPB0F403.1782  
+! Must move the global_mean data to PE 0 which stores all timeseries       GPB0F403.1783  
+! data                                                                     GPB0F403.1784  
+! (NB. This assumes that the output from SPATIAL is just a                 GPB0F403.1785  
+!      single number)                                                      GPB0F403.1786  
+                                                                           GPB0F405.4     
+        CALL GC_SSYNC(nproc,info)                                          GPB0F405.5     
+                                                                           GPB0F405.6     
+                                                                           GPB0F403.1787  
+        IF (mype .EQ. top_left_pe) THEN                                    GPB0F403.1788  
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)                       GPB0F403.1789  
+          info=GC_NONE                                                     GPB0F403.1790  
+          CALL GC_RSEND(100,1,0,info,fieldout(pp_ptr),global_mean)         GPB0F403.1791  
+        ENDIF                                                              GPB0F403.1792  
+                                                                           GPB0F403.1793  
+        CALL GC_SSYNC(nproc,info)                                          GPB0F403.1794  
+                                                                           GPB0F403.1795  
+        IF (mype .EQ. 0) THEN                                              GPB0F403.1796  
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)                       GPB0F403.1797  
+          info=GC_NONE                                                     GPB0F403.1798  
+          CALL GC_RRECV(100,1,top_left_pe,info,                            GPB0F403.1799  
+     &                  fieldout(pp_ptr),global_mean)                      GPB0F403.1800  
+        ELSE                                                               GPB1F404.92    
+          fieldout(pp_ptr)=0.0                                             GPB1F404.93    
+        ENDIF                                                              GPB1F404.94    
+                                                                           GPB0F403.1802  
+                                                                           GPB0F405.7     
+        CALL GC_SSYNC(nproc,info)                                          GPB0F405.8     
+*ENDIF                                                                     GPB0F403.1803  
+        pp_ptr=pp_ptr+(n_cols_out*n_rows_out)  ! increment the pp_ptr      MUSPAC1A.264   
+C                                                                          MUSPAC1A.265   
+C NB: n_cols_out and n_rows_out should both be 1 as timeseries samples     MUSPAC1A.266   
+C       are currently designed to be scalar quantities only.               MUSPAC1A.267   
+C                                                                          MUSPAC1A.268   
+CL check on n_cols_out and n_rows_out                                      MUSPAC1A.269   
+        IF (n_cols_out.ne.1) THEN                                          MUSPAC1A.270   
+          errmssg='MULTI_SP : n_cols_out <> 1'                             MUSPAC1A.271   
+          icode=st_not_supported                                           MUSPAC1A.272   
+          goto 999                                                         MUSPAC1A.273   
+        ENDIF                                                              MUSPAC1A.274   
+        IF (n_rows_out.ne.1) THEN                                          MUSPAC1A.275   
+          errmssg='MULTI_SP : n_rows_out <> 1'                             MUSPAC1A.276   
+          icode=st_not_supported                                           MUSPAC1A.277   
+          goto 999                                                         MUSPAC1A.278   
+        ENDIF                                                              MUSPAC1A.279   
+*IF DEF,MPP                                                                GPB0F403.1804  
+        IF (mype .EQ. 0) THEN                                              GPB0F403.1805  
+*ENDIF                                                                     GPB0F403.1806  
+        IF (start_ts) THEN ! put the descriptive info for this record      TJ140193.77    
+          CALL EXTRA_MAKE_VECTOR(fake_record,control_size,                 MUSPAC1A.281   
+     &      i,no_records,fieldout(extra_start),extraw,bzx,bzy,bdx,bdy)     MUSPAC1A.282   
+        ENDIF                                                              MUSPAC1A.283   
+*IF DEF,MPP                                                                GPB0F403.1807  
+        ENDIF                                                              GPB0F403.1808  
+*ENDIF                                                                     GPB0F403.1809  
+      ENDDO   ! end the loop over sub-domains                              MUSPAC1A.284   
+C                                                                          MUSPAC1A.285   
+      horiz_size=pp_ptr-1                                                  MUSPAC1A.286   
+      num_vert_levels=1                                                    MUSPAC1A.287   
+CL --------------------------------------------------------------------    MUSPAC1A.288   
+CL 7. If this is the first time in a time-series then                      TJ140193.78    
+CL     put the codes describing the extra data into the extra data fld     MUSPAC1A.290   
+CL     In addition set pphoriz out to the total length                     TJ140193.79    
+CL       as well as setting the input vetor to missing                     TJ140193.80    
+CL       where no values are set                                           TJ140193.81    
+CL----------------------------------------------------------------------   MUSPAC1A.291   
+                                                                           MUSPAC1A.292   
+       n_cols_out=no_records                                               MUSPAC1A.293   
+       n_rows_out=control(st_period_code)/control(st_freq_code)            TJ140193.82    
+       horiz_size=n_cols_out                                               TJ140193.83    
+       IF (start_ts) THEN  ! on start timestep we have entire vector       TJ140193.84    
+         horiz_size=n_cols_out*n_rows_out+extraw                           TJ140193.85    
+*IF DEF,MPP                                                                GPB0F403.1810  
+        IF (mype .EQ. 0) THEN                                              GPB0F403.1811  
+*ENDIF                                                                     GPB0F403.1812  
+         CALL EXTRA_TS_INFO(fieldout(extra_start),extraw,no_records)       MUSPAC1A.295   
+         do i=no_records+1,extra_start-1                                   TJ140193.86    
+           fieldout(i)=amdi                                                TJ140193.87    
+         enddo                                                             TJ140193.88    
+*IF DEF,MPP                                                                GPB0F403.1813  
+        ELSE                                                               GPB1F404.95    
+          DO i=no_records+1,lenout                                         GPB1F404.96    
+            fieldout(i)=0.0                                                GPB1F404.97    
+          ENDDO                                                            GPB1F404.98    
+        ENDIF                                                              GPB1F404.99    
+*ENDIF                                                                     GPB0F403.1815  
+       ENDIF                                                               MUSPAC1A.297   
+C                                                                          MUSPAC1A.298   
+999   CONTINUE ! jump here for error exit                                  MUSPAC1A.299   
+C                                                                          MUSPAC1A.300   
+111   FORMAT('MULTI_SP :  >>>FATAL ERROR <<',a40,i5,i5)                    MUSPAC1A.301   
+101   FORMAT('MULTI_SP : north > south',2i5,' in record ',i5)              MUSPAC1A.302   
+102   FORMAT('MULTI_SP : west > east',2i5,'in record ',i5 )                MUSPAC1A.303   
+      RETURN                                                               MUSPAC1A.304   
+      END                                                                  MUSPAC1A.305   
+*ENDIF                                                                     MUSPAC1A.306   

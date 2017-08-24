@@ -1,0 +1,1011 @@
+*IF DEF,C82_1A,AND,DEF,OCEAN                                               GHM2F405.24    
+C ******************************COPYRIGHT******************************    GTS2F400.8389  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.8390  
+C                                                                          GTS2F400.8391  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.8392  
+C restrictions as set forth in the contract.                               GTS2F400.8393  
+C                                                                          GTS2F400.8394  
+C                Meteorological Office                                     GTS2F400.8395  
+C                London Road                                               GTS2F400.8396  
+C                BRACKNELL                                                 GTS2F400.8397  
+C                Berkshire UK                                              GTS2F400.8398  
+C                RG12 2SZ                                                  GTS2F400.8399  
+C                                                                          GTS2F400.8400  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.8401  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.8402  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.8403  
+C Modelling at the above address.                                          GTS2F400.8404  
+C ******************************COPYRIGHT******************************    GTS2F400.8405  
+C                                                                          GTS2F400.8406  
+CLL SUBROUTINE REPLANCO                                                    RPANCO1A.3     
+CLL                                                                        RPANCO1A.4     
+CLL Purpose:  Updates ancillary fields as requested in FIELDCODE array.    RPANCO1A.5     
+CLL   Tests whether update is required for each field, allowing for        RPANCO1A.6     
+CLL   dependencies between fields. Uses LOOKUP array to find data for      RPANCO1A.7     
+CLL   appropriate time, reads a record and checks for current data         RPANCO1A.8     
+CLL   type. Reads second record if time interpolation required. Updates    RPANCO1A.9     
+CLL   the field. Under DEF RECON, the interface to the routine is          RPANCO1A.10    
+CLL   modified for use in the reconfiguration rather than the model.       RPANCO1A.11    
+CLL   Under DEF CAL360 the 360 day rather than the Gregorian calender      RPANCO1A.12    
+CLL   is used.                                                             RPANCO1A.13    
+CLL                                                                        RPANCO1A.14    
+CLL       In 1991 Extensive revision bringing code into line with          RPANCO1A.15    
+CLL              vn5.0 of REPLANCA                                         RPANCO1A.16    
+CLL                                                                        RPANCO1A.17    
+CLL CW SI       <- programmer of some or all of previous code or changes   RPANCO1A.18    
+CLL                                                                        RPANCO1A.19    
+CLL  Model            Modification history from model version 3.0:         RPANCO1A.20    
+CLL version  Date                                                          RPANCO1A.21    
+CLL   3.2    13/07/93 Changed CHARACTER*(*) to CHARACTER*(80) for          TS150793.168   
+CLL                   portability.  Author Tracey Smith.                   TS150793.169   
+CLL   3.3  08/02/94  Modify calls to TIME2SEC/SEC2TIME to output/input     TJ080294.392   
+CLL                  elapsed times in days & secs, for portability. TCJ    TJ080294.393   
+CLL   3.3    08/12/93 Extra argument for READFLDS. D. Robinson             DR081293.119   
+CLL  3.4  20/07/94  Improve time interpolation by using reference time     GRB1F304.127   
+CLL                  for ancillary updating.   R.T.H.Barnes.               GRB1F304.128   
+CLL  3.4  06/10/94  Add user ancillaries.                     RTHBarnes    GRB0F304.172   
+CLL  3.4  04/08/94  Extended to allow multi-level ancillary fields. MB     GMB1F304.117   
+CLL   3.4  16/06/94   DEF CAL360 replaced by LOGICAL LCAL360               GSS1F304.604   
+CLL                   LCAL360 passed to TIME2SEC, SEC2TIME                 GSS1F304.605   
+CLL                                                  S.J.Swarbrick         GSS1F304.606   
+CLL  4.0  06/09/95  Only print time interpolation diagnostics when it      GRB1F400.67    
+CLL                 is really done.  RTHBarnes.                            GRB1F400.68    
+!    4.1  18/06/96  Changes to cope with changes in STASH addressing       GDG0F401.1412  
+!                   Author D.M. Goddard.                                   GDG0F401.1413  
+!LL   4.4  05/09/97   Initialise ANCIL arrays. S.D.Mullerworth             GSM1F404.1     
+CLL                                                                        RPANCO1A.23    
+CLL PROGRAMMING STANDARD: UMDP NO 3 VERSION NO 2, DATED 07/09/90           RPANCO1A.24    
+CLL                                                                        RPANCO1A.25    
+CLL SYSTEM COMPONENTS COVERED: C71                                         RPANCO1A.26    
+CLL                                                                        RPANCO1A.27    
+CLL SYSTEM TASK C7                                                         RPANCO1A.28    
+CLL                                                                        RPANCO1A.29    
+CLL                                                                        RPANCO1A.30    
+CLL  External documentation: UMDP C7                                       RPANCO1A.31    
+CLL                                                                        RPANCO1A.32    
+CLLEND                                                                     RPANCO1A.33    
+                                                                           RPANCO1A.34    
+      SUBROUTINE REPLANCO                                                  RPANCO1A.35    
+                                                                           RPANCO1A.36    
+C*L   Arguments:                                                           RPANCO1A.37    
+     &(I_YEAR,I_MONTH,I_DAY,I_HOUR,I_MINUTE,I_SECOND,I_DAY_NUMBER,         RPANCO1A.38    
+     & ANCIL_REFTIME,OFFSET_STEPS,IMT,JMT,D1,                              GRB1F304.129   
+                                                                           RPANCO1A.40    
+*IF -DEF,RECON                                                             RPANCO1A.41    
+                                                                           RPANCO1A.42    
+     & O_STEP,O_STEPS_P_P,O_SECS_P_P,                                      RPANCO1A.43    
+                                                                           RPANCO1A.44    
+*ENDIF                                                                     RPANCO1A.45    
+                                                                           RPANCO1A.46    
+     & LEN1_LOOKUP,                                                        RPANCO1A.47    
+     & LEN_FIXHD,                                                          RPANCO1A.48    
+     & LEN_INTHD,                                                          RPANCO1A.49    
+     & LEN_REALHD,                                                         RPANCO1A.50    
+     & LEN_D1,                                                             RPANCO1A.51    
+     & FIXHD,                                                              RPANCO1A.52    
+     & INTHD,                                                              RPANCO1A.53    
+     & REALHD,                                                             RPANCO1A.54    
+     & LOOKUP,                                                             RPANCO1A.55    
+     & RLOOKUP,                                                            RPANCO1A.56    
+     & FTNANCIL,                                                           RPANCO1A.57    
+     & LOOKUP_START,                                                       RPANCO1A.58    
+     & NDATASETS,                                                          RPANCO1A.59    
+     & NLOOKUPS,                                                           RPANCO1A.60    
+                                                                           RPANCO1A.61    
+*CALL ARGPPX                                                               GDG0F401.1414  
+*IF DEF,RECON                                                              RPANCO1A.62    
+                                                                           RPANCO1A.63    
+     & IOUNIT,                                                             RPANCO1A.64    
+                                                                           RPANCO1A.65    
+*ENDIF                                                                     RPANCO1A.66    
+                                                                           RPANCO1A.67    
+     & ICODE,CMESSAGE,LCAL360)                                             GSS1F304.607   
+                                                                           RPANCO1A.69    
+                                                                           RPANCO1A.70    
+      IMPLICIT NONE                                                        RPANCO1A.71    
+                                                                           RPANCO1A.72    
+      LOGICAL LCAL360                                                      GSS1F304.608   
+C Include COMDECKS                                                         RPANCO1A.73    
+*CALL CSUBMODL                                                             GDG0F401.1415  
+*CALL CPPXREF                                                              GDG0F401.1416  
+*CALL PPXLOOK                                                              GDG0F401.1417  
+*CALL CANCILO                                                              RPANCO1A.74    
+*CALL CLOOKADD                                                             RPANCO1A.75    
+*CALL CPHYSCON                                                             RPANCO1A.76    
+*CALL CNTLOCN                                                              ORH2F401.68    
+                                                                           RPANCO1A.77    
+      INTEGER                                                              RPANCO1A.78    
+     &       I_YEAR,            ! Curent Model Time                        RPANCO1A.79    
+     &       I_MONTH,           !   "      "     "                         RPANCO1A.80    
+     &       I_DAY,             !   "      "     "                         RPANCO1A.81    
+     &       I_HOUR,            !   "      "     "                         RPANCO1A.82    
+     &       I_MINUTE,          !   "      "     "                         RPANCO1A.83    
+     &       I_SECOND,          !   "      "     "                         RPANCO1A.84    
+     &       I_DAY_NUMBER,      !                                          RPANCO1A.85    
+     &       ANCIL_REFTIME(6),  ! Reference time for ancillary updating    GRB1F304.130   
+     &       OFFSET_STEPS,      ! Offset in timesteps of ref. from basis   GRB1F304.131   
+*IF -DEF,RECON                                                             RPANCO1A.87    
+     &       O_STEP,            !                                          RPANCO1A.89    
+     &       O_STEPS_P_P,       !                                          RPANCO1A.90    
+     &       O_SECS_P_P,        !                                          RPANCO1A.91    
+*ENDIF                                                                     RPANCO1A.93    
+CCC  &       BASIS_TIME_DAYS,   ! Model basis time in whole days           GRB1F304.132   
+CCC  &       BASIS_TIME_SECS,   ! Model basis time in extra seconds        GRB1F304.133   
+     &       NDATASETS,         ! Number of ancillary datasets             RPANCO1A.96    
+     &       NLOOKUPS,          ! Number of lookup tables                  RPANCO1A.97    
+     &       LEN_D1             ! Size of primary data array               RPANCO1A.98    
+     &      ,IMT                ! Zonal dimension of arrays                RPANCO1A.99    
+     &      ,JMT                ! Meridional dimension of arrays           RPANCO1A.100   
+                                                                           RPANCO1A.101   
+      INTEGER                                                              RPANCO1A.102   
+     &       LEN1_LOOKUP,       ! First dimension of lookup table          RPANCO1A.103   
+     &       LEN_FIXHD,         ! Length of headers in data sets           RPANCO1A.104   
+     &       LEN_INTHD,                                                    RPANCO1A.105   
+     &       LEN_REALHD,                                                   RPANCO1A.106   
+     &       FIXHD(LEN_FIXHD,NDATASETS),  ! Data set headers               RPANCO1A.107   
+     &       INTHD(LEN_INTHD,NDATASETS),  !                                RPANCO1A.108   
+     &       FTNANCIL(NDATASETS),         ! FTN numbers of data sets       RPANCO1A.109   
+     &       LOOKUP_START(NDATASETS),     ! Start of lookup tables         RPANCO1A.110   
+C                                         ! referring to data set          RPANCO1A.111   
+     &       LOOKUP(LEN1_LOOKUP,NLOOKUPS) ! Data set lookup tables         RPANCO1A.112   
+                                                                           RPANCO1A.113   
+      REAL                                                                 RPANCO1A.114   
+     &       D1(LEN_D1),        ! Primary data array                       RPANCO1A.115   
+     &       REALHD(LEN_REALHD,NDATASETS),                                 RPANCO1A.116   
+     &       RLOOKUP(LEN1_LOOKUP,NLOOKUPS)                                 RPANCO1A.117   
+                                                                           RPANCO1A.118   
+      INTEGER                                                              RPANCO1A.119   
+     &       I_AO,     ! Atmosphere_Ocean indicator = 1 Atmosphere         RPANCO1A.120   
+C                                                   = 2 Ocean              RPANCO1A.121   
+     &       ICODE,    ! Return code                                       RPANCO1A.122   
+     &       IOUNIT    ! OUT  I/O unit passed out in recon mode            RPANCO1A.123   
+                                                                           RPANCO1A.124   
+      CHARACTER*(80)                                                       TS150793.170   
+     &       CMESSAGE  ! Error message                                     RPANCO1A.126   
+                                                                           RPANCO1A.127   
+                                                                           RPANCO1A.128   
+C*L   Subroutines called;                                                  RPANCO1A.129   
+      EXTERNAL                                                             RPANCO1A.130   
+     &       TIME2SEC,                                                     RPANCO1A.131   
+     &       READFLDS,                                                     RPANCO1A.132   
+*IF -DEF,RECON                                                             RPANCO1A.133   
+     &       SEC2TIME,TIME_DF,                                             GRB1F304.134   
+*ENDIF                                                                     RPANCO1A.135   
+     &       T_INT                                                         RPANCO1A.136   
+                                                                           RPANCO1A.137   
+C*L   Local integer arrays                                                 RPANCO1A.138   
+      REAL                                                                 RPANCO1A.139   
+     &       ANCIL1(IMT*JMT),     ! Buffers to hold values of ancillary    RPANCO1A.140   
+C                                 ! data for time interpolation.           RPANCO1A.141   
+     &       ANCIL2(IMT*JMT),     !                                        RPANCO1A.142   
+     &       ANCIL_DATA(IMT*JMT)  ! Field of ancillary data held prior     RPANCO1A.143   
+C                                 ! to selective updating.                 RPANCO1A.144   
+                                                                           RPANCO1A.145   
+C     Local variables                                                      RPANCO1A.146   
+      INTEGER                                                              RPANCO1A.147   
+     &       I,                 !                                          RPANCO1A.148   
+     &       JADDR,                                                        RPANCO1A.149   
+     &       J,                 !                                          RPANCO1A.150   
+     &       I1,       ! used for checking stash item code in sec 2.3      GMB1F304.118   
+     &       I2,       ! ptr to 1st field; calculated in sec 2.3           GMB1F304.119   
+     &       I1LEV,    ! ptr to 2nd field for this level; used in sec 3    GMB1F304.120   
+     &       I2LEV,    ! ptr to 1st field for this level; used in sec 3    GMB1F304.121   
+     &       ID,                !                                          RPANCO1A.153   
+     &       IM,                !                                          RPANCO1A.154   
+     &       IY,                !                                          RPANCO1A.155   
+     &       FIELD,             ! Current field number.                    RPANCO1A.156   
+     &       FILE               !                                          RPANCO1A.157   
+      INTEGER                                                              RPANCO1A.158   
+     &       INTERVAL,          ! Interval between data times.             RPANCO1A.159   
+     &       STEP,              ! Number of data times skipped             RPANCO1A.160   
+     &       MONTHS,            ! Used in calculations of position of      RPANCO1A.161   
+C                               ! data required                            RPANCO1A.162   
+     &       HOURS,                                                        RPANCO1A.163   
+     &       DAYS,SECONDS,      ! Times used in intermediate calculation   TJ080294.397   
+     &       PERIOD,                                                       RPANCO1A.165   
+     &       START_MONTH,       !                                          RPANCO1A.166   
+     &       NFTIN,             ! Current FTN number for ancillary field   RPANCO1A.167   
+     &       ANCIL_REF_DAYS,    ! Ancil.reference time in whole days       GRB1F304.135   
+     &       ANCIL_REF_SECS,    ! Ancil.reference time in extra seconds    GRB1F304.136   
+     &       DAY,SEC,           ! Times relative to basis time             TJ080294.398   
+     &       DAY1,SEC1,         ! Times relative to basis time             TJ080294.399   
+     &       INCR_SEC,          ! Increment in sec                         GRB1F304.137   
+     &       LEN_IO                                                        RPANCO1A.170   
+     &      ,LEVEL              ! loop index for level number              GMB1F304.122   
+     &      ,LEN_FLD            ! length of (single level) field           GMB1F304.123   
+     &      ,LEN_FLD_ACC        ! accumulated length of fields on          GMB1F304.124   
+C                                 previous levels                          GMB1F304.125   
+     &      ,POS_STRT           ! start position in D1 array               GMB1F304.126   
+                                                                           RPANCO1A.172   
+*IF -DEF,RECON                                                             RPANCO1A.173   
+      INTEGER                                                              RPANCO1A.174   
+     &       I_YEAR1,            ! Copy of Curent Model Time year          RPANCO1A.175   
+     &       I_MONTH1,           !   "      "     "          month         RPANCO1A.176   
+     &       I_DAY1,             !   "      "     "          day           RPANCO1A.177   
+     &       I_HOUR1,            !   "      "     "          hour          RPANCO1A.178   
+     &       I_MINUTE1,          !   "      "     "          minute        RPANCO1A.179   
+     &       I_SECOND1           !   "      "     "          second        RPANCO1A.180   
+                                                                           RPANCO1A.181   
+      INTEGER                                                              RPANCO1A.182   
+     &       UPDATE_MONTHS      ! update frequency (months) if Gregorian   RPANCO1A.183   
+      LOGICAL                                                              RPANCO1A.184   
+     &       LGREG_MONTHLY      ! True for Gregorian monthly updating      RPANCO1A.185   
+      INTEGER                                                              RPANCO1A.187   
+     &       I_YEAR_BASIS,            ! Basis Model Time                   RPANCO1A.188   
+     &       I_MONTH_BASIS,           !   "     "     "                    RPANCO1A.189   
+     &       I_DAY_BASIS,             !   "     "     "                    RPANCO1A.190   
+     &       I_HOUR_BASIS,            !   "     "     "                    RPANCO1A.191   
+     &       I_MINUTE_BASIS,          !   "     "     "                    RPANCO1A.192   
+     &       I_SECOND_BASIS,          !   "     "     "                    RPANCO1A.193   
+     &       I_DAY_NUMBER_BASIS                                            RPANCO1A.194   
+      INTEGER                                                              GRB1F304.138   
+     &       I_YEAR_REF,              ! Reference Time                     GRB1F304.139   
+     &       I_MONTH_REF,             !    "       "                       GRB1F304.140   
+     &       I_DAY_REF,               !    "       "                       GRB1F304.141   
+     &       I_HOUR_REF,              !    "       "                       GRB1F304.142   
+     &       I_MINUTE_REF,            !    "       "                       GRB1F304.143   
+     &       I_SECOND_REF             !    "       "                       GRB1F304.144   
+*ENDIF                                                                     RPANCO1A.197   
+                                                                           RPANCO1A.198   
+                                                                           RPANCO1A.199   
+      LOGICAL                                                              RPANCO1A.200   
+     &       LINTERPOLATE,      ! Indicates whether time                   RPANCO1A.201   
+C                               ! interpolation needed.                    RPANCO1A.202   
+     &       LMISMATCH,         ! Used in header chacks                    RPANCO1A.203   
+     &       LICE_DEPTH,        ! Number of data times skipped             RPANCO1A.204   
+     &       SINGLE_TIME,       ! Indicates that only one time is          RPANCO1A.205   
+C                               ! available in data set                    RPANCO1A.206   
+     &       PERIODIC,          ! Data set is periodic                     RPANCO1A.207   
+     &       REGULAR            ! Interval between data times in           RPANCO1A.208   
+C                               ! dataset is regular in model timesteps.   RPANCO1A.209   
+                                                                           RPANCO1A.210   
+      REAL                                                                 RPANCO1A.211   
+     &       A_IO               ! Used in check for I/O errors             RPANCO1A.212   
+     &,      TIME               ! Target time for time interpolation       GRB1F304.145   
+     &,      TIME1              ! Times if data used in time interpn.      GRB1F304.146   
+     &,      TIME2              !   "                                      GRB1F304.147   
+                                                                           RPANCO1A.216   
+                                                                           RPANCO1A.217   
+CL  1.  Initialisation for ocean                                           RPANCO1A.218   
+                                                                           RPANCO1A.219   
+C     Ocean fields                                                         RPANCO1A.220   
+C     FIELD=  1 Land Sea Mask                                              RPANCO1A.221   
+C             2 Ocean Depth                                                RPANCO1A.222   
+C             3 Zonal wind stress                                          RPANCO1A.223   
+C             4 Meridional wind stress                                     RPANCO1A.224   
+C             5 Wind mixing energy                                         RPANCO1A.225   
+C             6 Surface pressure                                           RPANCO1A.226   
+C             7 Solar heat flux at sea surface                             RPANCO1A.227   
+C             8 Remaining heat flux at sea surface                         RPANCO1A.228   
+C             9 Precipitation minus Evaporation                            RPANCO1A.229   
+C            10 River inflow                                               RPANCO1A.230   
+C            11 Water type                                                 RPANCO1A.231   
+C            12 Solar radiation over ice                                   RPANCO1A.232   
+C            13 Snowfall                                                   RPANCO1A.233   
+C            14 Sublimation                                                RPANCO1A.234   
+C            15 Reference surface temperature                              RPANCO1A.235   
+C            16 Reference surface salinity                                 RPANCO1A.236   
+C            17 Climatological air temperature                             RPANCO1A.237   
+C            18 Climatological ice depth                                   RPANCO1A.238   
+C            19 Anomalous heat flux                                        RPANCO1A.239   
+C            20 Anomalous salinity flux                                    RPANCO1A.240   
+C            21 Ice depth correction (heat)                                RPANCO1A.241   
+C            22                                                            GRB0F304.173   
+C            23                                                            GRB0F304.174   
+C            24 Single level user ancillary 1                              GRB0F304.175   
+C            25 Single level user ancillary 2                              GRB0F304.176   
+C            26 Single level user ancillary 3                              GRB0F304.177   
+C            27 Single level user ancillary 4                              GRB0F304.178   
+C            28 Single level user ancillary 5                              GRB0F304.179   
+C            29 Single level user ancillary 6                              GRB0F304.180   
+C            30 Single level user ancillary 7                              GRB0F304.181   
+C            31 Single level user ancillary 8                              GRB0F304.182   
+C            32 Single level user ancillary 9                              GRB0F304.183   
+C            33 Single level user ancillary 10                             GRB0F304.184   
+C            34 Multi-level user ancillary 1                               GRB0F304.185   
+C            35 Multi-level user ancillary 2                               GRB0F304.186   
+C            36 Multi-level user ancillary 3                               GRB0F304.187   
+C            37 Multi-level user ancillary 4                               GRB0F304.188   
+                                                                           RPANCO1A.242   
+      IOUNIT=0                                                             RPANCO1A.243   
+      INCR_SEC = 0                                                         GRB1F304.148   
+                                                                           GSM1F404.2     
+! Initialise arrays - particularly for unused rows in MPP U fields         GSM1F404.3     
+! *DIR$ CACHE_BYPASS ANCIL1,ANCIL2                                         GPB0F405.205   
+      DO I = 1,IMT*JMT                                                     GSM1F404.5     
+        ANCIL1(I)=0.0                                                      GSM1F404.6     
+        ANCIL2(I)=0.0                                                      GSM1F404.7     
+      ENDDO                                                                GSM1F404.8     
+CL  1.1 Set logical switches for each ancillary field independently        RPANCO1A.244   
+                                                                           RPANCO1A.245   
+      DO FIELD=1,NANCIL_FIELDS                                             RPANCO1A.246   
+                                                                           RPANCO1A.247   
+*IF -DEF,RECON                                                             RPANCO1A.248   
+                                                                           RPANCO1A.249   
+        UPDATE(FIELD)=.FALSE.                                              RPANCO1A.250   
+        IF(STEPS(FIELD).NE.0) THEN                                         RPANCO1A.251   
+C         UPDATE(FIELD)=MOD(O_STEP,STEPS(FIELD)).EQ.0                      GRB1F304.149   
+          UPDATE(FIELD)=(MOD(O_STEP+OFFSET_STEPS,STEPS(FIELD)).EQ.0        GRB1F304.150   
+     &                   .OR.O_STEP.EQ.0)                                  GRB1F304.151   
+     &                    .AND.FIELDCODE(1,FIELD).GT.0                     RPANCO1A.253   
+     &                     .AND.D1_ANCILADD(FIELD).GT.1                    GDR3F305.312   
+        END IF                                                             RPANCO1A.254   
+                                                                           GRB1F304.152   
+CL  1.05 Copy ancillary updating reference time to local variables         GRB1F304.153   
+      I_YEAR_REF   = ANCIL_REFTIME(1)                                      GRB1F304.154   
+      I_MONTH_REF  = ANCIL_REFTIME(2)                                      GRB1F304.155   
+      I_DAY_REF    = ANCIL_REFTIME(3)                                      GRB1F304.156   
+      I_HOUR_REF   = ANCIL_REFTIME(4)                                      GRB1F304.157   
+      I_MINUTE_REF = ANCIL_REFTIME(5)                                      GRB1F304.158   
+      I_SECOND_REF = ANCIL_REFTIME(6)                                      GRB1F304.159   
+CL       and convert to reference days & secs                              GRB1F304.160   
+            CALL TIME2SEC(I_YEAR_REF,I_MONTH_REF,I_DAY_REF,                GRB1F304.161   
+     &                    I_HOUR_REF,I_MINUTE_REF,I_SECOND_REF,            GRB1F304.162   
+     &                    0,0,ANCIL_REF_DAYS,ANCIL_REF_SECS,LCAL360)       GRB1F304.163   
+                                                                           GRB1F304.164   
+      IF (.NOT. LCAL360) THEN                                              GSS1F304.609   
+                                                                           RPANCO1A.259   
+CL  1.11 Set logical UPDATE for Gregorian calender updates at monthly      RPANCO1A.260   
+CL       or yearly intervals. NB STEPS value set to 1 day in INANCILO      RPANCO1A.261   
+        IF(FIELDCODE(1,FIELD).EQ.1.OR.FIELDCODE(1,FIELD).EQ.2) THEN        RPANCO1A.262   
+          MONTHS=I_MONTH+I_YEAR*12-(I_MONTH_REF+I_YEAR_REF*12)             GRB1F304.165   
+          UPDATE_MONTHS= FIELDCODE(2,FIELD)*                               RPANCO1A.264   
+     &     ((3-FIELDCODE(1,FIELD))/2 *12+ 1-(3-FIELDCODE(1,FIELD))/2)      RPANCO1A.265   
+          UPDATE(FIELD)=MOD(MONTHS,UPDATE_MONTHS).EQ.0.AND.I_DAY.EQ.1      RPANCO1A.266   
+        END IF                                                             RPANCO1A.267   
+                                                                           RPANCO1A.269   
+      END IF                                                               GSS1F304.610   
+*ELSE                                                                      RPANCO1A.270   
+                                                                           RPANCO1A.271   
+        UPDATE(FIELD)=FIELDCODE(FIELD).GT.0                                RPANCO1A.272   
+!  Initialise for valid time interpolation in reconfiguration mode.        GDG0F401.1418  
+      ANCIL_REF_DAYS = 0                                                   GDG0F401.1419  
+      ANCIL_REF_SECS = 0                                                   GDG0F401.1420  
+                                                                           RPANCO1A.273   
+*ENDIF                                                                     RPANCO1A.274   
+                                                                           RPANCO1A.275   
+      END DO                                                               RPANCO1A.276   
+                                                                           RPANCO1A.277   
+                                                                           RPANCO1A.278   
+CL Loop over ancillary fields (ocean)                                      RPANCO1A.279   
+                                                                           RPANCO1A.280   
+      DO FIELD=1,NANCIL_FIELDS                                             RPANCO1A.281   
+                                                                           RPANCO1A.282   
+                                                                           RPANCO1A.283   
+      IF (UPDATE(FIELD)) THEN  ! (1st level IF block)                      RPANCO1A.284   
+        FILE=FILEANCIL(FIELD)                                              RPANCO1A.285   
+        NFTIN=FTNANCIL(FILE)                                               RPANCO1A.286   
+                                                                           RPANCO1A.287   
+C     Update required for field                                            RPANCO1A.288   
+                                                                           RPANCO1A.289   
+      IF (L_OPRINT) WRITE(6,*)'REPLANCO:UPDATE REQUIRED FOR FIELD',FIELD   GIE0F403.608   
+                                                                           RPANCO1A.291   
+CL    Check whether more than one data time available in data set          RPANCO1A.292   
+                                                                           RPANCO1A.293   
+        SINGLE_TIME=FIXHD(10,FILE).EQ.0                                    RPANCO1A.294   
+                                                                           RPANCO1A.295   
+CL    Set default values for time interpolation                            RPANCO1A.296   
+                                                                           RPANCO1A.297   
+        LINTERPOLATE=.TRUE.                                                RPANCO1A.298   
+        IF(SINGLE_TIME) THEN                                               RPANCO1A.299   
+          LINTERPOLATE=.FALSE.                                             RPANCO1A.300   
+        END IF                                                             RPANCO1A.301   
+                                                                           RPANCO1A.302   
+                                                                           RPANCO1A.303   
+CL 2.1 Find position of input record                                       RPANCO1A.304   
+                                                                           RPANCO1A.305   
+CL    Default settings of search parameters if only one time present       RPANCO1A.306   
+                                                                           RPANCO1A.307   
+        IF(SINGLE_TIME) THEN                                               RPANCO1A.308   
+          STEP=0                                                           RPANCO1A.309   
+        ELSE                                                               RPANCO1A.310   
+                                                                           RPANCO1A.311   
+*IF -DEF,RECON                                                             RPANCO1A.312   
+                                                                           RPANCO1A.313   
+          UPDATE_MONTHS=0                                                  RPANCO1A.314   
+          LGREG_MONTHLY=.FALSE.                                            RPANCO1A.315   
+      IF (.NOT. LCAL360) THEN                                              GSS1F304.611   
+                                                                           GSS1F304.612   
+          IF(FIELDCODE(1,FIELD).EQ.1.OR.FIELDCODE(1,FIELD).EQ.2) THEN      RPANCO1A.317   
+            LGREG_MONTHLY=.TRUE.                                           RPANCO1A.318   
+            UPDATE_MONTHS= FIELDCODE(2,FIELD)*                             RPANCO1A.319   
+     &      ((3-FIELDCODE(1,FIELD))/2 *12+ 1-(3-FIELDCODE(1,FIELD))/2)     RPANCO1A.320   
+          END IF                                                           RPANCO1A.321   
+                                                                           RPANCO1A.323   
+      END IF                                                               GSS1F304.613   
+*ENDIF                                                                     RPANCO1A.324   
+                                                                           RPANCO1A.325   
+          PERIODIC=FIXHD(10,FILE).EQ.2                                     RPANCO1A.326   
+          REGULAR=.TRUE.                                                   RPANCO1A.327   
+      IF (.NOT. LCAL360) THEN                                              GSS1F304.614   
+                                                                           RPANCO1A.330   
+          REGULAR=FIXHD(35,FILE).EQ.0.AND.FIXHD(36,FILE).                  RPANCO1A.331   
+     &    EQ.0                                                             RPANCO1A.332   
+C i.e. data at intervals of days/hours & non-periodic                      RPANCO1A.333   
+          IF(PERIODIC) REGULAR=REGULAR.AND.FIXHD(37,FILE).EQ.0             RPANCO1A.334   
+C i.e. data at intervals of hours & periodic                               RPANCO1A.335   
+                                                                           RPANCO1A.336   
+      END IF                                                               GSS1F304.615   
+          IF(.NOT.PERIODIC) THEN                                           RPANCO1A.339   
+                                                                           RPANCO1A.340   
+CL            If data taken from full time series of input data.           RPANCO1A.341   
+                                                                           RPANCO1A.342   
+            CALL TIME2SEC(I_YEAR,I_MONTH,I_DAY,I_HOUR                      RPANCO1A.343   
+     &                    ,I_MINUTE,I_SECOND                               TJ080294.403   
+     &                    ,ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC           GSS1F304.616   
+     &                    ,LCAL360)                                        GSS1F304.617   
+                                                                           RPANCO1A.345   
+*IF -DEF,RECON                                                             RPANCO1A.346   
+                                                                           RPANCO1A.347   
+CL Adjust time to middle of updating interval                              RPANCO1A.348   
+                                                                           RPANCO1A.349   
+            IF(.NOT.LGREG_MONTHLY) THEN                                    RPANCO1A.350   
+              SEC=SEC+STEPS(FIELD)*O_SECS_P_P/(O_STEPS_P_P*2)              RPANCO1A.351   
+                                                                           RPANCO1A.352   
+C  If start-up, adjust for offset of reference time from initial time,     GRB1F304.166   
+C  & update with values for half a period before first standard update.    GRB1F304.167   
+              IF (O_STEP.EQ.0) THEN                                        GRB1F304.168   
+                DAY1 = DAY                                                 GRB1F304.169   
+                SEC1 = SEC                                                 GRB1F304.170   
+      INCR_SEC = -O_SECS_P_P*MOD(OFFSET_STEPS,STEPS(FIELD))/O_STEPS_P_P    GRB1F304.171   
+                CALL TIME_DF(DAY1,SEC1,0,INCR_SEC,DAY,SEC)                 GRB1F304.172   
+              END IF                                                       GRB1F304.173   
+                                                                           GRB1F304.174   
+            ELSE                                                           RPANCO1A.353   
+              IM=MOD(I_MONTH+UPDATE_MONTHS-1,12) + 1                       RPANCO1A.354   
+              IY=I_YEAR+(I_MONTH+UPDATE_MONTHS-1)/12                       RPANCO1A.355   
+              CALL TIME2SEC(IY,IM,I_DAY,I_HOUR                             RPANCO1A.356   
+     &                    ,I_MINUTE,I_SECOND                               TJ080294.405   
+     &                    ,ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY1,SEC1         GSS1F304.618   
+     &                    ,LCAL360)                                        GSS1F304.619   
+              IF (MOD(DAY+DAY1,2).EQ.0) THEN                               TJ080294.407   
+                DAY=(DAY+DAY1)/2                                           TJ080294.408   
+                SEC=(SEC+SEC1)/2                                           TJ080294.409   
+              ELSE                                                         TJ080294.410   
+                DAY=(DAY+DAY1-1)/2                                         TJ080294.411   
+                SEC=(SEC+SEC1+86400)/2                                     TJ080294.412   
+              ENDIF                                                        TJ080294.413   
+C  If start-up, adjust for offset of reference time from initial time,     GRB1F304.175   
+C  & update with values for half a period before first standard update.    GRB1F304.176   
+              IF (O_STEP.EQ.0) THEN                                        GRB1F304.177   
+                DAY1 = DAY                                                 GRB1F304.178   
+                SEC1 = SEC                                                 GRB1F304.179   
+      INCR_SEC = -O_SECS_P_P*MOD(OFFSET_STEPS,STEPS(FIELD))/O_STEPS_P_P    GRB1F304.180   
+                CALL TIME_DF(DAY1,SEC1,0,INCR_SEC,DAY,SEC)                 GRB1F304.181   
+              END IF                                                       GRB1F304.182   
+            ENDIF                                                          RPANCO1A.359   
+                                                                           RPANCO1A.360   
+*ENDIF                                                                     RPANCO1A.361   
+                                                                           RPANCO1A.362   
+            IF(REGULAR) THEN                                               RPANCO1A.363   
+CL 2.1.1  Standard cases:360 day calender;                                 RPANCO1A.364   
+CL 2.1.1  or Gregorian calendar with                                       RPANCO1A.365   
+CL        interval between data times in days or hours                     RPANCO1A.366   
+CL        updating interval may be regular in model timesteps,             RPANCO1A.367   
+CL        or (LGREG_MONTHLY=T) irregular in model timesteps,               RPANCO1A.368   
+                                                                           RPANCO1A.369   
+              DAYS   =DAY                                                  TJ080294.414   
+              SECONDS=SEC                                                  RPANCO1A.370   
+CL FInd time(in seconds) of first ancillary data on file                   RPANCO1A.371   
+              CALL TIME2SEC(FIXHD(21,FILE),FIXHD(22,FILE),                 RPANCO1A.372   
+     &                   FIXHD(23,FILE),FIXHD(24,FILE),                    RPANCO1A.373   
+     &                   FIXHD(25,FILE),FIXHD(26,FILE),                    RPANCO1A.374   
+     &                   ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC,            GSS1F304.620   
+     &                   LCAL360)                                          GSS1F304.621   
+              DAYS   =DAYS   -DAY                                          TJ080294.416   
+              SECONDS=SECONDS-SEC                                          RPANCO1A.376   
+              SECONDS=SECONDS+86400*DAYS                                   TJ080294.417   
+                                                                           RPANCO1A.377   
+              IF(SECONDS.LT.0) THEN                                        RPANCO1A.378   
+                ICODE=400+FIELD                                            RPANCO1A.379   
+           CMESSAGE='REPLANCO: Current time precedes start time of data'   RPANCO1A.380   
+                RETURN                                                     RPANCO1A.381   
+              END IF                                                       RPANCO1A.382   
+                                                                           RPANCO1A.383   
+CL FInd interval(in seconds) between ancillary data on file                RPANCO1A.384   
+              INTERVAL=(FIXHD(35,FILE)*8640+FIXHD(36,FILE)*720+            RPANCO1A.385   
+     &                FIXHD(37,FILE)*24+FIXHD(38,FILE))*3600+              RPANCO1A.386   
+     &                FIXHD(39,FILE)*60+FIXHD(40,FILE)                     RPANCO1A.387   
+                                                                           RPANCO1A.388   
+C Do not interpolate in time if data time exactly matches model time       RPANCO1A.389   
+                                                                           RPANCO1A.390   
+              IF(MOD(SECONDS,INTERVAL).EQ.0) THEN                          RPANCO1A.391   
+                LINTERPOLATE=.FALSE.                                       RPANCO1A.392   
+              END IF                                                       RPANCO1A.393   
+                                                                           RPANCO1A.394   
+              STEP=SECONDS/INTERVAL                                        RPANCO1A.395   
+              TIME=REAL(SECONDS)                                           RPANCO1A.396   
+              TIME1=STEP*INTERVAL                                          RPANCO1A.397   
+              TIME2=(STEP+1)*INTERVAL                                      RPANCO1A.398   
+                                                                           RPANCO1A.399   
+            ELSE                                                           RPANCO1A.400   
+                                                                           RPANCO1A.401   
+CL 2.1.2 Gregorian calender;ancillary data interval is in months or        RPANCO1A.402   
+CL       years,which is irregular in model timesteps.                      RPANCO1A.403   
+                                                                           RPANCO1A.404   
+*IF -DEF,RECON                                                             RPANCO1A.405   
+                                                                           RPANCO1A.406   
+CL Adjust YMD time to middle of updating interval                          RPANCO1A.407   
+                                                                           RPANCO1A.408   
+              I_YEAR1=I_YEAR                                               RPANCO1A.409   
+              I_MONTH1=I_MONTH                                             RPANCO1A.410   
+              I_DAY1=I_DAY                                                 RPANCO1A.411   
+              I_HOUR1=I_HOUR                                               RPANCO1A.412   
+              CALL SEC2TIME(DAY,SEC,ANCIL_REF_DAYS,ANCIL_REF_SECS,         GRB1F304.183   
+     &                     I_YEAR,I_MONTH,I_DAY,                           TJ080294.419   
+     &                     I_HOUR,I_MINUTE,I_SECOND,I_DAY_NUMBER,          GSS1F304.622   
+     &                     LCAL360)                                        GSS1F304.623   
+                                                                           RPANCO1A.415   
+*ENDIF                                                                     RPANCO1A.416   
+                                                                           RPANCO1A.417   
+CL FInd interval(in months) between ancillary data on file                 RPANCO1A.418   
+              INTERVAL=FIXHD(35,FILE)*12+FIXHD(36,FILE)                    RPANCO1A.419   
+              MONTHS=I_YEAR*12+I_MONTH                                     RPANCO1A.420   
+              START_MONTH=FIXHD(21,FILE)*12+FIXHD(22,FILE)                 RPANCO1A.421   
+              MONTHS=MONTHS-START_MONTH                                    RPANCO1A.422   
+C  Check for time within month                                             RPANCO1A.423   
+              IF((I_DAY*24+I_HOUR).LT.                                     RPANCO1A.424   
+     *           (FIXHD(23,FILE)*24+FIXHD(24,FILE))) THEN                  RPANCO1A.425   
+                MONTHS=MONTHS-1                                            RPANCO1A.426   
+              END IF                                                       RPANCO1A.427   
+                                                                           RPANCO1A.428   
+              IF(MONTHS.LT.0) THEN                                         RPANCO1A.429   
+                ICODE=400+FIELD                                            RPANCO1A.430   
+           CMESSAGE='REPLANCO: Current time precedes start time of data'   RPANCO1A.431   
+                RETURN                                                     RPANCO1A.432   
+              END IF                                                       RPANCO1A.433   
+                                                                           RPANCO1A.434   
+*IF -DEF,RECON                                                             RPANCO1A.435   
+                                                                           RPANCO1A.436   
+CL Adjust YMD time back to start of updating interval                      RPANCO1A.437   
+                                                                           RPANCO1A.438   
+              I_YEAR=I_YEAR1                                               RPANCO1A.439   
+              I_MONTH=I_MONTH1                                             RPANCO1A.440   
+              I_DAY=I_DAY1                                                 RPANCO1A.441   
+              I_HOUR=I_HOUR1                                               RPANCO1A.442   
+                                                                           RPANCO1A.443   
+*ENDIF                                                                     RPANCO1A.444   
+                                                                           RPANCO1A.445   
+                                                                           RPANCO1A.446   
+              STEP=MONTHS/INTERVAL                                         RPANCO1A.447   
+C NB INTERVAL may be > 1 month                                             RPANCO1A.448   
+              MONTHS=STEP*INTERVAL                                         RPANCO1A.449   
+C Calculate data times for time interpolation                              RPANCO1A.450   
+              TIME=REAL(SEC)/3600+REAL(DAY*24)                             TJ080294.420   
+              IM=MOD(FIXHD(22,FILE)+MONTHS-1,12)+1                         RPANCO1A.452   
+              IY=FIXHD(21,FILE)+(MONTHS+FIXHD(22,FILE)-1)/12               RPANCO1A.453   
+              CALL TIME2SEC(IY,IM,FIXHD(23,FILE),FIXHD(24,FILE),           RPANCO1A.454   
+     &              FIXHD(25,FILE),FIXHD(26,FILE),                         TJ080294.421   
+     &              ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC,                 GSS1F304.624   
+     &              LCAL360)                                               GSS1F304.625   
+              TIME1=REAL(SEC)/3600+REAL(DAY*24)                            TJ080294.423   
+              IM=MOD(FIXHD(22,FILE)+MONTHS+INTERVAL-1,12)+1                RPANCO1A.457   
+              IY=FIXHD(21,FILE)+(MONTHS+INTERVAL+FIXHD(22,FILE)-1)/12      RPANCO1A.458   
+              CALL TIME2SEC(IY,IM,FIXHD(23,FILE),FIXHD(24,FILE),           RPANCO1A.459   
+     &              FIXHD(25,FILE),FIXHD(26,FILE),                         TJ080294.424   
+     &              ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC,                 GSS1F304.626   
+     &              LCAL360)                                               GSS1F304.627   
+              TIME2=REAL(SEC)/3600+REAL(DAY*24)                            TJ080294.426   
+                                                                           RPANCO1A.462   
+C Do not interpolate in time if data time exactly matches model time       RPANCO1A.463   
+                                                                           RPANCO1A.464   
+              IF(TIME.EQ.TIME1) THEN                                       RPANCO1A.465   
+                LINTERPOLATE=.FALSE.                                       RPANCO1A.466   
+              END IF                                                       RPANCO1A.467   
+                                                                           RPANCO1A.468   
+            ENDIF ! End of REGULAR/not REGULAR                             RPANCO1A.469   
+                                                                           RPANCO1A.470   
+          ELSE  ! PERIODIC data                                            RPANCO1A.471   
+                                                                           RPANCO1A.472   
+CL 2.2   If data is taken from ancillary periodic data.                    RPANCO1A.473   
+                                                                           RPANCO1A.474   
+            CALL TIME2SEC(I_YEAR,I_MONTH,I_DAY,I_HOUR,                     RPANCO1A.475   
+     &                     I_MINUTE,I_SECOND,                              TJ080294.427   
+     &                     ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC,          GSS1F304.628   
+     &                     LCAL360)                                        GSS1F304.629   
+                                                                           RPANCO1A.477   
+*IF -DEF,RECON                                                             RPANCO1A.478   
+                                                                           RPANCO1A.479   
+CL Adjust time to middle of updating interval                              RPANCO1A.480   
+                                                                           RPANCO1A.481   
+            IF(.NOT.LGREG_MONTHLY) THEN                                    RPANCO1A.482   
+              SEC=SEC+STEPS(FIELD)*O_SECS_P_P/(O_STEPS_P_P*2)              RPANCO1A.483   
+                                                                           RPANCO1A.484   
+C  If start-up, adjust for offset of reference time from initial time,     GRB1F304.184   
+C  & update with values for half a period before first standard update.    GRB1F304.185   
+              IF (O_STEP.EQ.0) THEN                                        GRB1F304.186   
+                DAY1 = DAY                                                 GRB1F304.187   
+                SEC1 = SEC                                                 GRB1F304.188   
+      INCR_SEC = -O_SECS_P_P*MOD(OFFSET_STEPS,STEPS(FIELD))/O_STEPS_P_P    GRB1F304.189   
+                CALL TIME_DF(DAY1,SEC1,0,INCR_SEC,DAY,SEC)                 GRB1F304.190   
+              END IF                                                       GRB1F304.191   
+                                                                           GRB1F304.192   
+            ELSE                                                           RPANCO1A.485   
+              IM=MOD(I_MONTH+UPDATE_MONTHS-1,12) + 1                       RPANCO1A.486   
+              IY=I_YEAR+(I_MONTH+UPDATE_MONTHS-1)/12                       RPANCO1A.487   
+              CALL TIME2SEC(IY,IM,I_DAY,I_HOUR                             RPANCO1A.488   
+     &                    ,I_MINUTE,I_SECOND                               TJ080294.429   
+     &                    ,ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY1,SEC1         GSS1F304.630   
+     &                    ,LCAL360)                                        GSS1F304.631   
+              IF (MOD(DAY+DAY1,2).EQ.0) THEN                               TJ080294.431   
+                DAY=(DAY+DAY1)/2                                           TJ080294.432   
+                SEC=(SEC+SEC1)/2                                           TJ080294.433   
+              ELSE                                                         TJ080294.434   
+                DAY=(DAY+DAY1-1)/2                                         TJ080294.435   
+                SEC=(SEC+SEC1+86400)/2                                     TJ080294.436   
+              ENDIF                                                        TJ080294.437   
+C  If start-up, adjust for offset of reference time from initial time,     GRB1F304.193   
+C  & update with values for half a period before first standard update.    GRB1F304.194   
+              IF (O_STEP.EQ.0) THEN                                        GRB1F304.195   
+                DAY1 = DAY                                                 GRB1F304.196   
+                SEC1 = SEC                                                 GRB1F304.197   
+      INCR_SEC = -O_SECS_P_P*MOD(OFFSET_STEPS,STEPS(FIELD))/O_STEPS_P_P    GRB1F304.198   
+                CALL TIME_DF(DAY1,SEC1,0,INCR_SEC,DAY,SEC)                 GRB1F304.199   
+              END IF                                                       GRB1F304.200   
+            ENDIF                                                          RPANCO1A.491   
+                                                                           RPANCO1A.492   
+                                                                           RPANCO1A.493   
+CL Adjust YMD time to middle of updating interval                          RPANCO1A.494   
+                                                                           RPANCO1A.495   
+            I_YEAR1=I_YEAR                                                 RPANCO1A.496   
+            I_MONTH1=I_MONTH                                               RPANCO1A.497   
+            I_DAY1=I_DAY                                                   RPANCO1A.498   
+            I_HOUR1=I_HOUR                                                 RPANCO1A.499   
+            I_MINUTE1=I_MINUTE                                             RPANCO1A.500   
+            I_SECOND1=I_SECOND                                             RPANCO1A.501   
+            CALL SEC2TIME(DAY,SEC,ANCIL_REF_DAYS,ANCIL_REF_SECS,           GRB1F304.201   
+     &                     I_YEAR,I_MONTH,I_DAY,                           TJ080294.439   
+     &                     I_HOUR,I_MINUTE,I_SECOND,I_DAY_NUMBER,          GSS1F304.632   
+     &                     LCAL360)                                        GSS1F304.633   
+                                                                           RPANCO1A.504   
+                                                                           RPANCO1A.505   
+*ENDIF                                                                     RPANCO1A.506   
+                                                                           RPANCO1A.507   
+            IF (REGULAR) THEN                                              RPANCO1A.508   
+CL 2.2.1 Standard cases:1) 360 day calender, with allowed periods of       RPANCO1A.509   
+CL       1 day, 1 month or 1 year;                                         RPANCO1A.510   
+CL                                                                         RPANCO1A.511   
+CL       2) Gregorian calender with update in hours,and period of          RPANCO1A.512   
+CL       data 1 day.                                                       RPANCO1A.513   
+CL                                                                         RPANCO1A.514   
+CL       For both updating interval and number of                          RPANCO1A.515   
+CL       data times to be skipped in data set calculated in seconds.       RPANCO1A.516   
+                                                                           RPANCO1A.517   
+              DAYS   =DAY                                                  TJ080294.440   
+              SECONDS=SEC                                                  RPANCO1A.518   
+              INTERVAL=(FIXHD(35,FILE)*8640+FIXHD(36,FILE)*720+            RPANCO1A.519   
+     &                FIXHD(37,FILE)*24+FIXHD(38,FILE))*3600+              RPANCO1A.520   
+     &                FIXHD(39,FILE)*60+FIXHD(40,FILE)                     RPANCO1A.521   
+                                                                           RPANCO1A.522   
+C             PERIOD=INTHD(3,FILE)*INTERVAL                                RPANCO1A.523   
+              PERIOD=(FIXHD(28,FILE)-FIXHD(21,FILE))*8640*3600             RPANCO1A.524   
+     &             + (FIXHD(29,FILE)-FIXHD(22,FILE))*720*3600              RPANCO1A.525   
+     &             + (FIXHD(30,FILE)-FIXHD(23,FILE))*24*3600               RPANCO1A.526   
+     &             + (FIXHD(31,FILE)-FIXHD(24,FILE))*3600                  RPANCO1A.527   
+     &             + (FIXHD(32,FILE)-FIXHD(25,FILE))*60                    RPANCO1A.528   
+     &             + (FIXHD(33,FILE)-FIXHD(26,FILE))+INTERVAL              RPANCO1A.529   
+              PERIOD=PERIOD/3600                                           RPANCO1A.530   
+                                                                           RPANCO1A.531   
+CL   Do not allow non-standard periods                                     RPANCO1A.532   
+                                                                           GSS1F304.634   
+      IF (LCAL360) THEN                                                    GSS1F304.635   
+                                                                           GSS1F304.636   
+              IF(PERIOD.NE.8640.AND.PERIOD.NE.720.AND.PERIOD.NE.24)THEN    RPANCO1A.534   
+                ICODE=600+FIELD                                            RPANCO1A.538   
+           CMESSAGE='REPLANCO: Non-standard period for periodic data'      RPANCO1A.539   
+                RETURN                                                     RPANCO1A.540   
+              ENDIF                                                        RPANCO1A.541   
+      ELSE                                                                 GSS1F304.637   
+              IF(PERIOD.NE.24)THEN                                         GSS1F304.638   
+                ICODE=600+FIELD                                            GSS1F304.639   
+           CMESSAGE='REPLANCO: Non-standard period for periodic data'      GSS1F304.640   
+                RETURN                                                     GSS1F304.641   
+              ENDIF                                                        GSS1F304.642   
+      END IF                                                               GSS1F304.643   
+              IF(PERIOD.EQ.24)THEN                                         RPANCO1A.543   
+C Ancillary data interval in hour(s), period is 1 day                      RPANCO1A.544   
+                                                                           RPANCO1A.545   
+                IY=I_YEAR                                                  RPANCO1A.546   
+                IM=I_MONTH                                                 RPANCO1A.547   
+                ID=I_DAY                                                   RPANCO1A.548   
+                IF((I_HOUR*3600+I_MINUTE*60+I_SECOND).LT.(FIXHD(24,FILE)   RPANCO1A.549   
+     &             *3600+FIXHD(25,FILE)*60+FIXHD(26,FILE)))                RPANCO1A.550   
+     &           DAYS=DAYS+1                                               TJ080294.441   
+                                                                           RPANCO1A.552   
+              ELSE IF(PERIOD.EQ.720)THEN                                   RPANCO1A.553   
+C Ancillary data interval in day(s) or hours , period is 1 month           RPANCO1A.554   
+                                                                           RPANCO1A.555   
+                IY=I_YEAR                                                  RPANCO1A.556   
+                IM=I_MONTH                                                 RPANCO1A.557   
+                ID=FIXHD(23,FILE)                                          RPANCO1A.558   
+                IF((I_DAY*24*3600+I_HOUR*3600+I_MINUTE*60+I_SECOND).LT.    RPANCO1A.559   
+     &             (FIXHD(23,FILE)*24*3600+FIXHD(24,FILE)*3600+            RPANCO1A.560   
+     &              FIXHD(25,FILE)*60+FIXHD(26,FILE)))                     RPANCO1A.561   
+     &           DAYS=DAYS+30                                              TJ080294.442   
+                                                                           RPANCO1A.563   
+              ELSE IF(PERIOD.EQ.8640)THEN                                  RPANCO1A.564   
+C Ancillary data interval in month(s)or days or hours, period is 1 year    RPANCO1A.565   
+                                                                           RPANCO1A.566   
+                IY=I_YEAR                                                  RPANCO1A.567   
+                IM=FIXHD(22,FILE)                                          RPANCO1A.568   
+                ID=FIXHD(23,FILE)                                          RPANCO1A.569   
+                IF((I_MONTH*720*3600+I_DAY*24*3600+I_HOUR*3600+            RPANCO1A.570   
+     &             I_MINUTE*60+I_SECOND).LT.(FIXHD(22,FILE)*720*3600+      RPANCO1A.571   
+     &             FIXHD(23,FILE)*24*3600+FIXHD(24,FILE)*3600+             RPANCO1A.572   
+     &              FIXHD(25,FILE)*60+FIXHD(26,FILE)))                     RPANCO1A.573   
+     &           DAYS=DAYS+360                                             TJ080294.443   
+                                                                           RPANCO1A.575   
+              END IF                                                       RPANCO1A.576   
+                                                                           RPANCO1A.577   
+              CALL TIME2SEC(IY,IM,ID,FIXHD(24,FILE),                       RPANCO1A.578   
+     &                     FIXHD(25,FILE),FIXHD(26,FILE),                  RPANCO1A.579   
+     &                     ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC,          GSS1F304.644   
+     &                     LCAL360)                                        GSS1F304.645   
+              DAYS   =DAYS   -DAY                                          TJ080294.445   
+              SECONDS=SECONDS-SEC                                          RPANCO1A.581   
+              SECONDS=SECONDS+86400*DAYS                                   TJ080294.446   
+                                                                           RPANCO1A.582   
+C Do not interpolate in time if data time exactly matches model time       RPANCO1A.583   
+                                                                           RPANCO1A.584   
+              IF(MOD(SECONDS,INTERVAL).EQ.0) THEN                          RPANCO1A.585   
+                LINTERPOLATE=.FALSE.                                       RPANCO1A.586   
+              END IF                                                       RPANCO1A.587   
+              STEP=SECONDS/INTERVAL                                        RPANCO1A.588   
+              TIME=REAL(SECONDS)                                           RPANCO1A.589   
+              TIME1=STEP*INTERVAL                                          RPANCO1A.590   
+              TIME2=(STEP+1)*INTERVAL                                      RPANCO1A.591   
+                                                                           RPANCO1A.592   
+            ELSE  ! non regular case                                       RPANCO1A.593   
+                                                                           RPANCO1A.594   
+CL 2.2.2 Gregorian calender,and data interval is in months,                RPANCO1A.595   
+CL       period is 1 year                                                  RPANCO1A.596   
+CL       Updating interval and number of data times to be skipped          RPANCO1A.597   
+CL       calculated in months.                                             RPANCO1A.598   
+                                                                           RPANCO1A.599   
+              TIME=REAL(SEC)/3600+REAL(DAY*24)                             TJ080294.447   
+              INTERVAL=FIXHD(36,FILE)+FIXHD(35,FILE)*12                    RPANCO1A.601   
+C             PERIOD=INTHD(3,FILE)*INTERVAL                                RPANCO1A.602   
+              PERIOD=(FIXHD(28,FILE)-FIXHD(21,FILE))*12                    RPANCO1A.603   
+     &             + (FIXHD(29,FILE)-FIXHD(22,FILE))+INTERVAL              RPANCO1A.604   
+              IF(PERIOD.NE.12)THEN                                         RPANCO1A.605   
+                ICODE=600+FIELD                                            RPANCO1A.606   
+           CMESSAGE='REPLANCO: Non-standard period for periodic data'      RPANCO1A.607   
+                RETURN                                                     RPANCO1A.608   
+              ENDIF                                                        RPANCO1A.609   
+                                                                           RPANCO1A.610   
+              MONTHS=I_MONTH-FIXHD(22,FILE)                                RPANCO1A.611   
+C  Check for time within month                                             RPANCO1A.612   
+              IF((I_DAY*24+I_HOUR).LT.                                     RPANCO1A.613   
+     &           (FIXHD(23,FILE)*24+FIXHD(24,FILE))) THEN                  RPANCO1A.614   
+                MONTHS=MONTHS-1                                            RPANCO1A.615   
+              END IF                                                       RPANCO1A.616   
+              IF(MONTHS.LT.0) THEN                                         RPANCO1A.617   
+                MONTHS=MONTHS+12                                           RPANCO1A.618   
+              END IF                                                       RPANCO1A.619   
+                                                                           RPANCO1A.620   
+              STEP=MONTHS/INTERVAL                                         RPANCO1A.621   
+C NB INTERVAL may be > 1 month                                             RPANCO1A.622   
+              MONTHS=STEP*INTERVAL                                         RPANCO1A.623   
+C  Calculate TIME1 for first ancillary data time                           RPANCO1A.624   
+C  set IY correctly for time interpolation calculations                    RPANCO1A.625   
+              IY=I_YEAR                                                    RPANCO1A.626   
+              IM=MOD(FIXHD(22,FILE)+MONTHS-1,12)+1                         RPANCO1A.627   
+              IF(IM.GT.I_MONTH) IY=IY-1                                    RPANCO1A.628   
+              CALL TIME2SEC(IY,IM,FIXHD(23,FILE),FIXHD(24,FILE),           RPANCO1A.629   
+     &              FIXHD(25,FILE),FIXHD(26,FILE),                         TJ080294.448   
+     &              ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC,LCAL360)         GSS1F304.646   
+              TIME1=REAL(SEC)/3600+REAL(DAY*24)                            TJ080294.450   
+C  Calculate  TIME2 for second ancillary data time                         RPANCO1A.632   
+C  set IY correctly for time interpolation calculations                    RPANCO1A.633   
+              IY=I_YEAR                                                    RPANCO1A.634   
+              IM=MOD(FIXHD(22,FILE)+MONTHS+INTERVAL-1,12)+1                RPANCO1A.635   
+              IF(IM.LT.I_MONTH) IY=IY+1                                    RPANCO1A.636   
+              CALL TIME2SEC(IY,IM,FIXHD(23,FILE),FIXHD(24,FILE),           RPANCO1A.637   
+     &              FIXHD(25,FILE),FIXHD(26,FILE),                         TJ080294.451   
+     &              ANCIL_REF_DAYS,ANCIL_REF_SECS,DAY,SEC,LCAL360)         GSS1F304.647   
+              TIME2=REAL(SEC)/3600+REAL(DAY*24)                            TJ080294.453   
+                                                                           RPANCO1A.640   
+C Do not interpolate in time if data time exactly matches model time       RPANCO1A.641   
+                                                                           RPANCO1A.642   
+              IF(TIME.EQ.TIME1) THEN                                       RPANCO1A.643   
+                LINTERPOLATE=.FALSE.                                       RPANCO1A.644   
+              END IF                                                       RPANCO1A.645   
+                                                                           RPANCO1A.646   
+            ENDIF  ! regular/non-regular                                   GRB1F304.202   
+                                                                           RPANCO1A.648   
+*IF -DEF,RECON                                                             RPANCO1A.649   
+                                                                           RPANCO1A.650   
+CL Adjust YMD time back to start of updating interval                      RPANCO1A.651   
+                                                                           RPANCO1A.652   
+            I_YEAR=I_YEAR1                                                 RPANCO1A.653   
+            I_MONTH=I_MONTH1                                               RPANCO1A.654   
+            I_DAY=I_DAY1                                                   RPANCO1A.655   
+            I_HOUR=I_HOUR1                                                 RPANCO1A.656   
+            I_MINUTE=I_MINUTE1                                             RPANCO1A.657   
+            I_SECOND=I_SECOND1                                             RPANCO1A.658   
+                                                                           RPANCO1A.659   
+*ENDIF                                                                     RPANCO1A.660   
+                                                                           RPANCO1A.661   
+          ENDIF  ! non-periodic/periodic                                   GRB1F304.203   
+                                                                           RPANCO1A.663   
+*IF -DEF,RECON                                                             GRB1F304.204   
+      IF (LINTERPOLATE.AND.L_OPRINT) THEN                                  ORH2F401.67    
+        WRITE(6,*)' REPLANCO - time interpolation for field ',field        GIE0F403.609   
+        WRITE(6,*)' time,time1,time2 ',time,time1,time2                    GIE0F403.610   
+        WRITE(6,*)' seconds,int,period ',seconds,interval,period           GIE0F403.611   
+        END IF                                                             GRB1F400.70    
+*ENDIF                                                                     GRB1F304.208   
+                                                                           GRB1F304.209   
+        END IF ! singletime/non-singletime                                 GRB1F304.210   
+                                                                           RPANCO1A.665   
+CL 2.3   Check STASH Code                                                  RPANCO1A.666   
+                                                                           RPANCO1A.667   
+        I2=NLOOKUP(FIELD)+LOOKUP_STEP(FIELD)*STEP                          RPANCO1A.668   
+                                                                           RPANCO1A.669   
+        I1=LOOKUP(ITEM_CODE,I2+LOOKUP_START(FILE)-1)                       RPANCO1A.670   
+                                                                           RPANCO1A.671   
+        LMISMATCH=.FALSE.                                                  RPANCO1A.672   
+      IF (L_OPRINT) THEN                                                   ORH2F401.70    
+        WRITE(6,*)' Information used in checking ancillary data set:',     RPANCO1A.673   
+     *  ' position of lookup table in dataset:',I2                         RPANCO1A.674   
+        WRITE(6,*)' Position of first lookup table referring to ',         RPANCO1A.675   
+     *  'data type ',NLOOKUP(FIELD)                                        RPANCO1A.676   
+        WRITE(6,*)' Interval between lookup tables referring to data ',    RPANCO1A.677   
+     *  'type ', LOOKUP_STEP(FIELD),' Number of steps', STEP               RPANCO1A.678   
+        WRITE(6,*)' STASH code in dataset ',I1,                            RPANCO1A.679   
+     *  '  STASH code requested ',STASHANCIL(FIELD)                        RPANCO1A.680   
+        WRITE(6,*)'''Start'' position of lookup tables for dataset ',      RPANCO1A.681   
+     *  'in overall lookup array ' ,LOOKUP_START(FILE)                     RPANCO1A.682   
+      ENDIF                                                                ORH2F401.71    
+                                                                           RPANCO1A.683   
+        IF(I1.NE.STASHANCIL(FIELD)) THEN                                   RPANCO1A.684   
+        WRITE(6,*)I1,STASHANCIL(FIELD),FIELD                               RPANCO1A.685   
+          LMISMATCH=.TRUE.                                                 RPANCO1A.686   
+        END IF                                                             RPANCO1A.687   
+                                                                           RPANCO1A.688   
+CL Error exit if checks fail                                               RPANCO1A.689   
+                                                                           RPANCO1A.690   
+        IF(LMISMATCH) THEN                                                 RPANCO1A.691   
+          ICODE=200+FIELD                                                  RPANCO1A.692   
+         CMESSAGE='REPLANCO: PP HEADERS ON ANCILLARY FILE DO NOT MATCH'    RPANCO1A.693   
+         RETURN                                                            RPANCO1A.694   
+        END IF                                                             RPANCO1A.695   
+                                                                           RPANCO1A.696   
+        IF(LINTERPOLATE.AND..NOT.SINGLE_TIME) THEN                         RPANCO1A.697   
+CL Check time interpolation factors                                        RPANCO1A.698   
+          IF(TIME.LT.TIME1.OR.TIME.GT.TIME2) THEN                          RPANCO1A.699   
+           WRITE(6,*)' Information used in interpolation/replacement:'     RPANCO1A.700   
+           WRITE(6,*)' Time of first data=', TIME1                         RPANCO1A.701   
+           WRITE(6,*)' Validity Time for update=', TIME                    RPANCO1A.702   
+           WRITE(6,*)' Time of second data=', TIME2                        RPANCO1A.703   
+                                                                           RPANCO1A.704   
+           ICODE=500+FIELD                                                 RPANCO1A.705   
+           CMESSAGE='REPLANCO: TIME INTERPOLATION ERROR'                   RPANCO1A.706   
+           RETURN                                                          RPANCO1A.707   
+          END IF                                                           RPANCO1A.708   
+        END IF                                                             RPANCO1A.709   
+                                                                           RPANCO1A.710   
+CL  3.  Extract ancillary data for field I  and transfer to D1 array       GMB1F304.127   
+                                                                           RPANCO1A.712   
+C set accumulated length of fields input to zero                           GMB1F304.128   
+        LEN_FLD_ACC = 0                                                    GMB1F304.129   
+                                                                           GMB1F304.130   
+C start loop over levels (ends near end of routine)                        GMB1F304.131   
+        DO LEVEL=1,LEVELS(FIELD)                                           GMB1F304.132   
+                                                                           GMB1F304.133   
+         I2LEV = I2 + LEVEL - 1                                            GMB1F304.134   
+                                                                           GMB1F304.135   
+CL 3.0 Determine number of values in each field to be input                GMB1F304.136   
+                                                                           GMB1F304.137   
+C  LEN_FLD is length of first field to be read                             GMB1F304.138   
+       LEN_FLD = IMT*JMT                                                   ORH6F402.9     
+                                                                           ORH6F402.10    
+                                                                           GMB1F304.140   
+        IF ( LEN_FLD .GT. IMT*JMT ) THEN                                   GMB1F304.141   
+          ICODE = 1                                                        GMB1F304.142   
+          WRITE(6,*) ' length of ancillary field longer than allowed'      GMB1F304.143   
+          WRITE(6,*) 'LEN_FLD, IMT*JMT = ', LEN_FLD, IMT*JMT               GMB1F304.144   
+          CMESSAGE='REPLANCO : field length error'                         GMB1F304.145   
+          GO TO 900                                                        GMB1F304.146   
+        END IF                                                             GMB1F304.147   
+                                                                           GMB1F304.148   
+                                                                           GMB1F304.149   
+CL 3.1  Read data for single level of ancillary field.                     GMB1F304.150   
+                                                                           GMB1F304.151   
+        CALL READFLDS(NFTIN,1,I2LEV,LOOKUP(1,LOOKUP_START(FILE)),          GDG0F401.1421  
+     &                LEN1_LOOKUP,ANCIL1,LEN_FLD,FIXHD(1,FILE),            GDG0F401.1422  
+*CALL ARGPPX                                                               GDG0F401.1423  
+     &                ICODE,CMESSAGE)                                      GDG0F401.1424  
+        IF(ICODE.GT.0) THEN                                                RPANCO1A.715   
+          ICODE=FIELD+100                                                  RPANCO1A.716   
+          CMESSAGE='REPLANCO :I|O error'                                   RPANCO1A.717   
+          RETURN                                                           RPANCO1A.718   
+        END IF                                                             RPANCO1A.719   
+                                                                           RPANCO1A.720   
+CLL 3.2 If time interpolation required, read second record                 RPANCO1A.721   
+        IF(LINTERPOLATE) THEN                                              RPANCO1A.722   
+                                                                           RPANCO1A.723   
+          I1LEV=I2LEV+LOOKUP_STEP(FIELD)                                   GMB1F304.154   
+                                                                           RPANCO1A.725   
+          IF (I1LEV.LE.FIXHD(152,FILE)) THEN                               GMB1F304.155   
+            CALL READFLDS(NFTIN,1,I1LEV,LOOKUP(1,LOOKUP_START(FILE)),      GDG0F401.1425  
+     &                    LEN1_LOOKUP,ANCIL2,LEN_FLD,FIXHD(1,FILE),        GDG0F401.1426  
+*CALL ARGPPX                                                               GDG0F401.1427  
+     &                    ICODE,CMESSAGE)                                  GDG0F401.1428  
+              IF(ICODE.GT.0) THEN                                          RPANCO1A.729   
+                ICODE=FIELD+100                                            RPANCO1A.730   
+                IOUNIT=NFTIN                                               RPANCO1A.731   
+                CMESSAGE='REPLANCO :I|O error'                             RPANCO1A.732   
+                RETURN                                                     RPANCO1A.733   
+              END IF                                                       RPANCO1A.734   
+                                                                           RPANCO1A.735   
+          ELSE  ! end of data on file                                      RPANCO1A.736   
+                                                                           RPANCO1A.737   
+CL  If end of data has been reached go back to the start if periodic       RPANCO1A.738   
+CL     otherwise cancel time interpolation                                 RPANCO1A.739   
+                                                                           RPANCO1A.740   
+            IF(PERIODIC) THEN                                              RPANCO1A.741   
+                                                                           RPANCO1A.742   
+C find number of field to access                                           GMB1F304.158   
+              I1LEV=NLOOKUP(FIELD) + LEVEL - 1                             GMB1F304.159   
+                                                                           RPANCO1A.744   
+              CALL READFLDS(NFTIN,1,I1LEV,LOOKUP(1,LOOKUP_START(FILE)),    GDG0F401.1429  
+     &                      LEN1_LOOKUP,ANCIL2,LEN_FLD,FIXHD(1,FILE),      GDG0F401.1430  
+*CALL ARGPPX                                                               GDG0F401.1431  
+     &                      ICODE,CMESSAGE)                                GDG0F401.1432  
+              IF(ICODE.GT.0) THEN                                          RPANCO1A.747   
+                ICODE=FIELD+300                                            RPANCO1A.748   
+                IOUNIT=NFTIN                                               RPANCO1A.749   
+                CMESSAGE='REPLANCO :I|O error'                             RPANCO1A.750   
+                RETURN                                                     RPANCO1A.751   
+              END IF                                                       RPANCO1A.752   
+            ELSE                                                           RPANCO1A.753   
+              LINTERPOLATE=.FALSE.                                         RPANCO1A.754   
+            END IF                                                         RPANCO1A.755   
+          END IF  ! end of position of file test                           RPANCO1A.756   
+          ICODE=0                                                          RPANCO1A.757   
+        END IF  ! end of LINTERPOLATE                                      RPANCO1A.758   
+                                                                           RPANCO1A.759   
+CL 3.3 Set number of rows of data  (no longer required)                    GMB1F304.162   
+                                                                           RPANCO1A.766   
+CL 3.4 Perform time interpolation                                          RPANCO1A.767   
+                                                                           RPANCO1A.768   
+        IF(LINTERPOLATE) THEN                                              RPANCO1A.769   
+                                                                           RPANCO1A.770   
+C Linear interpolation in time, unless missing data indicator              RPANCO1A.771   
+C present at either time.                                                  RPANCO1A.772   
+                                                                           RPANCO1A.773   
+          CALL T_INT(ANCIL1,TIME1,ANCIL2,TIME2,ANCIL_DATA,                 RPANCO1A.774   
+     &             TIME,LEN_FLD)                                           GMB1F304.163   
+                                                                           RPANCO1A.776   
+C If no interpolation, copy data into final array                          RPANCO1A.777   
+                                                                           RPANCO1A.778   
+        ELSE                                                               RPANCO1A.779   
+          DO I=1,LEN_FLD                                                   GMB1F304.164   
+            ANCIL_DATA(I)=ANCIL1(I)                                        RPANCO1A.781   
+          END DO                                                           RPANCO1A.782   
+        END IF                                                             RPANCO1A.783   
+                                                                           RPANCO1A.784   
+CL 3.5 Updating action for each field at each level                        RPANCO1A.785   
+CL     Fields replaced.                                                    RPANCO1A.786   
+                                                                           RPANCO1A.787   
+        POS_STRT = D1_ANCILADD(FIELD) + LEN_FLD_ACC                        GMB1F304.165   
+        DO I=1,LEN_FLD                                                     GMB1F304.166   
+           D1(POS_STRT+I-1)=ANCIL_DATA(I)                                  GMB1F304.167   
+        END DO                                                             RPANCO1A.790   
+                                                                           GMB1F304.168   
+CL End loop over levels                                                    GMB1F304.169   
+                                                                           GMB1F304.170   
+        LEN_FLD_ACC = LEN_FLD_ACC + LEN_FLD                                GMB1F304.171   
+                                                                           GMB1F304.172   
+       END DO   ! LEVEL  loop ends                                         GMB1F304.173   
+                                                                           RPANCO1A.791   
+CL End loop over ancillary fields (ocean)                                  RPANCO1A.792   
+                                                                           RPANCO1A.793   
+      END IF  ! End UPDATE(FIELD) test : 1st level IF block                RPANCO1A.794   
+                                                                           RPANCO1A.795   
+      END DO                                                               RPANCO1A.796   
+                                                                           RPANCO1A.797   
+ 900  RETURN                                                               RPANCO1A.798   
+      END                                                                  RPANCO1A.799   
+*ENDIF                                                                     RPANCO1A.800   

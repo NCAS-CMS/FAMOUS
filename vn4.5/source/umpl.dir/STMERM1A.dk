@@ -1,0 +1,920 @@
+*IF DEF,C84_1A                                                             STMERM1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.9685  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9686  
+C                                                                          GTS2F400.9687  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9688  
+C restrictions as set forth in the contract.                               GTS2F400.9689  
+C                                                                          GTS2F400.9690  
+C                Meteorological Office                                     GTS2F400.9691  
+C                London Road                                               GTS2F400.9692  
+C                BRACKNELL                                                 GTS2F400.9693  
+C                Berkshire UK                                              GTS2F400.9694  
+C                RG12 2SZ                                                  GTS2F400.9695  
+C                                                                          GTS2F400.9696  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9697  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9698  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9699  
+C Modelling at the above address.                                          GTS2F400.9700  
+C ******************************COPYRIGHT******************************    GTS2F400.9701  
+C                                                                          GTS2F400.9702  
+CLL  Routine: STMERM ---------------------------------------------------   STMERM1A.3     
+CLL                                                                        STMERM1A.4     
+CLL  Purpose: Calculate weighted meridional mean within a region           STMERM1A.5     
+CLL           specified by lower left hand and upper right hand corner.    STMERM1A.6     
+CLL           (STASH service routine).                                     STMERM1A.7     
+CLL                                                                        STMERM1A.8     
+CLL  Tested under compiler:   cft77                                        STMERM1A.9     
+CLL  Tested under OS version: UNICOS 5.1                                   STMERM1A.10    
+CLL                                                                        STMERM1A.11    
+CLL  Author:   T.Johns/S.Tett                                              STMERM1A.12    
+CLL                                                                        STMERM1A.13    
+CLL  Model            Modification history from model version 3.0:         STMERM1A.14    
+CLL version  date                                                          STMERM1A.15    
+CLL   3.3  16/09/93  Allow level-by-level mass-weighting if mass-weights   TJ170993.179   
+CLL                  are so defined, otherwise use P*.                     TJ170993.180   
+!LL   4.3  15/01/97  Moved weighting and masking calculations up to        GPB0F403.898   
+!LL                  SPATIAL.                                              GPB0F403.899   
+!LL                  Significantly rewritten for MPP mode - meridional     GPB0F403.900   
+!LL                  data must be gathered to a processor for              GPB0F403.901   
+!LL                  reproducible sums to be calculated.      P.Burton     GPB0F403.902   
+!LL   4.4  13/06/97  MPP: Set fieldout to zero for processors in           GPB0F404.292   
+!LL                  the result subdomain area which will not              GPB0F404.293   
+!LL                  otherwise receiveof the meridional mean. P.Burton     GPB0F404.294   
+!LL   4.5  12/01/98  Replaced usage of shmem common block by a             GPB2F405.224   
+!LL                  dynamic array.                   P.Burton             GPB2F405.225   
+CLL                                                                        STMERM1A.16    
+CLL  Programming standard: UM Doc Paper 3, version 2 (7/9/90)              STMERM1A.17    
+CLL                                                                        STMERM1A.18    
+CLL  Logical components covered: D714                                      STMERM1A.19    
+CLL                                                                        STMERM1A.20    
+CLL  Project task: D7                                                      STMERM1A.21    
+CLL                                                                        STMERM1A.22    
+CLL  External documentation:                                               STMERM1A.23    
+CLL    Unified Model Doc Paper C4 - Storage handling and diagnostic        STMERM1A.24    
+CLL                                 system (STASH)                         STMERM1A.25    
+CLL                                                                        STMERM1A.26    
+C*L  Interface and arguments: ------------------------------------------   STMERM1A.27    
+C                                                                          STMERM1A.28    
+      SUBROUTINE STMERM(fieldin,vx,vy,st_grid,gr,lwrap,lmasswt,            GPB0F403.903   
+     &                  xstart,ystart,xend,yend,                           STMERM1A.30    
+*IF DEF,MPP                                                                GPB0F403.904   
+     &                  global_xstart,global_ystart,                       GPB0F403.905   
+     &                  global_xend,global_yend,                           GPB0F403.906   
+*ENDIF                                                                     GPB0F403.907   
+     &                  fieldout,                                          STMERM1A.31    
+     &                  pstar_weight,delta_ak,delta_bk,                    GPB0F403.908   
+     &                  area_weight,mask,                                  GPB0F403.909   
+     &                  row_length,p_rows,                                 GPB0F403.910   
+     &                  level_code,mask_code,weight_code,rmdi,             STMERM1A.35    
+     &                  icode,cmessage)                                    STMERM1A.36    
+C                                                                          STMERM1A.37    
+      IMPLICIT NONE                                                        STMERM1A.38    
+C                                                                          STMERM1A.39    
+      INTEGER                                                              STMERM1A.40    
+     &    vx,vy,                                ! IN  input field size     STMERM1A.41    
+     &    st_grid,                              ! IN  STASH grdtype code   STMERM1A.42    
+     &    gr,                                   ! IN input fld grid        GPB0F403.911   
+     &    xstart,ystart,                        ! IN  lower LH corner      STMERM1A.43    
+     &    xend,yend,                            ! IN  upper RH corner      STMERM1A.44    
+*IF DEF,MPP                                                                GPB0F403.912   
+     &    global_xstart,global_ystart,           ! IN global versions of   GPB0F403.913   
+     &    global_xend,  global_yend,             ! IN xstart etc.          GPB0F403.914   
+*ENDIF                                                                     GPB0F403.915   
+     &    row_length,p_rows,                    ! IN  primary dimensions   GPB0F403.916   
+     &    level_code,                           ! IN  input level code     STMERM1A.46    
+     &    mask_code,                            ! IN  masking code         STMERM1A.47    
+     &    weight_code,                          ! IN  weighting code       STMERM1A.48    
+     &    icode                                 ! OUT error return code    STMERM1A.49    
+      CHARACTER*(*)                                                        STMERM1A.50    
+     &    cmessage                              ! OUT error return msg     STMERM1A.51    
+      LOGICAL                                                              STMERM1A.52    
+     &    lwrap,                                ! IN  TRUE if wraparound   STMERM1A.53    
+     &    lmasswt,                              ! IN  TRUE if masswts OK   TJ170993.182   
+     &    mask(row_length,p_rows)               ! IN  mask array           GPB0F403.917   
+      REAL                                                                 STMERM1A.55    
+     &    fieldin(vx,vy),                       ! IN  input field          STMERM1A.56    
+     &    fieldout(xstart:xend),                ! OUT output field         STMERM1A.57    
+     &    pstar_weight(row_length,p_rows),      ! IN  pstar mass weight    GPB0F403.918   
+     &    delta_ak,                             ! IN  hybrid coordinates   STMERM1A.60    
+     &    delta_bk,                             ! IN  hybrid coordinates   STMERM1A.61    
+     &    area_weight(row_length,p_rows),       ! IN  area weighting       GPB0F403.919   
+! (already interpolated to the correct grid and                            GPB0F403.920   
+!  set to 1.0 where no area weighting is required)                         GPB0F403.921   
+     &    rmdi                                  ! IN  missing data indic   STMERM1A.64    
+C*----------------------------------------------------------------------   STMERM1A.65    
+C                                                                          STMERM1A.66    
+C External subroutines called                                              STMERM1A.67    
+C                                                                          STMERM1A.68    
+C                                                                          STMERM1A.70    
+*CALL STPARAM                                                              STMERM1A.71    
+*CALL STERR                                                                STMERM1A.72    
+C                                                                          STMERM1A.73    
+C Local variables                                                          STMERM1A.74    
+C                                                                          STMERM1A.75    
+        INTEGER i,ii,j   ! ARRAY INDICES FOR VARIABLE                      STMERM1A.76    
+                                                                           STMERM1A.77    
+*IF DEF,MPP                                                                GPB0F403.922   
+                                                                           GPB0F403.923   
+*CALL PARVARS                                                              GPB0F403.924   
+                                                                           GPB0F403.925   
+      INTEGER                                                              GPB0F403.926   
+                                                                           GPB0F403.927   
+*IF DEF,REPROD                                                             GPB0F403.928   
+! Processor co-ordinates of processors at the corners of the               GPB0F403.929   
+! processed subdomain                                                      GPB0F403.930   
+     &  proc_top_left_x,proc_top_left_y                                    GPB0F403.931   
+     &, proc_bot_right_x,proc_bot_right_y                                  GPB0F403.932   
+                                                                           GPB0F403.933   
+! size of the full subarea in both horizonal dimensions                    GPB0F403.934   
+     &, merid_sum_global_len_x                                             GPB0F403.935   
+     &, merid_sum_global_len_y                                             GPB0F403.936   
+                                                                           GPB0F403.937   
+! loop variables for loops over processors in subdomain                    GPB0F403.938   
+     &, proc_x,proc_y                                                      GPB0F403.939   
+                                                                           GPB0F403.940   
+! real processor x co-ordinate - when proc_x > nproc_x is just             GPB0F403.941   
+! proc_x-nproc_x                                                           GPB0F403.942   
+     &, eff_proc_x                                                         GPB0F403.943   
+                                                                           GPB0F403.944   
+! processor id of processor (proc_x,proc_y)                                GPB0F403.945   
+     &, proc_id                                                            GPB0F403.946   
+                                                                           GPB0F403.947   
+! definition of the extracted subarea array on processor proc_id           GPB0F403.948   
+     &, local_array_top_left_x,local_array_top_left_y                      GPB0F403.949   
+     &, local_array_bot_right_x,local_array_bot_right_y                    GPB0F403.950   
+                                                                           GPB0F403.951   
+! definition of the real data contained within the extracted               GPB0F403.952   
+! subarea on processor proc_id (ie. not including halos)                   GPB0F403.953   
+     &, local_data_top_left_x,local_data_top_left_y                        GPB0F403.954   
+     &, local_data_bot_right_x,local_data_bot_right_y                      GPB0F403.955   
+                                                                           GPB0F403.956   
+! size in the x dimension of the subarea array on proc_id                  GPB0F403.957   
+     &, local_array_size_x                                                 GPB0F403.958   
+                                                                           GPB0F403.959   
+! length of (partial) local meridional data to be sent                     GPB0F403.960   
+     &, local_send_size_y                                                  GPB0F403.961   
+                                                                           GPB0F403.962   
+! offset of data to be sent from start of local row                        GPB0F403.963   
+     &, local_send_off_x                                                   GPB0F403.964   
+                                                                           GPB0F403.965   
+! position in the full meridional column of (partial)                      GPB0F403.966   
+! data to be sent                                                          GPB0F403.967   
+     &, pos_in_merid_array                                                 GPB0F403.968   
+                                                                           GPB0F403.969   
+! number of (partial) meridional mean columns on                           GPB0F403.970   
+! processor proc_id                                                        GPB0F403.971   
+     &, local_n_cols_to_send                                               GPB0F403.972   
+                                                                           GPB0F403.973   
+! the first point on the column to be sent to processor proc_id            GPB0F403.974   
+     &, local_send_off_y                                                   GPB0F403.975   
+                                                                           GPB0F403.976   
+! the global meridional mean number of the first local                     GPB0F403.977   
+! (partial) meridional mean column to be sent from proc_id                 GPB0F403.978   
+     &, global_merid_col_number_start                                      GPB0F403.979   
+                                                                           GPB0F403.980   
+! loop counter for loop over columns to send                               GPB0F403.981   
+     &, col                                                                GPB0F403.982   
+                                                                           GPB0F403.983   
+! index of column in proc_id's array of local data                         GPB0F403.984   
+     &, local_col                                                          GPB0F403.985   
+                                                                           GPB0F403.986   
+! global meridional column number of a column                              GPB0F403.987   
+     &, global_merid_col_id                                                GPB0F403.988   
+                                                                           GPB0F403.989   
+! processor which this meridional mean column will be sent to              GPB0F403.990   
+     &, dest_proc                                                          GPB0F403.991   
+                                                                           GPB0F403.992   
+! column number on the destination processor                               GPB0F403.993   
+     &, work_dest_col_id                                                   GPB0F403.994   
+                                                                           GPB0F403.995   
+! number of items of meridional data to send and receive                   GPB0F403.996   
+     &, n_send_data , n_rec_data                                           GPB0F403.997   
+                                                                           GPB0F403.998   
+! number of final meridional means to send and receive                     GPB0F403.999   
+     &, n_send_means , n_rec_means                                         GPB0F403.1000  
+                                                                           GPB0F403.1001  
+! number of columns of (full) meridional data on this processor            GPB0F403.1002  
+     &, n_cols_full_merid_data                                             GPB0F403.1003  
+                                                                           GPB0F403.1004  
+! size of local_sum_arrays and global_sum_arrays                           GPB0F403.1005  
+     &, local_sum_array_len                                                GPB0F403.1006  
+     &, global_sum_array_len                                               GPB0F403.1007  
+                                                                           GPB0F403.1008  
+! field type (P or U) of input field                                       GPB0F403.1009  
+     &, fld_type                                                           GPB0F403.1010  
+                                                                           GPB0F403.1011  
+! arguments for GCOM routines                                              GPB0F403.1012  
+     &, flag , info                                                        GPB0F403.1013  
+                                                                           GPB0F403.1014  
+! dummy variables (unused return values from subroutine calls)             GPB0F403.1015  
+     &, dummy1,dummy2                                                      GPB0F403.1016  
+*ELSE                                                                      GPB0F403.1017  
+! size of subarea on this processor, not including halo areas              GPB0F403.1018  
+     &  local_sum_xstart,local_sum_xend                                    GPB0F403.1019  
+     &, local_sum_ystart,local_sum_yend                                    GPB0F403.1020  
+                                                                           GPB0F403.1021  
+! number of columns of meridional data to sum on this processor            GPB0F403.1022  
+! (xend-xstart+1)                                                          GPB0F403.1023  
+     &, partial_sum_data_sizex                                             GPB0F403.1024  
+                                                                           GPB0F403.1025  
+! return code from GCOM routines                                           GPB0F403.1026  
+     &, info                                                               GPB0F403.1027  
+*ENDIF                                                                     GPB0F403.1028  
+                                                                           GPB0F403.1029  
+                                                                           GPB0F403.1031  
+*IF DEF,REPROD                                                             GPB0F403.1032  
+      LOGICAL                                                              GPB0F403.1033  
+                                                                           GPB0F403.1034  
+! indicates if the subarea requested for meridional meaning wraps          GPB0F403.1035  
+! over zero longitude                                                      GPB0F403.1036  
+     &  lwrap_merid_mean                                                   GPB0F403.1037  
+                                                                           GPB0F403.1038  
+! indicates if the subdomain contains processors which hold both           GPB0F403.1039  
+! the start and end of the subdomain, which wraps over zero                GPB0F403.1040  
+! longitude                                                                GPB0F403.1041  
+     &, lwrap_proc                                                         GPB0F403.1042  
+                                                                           GPB0F403.1043  
+! indicates that a full field is being zonal meaned                        GPB0F403.1044  
+     &, fullfield                                                          GPB0F403.1045  
+                                                                           GPB0F403.1046  
+      REAL                                                                 GPB0F403.1047  
+! temporary variables used in calculation of meridional means              GPB0F403.1048  
+     &  merid_sum_top,merid_sum_bot                                        GPB0F403.1049  
+                                                                           GPB0F403.1050  
+      INTEGER                                                              GPB0F403.1051  
+                                                                           GPB0F403.1052  
+! Send/receive maps for meridional data arrays to be summed                GPB0F403.1053  
+     &  send_data_map(7,(xend-xstart+1))                                   GPB0F403.1054  
+     &, rec_data_map(7,(global_xend-global_xstart+1)*nproc)                GPB2F405.226   
+                                                                           GPB0F403.1056  
+! send/receive maps for meridional means                                   GPB0F403.1057  
+     &, send_means_map(7,(global_xend-global_xstart+1))                    GPB0F403.1058  
+     &, rec_means_map(7,(xend-xstart+1))                                   GPB0F403.1059  
+                                                                           GPB0F403.1060  
+! Weighted version of fieldin                                              GPB0F403.1061  
+      REAL local_sum_array_top(xstart:xend,ystart:yend)                    GPB0F403.1062  
+! Weights applied to fieldin                                               GPB0F403.1063  
+      REAL local_sum_array_bot(xstart:xend,ystart:yend)                    GPB0F403.1064  
+*ENDIF                                                                     GPB0F403.1065  
+                                                                           GPB0F403.1066  
+                                                                           GPB0F403.1068  
+*IF DEF,REPROD                                                             GPB0F403.1069  
+      INTEGER                                                              GPB0F403.1070  
+! Sizes of the global_sum_arrays defined below                             GPB2F405.227   
+     &  global_sum_array_sizex,global_sum_array_sizey                      GPB0F403.1074  
+                                                                           GPB0F403.1075  
+      REAL                                                                 GPB0F403.1084  
+! Collected versions of fieldin and the weights containing                 GPB0F403.1085  
+! whole (subarea) columns of meridional data                               GPB0F403.1086  
+     &  global_sum_array_top(global_ystart:global_yend,                    GPB2F405.228   
+     &                       global_xend-global_xstart+1)                  GPB2F405.229   
+     &, global_sum_array_bot(global_ystart:global_yend,                    GPB2F405.230   
+     &                       global_xend-global_xstart+1)                  GPB2F405.231   
+                                                                           GPB0F403.1091  
+! Calculated meridional means on the calculating processor                 GPB0F403.1092  
+     &, merid_mean_array(global_xend-global_xstart+1)                      GPB2F405.232   
+                                                                           GPB0F403.1094  
+*ELSE                                                                      GPB0F403.1107  
+      INTEGER                                                              GPB0F403.1108  
+! Size of local partial sum arrays defined below                           GPB2F405.233   
+     &  partial_sum_array_sizex                                            GPB0F403.1112  
+                                                                           GPB0F403.1113  
+      REAL                                                                 GPB0F403.1120  
+! Partial meridional sums of subarea columns                               GPB0F403.1121  
+     &  partial_SUMMTOP(vx*2)                                              GPB2F405.234   
+     &, partial_SUMMBOT(vx*2)                                              GPB2F405.235   
+                                                                           GPB0F403.1124  
+*ENDIF                                                                     GPB0F403.1135  
+                                                                           GPB0F403.1136  
+*IF DEF,REPROD                                                             GPB0F403.1137  
+                                                                           GPB0F403.1138  
+! Integer function used for obtaining field type                           GPB0F403.1139  
+      INTEGER GET_FLD_TYPE                                                 GPB0F403.1140  
+                                                                           GPB0F403.1141  
+*ENDIF                                                                     GPB0F403.1142  
+                                                                           GPB0F403.1143  
+*CALL GCCOM                                                                GPB0F403.1144  
+                                                                           GPB0F403.1145  
+*ENDIF                                                                     GPB0F403.1146  
+        REAL SUMMTOP(xstart:xend)                                          STMERM1A.80    
+        REAL SUMMBOT(xstart:xend)                                          STMERM1A.81    
+                                                                           STMERM1A.82    
+CL----------------------------------------------------------------------   STMERM1A.83    
+CL 0. Initialise sums                                                      STMERM1A.84    
+CL                                                                         STMERM1A.85    
+CFPP$ NOINNER R                                                            STMERM1A.86    
+      DO i=xstart,xend                                                     STMERM1A.87    
+        SUMMTOP(i)=0.0                                                     STMERM1A.88    
+        SUMMBOT(i)=0.0                                                     STMERM1A.89    
+      ENDDO                                                                STMERM1A.90    
+CL----------------------------------------------------------------------   STMERM1A.91    
+                                                                           GPB0F403.1147  
+! pstar_weight and area_weight arrays contain appropriate                  GPB0F403.1148  
+! weighting factors, interpolated to the correct grid, for                 GPB0F403.1149  
+! mass weighting and area weighting respectively. If either type           GPB0F403.1150  
+! of weighting is not required, the relevant array is set to 1.0           GPB0F403.1151  
+! The mask array contains appropriate masking                              GPB0F403.1152  
+                                                                           GPB0F403.1153  
+*IF -DEF,MPP,OR,DEF,REPROD                                                 GPB0F403.1154  
+*IF -DEF,MPP                                                               GPB0F403.1155  
+! Sum up weighted versions of fieldin array                                GPB0F403.1156  
+*ELSE                                                                      GPB0F403.1157  
+! Create arrays of weighted data suitable to be summed                     GPB0F403.1158  
+*ENDIF                                                                     GPB0F403.1159  
+                                                                           GPB0F403.1160  
+*IF DEF,MPP                                                                GPB0F403.1161  
+! Only do the calculations if some of the subarea is contained             GPB0F403.1162  
+! within this processor                                                    GPB0F403.1163  
+      IF ((xstart .NE. st_no_data) .AND. (xend .NE. st_no_data) .AND.      GPB0F403.1164  
+     &    (ystart .NE. st_no_data) .AND. (yend .NE. st_no_data)) THEN      GPB0F403.1165  
+                                                                           GPB0F403.1166  
+*ENDIF                                                                     GPB0F403.1167  
+        DO i=xstart,xend                                                   GPB0F403.1168  
+*IF -DEF,MPP                                                               GPB0F403.1169  
+          IF (lwrap) THEN                                                  GPB0F403.1170  
+            ii=1+MOD(i-1,vx)                                               GPB0F403.1171  
+          ELSE                                                             GPB0F403.1172  
+            ii=i                                                           GPB0F403.1173  
+          ENDIF                                                            GPB0F403.1174  
+*ELSE                                                                      GPB0F403.1175  
+          IF ( lwrap .AND. (i .GT. (lasize(1)-Offx))) THEN                 GPB0F403.1176  
+            ii=i-lasize(1)+2*Offx ! miss halos on wrap around              GPB0F403.1177  
+          ELSE                                                             GPB0F403.1178  
+            ii=i                                                           GPB0F403.1179  
+          ENDIF                                                            GPB0F403.1180  
+*ENDIF                                                                     GPB0F403.1181  
+          DO j=ystart,yend                                                 GPB0F403.1182  
+            IF (mask(ii,j)) THEN                                           GPB0F403.1183  
+              IF (.NOT. lmasswt) THEN                                      GPB0F403.1184  
+*IF -DEF,MPP                                                               GPB0F403.1185  
+                SUMMBOT(i)=SUMMBOT(i)+                                     GPB0F403.1186  
+     &            pstar_weight(ii,j)*area_weight(ii,j)                     GPB0F403.1187  
+                SUMMTOP(i)=SUMMTOP(i)+                                     GPB0F403.1188  
+     &            fieldin(ii,j)*pstar_weight(ii,j)*area_weight(ii,j)       GPB0F403.1189  
+*ELSE                                                                      GPB0F403.1190  
+                local_sum_array_bot(i,j)=                                  GPB0F403.1191  
+     &            pstar_weight(ii,j)*area_weight(ii,j)                     GPB0F403.1192  
+                local_sum_array_top(i,j)=                                  GPB0F403.1193  
+     &            fieldin(ii,j)*pstar_weight(ii,j)*area_weight(ii,j)       GPB0F403.1194  
+*ENDIF                                                                     GPB0F403.1195  
+              ELSE                                                         GPB0F403.1196  
+*IF -DEF,MPP                                                               GPB0F403.1197  
+                SUMMBOT(i)=SUMMBOT(i)-                                     GPB0F403.1198  
+     &            (delta_ak+delta_bk*pstar_weight(ii,j))*                  GPB0F403.1199  
+     &            area_weight(ii,j)                                        GPB0F403.1200  
+                SUMMTOP(i)=SUMMTOP(i)-fieldin(ii,j)*                       GPB0F403.1201  
+     &            (delta_ak+delta_bk*pstar_weight(ii,j))*                  GPB0F403.1202  
+     &            area_weight(ii,j)                                        GPB0F403.1203  
+*ELSE                                                                      GPB0F403.1204  
+                local_sum_array_bot(i,j)=                                  GPB0F403.1205  
+     &            -1.0*(delta_ak+delta_bk*pstar_weight(ii,j))*             GPB0F403.1206  
+     &            area_weight(ii,j)                                        GPB0F403.1207  
+                local_sum_array_top(i,j)=                                  GPB0F403.1208  
+     &            -1.0*fieldin(ii,j)*                                      GPB0F403.1209  
+     &            (delta_ak+delta_bk*pstar_weight(ii,j))*                  GPB0F403.1210  
+     &            area_weight(ii,j)                                        GPB0F403.1211  
+*ENDIF                                                                     GPB0F403.1212  
+              ENDIF                                                        GPB0F403.1213  
+*IF -DEF,MPP                                                               GPB0F403.1214  
+            ENDIF                                                          GPB0F403.1215  
+*ELSE                                                                      GPB0F403.1216  
+            ELSE                                                           STMERM1A.102   
+              local_sum_array_bot(i,j)=0.0                                 GPB0F403.1217  
+              local_sum_array_top(i,j)=0.0                                 GPB0F403.1218  
+            ENDIF                                                          STMERM1A.104   
+*ENDIF                                                                     GPB0F403.1219  
+          ENDDO                                                            GPB0F403.1220  
+        ENDDO                                                              GPB0F403.1221  
+                                                                           GPB0F403.1222  
+*IF DEF,MPP                                                                GPB0F403.1223  
+      ENDIF  ! if this processor contains any of the subarea               GPB0F403.1224  
+*ENDIF                                                                     GPB0F403.1225  
+                                                                           GPB0F403.1226  
+*IF -DEF,MPP                                                               GPB0F403.1227  
+      DO i=xstart,xend                                                     STMERM1A.487   
+        IF (SUMMBOT(i) .EQ. 0.0) THEN                                      GPB0F403.1228  
+          fieldout(i)=rmdi                                                 STMERM1A.489   
+        ELSE                                                               STMERM1A.490   
+          fieldout(i)=SUMMTOP(i)/SUMMBOT(i)                                STMERM1A.491   
+        ENDIF                                                              STMERM1A.492   
+      ENDDO                                                                STMERM1A.493   
+                                                                           GPB0F403.1229  
+*ELSE                                                                      GPB0F403.1230  
+                                                                           GPB0F404.295   
+! Initialise fieldout array - so all PE's have valid data                  GPB0F404.296   
+! (Only PEs on top of subdomain get the meridional means)                  GPB0F404.297   
+      DO i=xstart,xend                                                     GPB0F404.298   
+        fieldout(i)=0.0                                                    GPB0F404.299   
+      ENDDO                                                                GPB0F404.300   
+                                                                           GPB0F403.1231  
+! The local_sum_arrays must be distributed so that complete                GPB0F403.1232  
+! sub-area columns exist on processors, so that a reproducible sum         GPB0F403.1233  
+! can be carried out.                                                      GPB0F403.1234  
+! The following code calculates where the local_sum_array data             GPB0F403.1235  
+! must be sent to, and where the final answers must be sent back to        GPB0F403.1236  
+                                                                           GPB0F403.1237  
+! 0.0 : Initialise variables defining the size of the arrays               GPB0F403.1238  
+!       global_sum_arrays                                                  GPB0F403.1239  
+                                                                           GPB0F403.1240  
+      global_sum_array_sizex=global_xend-global_xstart+1                   GPB2F405.236   
+      global_sum_array_sizey=global_yend-global_ystart+1                   GPB2F405.237   
+                                                                           GPB0F403.1244  
+      local_sum_array_len=((xend-xstart)+1)*((yend-ystart)+1)              GPB0F403.1245  
+      global_sum_array_len=global_sum_array_sizex*                         GPB0F403.1246  
+     &                     global_sum_array_sizey                          GPB0F403.1247  
+                                                                           GPB0F403.1248  
+! Set a logicial indicating if the area being meaned is the                GPB0F403.1249  
+! full field                                                               GPB0F403.1250  
+                                                                           GPB0F403.1251  
+      fld_type=GET_FLD_TYPE(gr)                                            GPB0F403.1252  
+                                                                           GPB0F403.1253  
+      fullfield= ((( global_xstart .EQ. 1) .AND.                           GPB0F403.1254  
+     &             ( global_xend) .EQ. glsize(1)) .AND.                    GPB0F403.1255  
+     &             ( global_ystart .EQ. 1) .AND.                           GPB0F403.1256  
+     &             (((fld_type .EQ. fld_type_p) .AND.                      GPB0F403.1257  
+     &               (global_yend .EQ. glsize(2))) .OR.                    GPB0F403.1258  
+     &              ((fld_type .EQ. fld_type_u) .AND.                      GPB0F403.1259  
+     &               (global_yend .EQ. glsize(2)-1))))                     GPB0F403.1260  
+                                                                           GPB0F403.1261  
+! Calculate the length of the full meridional subarea                      GPB0F403.1262  
+                                                                           GPB0F403.1263  
+      merid_sum_global_len_x=global_xend-global_xstart+1                   GPB0F403.1264  
+      merid_sum_global_len_y=global_yend-global_ystart+1                   GPB0F403.1265  
+                                                                           GPB0F403.1266  
+! 1.0 Find the set of processors covering the requested sub-area           GPB0F403.1267  
+                                                                           GPB0F403.1268  
+      CALL GLOBAL_TO_LOCAL_RC(gr,                                          GPB0F403.1269  
+     &   global_xstart , global_ystart,                                    GPB0F403.1270  
+     &   proc_top_left_x, proc_top_left_y,                                 GPB0F403.1271  
+     &   dummy1,dummy2)                                                    GPB0F403.1272  
+                                                                           GPB0F403.1273  
+      CALL GLOBAL_TO_LOCAL_RC(gr,                                          GPB0F403.1274  
+     &   global_xend,global_yend,                                          GPB0F403.1275  
+     &   proc_bot_right_x, proc_bot_right_y,                               GPB0F403.1276  
+     &   dummy1,dummy2)                                                    GPB0F403.1277  
+                                                                           GPB0F403.1278  
+! Set a logical to indicate if the meridional mean area required           GPB0F403.1279  
+! wraps over zero longitude                                                GPB0F403.1280  
+                                                                           GPB0F403.1281  
+      lwrap_merid_mean=                                                    GPB0F403.1282  
+     & ((global_xend .GT. glsize(1)) .OR.                                  GPB0F403.1283  
+     &   (global_xend .LT. global_xstart))                                 GPB0F403.1284  
+                                                                           GPB0F403.1285  
+! If there is a wrap around over 0 longitude, ensure that                  GPB0F403.1286  
+! proc_bot_right_x > proc_top_left_x                                       GPB0F403.1287  
+                                                                           GPB0F403.1288  
+      IF (lwrap_merid_mean)                                                GPB0F403.1289  
+     &  proc_bot_right_x=proc_bot_right_x+nproc_x                          GPB0F403.1290  
+                                                                           GPB0F403.1291  
+! Set up a logical to indicate if a processor in the subdomain             GPB0F403.1292  
+! contains both the start and end of a meridional mean which wraps         GPB0F403.1293  
+! over zero longitude. If TRUE, some extra work is required at             GPB0F403.1294  
+! this processor as it contains data for two non-contiguous parts          GPB0F403.1295  
+! of the meridional mean                                                   GPB0F403.1296  
+                                                                           GPB0F403.1297  
+      lwrap_proc=(proc_bot_right_x .EQ. proc_top_left_x+nproc_x)           GPB0F403.1298  
+                                                                           GPB0F403.1299  
+! 2.0 Loop over all the processors in the subdomain, and set               GPB0F403.1300  
+!     up the send/receive maps defining the redistribution                 GPB0F403.1301  
+!     of data                                                              GPB0F403.1302  
+                                                                           GPB0F403.1303  
+      n_send_data=0            ! number of items of data to send           GPB0F403.1304  
+      n_rec_data=0             ! number of items of data to receive        GPB0F403.1305  
+      n_send_means=0           ! number of merid. means I will send        GPB0F403.1306  
+      n_rec_means=0            ! number of merid. means I will receive     GPB0F403.1307  
+      n_cols_full_merid_data=0 ! number of cols. of data I will mean       GPB0F403.1308  
+                                                                           GPB0F403.1309  
+      DO proc_y=proc_top_left_y , proc_bot_right_y                         GPB0F403.1310  
+                                                                           GPB0F403.1311  
+        DO proc_x=proc_top_left_x , proc_bot_right_x                       GPB0F403.1312  
+                                                                           GPB0F403.1313  
+          eff_proc_x=MOD(proc_x,nproc_x)                                   GPB0F403.1314  
+          proc_id=eff_proc_x+proc_y*nproc_x                                GPB0F403.1315  
+                                                                           GPB0F403.1316  
+! 2.1  Find the size of the array containing the meridional                GPB0F403.1317  
+!      arrays on processor proc_id                                         GPB0F403.1318  
+                                                                           GPB0F403.1319  
+          CALL GLOBAL_TO_LOCAL_SUBDOMAIN(.TRUE.,.TRUE.,                    GPB0F403.1320  
+     &      gr,proc_id,                                                    GPB0F403.1321  
+     &      global_ystart,global_xend,                                     GPB0F403.1322  
+     &      global_yend,global_xstart,                                     GPB0F403.1323  
+     &      local_array_top_left_y,local_array_bot_right_x,                GPB0F403.1324  
+     &      local_array_bot_right_y,local_array_top_left_x)                GPB0F403.1325  
+                                                                           GPB0F403.1326  
+! 2.2 Using this information, calculate the size of this array in          GPB0F403.1327  
+!     the x dimension. If the data is wrapped round, the calculation       GPB0F403.1328  
+!     is done differently:                                                 GPB0F403.1329  
+                                                                           GPB0F403.1330  
+          IF (local_array_top_left_x .LE. local_array_bot_right_x)         GPB0F403.1331  
+     &    THEN                                                             GPB0F403.1332  
+            local_array_size_x=                                            GPB0F403.1333  
+     &        local_array_bot_right_x-local_array_top_left_x+1             GPB0F403.1334  
+          ELSE                                                             GPB0F403.1335  
+            local_array_size_x=                                            GPB0F403.1336  
+     &        local_array_bot_right_x-local_array_top_left_x+1+            GPB0F403.1337  
+     &        g_lasize(1,proc_id)-2*Offx                                   GPB0F403.1338  
+          ENDIF                                                            GPB0F403.1339  
+                                                                           GPB0F403.1340  
+! 2.3 Find out the size of the actual meridional mean data within the      GPB0F403.1341  
+!     subarea array on processor proc_id                                   GPB0F403.1342  
+                                                                           GPB0F403.1343  
+          CALL GLOBAL_TO_LOCAL_SUBDOMAIN(.FALSE.,.FALSE.,                  GPB0F403.1344  
+     &      gr,proc_id,                                                    GPB0F403.1345  
+     &      global_ystart,global_xend,                                     GPB0F403.1346  
+     &      global_yend,global_xstart,                                     GPB0F403.1347  
+     &      local_data_top_left_y,local_data_bot_right_x,                  GPB0F403.1348  
+     &      local_data_bot_right_y,local_data_top_left_x)                  GPB0F403.1349  
+                                                                           GPB0F403.1350  
+! 2.4 Calculate various quantities:                                        GPB0F403.1351  
+!     local_send_size_y  : the length of data to be sent                   GPB0F403.1352  
+!     local_send_off_y   : the offset of this data from the                GPB0F403.1353  
+!                          start of column                                 GPB0F403.1354  
+!     pos_in_merid_array : position of this data in the full               GPB0F403.1355  
+!                          meridional array                                GPB0F403.1356  
+                                                                           GPB0F403.1357  
+          local_send_size_y=                                               GPB0F403.1358  
+     &      local_data_bot_right_y-local_data_top_left_y+1                 GPB0F403.1359  
+          local_send_off_y=                                                GPB0F403.1360  
+     &      local_data_top_left_y-local_array_top_left_y                   GPB0F403.1361  
+          pos_in_merid_array=                                              GPB0F403.1362  
+     &      g_datastart(2,proc_id)+local_data_top_left_y-Offy-             GPB0F403.1363  
+     &      global_ystart                                                  GPB0F403.1364  
+                                                                           GPB0F403.1365  
+! 2.5 Find the number of meridional mean columns to be sent                GPB0F403.1366  
+!     from this processor, the first column to be sent,                    GPB0F403.1367  
+!     and which global meridional mean this is                             GPB0F403.1368  
+                                                                           GPB0F403.1369  
+          IF ((LWRAP_PROC) .AND. (proc_x .EQ. proc_top_left_x)) THEN       GPB0F403.1370  
+! Processor containing start and end of sumdomain - but here               GPB0F403.1371  
+! we're interested only in the start segment                               GPB0F403.1372  
+                                                                           GPB0F403.1373  
+            local_n_cols_to_send=                                          GPB0F403.1374  
+     &        g_lasize(1,proc_id)-local_data_top_left_x-Offx+1             GPB0F403.1375  
+            local_send_off_x=                                              GPB0F403.1376  
+     &        local_data_top_left_x-local_array_top_left_x                 GPB0F403.1377  
+            global_merid_col_number_start=                                 GPB0F403.1378  
+     &        g_datastart(1,proc_id)+local_data_top_left_x-Offx-           GPB0F403.1379  
+     &        global_xstart                                                GPB0F403.1380  
+                                                                           GPB0F403.1381  
+          ELSEIF ((LWRAP_PROC) .AND.                                       GPB0F403.1382  
+     &            (proc_x .EQ. proc_bot_right_x)) THEN                     GPB0F403.1383  
+! Processor containing start and end of subdomain - but here               GPB0F403.1384  
+! we're interested only in the end segment                                 GPB0F403.1385  
+                                                                           GPB0F403.1386  
+            local_n_cols_to_send=local_data_bot_right_x-Offx               GPB0F403.1387  
+            local_send_off_x=local_array_size_x-local_n_cols_to_send       GPB0F403.1388  
+            global_merid_col_number_start=                                 GPB0F403.1389  
+     &        merid_sum_global_len_x-local_n_cols_to_send+1                GPB0F403.1390  
+                                                                           GPB0F403.1391  
+          ELSE                                                             GPB0F403.1392  
+! all other processors                                                     GPB0F403.1393  
+                                                                           GPB0F403.1394  
+            local_n_cols_to_send=                                          GPB0F403.1395  
+     &        local_data_bot_right_x-local_data_top_left_x+1               GPB0F403.1396  
+            local_send_off_x=                                              GPB0F403.1397  
+     &        local_data_top_left_x-local_array_top_left_x                 GPB0F403.1398  
+            global_merid_col_number_start=                                 GPB0F403.1399  
+     &        g_datastart(1,proc_id)+local_data_top_left_x-Offx-           GPB0F403.1400  
+     &        global_xstart                                                GPB0F403.1401  
+          ENDIF                                                            GPB0F403.1402  
+                                                                           GPB0F403.1403  
+          IF (global_merid_col_number_start .LT. 1) THEN                   GPB0F403.1404  
+! This means the sub-area wraps over zero longitude - so to get            GPB0F403.1405  
+! the correct position in the array we add the global row length           GPB0F403.1406  
+            global_merid_col_number_start=                                 GPB0F403.1407  
+     &        global_merid_col_number_start+glsize(1)                      GPB0F403.1408  
+          ENDIF                                                            GPB0F403.1409  
+                                                                           GPB0F403.1410  
+                                                                           GPB0F403.1411  
+! 2.6 Loop over columns and construct send/receive maps                    GPB0F403.1412  
+                                                                           GPB0F403.1413  
+          DO col=1,local_n_cols_to_send                                    GPB0F403.1414  
+                                                                           GPB0F403.1415  
+! 2.6.1 Find the local column index on proc_id, and the global             GPB0F403.1416  
+!       meridional column index of this column                             GPB0F403.1417  
+                                                                           GPB0F403.1418  
+            local_col=col+local_send_off_x                                 GPB0F403.1419  
+            global_merid_col_id=global_merid_col_number_start+col-1        GPB0F403.1420  
+                                                                           GPB0F403.1421  
+! 2.6.2 and find the destination processor of this column, and             GPB0F403.1422  
+!       where on this processor it will be sent to                         GPB0F403.1423  
+                                                                           GPB0F403.1424  
+            dest_proc=MOD(global_merid_col_id-1,nproc)                     GPB0F403.1425  
+            work_dest_col_id=((global_merid_col_id-1)/nproc)+1             GPB0F403.1426  
+                                                                           GPB0F403.1427  
+! 2.6.3 If this processor is proc_id construct a send_data_map             GPB0F403.1428  
+!       entry for this column of data                                      GPB0F403.1429  
+                                                                           GPB0F403.1430  
+            IF (mype .EQ. proc_id) THEN                                    GPB0F403.1431  
+                                                                           GPB0F403.1432  
+              n_send_data = n_send_data+1                                  GPB0F403.1433  
+                                                                           GPB0F403.1434  
+              send_data_map(S_DESTINATION_PE,n_send_data)=                 GPB0F403.1435  
+     &          dest_proc                                                  GPB0F403.1436  
+              send_data_map(S_BASE_ADDRESS_IN_SEND_ARRAY,                  GPB0F403.1437  
+     &                      n_send_data)=                                  GPB0F403.1438  
+     &          local_send_off_y*local_array_size_x +                      GPB0F403.1439  
+     &          local_send_off_x+col                                       GPB0F403.1440  
+              send_data_map(S_NUMBER_OF_ELEMENTS_IN_ITEM,                  GPB0F403.1441  
+     &                      n_send_data)=                                  GPB0F403.1442  
+     &          local_send_size_y                                          GPB0F403.1443  
+              send_data_map(S_STRIDE_IN_SEND_ARRAY,n_send_data)=           GPB0F403.1444  
+     &          local_array_size_x                                         GPB0F403.1445  
+              send_data_map(S_ELEMENT_LENGTH,n_send_data)=1                GPB0F403.1446  
+              send_data_map(S_BASE_ADDRESS_IN_RECV_ARRAY,                  GPB0F403.1447  
+     &                      n_send_data)=                                  GPB0F403.1448  
+     &          (work_dest_col_id-1)*global_sum_array_sizey +              GPB2F405.238   
+     &          pos_in_merid_array                                         GPB0F403.1450  
+              send_data_map(S_STRIDE_IN_RECV_ARRAY,n_send_data)=1          GPB0F403.1451  
+                                                                           GPB0F403.1452  
+! 2.6.3.1 If this processor is at the top of the subarea, then it is       GPB0F403.1453  
+!         responsible for holding the final meridional mean values.        GPB0F403.1454  
+!         So we must set up a rec_means_map entry to allow the             GPB0F403.1455  
+!         meridional mean value for this column to be returned.            GPB0F403.1456  
+                                                                           GPB0F403.1457  
+              IF (proc_y .EQ. proc_top_left_y) THEN                        GPB0F403.1458  
+                                                                           GPB0F403.1459  
+                n_rec_means = n_rec_means + 1                              GPB0F403.1460  
+                                                                           GPB0F403.1461  
+                rec_means_map(R_SOURCE_PE,n_rec_means)=dest_proc           GPB0F403.1462  
+                IF (fullfield) THEN ! We don't want halos                  GPB0F403.1463  
+                  rec_means_map(R_BASE_ADDRESS_IN_RECV_ARRAY,              GPB0F403.1464  
+     &                          n_rec_means)=                              GPB0F403.1465  
+     &              local_col-Offx                                         GPB0F403.1466  
+                ELSE ! halos are automatically removed                     GPB0F403.1467  
+                  rec_means_map(R_BASE_ADDRESS_IN_RECV_ARRAY,              GPB0F403.1468  
+     &                          n_rec_means)=                              GPB0F403.1469  
+     &              local_col                                              GPB0F403.1470  
+                ENDIF                                                      GPB0F403.1471  
+                rec_means_map(R_NUMBER_OF_ELEMENTS_IN_ITEM,                GPB0F403.1472  
+     &                        n_rec_means)= 1                              GPB0F403.1473  
+                rec_means_map(R_STRIDE_IN_RECV_ARRAY,                      GPB0F403.1474  
+     &                        n_rec_means)= 1                              GPB0F403.1475  
+                rec_means_map(R_ELEMENT_LENGTH,n_rec_means)=1              GPB0F403.1476  
+                rec_means_map(R_BASE_ADDRESS_IN_SEND_ARRAY,                GPB0F403.1477  
+     &                        n_rec_means)=                                GPB0F403.1478  
+     &            work_dest_col_id                                         GPB0F403.1479  
+                rec_means_map(R_STRIDE_IN_SEND_ARRAY,                      GPB0F403.1480  
+     &                        n_rec_means)=1                               GPB0F403.1481  
+              ENDIF                                                        GPB0F403.1482  
+                                                                           GPB0F403.1483  
+            ENDIF                                                          GPB0F403.1484  
+                                                                           GPB0F403.1485  
+! 2.6.4 If this processor is dest_proc construct a rec_data_map            GPB0F403.1486  
+!       entry for this column of data                                      GPB0F403.1487  
+                                                                           GPB0F403.1488  
+            IF (mype .EQ. dest_proc) THEN                                  GPB0F403.1489  
+                                                                           GPB0F403.1490  
+              IF (proc_y .EQ. proc_top_left_y)                             GPB0F403.1491  
+! increment counter of full meridional columns on this processor           GPB0F403.1492  
+     &          n_cols_full_merid_data=n_cols_full_merid_data+1            GPB0F403.1493  
+                                                                           GPB0F403.1494  
+              n_rec_data = n_rec_data+1                                    GPB0F403.1495  
+                                                                           GPB0F403.1496  
+              rec_data_map(R_SOURCE_PE,n_rec_data)=                        GPB0F403.1497  
+     &          proc_id                                                    GPB0F403.1498  
+              rec_data_map(R_BASE_ADDRESS_IN_RECV_ARRAY,n_rec_data)=       GPB0F403.1499  
+     &          (work_dest_col_id-1)*global_sum_array_sizey +              GPB2F405.239   
+     &          pos_in_merid_array                                         GPB0F403.1501  
+              rec_data_map(R_NUMBER_OF_ELEMENTS_IN_ITEM,n_rec_data)=       GPB0F403.1502  
+     &          local_send_size_y                                          GPB0F403.1503  
+              rec_data_map(R_STRIDE_IN_RECV_ARRAY,n_rec_data)=1            GPB0F403.1504  
+              rec_data_map(R_ELEMENT_LENGTH,n_rec_data)=1                  GPB0F403.1505  
+              rec_data_map(R_BASE_ADDRESS_IN_SEND_ARRAY,n_rec_data)=       GPB0F403.1506  
+     &          local_send_off_y*local_array_size_x +                      GPB0F403.1507  
+     &          local_send_off_x+col                                       GPB0F403.1508  
+              rec_data_map(R_STRIDE_IN_SEND_ARRAY,n_rec_data)=             GPB0F403.1509  
+     &          local_array_size_x                                         GPB0F403.1510  
+                                                                           GPB0F403.1511  
+! 2.6.4.1 Set up the send_means_map entry for sending the                  GPB0F403.1512  
+!         resulting meridional mean of this column back to                 GPB0F403.1513  
+!         the processor at the top of the subarea.                         GPB0F403.1514  
+!         We only need to do this once per column (not for                 GPB0F403.1515  
+!         each value of proc_y).                                           GPB0F403.1516  
+                                                                           GPB0F403.1517  
+              IF (proc_y .EQ. proc_top_left_y) THEN                        GPB0F403.1518  
+                                                                           GPB0F403.1519  
+                n_send_means = n_send_means+1                              GPB0F403.1520  
+                                                                           GPB0F403.1521  
+                send_means_map(S_DESTINATION_PE,n_send_means)=             GPB0F403.1522  
+     &            proc_id                                                  GPB0F403.1523  
+                send_means_map(S_BASE_ADDRESS_IN_SEND_ARRAY,               GPB0F403.1524  
+     &                         n_send_means)=work_dest_col_id              GPB0F403.1525  
+                send_means_map(S_NUMBER_OF_ELEMENTS_IN_ITEM,               GPB0F403.1526  
+     &                         n_send_means)=1                             GPB0F403.1527  
+                send_means_map(S_STRIDE_IN_SEND_ARRAY,                     GPB0F403.1528  
+     &                         n_send_means)=1                             GPB0F403.1529  
+                send_means_map(S_ELEMENT_LENGTH,n_send_means)=1            GPB0F403.1530  
+                IF (fullfield) THEN ! we don't want halos                  GPB0F403.1531  
+                  send_means_map(S_BASE_ADDRESS_IN_RECV_ARRAY,             GPB0F403.1532  
+     &                           n_send_means)=local_col-Offx              GPB0F403.1533  
+                ELSE ! halos are automatically removed                     GPB0F403.1534  
+                  send_means_map(S_BASE_ADDRESS_IN_RECV_ARRAY,             GPB0F403.1535  
+     &                           n_send_means)=local_col                   GPB0F403.1536  
+                ENDIF                                                      GPB0F403.1537  
+                send_means_map(S_STRIDE_IN_RECV_ARRAY,                     GPB0F403.1538  
+     &                         n_send_means)=1                             GPB0F403.1539  
+              ENDIF ! if at top of subarea                                 GPB0F403.1540  
+                                                                           GPB0F403.1541  
+            ENDIF ! if mype .eq. dest_proc                                 GPB0F403.1542  
+                                                                           GPB0F403.1543  
+          ENDDO ! col : loop over local columns on proc_id                 GPB0F403.1544  
+                                                                           GPB0F403.1545  
+        ENDDO ! proc_x : loop over processors in x dimension               GPB0F403.1546  
+                                                                           GPB0F403.1547  
+      ENDDO ! proc_y : loop over processors in y dimension                 GPB0F403.1548  
+                                                                           GPB0F403.1549  
+! 3.0 Now the send and receive maps are set up, use                        GPB0F403.1550  
+!     GCG_RALLTOALLE to redistribute the data                              GPB0F403.1551  
+!     from the local_sum_arrays to the global_sum_arrays                   GPB0F403.1552  
+      flag=GC_NONE ! flag argument is currently ignored by GCOM            GPB0F403.1553  
+                                                                           GPB0F403.1554  
+! We do a SHM_PUT operation, because the send arrays are non-              GPB0F403.1555  
+! memory aligned, and the receiving arrays are.                            GPB0F403.1556  
+      CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)                           GPB0F403.1557  
+      info=GC_NONE                                                         GPB0F403.1558  
+                                                                           GPB0F403.1559  
+      CALL GCG_RALLTOALLE(                                                 GPB0F403.1560  
+     &  local_sum_array_top , send_data_map , n_send_data ,                GPB0F403.1561  
+     &  local_sum_array_len ,                                              GPB0F403.1562  
+     &  global_sum_array_top , rec_data_map , n_rec_data ,                 GPB0F403.1563  
+     &  global_sum_array_len ,                                             GPB0F403.1564  
+     &  gc_all_proc_group , flag , info)                                   GPB0F403.1565  
+                                                                           GPB0F403.1566  
+      CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)                           GPB0F403.1567  
+      info=GC_NONE                                                         GPB0F403.1568  
+                                                                           GPB0F403.1569  
+      CALL GCG_RALLTOALLE(                                                 GPB0F403.1570  
+     &  local_sum_array_bot , send_data_map , n_send_data ,                GPB0F403.1571  
+     &  local_sum_array_len ,                                              GPB0F403.1572  
+     &  global_sum_array_bot , rec_data_map , n_rec_data ,                 GPB0F403.1573  
+     &  global_sum_array_len ,                                             GPB0F403.1574  
+     &  gc_all_proc_group , flag , info)                                   GPB0F403.1575  
+                                                                           GPB0F403.1576  
+! 4.0 Calculate mean of any meridional data on this processor              GPB0F403.1577  
+                                                                           GPB0F403.1578  
+      DO i=1,n_cols_full_merid_data                                        GPB0F403.1579  
+                                                                           GPB0F403.1580  
+        merid_sum_top=0.0                                                  GPB0F403.1581  
+        merid_sum_bot=0.0                                                  GPB0F403.1582  
+                                                                           GPB0F403.1583  
+        DO j=global_ystart,global_yend                                     GPB2F405.240   
+                                                                           GPB0F403.1585  
+          merid_sum_top=merid_sum_top+                                     GPB0F403.1586  
+     &                     global_sum_array_top(j,i)                       GPB0F403.1587  
+          merid_sum_bot=merid_sum_bot+                                     GPB0F403.1588  
+     &                     global_sum_array_bot(j,i)                       GPB0F403.1589  
+        ENDDO                                                              GPB0F403.1590  
+                                                                           GPB0F403.1591  
+        IF (merid_sum_bot .EQ. 0.0) THEN                                   GPB0F403.1592  
+          merid_mean_array(i)=rmdi                                         GPB0F403.1593  
+        ELSE                                                               GPB0F403.1594  
+          merid_mean_array(i)=merid_sum_top/merid_sum_bot                  GPB0F403.1595  
+        ENDIF                                                              GPB0F403.1596  
+                                                                           GPB0F403.1597  
+      ENDDO                                                                GPB0F403.1598  
+                                                                           GPB0F403.1599  
+! 5.0 Send the calculated means back to the processors at the              GPB0F403.1600  
+!     top of the subarea, into the fieldout array                          GPB0F403.1601  
+                                                                           GPB0F403.1602  
+      flag=GC_NONE ! flag argument is currently ignored by GCOM            GPB0F403.1603  
+                                                                           GPB0F403.1604  
+! We do a SHM_GET operation, because the send arrays are memory            GPB0F403.1605  
+! aligned, but the receiving arrays are not.                               GPB0F403.1606  
+      CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)                           GPB0F403.1607  
+      info=GC_NONE                                                         GPB0F403.1608  
+                                                                           GPB0F403.1609  
+      CALL GCG_RALLTOALLE(                                                 GPB0F403.1610  
+     &  merid_mean_array , send_means_map , n_send_means ,                 GPB0F403.1611  
+     &  global_sum_array_sizex,                                            GPB0F403.1612  
+     &  fieldout , rec_means_map , n_rec_means,                            GPB0F403.1613  
+     &  (xend-xstart)+1,                                                   GPB0F403.1614  
+     &  gc_all_proc_group , flag , info)                                   GPB0F403.1615  
+                                                                           GPB0F403.1616  
+*ENDIF                                                                     GPB0F403.1617  
+*ELSE                                                                      GPB0F403.1618  
+                                                                           GPB0F403.1619  
+! 0.0 : Initialise variables defining the size of the arrays               GPB0F403.1620  
+!       partial_sum_arrays                                                 GPB0F403.1621  
+      partial_sum_array_sizex=vx*2                                         GPB2F405.241   
+                                                                           GPB0F403.1624  
+! 1.0 Find the bounds of the actual data required in the summation         GPB0F403.1625  
+!    (ie. excluding the halos, contained within                            GPB0F403.1626  
+!    xstart,xend,ystart,yend.                                              GPB0F403.1627  
+                                                                           GPB0F403.1628  
+      CALL GLOBAL_TO_LOCAL_SUBDOMAIN(.FALSE.,.FALSE.,                      GPB0F403.1629  
+     &  gr,mype,                                                           GPB0F403.1630  
+     &  global_ystart,global_xend,                                         GPB0F403.1631  
+     &  global_yend,global_xstart,                                         GPB0F403.1632  
+     &  local_sum_ystart,local_sum_xend,                                   GPB0F403.1633  
+     &  local_sum_yend,local_sum_xstart)                                   GPB0F403.1634  
+                                                                           GPB0F403.1635  
+      IF (local_sum_xstart .GT. local_sum_xend)                            GPB0F403.1636  
+     &  local_sum_xend=local_sum_xend+ROW_LENGTH-2*Offx                    GPB0F403.1637  
+                                                                           GPB0F403.1638  
+! 1.1 And the number of partial sums on this processor                     GPB0F403.1639  
+!     (If there is a wrap around, with the subarea starting                GPB0F403.1640  
+!      and ending on this processor, the halo cols are included            GPB0F403.1641  
+!      in this number - although no sums will actually be                  GPB0F403.1642  
+!      carried out there)                                                  GPB0F403.1643  
+                                                                           GPB0F403.1644  
+      partial_sum_data_sizex=                                              GPB0F403.1645  
+     &  local_sum_xend-local_sum_xstart+1                                  GPB0F403.1646  
+                                                                           GPB0F403.1647  
+                                                                           GPB0F403.1648  
+! 1.2 Initialise the sum arrays                                            GPB0F403.1649  
+                                                                           GPB0F403.1650  
+      IF ((local_sum_xstart .NE. st_no_data) .AND.                         GPB0F403.1651  
+     &    (local_sum_xend .NE. st_no_data)) THEN                           GPB0F403.1652  
+                                                                           GPB0F403.1653  
+        DO i=local_sum_xstart,local_sum_xend                               GPB0F403.1654  
+          partial_SUMMBOT(i)=0.0                                           GPB0F403.1655  
+          partial_SUMMTOP(i)=0.0                                           GPB0F403.1656  
+        ENDDO                                                              GPB0F403.1657  
+                                                                           GPB0F403.1658  
+      ENDIF                                                                GPB0F403.1659  
+                                                                           GPB0F403.1660  
+! 2.0 Calculate the partial sums                                           GPB0F403.1661  
+                                                                           GPB0F403.1662  
+! Only do the calculations if some of the subdomain exists on this         GPB0F403.1663  
+! processor                                                                GPB0F403.1664  
+                                                                           GPB0F403.1665  
+      IF ( (local_sum_xstart .NE. st_no_data) .AND.                        GPB0F403.1666  
+     &     (local_sum_xend   .NE. st_no_data) .AND.                        GPB0F403.1667  
+     &     (local_sum_ystart .NE. st_no_data) .AND.                        GPB0F403.1668  
+     &     (local_sum_yend   .NE. st_no_data)) THEN                        GPB0F403.1669  
+                                                                           GPB0F403.1670  
+! 2.2 Do the actual sum                                                    GPB0F403.1671  
+                                                                           GPB0F403.1672  
+        DO i=local_sum_xstart,local_sum_xend                               GPB0F403.1673  
+                                                                           GPB0F403.1674  
+          IF ( lwrap .AND. (i .GT. (lasize(1)-Offx))) THEN                 GPB0F403.1675  
+            ii=i-lasize(1)+2*Offx ! miss halos on wrap around              GPB0F403.1676  
+          ELSE                                                             GPB0F403.1677  
+            ii=i                                                           GPB0F403.1678  
+          ENDIF                                                            GPB0F403.1679  
+                                                                           GPB0F403.1680  
+          DO j=local_sum_ystart,local_sum_yend                             GPB0F403.1681  
+            IF (mask(ii,j)) THEN                                           GPB0F403.1682  
+              IF (.NOT. lmasswt) THEN                                      GPB0F403.1683  
+                                                                           GPB0F403.1684  
+                partial_SUMMBOT(i)=partial_SUMMBOT(i)+                     GPB0F403.1685  
+     &            pstar_weight(ii,j)*area_weight(ii,j)                     GPB0F403.1686  
+                partial_SUMMTOP(i)=partial_SUMMTOP(i)+                     GPB0F403.1687  
+     &            fieldin(ii,j)*pstar_weight(ii,j)*area_weight(ii,j)       GPB0F403.1688  
+              ELSE                                                         GPB0F403.1689  
+                partial_SUMMBOT(i)=partial_SUMMBOT(i)-                     GPB0F403.1690  
+     &           (delta_ak+delta_bk*pstar_weight(ii,j))*                   GPB0F403.1691  
+     &           area_weight(ii,j)                                         GPB0F403.1692  
+                partial_SUMMTOP(i)=                                        GPB0F403.1693  
+     &            partial_SUMMTOP(i)-fieldin(ii,j)*                        GPB0F403.1694  
+     &            (delta_ak+delta_bk*pstar_weight(ii,j))*                  GPB0F403.1695  
+     &            area_weight(ii,j)                                        GPB0F403.1696  
+              ENDIF ! if (.NOT. lmasswt)                                   GPB0F403.1697  
+            ENDIF ! if this point is to be processed                       GPB0F403.1698  
+          ENDDO ! j : loop over rows                                       GPB0F403.1699  
+        ENDDO ! i : loop over columns                                      GPB0F403.1700  
+      ENDIF ! if subdomain covers this processor                           GPB0F403.1701  
+                                                                           GPB0F403.1702  
+! 3.0 Sums up the partial sums down each column to make a full sum         GPB0F403.1703  
+                                                                           GPB0F403.1704  
+! So a sum down the processor column if the subdomain covers any           GPB0F403.1705  
+! processor(s) along the column                                            GPB0F403.1706  
+                                                                           GPB0F403.1707  
+      IF ((local_sum_xstart .NE. st_no_data) .AND.                         GPB0F403.1708  
+     &    (local_sum_xend .NE. st_no_data)) THEN                           GPB0F403.1709  
+                                                                           GPB0F403.1710  
+        CALL GCG_RSUM(partial_sum_data_sizex,gc_proc_col_group,            GPB0F403.1711  
+     &                info,partial_SUMMBOT(local_sum_xstart))              GPB0F403.1712  
+        CALL GCG_RSUM(partial_sum_data_sizex,gc_proc_col_group,            GPB0F403.1713  
+     &                info,partial_SUMMTOP(local_sum_xstart))              GPB0F403.1714  
+                                                                           GPB0F403.1715  
+! So now the partial_* arrays actually contain the full sums               GPB0F403.1716  
+! along the column                                                         GPB0F403.1717  
+                                                                           GPB0F403.1718  
+! 3.1 And put the mean meridional values into the fieldout array           GPB0F403.1719  
+                                                                           GPB0F403.1720  
+! Only processors in the subdomain area need to record the                 GPB0F403.1721  
+! results                                                                  GPB0F403.1722  
+        IF ((local_sum_ystart .NE. st_no_data) .AND.                       GPB0F403.1723  
+     &      (local_sum_yend .NE. st_no_data)) THEN                         GPB0F403.1724  
+                                                                           GPB0F403.1725  
+          DO i=local_sum_xstart,local_sum_xend                             GPB0F403.1726  
+            IF (partial_SUMMBOT(i) .EQ. 0.0) THEN                          GPB0F403.1727  
+              fieldout(i)=rmdi                                             GPB0F403.1728  
+            ELSE                                                           GPB0F403.1729  
+              fieldout(i)=partial_SUMMTOP(i)/partial_SUMMBOT(i)            GPB0F403.1730  
+            ENDIF                                                          GPB0F403.1731  
+          ENDDO                                                            GPB0F403.1732  
+                                                                           GPB0F403.1733  
+        ENDIF ! is this processor in the subdomain                         GPB0F403.1734  
+                                                                           GPB0F403.1735  
+      ENDIF ! does the subdomain intersect with this processor             GPB0F403.1736  
+!           ! column                                                       GPB0F403.1737  
+                                                                           GPB0F403.1738  
+*ENDIF                                                                     GPB0F403.1739  
+CL                                                                         STMERM1A.494   
+  999 CONTINUE                                                             STMERM1A.495   
+      RETURN                                                               STMERM1A.496   
+      END                                                                  STMERM1A.497   
+*ENDIF                                                                     STMERM1A.498   

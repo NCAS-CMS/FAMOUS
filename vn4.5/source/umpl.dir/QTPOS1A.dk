@@ -1,0 +1,1008 @@
+*IF DEF,A13_1A,OR,DEF,A13_1C,OR,DEF,RECON                                  AAD2F404.285   
+C ******************************COPYRIGHT******************************    GTS2F400.7921  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.7922  
+C                                                                          GTS2F400.7923  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.7924  
+C restrictions as set forth in the contract.                               GTS2F400.7925  
+C                                                                          GTS2F400.7926  
+C                Meteorological Office                                     GTS2F400.7927  
+C                London Road                                               GTS2F400.7928  
+C                BRACKNELL                                                 GTS2F400.7929  
+C                Berkshire UK                                              GTS2F400.7930  
+C                RG12 2SZ                                                  GTS2F400.7931  
+C                                                                          GTS2F400.7932  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.7933  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.7934  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.7935  
+C Modelling at the above address.                                          GTS2F400.7936  
+C ******************************COPYRIGHT******************************    GTS2F400.7937  
+C                                                                          GTS2F400.7938  
+!+ Interface routine for QTPOS allowing both normal and MPP code to use    APB6F401.6     
+!+ current algorithms                                                      APB6F401.7     
+!                                                                          APB6F401.8     
+! Subroutine Interface                                                     APB6F401.9     
+      SUBROUTINE QT_POS_CTL                                                APB6F401.10    
+     &                     (QT,RS_SQUARED_DELTAP,ROW_LENGTH,               APB6F401.11    
+     &                      P_FIELD,Q_LEVELS,                              APB6F401.12    
+*CALL ARGFLDPT                                                             APB6F401.13    
+     &                      ERROR_CODE,ERROR_MESSAGE,                      APB6F401.14    
+     &                      COS_P_LATITUDE,SEC_P_LATITUDE,                 APB6F401.15    
+     &                      L_NEG_QT,L_QT_POS_LOCAL,DT,SF_QTFIX,QTFIX)     APB6F401.16    
+                                                                           APB6F401.17    
+      IMPLICIT NONE                                                        APB6F401.18    
+                                                                           APB6F401.19    
+!                                                                          APB6F401.20    
+! Description:                                                             APB6F401.21    
+! QT fields are mass weighted, and then                                    APB6F401.22    
+! if MPP *DEF is set, the field is gathered a level to a processor, and    APB6F401.23    
+! QT_POS is called by each processor with its levels. Otherwise (ie. non   APB6F401.24    
+! MPP), this routine just passed the mass-weighted QT field straight       APB6F401.25    
+! through to QTPOS. Finally, the mass weighting is removed, and            APB6F401.26    
+! the QT_FIX diagnostic is calculated (if required)                        APB6F401.27    
+!                                                                          APB6F401.28    
+! Current code owner (QT_POS_CTL only) : Paul Burton                       APB6F401.29    
+!                                                                          APB6F401.30    
+! History                                                                  APB6F401.31    
+!  Model    Date      Modification history from model version 4.1          APB6F401.32    
+!    4.1    13/05/96  New subroutine added to allow QT_POS to be used      APB6F401.33    
+!                     by both normal and MPP code.   P.Burton              APB6F401.34    
+!    4.3    24/04/97  Improved error trapping for MPP code                 GPB5F403.57    
+!                     Set QTFIX to safe values         P.Burton            GPB5F403.58    
+!    4.4    29/07/97  Optimize communications for T3E.  P.Burton           GPB2F404.306   
+!    4.5    29/09/98  T3E only: remove negative zeros from QT              GPB0F405.191   
+!                                                    P.Burton              GPB0F405.192   
+!                                                                          APB6F401.35    
+! Subroutine Arguments:                                                    APB6F401.36    
+                                                                           APB6F401.37    
+      INTEGER                                                              APB6F401.38    
+     &  P_FIELD                  ! IN : Size of fields on P grid           APB6F401.39    
+     &, ROW_LENGTH               ! IN : number of points per row           APB6F401.40    
+     &, Q_LEVELS                 ! IN : number of moist levels             APB6F401.41    
+!                                                                          APB6F401.42    
+     &, ERROR_CODE               ! INOUT : 0 on entry                      APB6F401.43    
+!                                !         1 on exit if error detected     APB6F401.44    
+                                                                           APB6F401.45    
+! All TYPFLDPT arguments are intent IN                                     APB6F401.46    
+*CALL TYPFLDPT                                                             APB6F401.47    
+                                                                           APB6F401.48    
+      CHARACTER*(80)                                                       APB6F401.49    
+     &  ERROR_MESSAGE            ! OUT : Error message                     APB6F401.50    
+                                                                           APB6F401.51    
+      REAL                                                                 APB6F401.52    
+     &  QT(P_FIELD,Q_LEVELS)     ! INOUT : QT field                        APB6F401.53    
+     &, QTFIX(P_FIELD,Q_LEVELS) ! OUT : QT fix diagnostic from             APB6F401.54    
+!                                !       resetting and redistributing      APB6F401.55    
+!                                !       negative QT values                APB6F401.56    
+     &, RS_SQUARED_DELTAP(P_FIELD,Q_LEVELS)                                APB6F401.57    
+!                                ! IN : RS*RS*DELTA_P                      APB6F401.58    
+     &, COS_P_LATITUDE(P_FIELD)  ! IN : COS(LATITUDE) at P points          APB6F401.59    
+     &, SEC_P_LATITUDE(P_FIELD)  ! IN : SEC(LATITUDE) at P points          APB6F401.60    
+     &, DT                       ! IN : dynamics timestep                  APB6F401.61    
+                                                                           APB6F401.62    
+      LOGICAL                                                              APB6F401.63    
+     &  L_NEG_QT                 ! IN : Switch to continue in event of     APB6F401.64    
+!                                !      excessive negative QT              APB6F401.65    
+!                                !      (non-conservative)                 APB6F401.66    
+     &, L_QT_POS_LOCAL           ! IN : perform local correction           APB6F401.67    
+!                                !      (method 2)                         APB6F401.68    
+     &, SF_QTFIX                 ! IN : STASHflag for output of QT fix     APB6F401.69    
+!                                !      diagnostic                         APB6F401.70    
+                                                                           APB6F401.71    
+*IF DEF,MPP,AND,DEF,T3E                                                    GPB2F404.307   
+*CALL PARVARS                                                              GPB2F404.308   
+*ENDIF                                                                     GPB2F404.309   
+! Local variables                                                          APB6F401.72    
+                                                                           APB6F401.73    
+      INTEGER                                                              APB6F401.74    
+     &  K,I                      ! loop variables                          APB6F401.75    
+     &, I_start                  ! start address for QTPOS calcs           APB6F401.76    
+     &, I_end                    ! end address of QTPOS calcs              APB6F401.77    
+*IF DEF,MPP                                                                APB6F401.78    
+     &, I_start_local            ! local start address for QTPOS calcs     APB6F401.79    
+     &, I_end_local              ! local end address for QTPOS calcs       APB6F401.80    
+     &, info                     ! return code from comms.                 APB6F401.81    
+     &, MAP(Q_LEVELS)            ! processor number for level              APB6F401.82    
+     &, N_LEVS_ON_PROC(0:N_PROCS-1) ! number of levels on each processor   APB6F401.83    
+     &, int_FAILURE(Q_LEVELS)    ! version of LOGICAL FAILURE array,       APB6F401.84    
+!                                ! but using integers                      APB6F401.85    
+*ENDIF                                                                     APB6F401.86    
+                                                                           APB6F401.87    
+      REAL                                                                 APB6F401.88    
+     &  FACTOR(Q_LEVELS)         ! scaling factor for revised QT           APB6F401.89    
+*IF DEF,GLOBAL                                                             APB6F401.90    
+     &, COS_P_LAT_NP             ! COS(latitude) at North Pole             APB6F401.91    
+     &, COS_P_LAT_SP             ! COS(latitude) at South Pole             APB6F401.92    
+     &, SEC_P_LAT_NP             ! SEC(latitude) at North Pole             APB6F401.93    
+     &, SEC_P_LAT_SP             ! SEC(latitude) at South Pole             APB6F401.94    
+! See note below concerning rotated global grids                           APB6F401.95    
+*ENDIF                                                                     APB6F401.96    
+*IF DEF,MPP                                                                APB6F401.97    
+     &, local_FACTOR((Q_LEVELS/N_PROCS)+1)  ! scaling factors for the      APB6F401.98    
+!                                          ! levels I process              APB6F401.99    
+     &,  global_QT_data(GLOBAL_P_FIELD,(Q_LEVELS/N_PROCS)+1)               APB6F401.100   
+! Array containing the QT levels to be processed on this processor         APB6F401.101   
+     &,  NP_VALUE(Q_LEVELS,2)    ! value of QT + QTFIX at North Pole       APB6F401.102   
+     &,  SP_VALUE(Q_LEVELS,2)    ! value of QT + QTFIX at South Pole       APB6F401.103   
+*ENDIF                                                                     APB6F401.104   
+                                                                           APB6F401.105   
+      LOGICAL                                                              APB6F401.106   
+     &  FAILURE(Q_LEVELS)  ! Indicates if a particular level has           APB6F401.107   
+!                          ! failed to be QT_POSd.                         APB6F401.108   
+*IF DEF,MPP                                                                APB6F401.109   
+     &, local_FAILURE((Q_LEVELS/N_PROCS)+1)  ! FAILURE array for           APB6F401.110   
+!                                           ! levels I process             APB6F401.111   
+*ENDIF                                                                     APB6F401.112   
+*IF DEF,MPP,AND,DEF,T3E                                                    GPB2F404.310   
+                                                                           GPB2F404.311   
+      INTEGER address_global_QT_data(0:MAXPROC)                            GPB2F404.312   
+!        address of global_QT_data array on each PE                        GPB2F404.313   
+      COMMON /shmem_align_address_FIELD/ address_global_QT_data            GPB2F404.314   
+                                                                           GPB2F404.315   
+      REAL dummy_global_QT_data(GLOBAL_P_FIELD,(Q_LEVELS/N_PROCS)+1)       GPB2F404.316   
+      POINTER (PTR_dummy_global_QT_data,dummy_global_QT_data)              GPB2F404.317   
+! dummy_FIELD will point to the address of FIELD on the remote PE          GPB2F404.318   
+                                                                           GPB2F404.319   
+      INTEGER glob_pos,loc_pos                                             GPB2F404.320   
+                                                                           GPB2F404.321   
+*ENDIF                                                                     GPB2F404.322   
+                                                                           APB6F401.113   
+*CALL C_A                                                                  APB6F401.114   
+*CALL C_G                                                                  APB6F401.115   
+                                                                           APB6F401.116   
+!---------------------------------------------------------------------     APB6F401.117   
+! NOTE : The MPP code assumes, that for global models, the value of        APB6F401.118   
+!        latitude remains constant over a row (in particular the polar     APB6F401.119   
+!        rows). This implies the code will not give the correct answers    APB6F401.120   
+!        if a rotated global grid is used.                                 APB6F401.121   
+                                                                           APB6F401.122   
+*IF DEF,GLOBAL                                                             APB6F401.123   
+      IF (L_QT_POS_LOCAL) THEN                                             APB6F401.124   
+        I_start=1                                                          APB6F401.125   
+        I_end=GLOBAL_P_FIELD                                               APB6F401.126   
+*IF DEF,MPP                                                                APB6F401.127   
+        I_start_local=FIRST_FLD_PT                                         APB6F401.128   
+        I_end_local=LAST_P_FLD_PT                                          APB6F401.129   
+*ENDIF                                                                     APB6F401.130   
+      ELSE ! global correction scheme                                      APB6F401.131   
+        I_start=GLOBAL_ROW_LENGTH                                          APB6F401.132   
+        I_end=GLOBAL_P_FIELD+1-GLOBAL_ROW_LENGTH                           APB6F401.133   
+*IF DEF,MPP                                                                APB6F401.134   
+        IF (at_top_of_LPG) THEN                                            APB6F401.135   
+          I_start_local=TOP_ROW_START+LAST_ROW_PT-1                        APB6F401.136   
+        ELSE                                                               APB6F401.137   
+          I_start_local=FIRST_FLD_PT                                       APB6F401.138   
+        ENDIF                                                              APB6F401.139   
+        IF (at_base_of_LPG) THEN                                           APB6F401.140   
+          I_end_local=P_BOT_ROW_START+FIRST_ROW_PT-1                       APB6F401.141   
+        ELSE                                                               APB6F401.142   
+          I_end_local=LAST_P_FLD_PT                                        APB6F401.143   
+        ENDIF                                                              APB6F401.144   
+*ENDIF                                                                     APB6F401.145   
+                                                                           APB6F401.146   
+*IF DEF,MPP                                                                APB6F401.147   
+        IF (at_top_of_LPG .AND. at_right_of_LPG) THEN                      APB6F401.148   
+*ENDIF                                                                     APB6F401.149   
+          COS_P_LAT_NP=COS_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)         APB6F401.150   
+          SEC_P_LAT_NP=SEC_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)         APB6F401.151   
+          COS_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=                     APB6F401.152   
+     &      GLOBAL_ROW_LENGTH*COS_P_LAT_NP                                 APB6F401.153   
+          SEC_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=                     APB6F401.154   
+     &      1.0/COS_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)                APB6F401.155   
+*IF DEF,MPP                                                                APB6F401.156   
+        ENDIF                                                              APB6F401.157   
+                                                                           APB6F401.158   
+        IF (at_base_of_LPG .AND. at_left_of_LPG) THEN                      APB6F401.159   
+*ENDIF                                                                     APB6F401.160   
+          COS_P_LAT_SP=COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)      APB6F401.161   
+          SEC_P_LAT_SP=SEC_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)      APB6F401.162   
+          COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=                  APB6F401.163   
+     &      GLOBAL_ROW_LENGTH*COS_P_LAT_SP                                 APB6F401.164   
+          SEC_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=                  APB6F401.165   
+     &      1.0/COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)             APB6F401.166   
+*IF DEF,MPP                                                                APB6F401.167   
+        ENDIF                                                              APB6F401.168   
+*ENDIF                                                                     APB6F401.169   
+                                                                           APB6F401.170   
+      ENDIF                                                                APB6F401.171   
+                                                                           APB6F401.172   
+*ELSE                                                                      APB6F401.173   
+      I_start=1                                                            APB6F401.174   
+      I_end=GLOBAL_P_FIELD                                                 APB6F401.175   
+*IF DEF,MPP                                                                APB6F401.176   
+      I_start_local=FIRST_FLD_PT                                           APB6F401.177   
+      I_end_local=LAST_P_FLD_PT                                            APB6F401.178   
+*ENDIF                                                                     APB6F401.179   
+*ENDIF                                                                     APB6F401.180   
+                                                                           APB6F401.181   
+      DO K=1,Q_LEVELS                                                      APB6F401.182   
+*IF -DEF,MPP                                                               APB6F401.183   
+        DO I=I_start,I_end                                                 APB6F401.184   
+*ELSE                                                                      APB6F401.185   
+        DO I=I_start_local,I_end_local                                     APB6F401.186   
+*ENDIF                                                                     APB6F401.187   
+          QT(I,K)=QT(I,K)*RS_SQUARED_DELTAP(I,K)*COS_P_LATITUDE(I)         APB6F401.188   
+        ENDDO                                                              APB6F401.189   
+                                                                           APB6F401.190   
+        IF (SF_QTFIX) THEN                                                 APB6F401.191   
+          DO I=FIRST_VALID_PT,LAST_P_VALID_PT                              APB6F401.192   
+            QTFIX(I,K)=QT(I,K)                                             APB6F401.193   
+          ENDDO                                                            APB6F401.194   
+          DO I=1,FIRST_VALID_PT-1                                          GPB5F403.59    
+            QTFIX(I,K)=QT(FIRST_VALID_PT,K)                                GPB5F403.60    
+          ENDDO                                                            GPB5F403.61    
+          DO I=LAST_P_VALID_PT+1,P_FIELD                                   GPB5F403.62    
+            QTFIX(I,K)=QT(LAST_P_VALID_PT,K)                               GPB5F403.63    
+          ENDDO                                                            GPB5F403.64    
+        ENDIF                                                              APB6F401.195   
+                                                                           APB6F401.196   
+*IF DEF,MPP                                                                APB6F401.197   
+! Caclulate the mapping of which processor each level will go to           APB6F401.198   
+        MAP(K)=MOD((K-1),N_PROCS)  ! assumes first PE is PE 0              APB6F401.199   
+                                                                           APB6F401.200   
+*ENDIF                                                                     APB6F401.201   
+      ENDDO                                                                APB6F401.202   
+                                                                           APB6F401.203   
+*IF DEF,MPP                                                                APB6F401.204   
+! Distribute QT over the processors                                        APB6F401.205   
+      DO K=0,N_PROCS-1                                                     APB6F401.206   
+        N_LEVS_ON_PROC(K)=0                                                APB6F401.207   
+      ENDDO                                                                APB6F401.208   
+                                                                           APB6F401.209   
+*IF -DEF,T3E                                                               GPB2F404.323   
+      DO K=1,Q_LEVELS                                                      APB6F401.210   
+        N_LEVS_ON_PROC(MAP(K))=N_LEVS_ON_PROC(MAP(K))+1                    APB6F401.211   
+                                                                           APB6F401.212   
+        CALL GATHER_FIELD(QT(1,K),                                         APB6F401.213   
+     &                    global_QT_data(1,N_LEVS_ON_PROC(MAP(K))),        APB6F401.214   
+     &                    ROW_LENGTH,tot_P_ROWS,                           APB6F401.215   
+     &                    GLOBAL_ROW_LENGTH,                               APB6F401.216   
+     &                    GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH,                APB6F401.217   
+     &                    MAP(K),GC_ALL_GROUP,info)                        APB6F401.218   
+                                                                           APB6F401.219   
+      ENDDO                                                                APB6F401.220   
+*ELSE                                                                      GPB2F404.324   
+! Set up the address_global_QT_data array                                  GPB2F404.325   
+      CALL barrier()                                                       GPB2F404.326   
+                                                                           GPB2F404.327   
+      DO K=0,nproc-1                                                       GPB2F404.328   
+        CALL shmem_put(address_global_QT_data(mype),                       GPB2F404.329   
+     &                 LOC(global_QT_data),1,K)                            GPB2F404.330   
+      ENDDO                                                                GPB2F404.331   
+                                                                           GPB2F404.332   
+      CALL barrier()                                                       GPB2F404.333   
+                                                                           GPB2F404.334   
+      DO K=1,Q_LEVELS                                                      GPB2F404.335   
+                                                                           GPB2F404.336   
+        N_LEVS_ON_PROC(MAP(K))=N_LEVS_ON_PROC(MAP(K))+1                    GPB2F404.337   
+                                                                           GPB2F404.338   
+        PTR_dummy_global_QT_data=                                          GPB2F404.339   
+     &    address_global_QT_data(MAP(K))                                   GPB2F404.340   
+                                                                           GPB2F404.341   
+        DO i=Offy+1,lasize(2)-Offy                                         GPB2F404.342   
+                                                                           GPB2F404.343   
+          glob_pos=(datastart(2)+i-2-Offy)*glsize(1) + datastart(1)        GPB2F404.344   
+          loc_pos=(i-1)*lasize(1)+Offx+1                                   GPB2F404.345   
+                                                                           GPB2F404.346   
+          CALL shmem_put(                                                  GPB2F404.347   
+     &      dummy_global_QT_data(glob_pos,N_LEVS_ON_PROC(MAP(K))),         GPB2F404.348   
+     &      QT(loc_pos,K),                                                 GPB2F404.349   
+     &      blsizep(1),MAP(K))                                             GPB2F404.350   
+                                                                           GPB2F404.351   
+        ENDDO                                                              GPB2F404.352   
+      ENDDO                                                                GPB2F404.353   
+                                                                           GPB2F404.354   
+      CALL barrier()                                                       GPB2F404.355   
+*ENDIF                                                                     GPB2F404.356   
+                                                                           APB6F401.221   
+! and call QT_POS with the whole levels on this processor                  APB6F401.222   
+                                                                           APB6F401.223   
+      DO K=1,N_LEVS_ON_PROC(MY_PROC_ID)                                    APB6F401.224   
+        local_FAILURE(K)=.FALSE.                                           APB6F401.225   
+      ENDDO                                                                APB6F401.226   
+                                                                           APB6F401.227   
+      CALL QT_POS(global_QT_data,global_ROW_LENGTH,global_P_FIELD,         APB6F401.228   
+     &            I_start,I_end,                                           APB6F401.229   
+     &            N_LEVS_ON_PROC(MY_PROC_ID),                              APB6F401.230   
+     &            ERROR_CODE,ERROR_MESSAGE,                                APB6F401.231   
+     &            local_FACTOR,local_FAILURE,                              APB6F401.232   
+     &            L_NEG_QT,L_QT_POS_LOCAL)                                 APB6F401.233   
+                                                                           APB6F401.234   
+! Set ERROR_CODE and ERROR_MESSAGE if any pe has set ERROR_CODE            GPB5F403.65    
+      CALL GC_IMAX(1,n_procs,info,ERROR_CODE)                              GPB5F403.66    
+                                                                           GPB5F403.67    
+      IF (ERROR_CODE .NE. 0) THEN                                          GPB5F403.68    
+        ERROR_MESSAGE=                                                     GPB5F403.69    
+     & 'QT_POS   : MASS-WEIGHTED QT SUMMED OVER A LEVEL WAS NEGATIVE.'     GPB5F403.70    
+      ENDIF                                                                GPB5F403.71    
+                                                                           GPB5F403.72    
+! and gather back levels to original processors                            APB6F401.235   
+                                                                           APB6F401.236   
+      DO K=0,N_PROCS-1                                                     APB6F401.237   
+        N_LEVS_ON_PROC(K)=0                                                APB6F401.238   
+      ENDDO                                                                APB6F401.239   
+                                                                           APB6F401.240   
+*IF -DEF,T3E                                                               GPB2F404.357   
+      DO K=1,Q_LEVELS                                                      APB6F401.241   
+        N_LEVS_ON_PROC(MAP(K))=N_LEVS_ON_PROC(MAP(K))+1                    APB6F401.242   
+                                                                           APB6F401.243   
+! collect the FAILURE and FACTOR array elements for this level             APB6F401.244   
+                                                                           APB6F401.245   
+        IF (MY_PROC_ID .EQ. MAP(K)) THEN                                   APB6F401.246   
+!         I processed this level                                           APB6F401.247   
+          IF (local_FAILURE(N_LEVS_ON_PROC(MY_PROC_ID))) THEN              APB6F401.248   
+            int_FAILURE(K)=1                                               APB6F401.249   
+          ELSE                                                             APB6F401.250   
+            int_FAILURE(K)=0                                               APB6F401.251   
+          ENDIF                                                            APB6F401.252   
+          FACTOR(K)=local_FACTOR(N_LEVS_ON_PROC(MY_PROC_ID))               APB6F401.253   
+        ELSE  ! I didn't process this level                                APB6F401.254   
+          int_FAILURE(K)=0                                                 APB6F401.255   
+          FACTOR(K)=0.0                                                    APB6F401.256   
+        ENDIF                                                              APB6F401.257   
+                                                                           APB6F401.258   
+! and scatter this level back to it's original home                        APB6F401.259   
+                                                                           APB6F401.260   
+        CALL SCATTER_FIELD(QT(1,K),                                        APB6F401.261   
+     &                    global_QT_data(1,N_LEVS_ON_PROC(MAP(K))),        APB6F401.262   
+     &                    ROW_LENGTH,tot_P_ROWS,                           APB6F401.263   
+     &                    GLOBAL_ROW_LENGTH,                               APB6F401.264   
+     &                    GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH,                APB6F401.265   
+     &                    MAP(K),GC_ALL_GROUP,info)                        APB6F401.266   
+                                                                           APB6F401.267   
+      ENDDO                                                                APB6F401.268   
+*ELSE                                                                      GPB2F404.358   
+                                                                           GPB2F404.359   
+      CALL barrier()                                                       GPB2F404.360   
+                                                                           GPB2F404.361   
+      DO K=1,Q_LEVELS                                                      GPB2F404.362   
+                                                                           GPB2F404.363   
+        N_LEVS_ON_PROC(MAP(K))=N_LEVS_ON_PROC(MAP(K))+1                    GPB2F404.364   
+                                                                           GPB2F404.365   
+! collect the FAILURE and FACTOR array elements for this level             GPB2F404.366   
+                                                                           GPB2F404.367   
+        IF (MY_PROC_ID .EQ. MAP(K)) THEN                                   GPB2F404.368   
+!         I processed this level                                           GPB2F404.369   
+          IF (local_FAILURE(N_LEVS_ON_PROC(MY_PROC_ID))) THEN              GPB2F404.370   
+            int_FAILURE(K)=1                                               GPB2F404.371   
+          ELSE                                                             GPB2F404.372   
+            int_FAILURE(K)=0                                               GPB2F404.373   
+          ENDIF                                                            GPB2F404.374   
+          FACTOR(K)=local_FACTOR(N_LEVS_ON_PROC(MY_PROC_ID))               GPB2F404.375   
+        ELSE  ! I didn't process this level                                GPB2F404.376   
+          int_FAILURE(K)=0                                                 GPB2F404.377   
+          FACTOR(K)=0.0                                                    GPB2F404.378   
+        ENDIF                                                              GPB2F404.379   
+                                                                           GPB2F404.380   
+        PTR_dummy_global_QT_data=                                          GPB2F404.381   
+     &    address_global_QT_data(MAP(K))                                   GPB2F404.382   
+                                                                           GPB2F404.383   
+        DO i=Offy+1,lasize(2)-Offy                                         GPB2F404.384   
+                                                                           GPB2F404.385   
+          glob_pos=(datastart(2)+i-2-Offy)*glsize(1) + datastart(1)        GPB2F404.386   
+          loc_pos=(i-1)*lasize(1)+Offx+1                                   GPB2F404.387   
+                                                                           GPB2F404.388   
+          CALL shmem_get(                                                  GPB2F404.389   
+     &      QT(loc_pos,K),                                                 GPB2F404.390   
+     &      dummy_global_QT_data(glob_pos,N_LEVS_ON_PROC(MAP(K))),         GPB2F404.391   
+     &      blsizep(1),MAP(K))                                             GPB2F404.392   
+                                                                           GPB2F404.393   
+        ENDDO                                                              GPB2F404.394   
+      ENDDO                                                                GPB2F404.395   
+                                                                           GPB2F404.396   
+      CALL barrier()                                                       GPB2F404.397   
+*ENDIF                                                                     GPB2F404.398   
+                                                                           APB6F401.269   
+! and distribute the FAILURE and FACTOR arrays                             APB6F401.270   
+                                                                           APB6F401.271   
+      CALL GC_ISUM(Q_LEVELS,N_PROCS,info,int_FAILURE)                      APB6F401.272   
+      CALL GC_RSUM(Q_LEVELS,N_PROCS,info,FACTOR)                           APB6F401.273   
+                                                                           APB6F401.274   
+      DO K=1,Q_LEVELS                                                      APB6F401.275   
+        IF (int_FAILURE(K) .EQ. 0) THEN                                    APB6F401.276   
+          FAILURE(K)=.FALSE.                                               APB6F401.277   
+        ELSE                                                               APB6F401.278   
+          FAILURE(K)=.TRUE.                                                APB6F401.279   
+        ENDIF                                                              APB6F401.280   
+      ENDDO                                                                APB6F401.281   
+                                                                           APB6F401.282   
+*ELSE                                                                      APB6F401.283   
+! Call QT_POS                                                              APB6F401.284   
+                                                                           APB6F401.285   
+      CALL QT_POS(QT,ROW_LENGTH,P_FIELD,I_start,I_end,Q_LEVELS,            APB6F401.286   
+     &            ERROR_CODE,ERROR_MESSAGE,FACTOR,FAILURE,                 APB6F401.287   
+     &            L_NEG_QT,L_QT_POS_LOCAL)                                 APB6F401.288   
+                                                                           APB6F401.289   
+*ENDIF                                                                     APB6F401.290   
+                                                                           APB6F401.291   
+! Now remove the mass weighting, and calculate QT_FIX diagnostic           APB6F401.292   
+                                                                           APB6F401.293   
+      DO K=1,Q_LEVELS                                                      APB6F401.294   
+        IF (FAILURE(K)) THEN                                               APB6F401.295   
+          IF (SF_QTFIX) THEN                                               APB6F401.296   
+*IF -DEF,MPP                                                               APB6F401.297   
+            DO I=I_start,I_end                                             APB6F401.298   
+*ELSE                                                                      APB6F401.299   
+            DO I=I_start_local,I_end_local                                 APB6F401.300   
+*ENDIF                                                                     APB6F401.301   
+              QTFIX(I,K) = (QT(I,K) * FACTOR(K) - QTFIX(I,K))*             APB6F401.302   
+     &                     SEC_P_LATITUDE(I)/(A*A*G*DT)                    APB6F401.303   
+            ENDDO                                                          APB6F401.304   
+          ENDIF                                                            APB6F401.305   
+*IF -DEF,MPP                                                               APB6F401.306   
+          DO I=I_start,I_end                                               APB6F401.307   
+*ELSE                                                                      APB6F401.308   
+          DO I=I_start_local,I_end_local                                   APB6F401.309   
+*ENDIF                                                                     APB6F401.310   
+            QT(I,K)=QT(I,K)*FACTOR(K)/RS_SQUARED_DELTAP(I,K)*              APB6F401.311   
+     &              SEC_P_LATITUDE(I)                                      APB6F401.312   
+          ENDDO                                                            APB6F401.313   
+        ELSE  ! FAILURE(K) .EQ. .FALSE.                                    APB6F401.314   
+          IF (SF_QTFIX) THEN                                               APB6F401.315   
+*IF -DEF,MPP                                                               APB6F401.316   
+            DO I=I_start,I_end                                             APB6F401.317   
+*ELSE                                                                      APB6F401.318   
+            DO I=I_start_local,I_end_local                                 APB6F401.319   
+*ENDIF                                                                     APB6F401.320   
+              QTFIX(I,K) = (QT(I,K) - QTFIX(I,K)) *                        APB6F401.321   
+     &                     SEC_P_LATITUDE(I)/(A*A*G*DT)                    APB6F401.322   
+            ENDDO                                                          APB6F401.323   
+          ENDIF                                                            APB6F401.324   
+*IF -DEF,MPP                                                               APB6F401.325   
+          DO I=I_start,I_end                                               APB6F401.326   
+*ELSE                                                                      APB6F401.327   
+          DO I=I_start_local,I_end_local                                   APB6F401.328   
+*ENDIF                                                                     APB6F401.329   
+            QT(I,K)=QT(I,K)/RS_SQUARED_DELTAP(I,K)*                        APB6F401.330   
+     &              SEC_P_LATITUDE(I)                                      APB6F401.331   
+          ENDDO                                                            APB6F401.332   
+        ENDIF                                                              APB6F401.333   
+                                                                           APB6F401.334   
+      ENDDO ! K : loop over levels                                         APB6F401.335   
+                                                                           APB6F401.336   
+*IF DEF,GLOBAL                                                             APB6F401.337   
+      IF (.NOT. L_QT_POS_LOCAL) THEN                                       APB6F401.338   
+                                                                           APB6F401.339   
+! Set all points at poles equal to last(NP)/first(SP) point                APB6F401.340   
+*IF -DEF,MPP                                                               APB6F401.341   
+          DO K=1,Q_LEVELS                                                  APB6F401.342   
+            DO I=1,ROW_LENGTH-1                                            APB6F401.343   
+              QT(I,K) = QT(ROW_LENGTH,K)                                   APB6F401.344   
+              QT(P_FIELD+1-I,K) = QT(P_FIELD+1-ROW_LENGTH,K)               APB6F401.345   
+            ENDDO                                                          APB6F401.346   
+                                                                           APB6F401.347   
+            IF (SF_QTFIX) THEN                                             APB6F401.348   
+              DO I=1,ROW_LENGTH-1                                          APB6F401.349   
+                QTFIX(I,K) = QTFIX(ROW_LENGTH,K)                           APB6F401.350   
+                QTFIX(P_FIELD+1-I,K) = QTFIX(P_FIELD+1-ROW_LENGTH,K)       APB6F401.351   
+              ENDDO                                                        APB6F401.352   
+            ENDIF                                                          APB6F401.353   
+          ENDDO                                                            APB6F401.354   
+*ELSE                                                                      APB6F401.355   
+! Set up arrays containing NP values                                       APB6F401.356   
+          IF (at_top_of_LPG .AND. at_right_of_LPG) THEN                    APB6F401.357   
+            DO K=1,Q_LEVELS                                                APB6F401.358   
+              NP_VALUE(K,1)=QT(I_start_local,K)                            APB6F401.359   
+              NP_VALUE(K,2)=QTFIX(I_start_local,K)                         APB6F401.360   
+            ENDDO                                                          APB6F401.361   
+          ELSE                                                             APB6F401.362   
+            DO K=1,Q_LEVELS                                                APB6F401.363   
+              NP_VALUE(K,1)=0.0                                            APB6F401.364   
+              NP_VALUE(K,2)=0.0                                            APB6F401.365   
+            ENDDO                                                          APB6F401.366   
+          ENDIF                                                            APB6F401.367   
+                                                                           APB6F401.368   
+! Distribute the NP value over processors on polar row                     APB6F401.369   
+          IF (at_top_of_LPG) THEN                                          APB6F401.370   
+            CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_VALUE(1,1))        APB6F401.371   
+            DO K=1,Q_LEVELS                                                APB6F401.372   
+              DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                APB6F401.373   
+                QT(I,K)=NP_VALUE(K,1)                                      APB6F401.374   
+              ENDDO                                                        APB6F401.375   
+            ENDDO                                                          APB6F401.376   
+            IF (SF_QTFIX) THEN                                             APB6F401.377   
+              CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_VALUE(1,2))      APB6F401.378   
+              DO K=1,Q_LEVELS                                              APB6F401.379   
+                DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1              APB6F401.380   
+                  QTFIX(I,K)=NP_VALUE(K,2)                                 APB6F401.381   
+                ENDDO                                                      APB6F401.382   
+              ENDDO                                                        APB6F401.383   
+            ENDIF                                                          APB6F401.384   
+          ENDIF                                                            APB6F401.385   
+                                                                           APB6F401.386   
+! Set up arrays containing SP values                                       APB6F401.387   
+          IF (at_base_of_LPG .AND. at_left_of_LPG) THEN                    APB6F401.388   
+            DO K=1,Q_LEVELS                                                APB6F401.389   
+              SP_VALUE(K,1)=QT(I_end_local,K)                              APB6F401.390   
+              SP_VALUE(K,2)=QTFIX(I_end_local,K)                           APB6F401.391   
+            ENDDO                                                          APB6F401.392   
+          ELSE                                                             APB6F401.393   
+            DO K=1,Q_LEVELS                                                APB6F401.394   
+              SP_VALUE(K,1)=0.0                                            APB6F401.395   
+              SP_VALUE(K,2)=0.0                                            APB6F401.396   
+            ENDDO                                                          APB6F401.397   
+          ENDIF                                                            APB6F401.398   
+                                                                           APB6F401.399   
+! Distribute the SP value over processors on polar row                     APB6F401.400   
+          IF (at_base_of_LPG) THEN                                         APB6F401.401   
+            CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,SP_VALUE(1,1))        APB6F401.402   
+            DO K=1,Q_LEVELS                                                APB6F401.403   
+              DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1            APB6F401.404   
+                QT(I,K)=SP_VALUE(K,1)                                      APB6F401.405   
+              ENDDO                                                        APB6F401.406   
+            ENDDO                                                          APB6F401.407   
+            IF (SF_QTFIX) THEN                                             APB6F401.408   
+              CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_VALUE(1,2))      APB6F401.409   
+              DO K=1,Q_LEVELS                                              APB6F401.410   
+                DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1          APB6F401.411   
+                  QTFIX(I,K)=SP_VALUE(K,2)                                 APB6F401.412   
+                ENDDO                                                      APB6F401.413   
+              ENDDO                                                        APB6F401.414   
+            ENDIF                                                          APB6F401.415   
+          ENDIF                                                            APB6F401.416   
+*ENDIF                                                                     APB6F401.417   
+! Reset the pole rows of latitude                                          APB6F401.418   
+                                                                           APB6F401.419   
+*IF DEF,MPP                                                                APB6F401.420   
+        IF (at_top_of_LPG .AND. at_right_of_LPG) THEN                      APB6F401.421   
+*ENDIF                                                                     APB6F401.422   
+          COS_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=COS_P_LAT_NP         APB6F401.423   
+          SEC_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=SEC_P_LAT_NP         APB6F401.424   
+*IF DEF,MPP                                                                APB6F401.425   
+        ENDIF                                                              APB6F401.426   
+                                                                           APB6F401.427   
+        IF (at_base_of_LPG .AND. at_left_of_LPG) THEN                      APB6F401.428   
+*ENDIF                                                                     APB6F401.429   
+          COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=COS_P_LAT_SP      APB6F401.430   
+          SEC_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=SEC_P_LAT_SP      APB6F401.431   
+*IF DEF,MPP                                                                APB6F401.432   
+        ENDIF                                                              APB6F401.433   
+*ENDIF                                                                     APB6F401.434   
+      ENDIF ! IF (.NOT. L_QT_POS_LOCAL)                                    APB6F401.435   
+*ENDIF                                                                     APB6F401.436   
+                                                                           APB6F401.437   
+*IF DEF,T3E                                                                GPB0F405.193   
+      CALL REMOVE_NEGATIVE_ZERO(QT,P_FIELD,Q_LEVELS)                       GPB0F405.194   
+*ENDIF                                                                     GPB0F405.195   
+*IF DEF,MPP                                                                APB6F401.438   
+! Bring halos up to date                                                   APB6F401.439   
+      CALL SWAPBOUNDS(QT,ROW_LENGTH,tot_P_ROWS,                            APB6F401.440   
+     &                EW_Halo,NS_Halo,Q_LEVELS)                            APB6F401.441   
+*ENDIF                                                                     APB6F401.442   
+                                                                           APB6F401.443   
+      RETURN                                                               APB6F401.444   
+      END                                                                  APB6F401.445   
+                                                                           APB6F401.446   
+CLL   SUBROUTINE QT_POS -------------------------------------------        QTPOS1A.3     
+CLL                                                                        QTPOS1A.4     
+CLL   PURPOSE:   REMOVES NEGATIVE VALUES OF QT.  THERE ARE TWO ALTERNAT-   ACH1F304.19    
+CLL              IVE METHODS: METHOD 1 IS THE ORIGINAL SCHEME WHILE        ACH1F304.20    
+CLL              IF L_QT_POS_LOCAL = .TRUE. METHOD 2 IS USED.              ACH1F304.21    
+CLL              METHOD 2 IS DESIGNED TO ELIMINATE THE                     ACH1F304.22    
+CLL              VERY SLOW CLIMATE DRIFT IN QT IN UPPER MODEL LEVELS.      ACH1F304.23    
+CLL              IT IS UNNECESSARILY COMPLICATED (AND EXPENSIVE) FOR       ACH1F304.24    
+CLL              FORECAST USE.                                             ACH1F304.25    
+CLL                                                                        ACH1F304.26    
+CLL        METHOD 1:  ACCUMULATES TOTALS OF                                ACH1F304.27    
+CLL              OF NEGATIVE AND POSITIVE VALUES ON A LEVEL, ZEROING       QTPOS1A.6     
+CLL              ALL NEGATIVE POINTS AND PROPORTIONALLY REMOVING THE       QTPOS1A.7     
+CLL              SUM OF THE NEGATIVES FROM ALL POSITIVE POINTS.            QTPOS1A.8     
+CLL        METHOD 2:  THE FOLLOWING METHOD IS APPLIED AT EACH LAYER:       ACH1F304.28    
+CLL            STEP 1 - LOOP ROUND ALL POINTS. IF QT IS NEGATIVE,          ACH1F304.29    
+CLL              (a):                                                      ACH1F304.30    
+CLL              SUM QT ROUND NEIGHBOURING POINTS WITHIN ONE ROW AND       ACH1F304.31    
+CLL              ONE COLUMN OF POINT IN CURRENT LAYER.  IF THIS VALUE      ACH1F304.32    
+CLL              IS POSITIVE AND LARGE ENOUGH,THE CENTRE NEGATIVE VALUE    ACH1F304.33    
+CLL              IS SET EQUAL TO ZERO AND THE NEIGHBOURS ARE SCALED        ACH1F304.34    
+CLL              TO CONSERVE MASS WEIGHTED QT. IF (a) DOES NOT WORK        ACH1F304.35    
+CLL              THEN (b):                                                 ACH1F304.36    
+CLL              EXTEND SUMMATION WITH A LARGER SEARCH RADIUS AND REPEAT   ACH1F304.37    
+CLL              PROCESS. (SEARCH RADIUS = 4 FOUND TO BE SUFFICIENT)       ACH1F304.38    
+CLL            STEP 2 - IF GLOBAL MODEL, CHECK FOR NEGATIVE QT AT POLES    ACH1F304.39    
+CLL              AND CORRECT USING ALL VALUES IN NEIGHBOURING ROW.         ACH1F304.40    
+CLL            STEP 3 - IF ANY NEGATIVE VALUES REMAIN (VERY UNCOMMON)      ACH1F304.41    
+CLL              PERFORM GLOBAL CORRECTION AS IN METHOD 1.                 ACH1F304.42    
+CLL                                                                        ACH1F304.43    
+CLL              IN BOTH METHODS IF THERE ARE INSUFFICIENT                 ACH1F304.44    
+CLL              POSITIVE VALUES WITHIN THE WHOLE LAYER AN ERROR           ACH1F304.45    
+CLL              MESSAGE IS PRODUCED.  PROGRAM CONTINUES IF L_NEG_Q        ACH1F304.46    
+CLL              IS TRUE IN WHICH CASE QT IS NOT CONSERVED.                ACH1F304.47    
+CLL   N.B.       DEFINITION OF RS SQUARED DELTAP MEANS THAT POSITIVE       QTPOS1A.9     
+CLL              QT VALUES HAVE A NEGATIVE SIGN!                           QTPOS1A.10    
+CLL                                                                        ACH1F304.48    
+CLL                                                                        ACH1F304.49    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  QTPOS1A.11    
+CLL   VERSION FOR CRAY Y-MP                                                QTPOS1A.12    
+CLL                                                                        QTPOS1A.13    
+CLL  MM, SB     <- PROGRAMMER OF SOME OR ALL OF PREVIOUS CODE OR CHANGES   QTPOS1A.14    
+CLL                                                                        QTPOS1A.15    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         QTPOS1A.16    
+CLL VERSION  DATE                                                          QTPOS1A.17    
+CLL   3.2    13/07/93 Changed CHARACTER*(*) to CHARACTER*(80) for          TS150793.137   
+CLL                   portability.  Author Tracey Smith.                   TS150793.138   
+CLL   3.4    02/08/94 Add QTFIX diagnostic.  Tim Johns                     ACH1F304.50    
+CLL   3.4     7/08/94 Method 2 added to perform local corrections.         ACH1F304.51    
+CLL                   Author Chris Hall.                                   ACH1F304.52    
+!LL   4.0     9/02/95 : Alter code for local correction option to help     ARSF2400.1     
+!LL                     speed it up. Still scalar in parts. R A Stratton   ARSF2400.2     
+CLL   4.0     1/02/95 Values of polar weighting changed for consistency    ACH1F400.14    
+CLL                   with other parts of dynamics.  Chris Hall            ACH1F400.15    
+!LL   4.1    14/05/96 Moved some code up to QT_POS_CTL, and changed        APB6F401.447   
+!LL                   arguments/comments.    P.Burton                      APB6F401.448   
+CLL                                                                        QTPOS1A.18    
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       QTPOS1A.19    
+CLL                         STANDARD A. VERSION 2, DATED 18/01/90          QTPOS1A.20    
+CLL                                                                        QTPOS1A.21    
+CLL   SYSTEM COMPONENTS COVERED: P 191                                     QTPOS1A.22    
+CLL                                                                        QTPOS1A.23    
+CLL   SYSTEM TASK: P1                                                      QTPOS1A.24    
+CLL                                                                        QTPOS1A.25    
+CLL   DOCUMENTATION:       SECTION 3.7                                     QTPOS1A.26    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER            QTPOS1A.27    
+CLL                        NO. 10 M.J.P.CULLEN,T.DAVIES AND M.H.MAWSON     QTPOS1A.28    
+CLL                        VERSION 10, DATED 10/09/90.                     QTPOS1A.29    
+CLLEND-------------------------------------------------------------        QTPOS1A.30    
+                                                                           QTPOS1A.31    
+C*L   ARGUMENTS:---------------------------------------------------        QTPOS1A.32    
+      SUBROUTINE QT_POS                                                    QTPOS1A.33    
+     1                 (QT,ROW_LENGTH,P_FIELD,ISTART,IEND,Q_LEVELS,        APB6F401.449   
+     2                  ERROR_CODE,ERROR_MESSAGE,FACTOR,FAILURE,           APB6F401.450   
+     3                  L_NEG_QT,L_QT_POS_LOCAL)                           APB6F401.451   
+                                                                           APB6F401.452   
+      IMPLICIT NONE                                                        APB6F401.453   
+                                                                           APB6F401.454   
+      INTEGER                                                              APB6F401.455   
+     &  ROW_LENGTH         ! IN : number of points per row                 APB6F401.456   
+     &, P_FIELD            ! IN : size of horizontal P field               APB6F401.457   
+     &, ISTART             ! IN : first point to process                   APB6F401.458   
+     &, IEND               ! IN : last point to process                    APB6F401.459   
+     &, Q_LEVELS           ! IN : number of (moist) levels to process      APB6F401.460   
+                                                                           APB6F401.461   
+      LOGICAL                                                              APB6F401.462   
+     &  L_NEG_QT           ! IN : switch to continue in event of           APB6F401.463   
+!                          !      excessive negative QTs (non-conserv.)    APB6F401.464   
+     &, L_QT_POS_LOCAL     ! IN : perform local corrections (method 2)     APB6F401.465   
+                                                                           APB6F401.466   
+      REAL                                                                 APB6F401.467   
+     &  QT(P_FIELD,Q_LEVELS) ! IN/OUT : QT field to update                 APB6F401.468   
+                                                                           APB6F401.469   
+      INTEGER                                                              APB6F401.470   
+     &  ERROR_CODE         ! OUT : 1 on exit if error detected             APB6F401.471   
+                                                                           APB6F401.472   
+      CHARACTER*(80)                                                       APB6F401.473   
+     &  ERROR_MESSAGE      ! OUT : Error message if ERROR_CODE not zero    APB6F401.474   
+                                                                           APB6F401.475   
+      REAL                                                                 APB6F401.476   
+     &  FACTOR(Q_LEVELS)   ! OUT : Scaling factor for QT                   APB6F401.477   
+                                                                           APB6F401.478   
+      LOGICAL                                                              APB6F401.479   
+     &  FAILURE(Q_LEVELS)  ! OUT : Indicates a level needs rescaling       APB6F401.480   
+                                                                           QTPOS1A.64    
+C*---------------------------------------------------------------------    QTPOS1A.65    
+                                                                           QTPOS1A.66    
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    QTPOS1A.67    
+C DEFINE LOCAL ARRAYS: NONE ARE REQUIRED                                   QTPOS1A.68    
+C*---------------------------------------------------------------------    QTPOS1A.69    
+C DEFINE LOCAL VARIABLES                                                   QTPOS1A.70    
+                                                                           QTPOS1A.71    
+      INTEGER                                                              QTPOS1A.73    
+     *  I,K,II,JJ,NN,J   ! Loop variables                                  APB6F401.481   
+     *, IN,IS,JE,JW        ! Row/column indices to north/south/east/west   ACH1F304.67    
+     *, POINTER            ! Array pointer                                 ACH1F304.68    
+     *, ROW                ! Row number counting from 0                    ACH1F304.69    
+     *, NPT                ! Point in row counting from 1                  ACH1F304.70    
+     *, ROWS               ! Number of rows                                ACH1F304.71    
+     *, MAX_SEARCH         ! Maximum search radius (points)                ACH1F304.74    
+     *, NO_NEG             ! Count of number negative in step 3 & 1        ARSF2400.4     
+     *, NO_NEG2            ! Count of number negative                      ARSF2400.5     
+     *, NINDEX(P_FIELD)    ! locations of negative q                       ARSF2400.6     
+      REAL                                                                 QTPOS1A.75    
+     *  SUM_NEIGHBOURS     ! Sum of QT around neighbours                   ACH1F304.76    
+     *, SUM_POSITIVE       ! Global sum of positive QT                     ACH1F304.77    
+     *, SUM_NEGATIVE       ! Global sum of negative QT                     ACH1F304.78    
+     *, TEMP1,TEMP2        ! Temporary sums                                ACH1F304.80    
+                                                                           QTPOS1A.81    
+C*L   NO EXTERNAL SUBROUTINE CALLS:------------------------------------    QTPOS1A.82    
+C*---------------------------------------------------------------------    QTPOS1A.83    
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD.                            QTPOS1A.84    
+CL---------------------------------------------------------------------    QTPOS1A.85    
+CL    INTERNAL STRUCTURE.                                                  QTPOS1A.86    
+CL---------------------------------------------------------------------    QTPOS1A.87    
+CL                                                                         QTPOS1A.88    
+      ROWS=P_FIELD/ROW_LENGTH                                              ACH1F304.107   
+      MAX_SEARCH=4                                                         ACH1F304.108   
+                                                                           ACH1F304.109   
+CL LOOP OVER LEVELS                                                        QTPOS1A.97    
+      DO K= 1,Q_LEVELS                                                     ACH1F304.110   
+        FAILURE(K)=.FALSE.                                                 APB6F401.482   
+        FACTOR(K)=0.0                                                      APB6F401.483   
+        IF (L_QT_POS_LOCAL) THEN                                           ACH1F304.128   
+CL---------------------------------------------------------------------    ACH1F304.129   
+CL    METHOD 2                                                             ACH1F304.130   
+CL---------------------------------------------------------------------    ACH1F304.131   
+          NO_NEG=0                                                         ARSF2400.7     
+                                                                           ACH1F304.132   
+*IF DEF,GLOBAL                                                             QTPOS1A.106   
+C   Loop round non-polar points                                            ACH1F304.133   
+          DO I=ROW_LENGTH+1,P_FIELD-ROW_LENGTH                             ACH1F304.134   
+*ELSE                                                                      QTPOS1A.108   
+          DO I=1,P_FIELD                                                   ACH1F304.135   
+*ENDIF                                                                     QTPOS1A.110   
+            IF(QT(I,K).GT.0.0) THEN                                        ACH1F304.136   
+              NO_NEG=NO_NEG+1                                              ARSF2400.8     
+              NINDEX(NO_NEG)=I                                             ARSF2400.9     
+            ENDIF                                                          ARSF2400.10    
+          ENDDO                                                            ARSF2400.11    
+                                                                           ARSF2400.12    
+          DO J=1,NO_NEG                                                    ARSF2400.13    
+            I=NINDEX(J)                                                    ARSF2400.14    
+CL                                                                         QTPOS1A.113   
+CL---------------------------------------------------------------------    QTPOS1A.114   
+CL    SECTION 2.    STEP 1. WHERE QT IS NEGATIVE LOOP ROUND                ACH1F304.137   
+CL              8 NEIGHBOURS TO PERFORM LOCAL CORRECTION.  THIS OCCURS     ACH1F304.138   
+CL              AT APPROXIMATELY 2% OF THE POINTS.  THE FOLLOWING CODE     ACH1F304.139   
+CL              IN SECTIONS 2 & 3 IS RATHER LONG-WINDED, BUT CPU IS        ACH1F304.140   
+CL              SIGNIFICANTLY REDUCED OVER A SIMPLER APPROACH.             ACH1F304.141   
+CL---------------------------------------------------------------------    ACH1F304.142   
+C   If QT is negative find 8 neighbours ...                                ACH1F304.143   
+              ROW=(I-1)/ROW_LENGTH                                         ACH1F304.144   
+              NPT=I-ROW*ROW_LENGTH                                         ACH1F304.145   
+              JE=1                                                         ACH1F304.146   
+              JW=-1                                                        ACH1F304.147   
+*IF DEF,GLOBAL                                                             ACH1F304.148   
+              IF(NPT.EQ.ROW_LENGTH) JE=1-ROW_LENGTH                        ACH1F304.149   
+              IF(NPT.EQ.1) JW=ROW_LENGTH-1                                 ACH1F304.150   
+*ELSE                                                                      ACH1F304.151   
+C   Abandon search for neighbours on LAM boundary                          ACH1F304.152   
+              IF(NPT.EQ.ROW_LENGTH.OR.NPT.EQ.1) THEN                       ACH1F304.153   
+                FAILURE(K)=.TRUE.                                          APB6F401.484   
+                GOTO 200                                                   ARSF2400.15    
+              END IF                                                       ACH1F304.156   
+*ENDIF                                                                     ACH1F304.157   
+C   ... and sum neighbouring 8 values                                      ACH1F304.158   
+              SUM_NEIGHBOURS = QT(I+JE,K) + QT(I+JW,K)                     ACH1F304.159   
+              IF(ROW.GT.0) THEN                                            ACH1F304.160   
+                II=I-ROW_LENGTH                                            ACH1F304.161   
+                SUM_NEIGHBOURS = SUM_NEIGHBOURS +                          ACH1F304.162   
+     *                           QT(II,K) + QT(II+JE,K) + QT(II+JW,K)      ACH1F304.163   
+              END IF                                                       ACH1F304.164   
+              IF(ROW.LT.ROWS-1) THEN                                       ACH1F304.165   
+                II=I+ROW_LENGTH                                            ACH1F304.166   
+                SUM_NEIGHBOURS = SUM_NEIGHBOURS +                          ACH1F304.167   
+     *                           QT(II,K) + QT(II+JE,K) + QT(II+JW,K)      ACH1F304.168   
+              END IF                                                       ACH1F304.169   
+C                                                                          ACH1F304.170   
+C   If possible set QT=0 at point with negative value and adjust           ACH1F304.171   
+C   neighbouring values by FACTOR to conserve QT                           ACH1F304.172   
+              IF(SUM_NEIGHBOURS.LT.0.0) THEN                               ACH1F304.173   
+                FACTOR(K)=1.0+QT(I,K)/SUM_NEIGHBOURS                       APB6F401.485   
+                IF(FACTOR(K).GE.0.0) THEN                                  APB6F401.486   
+                  QT(I,K)=0.0                                              ACH1F304.176   
+                  QT(I+JE,K) = QT(I+JE,K)*FACTOR(K)                        APB6F401.487   
+                  QT(I+JW,K) = QT(I+JW,K)*FACTOR(K)                        APB6F401.488   
+                  IF(ROW.GT.0) THEN                                        ACH1F304.179   
+                    II=I-ROW_LENGTH                                        ACH1F304.180   
+                    QT(II,K) = QT(II,K)*FACTOR(K)                          APB6F401.489   
+                    QT(II+JE,K) = QT(II+JE,K)*FACTOR(K)                    APB6F401.490   
+                    QT(II+JW,K) = QT(II+JW,K)*FACTOR(K)                    APB6F401.491   
+                  END IF                                                   ACH1F304.184   
+                  IF(ROW.LT.ROWS-1) THEN                                   ACH1F304.185   
+                    II=I+ROW_LENGTH                                        ACH1F304.186   
+                    QT(II,K) = QT(II,K)*FACTOR(K)                          APB6F401.492   
+                    QT(II+JE,K) = QT(II+JE,K)*FACTOR(K)                    APB6F401.493   
+                    QT(II+JW,K) = QT(II+JW,K)*FACTOR(K)                    APB6F401.494   
+                  END IF                                                   ACH1F304.190   
+                END IF                                                     ACH1F304.192   
+              END IF                                                       ACH1F304.193   
+*IF -DEF,GLOBAL                                                            ARSF2400.16    
+  200       CONTINUE       ! LAM only                                      ARSF2400.17    
+*ENDIF                                                                     ARSF2400.18    
+          END DO       ! loop over negative grid points                    ARSF2400.19    
+                                                                           ARSF2400.20    
+! recalculate number of negative gridpoints                                ARSF2400.21    
+          NO_NEG2=0                                                        ARSF2400.22    
+          DO J=1,NO_NEG                                                    ARSF2400.23    
+            I=NINDEX(J)                                                    ARSF2400.24    
+            IF(QT(I,K).GT.0.0) THEN                                        ARSF2400.25    
+              NO_NEG2=NO_NEG2+1                                            ARSF2400.26    
+              NINDEX(NO_NEG2)=I                                            ARSF2400.27    
+            ENDIF                                                          ARSF2400.28    
+          ENDDO                                                            ARSF2400.29    
+!         WRITE(6,*)' Step 1 level ',k,' no neg ',no_NEG                   GIE0F403.566   
+!         WRITE(6,*)' Step 2 level ',k,' no neg ',no_NEG2                  GIE0F403.567   
+CL                                                                         ACH1F304.194   
+CL---------------------------------------------------------------------    ACH1F304.195   
+CL    SECTION 3.    STEP 2. WHERE QT IS NEGATIVE AND STEP 1 CORRECTIONS    ACH1F304.196   
+CL              HAVE FAILED, ATTEMPT LOCAL CORRECTION BY EXTENDING         ACH1F304.197   
+CL              SEARCH TO 24, 48 OR 80 SURROUNDING POINTS (SEARCH RADIUS   ACH1F304.198   
+CL              EQUALS 2, 3 OR 4), OR FURTHER.  THIS OCCURS ABOUT          ACH1F400.23    
+CL              0.1% OF THE TIME AT CLIMATE RESOLUTION AND MUCH MORE       ACH1F400.24    
+CL              FREQUENTLY AT FORECAST RESOLUTION.  ALTHOUGH SMALL IN      ACH1F400.25    
+CL              NUMBER, LOCAL CORRECTIONS AT THESE POINTS ARE REQUIRED     ACH1F400.26    
+CL              TO SLOW DOWN THE LOSS OF STRATOSPHERIC MOISTURE THAT       ACH1F400.27    
+CL              OCCURS ON CLIMATE TIME SCALES.                             ACH1F400.28    
+CL---------------------------------------------------------------------    ACH1F304.203   
+         IF (NO_NEG2.GT.0) THEN         ! only do this if required         ARSF2400.32    
+           DO J=1,NO_NEG2                                                  ARSF2400.33    
+            I=NINDEX(J)                                                    ARSF2400.34    
+              ROW=(I-1)/ROW_LENGTH                                         ARSF2400.35    
+              NPT=I-ROW*ROW_LENGTH                                         ARSF2400.36    
+*IF -DEF,GLOBAL                                                            ARSF2400.37    
+C   Abandon search for neighbours on LAM boundary                          ARSF2400.38    
+              IF(NPT.EQ.ROW_LENGTH.OR.NPT.EQ.1) THEN                       ARSF2400.39    
+                FAILURE(K)=.TRUE.                                          APB6F401.495   
+                GOTO 300                                                   ARSF2400.41    
+              END IF                                                       ARSF2400.42    
+*ENDIF                                                                     ARSF2400.43    
+              DO NN=2,MAX_SEARCH                                           ACH1F304.204   
+                JW=NPT-NN                                                  ACH1F304.205   
+                JE=NPT+NN                                                  ACH1F304.206   
+*IF -DEF,GLOBAL                                                            ACH1F304.207   
+                IF(JE.GT.ROW_LENGTH) JE=ROW_LENGTH                         ACH1F304.208   
+                IF(JW.LT.1) JW=1                                           ACH1F304.209   
+*ENDIF                                                                     ACH1F304.210   
+                IN=ROW-NN                                                  ACH1F304.211   
+                IS=ROW+NN                                                  ACH1F304.212   
+                IF(IN.LT.0) IN=0                                           ACH1F304.213   
+                IF(IS.GE.ROWS) IS=ROWS-1                                   ACH1F304.214   
+C   ... and sum QT at neighbouring points                                  ACH1F304.215   
+                SUM_NEIGHBOURS=-QT(I,K)                                    ACH1F304.216   
+                DO II=IN,IS                                                ACH1F304.217   
+                  DO JJ=JW,JE                                              ACH1F304.218   
+                    POINTER = II*ROW_LENGTH + JJ                           ACH1F304.219   
+*IF DEF,GLOBAL                                                             ACH1F304.220   
+                    IF(JJ.GT.ROW_LENGTH) POINTER = POINTER-ROW_LENGTH      ACH1F304.221   
+                    IF(JJ.LT.1) POINTER = POINTER+ROW_LENGTH               ACH1F304.222   
+*ENDIF                                                                     ACH1F304.223   
+                    SUM_NEIGHBOURS = SUM_NEIGHBOURS + QT(POINTER,K)        ACH1F304.224   
+                  END DO                                                   ACH1F304.225   
+                END DO                                                     ACH1F304.226   
+C                                                                          ACH1F304.227   
+C   If possible set QT=0 at point with negative value and adjust           ACH1F304.228   
+C   neighbouring values by FACTOR to conserve QT                           ACH1F304.229   
+                IF(SUM_NEIGHBOURS.LT.0.0) THEN                             ACH1F304.230   
+                  FACTOR(K)=1.0+QT(I,K)/SUM_NEIGHBOURS                     APB6F401.496   
+                  IF(FACTOR(K).GE.0.0) THEN                                APB6F401.497   
+                    QT(I,K)=0.0                                            ACH1F304.233   
+                    DO II=IN,IS                                            ACH1F304.234   
+                      DO JJ=JW,JE                                          ACH1F304.235   
+                        POINTER = II*ROW_LENGTH + JJ                       ACH1F304.236   
+*IF DEF,GLOBAL                                                             ACH1F304.237   
+                        IF(JJ.GT.ROW_LENGTH) POINTER =POINTER-ROW_LENGTH   ACH1F304.238   
+                        IF(JJ.LT.1) POINTER = POINTER+ROW_LENGTH           ACH1F304.239   
+*ENDIF                                                                     ACH1F304.240   
+                        QT(POINTER,K) = QT(POINTER,K)*FACTOR(K)            APB6F401.498   
+                      END DO                                               ACH1F304.242   
+                    END DO                                                 ACH1F304.243   
+                    GOTO 300    ! Successfull correction performed         ACH1F304.244   
+                  END IF                                                   ACH1F304.245   
+                END IF                                                     ACH1F304.246   
+              END DO     ! End loop on search radius (NN)                  ACH1F304.247   
+C                                                                          ACH1F304.248   
+C  No correction possible within maximum search radius (=4)                ACH1F304.249   
+              FAILURE(K)=.TRUE.                                            APB6F401.499   
+  300       CONTINUE                                                       ACH1F304.252   
+          END DO         ! End loop on points (I)                          ACH1F304.253   
+         END IF          ! end step 2                                      ARSF2400.44    
+                                                                           ACH1F304.254   
+*IF DEF,GLOBAL                                                             ACH1F304.255   
+C                                                                          ACH1F304.256   
+C  Loop round polar points                                                 ACH1F304.257   
+CL                                                                         ACH1F304.258   
+CL---------------------------------------------------------------------    ACH1F304.259   
+CL    SECTION 4.     STEP 2. IF GLOBAL MODEL DEAL WITH POLES IN            ACH1F304.260   
+CL                   SIMILAR FASHION EXCEPT WORKING ROW AT A TIME.         ACH1F304.261   
+CL---------------------------------------------------------------------    ACH1F304.262   
+C  Set all ploar points equal                                              ACH1F304.263   
+          TEMP1=0.0                                                        ACH1F304.264   
+          TEMP2=0.0                                                        ACH1F304.265   
+          DO I=1,ROW_LENGTH                                                ACH1F304.266   
+            TEMP1=TEMP1+QT(I,K)                                            ACH1F304.267   
+            TEMP2=TEMP2+QT(P_FIELD-ROW_LENGTH+I,K)                         ACH1F304.268   
+          END DO                                                           ACH1F304.269   
+          DO I=1,ROW_LENGTH                                                ACH1F304.270   
+            QT(I,K)=TEMP1/ROW_LENGTH                                       ACH1F304.271   
+            QT(P_FIELD-ROW_LENGTH+I,K)=TEMP2/ROW_LENGTH                    ACH1F304.272   
+          END DO                                                           ACH1F304.273   
+C  Check for negative QT at north pole                                     ACH1F304.274   
+          IF(QT(1,K).GT.0.0) THEN                                          ACH1F304.275   
+            SUM_NEIGHBOURS=0.0                                             ACH1F304.276   
+            DO I=1,ROW_LENGTH                                              ACH1F304.277   
+              SUM_NEIGHBOURS = SUM_NEIGHBOURS + QT(ROW_LENGTH+I,K)         ACH1F304.278   
+            END DO                                                         ACH1F304.279   
+            IF(SUM_NEIGHBOURS.LT.0.0) THEN                                 ACH1F304.280   
+              FACTOR(K)=1.0+QT(1,K)*ROW_LENGTH/SUM_NEIGHBOURS              APB6F401.500   
+              IF(FACTOR(K).GE.0.0) THEN                                    APB6F401.501   
+                DO I=1,ROW_LENGTH                                          ACH1F304.283   
+                  QT(I,K)=0.0                                              ACH1F304.284   
+                  QT(ROW_LENGTH+I,K)=QT(ROW_LENGTH+I,K)*FACTOR(K)          APB6F401.502   
+                END DO                                                     ACH1F304.286   
+                GOTO 400    ! Correction performed                         ACH1F304.287   
+              END IF                                                       ACH1F304.288   
+            END IF                                                         ACH1F304.289   
+C                                                                          ACH1F304.290   
+C  No correction possible: global QT in layer is negative                  ACH1F304.291   
+            FAILURE(K)=.TRUE.                                              APB6F401.503   
+                                                                           ACH1F304.293   
+          END IF                                                           ACH1F304.294   
+  400     CONTINUE                                                         ACH1F304.295   
+C  Check for negative QT at south pole                                     ACH1F304.296   
+          IF(QT(P_FIELD-1,K).GT.0.0) THEN                                  ACH1F304.297   
+            SUM_NEIGHBOURS=0.0                                             ACH1F304.298   
+            DO I=1,ROW_LENGTH                                              ACH1F304.299   
+              SUM_NEIGHBOURS=SUM_NEIGHBOURS+QT(P_FIELD+1-ROW_LENGTH-I,K)   ACH1F304.300   
+            END DO                                                         ACH1F304.301   
+            IF(SUM_NEIGHBOURS.LT.0.0) THEN                                 ACH1F304.302   
+              FACTOR(K)=1.0+QT(P_FIELD-1,K)*ROW_LENGTH/SUM_NEIGHBOURS      APB6F401.504   
+              IF(FACTOR(K).GE.0.0) THEN                                    APB6F401.505   
+CDIR$ IVDEP                                                                ARSF2400.45    
+! Fujitsu vectorization directive                                          GRB0F405.439   
+!OCL NOVREC                                                                GRB0F405.440   
+                DO I=1,ROW_LENGTH                                          ACH1F304.305   
+                  QT(P_FIELD-ROW_LENGTH+I,K)=0.0                           ACH1F304.306   
+                  QT(P_FIELD+1-ROW_LENGTH-I,K) =                           ACH1F304.307   
+     *                       QT(P_FIELD+1-ROW_LENGTH-I,K)*FACTOR(K)        APB6F401.506   
+                END DO                                                     ACH1F304.309   
+                GOTO 500    ! Correction performed                         ACH1F304.310   
+              END IF                                                       ACH1F304.311   
+            END IF                                                         ACH1F304.312   
+C                                                                          ACH1F304.313   
+C  No correction possible: global QT in layer is negative                  ACH1F304.314   
+            FAILURE(K)=.TRUE.                                              APB6F401.507   
+          END IF                                                           ACH1F304.316   
+  500     CONTINUE                                                         ACH1F304.317   
+*ENDIF                                                                     ACH1F304.318   
+        END IF          !  End main section for method 1                   ACH1F304.319   
+CL---------------------------------------------------------------------    ACH1F304.320   
+CL    SECTION 5.     METHOD 1.  ALSO METHOD 2 STEP 3.                      ACH1F304.321   
+CL              REMOVE REMAINING NEGATIVE QT BY SUMMING                    ACH1F304.322   
+CL              NEGATIVE AND POSITIVE VALUES SEPARATELY ON THE             ACH1F304.323   
+CL              LEVEL AND PERFORMING A GLOBAL CORRECTION.                  ACH1F304.324   
+CL---------------------------------------------------------------------    ACH1F304.325   
+        IF(FAILURE(K).OR..NOT.L_QT_POS_LOCAL) THEN                         APB6F401.508   
+          NO_NEG=0            !zero count of -ve points                    ACH1F304.327   
+          SUM_POSITIVE = 0.0                                               ACH1F304.328   
+          SUM_NEGATIVE = 0.0                                               ACH1F304.329   
+          DO I=ISTART,IEND                                                 ACH1F304.330   
+            IF(QT(I,K).GT.0.)THEN                                          ACH1F304.331   
+              NO_NEG=NO_NEG+1           !count number of -ve points        ACH1F304.332   
+              SUM_NEGATIVE = SUM_NEGATIVE + QT(I,K)                        ACH1F304.333   
+              QT(I,K) = 0.0                                                ACH1F304.334   
+            ELSE                                                           ACH1F304.335   
+              SUM_POSITIVE = SUM_POSITIVE + QT(I,K)                        ACH1F304.336   
+            END IF                                                         ACH1F304.337   
+          END DO                                                           ACH1F304.338   
+!         WRITE(6,*)' GLOBAL correction level ',k,' no neg ',no_NEG        GIE0F403.568   
+                                                                           ACH1F304.339   
+CL If a negative value is found re-scale all positive points               ACH1F304.340   
+CL                                                                         ACH1F304.341   
+          IF (SUM_NEGATIVE.GT.0.0) THEN                                    ACH1F304.342   
+            FAILURE(K)=.TRUE.                                              APB6F401.509   
+            FACTOR(K) = 1. + SUM_NEGATIVE/SUM_POSITIVE                     APB6F401.510   
+            IF(L_NEG_QT.AND.FACTOR(K).LT.0)THEN                            APB6F401.511   
+CL Skip abort if L_NEG_QT is true                                          ACH1F304.346   
+              WRITE(6,*)' QT_POS : Mass weighted QT summed over level ',   ACH1F304.347   
+     *            K,' was negative.  WARNING: QT not conserved'            ACH1F304.348   
+              WRITE(6,*) NO_NEG,' points were -ve and the scaling ',       ACH1F304.349   
+     *           'factor has been reset to 1'                              ACH1F304.350   
+              FACTOR(K) = 1.0                                              APB6F401.512   
+            ENDIF                                                          ACH1F304.352   
+            IF(FACTOR(K).LT.0.0) THEN                                      APB6F401.513   
+              ERROR_CODE = 1                                               ACH1F304.354   
+              ERROR_MESSAGE=                                               ACH1F304.355   
+     *  'QT_POS   : MASS-WEIGHTED QT SUMMED OVER A LEVEL WAS NEGATIVE.'    ACH1F304.356   
+              RETURN                                                       ACH1F304.357   
+            END IF                                                         ACH1F304.358   
+          ELSE                                                             ACH1F304.359   
+            FAILURE(K)=.FALSE.                                             APB6F401.514   
+          END IF                                                           ACH1F304.361   
+        END IF                                                             ACH1F304.362   
+                                                                           QTPOS1A.137   
+CL END LOOP OVER LEVELS                                                    ACH1F304.408   
+      END DO                                                               ACH1F304.409   
+                                                                           QTPOS1A.171   
+                                                                           QTPOS1A.195   
+CL    END OF ROUTINE QT_POS                                                QTPOS1A.196   
+                                                                           QTPOS1A.197   
+      RETURN                                                               QTPOS1A.198   
+      END                                                                  QTPOS1A.199   
+*ENDIF                                                                     QTPOS1A.200   

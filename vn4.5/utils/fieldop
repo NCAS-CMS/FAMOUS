@@ -1,0 +1,426 @@
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#---------------------------------------------------------------------
+#  Script:  fieldop
+#---------------------------------------------------------------------
+#
+# Purpose: Script that takes as input 2 model dumps or direct access
+# fieldsfiles with unpacked or packed (wgdos,grib,cray 32 bits) data and
+# writes out to a new file, the difference, sum or product of the data
+# values.
+# The operation performed is indicated by the option set up in namelist
+# 'CONTROL' which is passed in via argument $1.
+#   Alternatively if only one input file is specified with an integer
+# specified with the option -d then the namelist is set such that the
+# data is divided by the specified integer value allowing possible
+# meaning of files.
+#
+#  Current Owner: Ian Edmond
+#  Reviewer: Dave Robinson               Date of review:
+#
+#  Tested under OS version: UNICOS <UNICOS version number>
+#  UM   version no: <UM version>  Date of test:  <date of test>
+#
+#  History:
+#   Model
+#  version  Date     Modification history:
+# <...>   <...>    Original version (<Name of author(s)>).
+#   4.3     21/2/97  -t -l and -T options added - see argument list
+#                    below.  This enables individual levels of a
+#                    specified field to be operated upon exclusively.
+#                    -T determines which data/validity times are in
+#                    output file. Ian Edmond.
+#   4.4     8/12/97 Error code returned if fieldop exe. fails  I Edmond
+#  4.5  01/09/98  Removed UMVERSION. K Rogers
+#   4.5     14/07/98 Moved functions to a separate file and
+#                    autoloaded them. (A Van der Wal)
+#
+#  Programming standard: UMDP 3, version <UMDP 3 version number>
+#
+#  Project task: <project task code>
+#
+#  Logical components covered: <logical component code>
+#
+#  External documentation:
+#    <UMDP number & name of external documentation>
+#
+#   Interface and arguments:
+#
+#   fieldop [[-asm][-d integer][[-t string][-n string]]  \
+#         [-l string][-T][-uSTASH "filename"] file1 [file2] outfile"
+#
+#   3-6 arguments as follows:
+#        $1        -[asm] or -d <integer> :operation or divisor
+#        $2 (optional) -n <string>       :string contains a list of full
+#                                        :stashcodes indicating which
+#                                        :fields not to operate upon
+#                                        :e.g -n "2 3"   u & v fields.
+#        $2 (optional) -t <string>    :string contains a list of full
+#                                     :stashcodes indicating which
+#                                     :fields to operate upon
+#        $3 (optional) -l <string>    :string contains a list of levels
+#                                     :(lblev) indicating which levels
+#                                     :to operate upon.
+#                                     :If -t specified also, -l refers
+#                                     :to those levels in fields
+#                                     :selected by -t
+#                                     :if -n specified also, -l refers
+#                                     :to those levels in fields which
+#                                     :are not in the "-n" list
+#        $4 (optional) -T             :If present Data/validity times
+#                                     :taken from File 2.
+#        $5 (optional) -uSTASH        :pathname of file containing
+#                                        :namelist USTSNUM specifing
+#                                        :user STASHmaster details. e.g
+#                &USTSNUM
+#                N_USTASH = 1, NRECS_USTASH = 1,
+#                USTSFILS="/u/m11/user3/t11ie/user_STASHmaster"
+#                /
+#
+#        $6            File 1           :1st input file name
+#        $7 (optional) File 2           :2nd input file name if required
+#        $8            File 3           :output file name
+#
+#
+#   -------------------------------------------------------------------
+#
+#   Calls    : fieldop
+#
+#   Imports:
+#     VN - Version number of the program library to be used.
+#     TMPDIR - Directory in which temporary files created
+#              for namelists containing details of the operation
+#              type and stashcodes not to process and also for the
+#              exporting of enviroment variable names for the dumps.
+#     PPXREFU - Full path-name of user ppxref file.
+#
+#   Local variables:
+#     deck_name - name of DECK or COMDECK in program library which
+#                 modifications refer to.
+#     suffix    - .cdk or .dk, defines whether the changes are to
+#                 a comdeck or deck.
+#
+# End of header -------------------------------------------------------
+#! /bin/ksh
+
+# Step 0 - Set up environment variables
+
+VN=4.5
+
+# Directory for intermediate files
+TMPDIR=${TMPDIR:-/tmp}
+
+# UM directory and version no. refering to the ppxref file used
+# Directory containing executable fieldop
+EXEC=$UMDIR/vn$VN/exec
+
+
+# Step 1 - Initialise, export filenames of input and output
+#          dumps/fieldsfiles.
+#
+. $UMDIR/vn$VN/scripts/setglobalvars
+autoload initxport
+# export STASHmaster file
+STASHMSTR=$UMDIR/vn$VN/ctldata/STASHmaster
+export UNIT22=$STASHMSTR
+
+
+# Step 2 -  Read filenames specified in argument list and check syntax.
+#
+files=0
+op=false
+divide=false
+opts_set=false
+fields_set=false
+nfields=F
+tfields=F
+llev=F
+Tcopy=F
+usts=false
+
+while [ $# -gt 0 ]               # Loop over all command line arguments
+
+do
+ case "$1" in                    # Arguments defining operation type.
+
+ -a)                             # addition
+    if [ $opts_set = false ]
+     then
+
+      op=add
+      opts_set=true
+     else
+
+      echo "error"
+      exit
+
+    fi
+  ;;
+
+ -s)                             # subtraction
+    if [ $opts_set = false ]
+     then
+
+      op=subtract
+      opts_set=true
+     else
+
+      echo "error"
+      exit
+
+     fi
+  ;;
+
+ -m)                             # multiplication
+    if [ $opts_set = false ]
+     then
+
+      op=multiply
+      opts_set=true
+     else
+
+      echo "error"
+      exit
+
+    fi
+  ;;
+
+ -d)                             # division by integer
+    if [ $opts_set = false ]
+     then
+
+      op=divide
+      div_factor=$2
+      shift
+      opts_set=true
+     else
+
+      echo "error"
+      exit
+    fi
+  ;;
+
+ -n)                             # stashcodes not operated upon
+    if [ $fields_set = false ]
+     then
+
+      fields_set=true
+      nfields=T
+     else
+
+      echo "error"
+      exit
+
+    fi
+    stashcodes=$2
+    shift
+  ;;
+
+ -t)                             # stashcodes operated upon exclusively
+    if [ $fields_set = false ]
+     then
+
+      fields_set=true
+      tfields=T
+     else
+
+      echo "error"
+      exit
+
+    fi
+    stashcodes=$2
+    shift
+  ;;
+
+ -l)                             # levels operated upon exclusively
+    llev=T
+    levs=$2
+    shift
+  ;;
+
+ -uSTASH)                        # User STASHmaster namelist
+    USTASHLIST=$2
+    usts=true
+    shift
+  ;;
+
+ -T)                             # Data/validity times taken from 2nd
+    Tcopy=T                      # dump
+  ;;
+
+  *)                             # Input and output filenames.
+
+    if [ $opts_set = true ]      # Operation type successfully read in
+     then                        # from first argument.
+
+      files=`expr $files + 1`
+      if [ $op = divide ]        # Read filenames specified in argument
+       then                      # list into file1 and file2 when only 1
+                                 # input file specified.
+        if [ $files -eq 1 ]
+         then
+
+          file1=$1
+         elif [ $files -eq 2 ]
+         then
+
+          outfile=$1
+         else
+
+    echo "Usage: fieldop [[-asm][-d integer][[-t string][-n string]]  \
+[-l string][-T][-uSTASH "filename"] file1 [file2] outfile"
+
+          exit
+        fi
+
+      else                       # Read filenames specified in argument
+                                 # list into file1, file2 and file3 when
+        if [ $files -eq 1 ]      # 2 input files specified.
+         then
+
+          file1=$1
+         elif [ $files -eq 2 ]
+         then
+
+          file2=$1
+         elif [ $files -eq 3 ]
+         then
+
+          outfile=$1
+         else
+
+    echo "Usage: fieldop [[-asm][-d integer][[-t string][-n string]]  \
+[-l string][-T][-uSTASH "filename"] file1 [file2] outfile"
+
+          exit
+         fi
+
+      fi
+
+    else            # operation incorrectly specified in 1st argument.
+
+    echo "Usage: fieldop [[-asm][-d integer][[-t string][-n string]]  \
+[-l string][-T][-uSTASH "filename"] file1 [file2] outfile"
+
+      exit
+    fi
+  ;;
+
+ esac
+
+shift
+done
+
+if [ $op != divide ]   # if input files are to be added, subtracted
+ then                  # or multiplied.
+
+    # Write operation type to namelist CONTROL read by $EXEC/fieldop.
+    echo " &CONTROL OP = '$op',NFIELDS= $nfields," \
+    "TFIELDS= $tfields, LLEV= $llev, TCOPY=$Tcopy /"  >$TMPDIR/nlist
+    # Call function 'initxport' to initialise and export filenames.
+    initxport $file1 $file2 $outfile
+    # Output file is a copy of the 1st input file initially.
+    cp $file1 $outfile
+ else                  # if input file is to be divided by an integer.
+
+    # Write operation type to namelist CONTROL read by $EXEC/fieldop.
+    echo " &CONTROL OP = 'idiv' DIVISOR = $div_factor," \
+    "NFIELDS= $nfields, TFIELDS= $tfields LLEV= $llev," \
+    " TCOPY=$Tcopy /"  > $TMPDIR/nlist
+    # Call function 'initxport' to initialise and export filenames.
+    initxport $file1 $outfile
+    # Output file is a copy of the input file initially.
+    cp $file1 $outfile
+
+fi
+
+# Stashcodes specifing fields which are passed directly to the output
+# file are written to namelist STASHES.
+if test "$stashcodes". != .
+then
+ set $stashcodes
+fi
+echo " &STASHES" >> $TMPDIR/nlist
+i=0
+
+while [ $# -ne 0 ]
+do
+
+  i=`expr $i + 1`
+  echo " STASH$i = $1" >> $TMPDIR/nlist
+  shift
+
+done
+
+echo " /" >> $TMPDIR/nlist
+
+# Levels which are to be operated on are written to namelist LEVELS.
+if test "$levs". != .
+then
+ set $levs
+fi
+echo " &LEVELS" >> $TMPDIR/nlist
+i=0
+
+while [ $# -ne 0 ]
+do
+
+  i=`expr $i + 1`
+  echo " L$i = $1" >> $TMPDIR/nlist
+  shift
+
+done
+
+echo " /" >> $TMPDIR/nlist
+
+if [ $usts != true ]    # Specify whether user STASHmaster file used.
+ then
+  echo " &USTSFILE"  >> $TMPDIR/nlist  # User STASHmaster file not used
+  echo " ustash=0"  >> $TMPDIR/nlist
+  echo " /"      >> $TMPDIR/nlist
+else
+  echo " &USTSFILE"  >> $TMPDIR/nlist  # User STASHmaster file used
+  echo " ustash=1"  >> $TMPDIR/nlist
+  echo " /"      >> $TMPDIR/nlist
+fi
+
+#
+# Step 3 - Execute utility & print out messages.
+
+if [ $usts = true ]      # Append user STASHmaster namlist USTSNUM
+ then                    # to file $TMPDIR/nlist
+  cat $USTASHLIST >> $TMPDIR/nlist
+fi
+
+NLISTIN=$TMPDIR/nlist
+EXECFILE=$EXEC/fieldop
+export UNIT05=$NLISTIN
+
+$EXECFILE 1> $TMPDIR/fieldop.out 2>&1
+CC=$?
+if test $CC != 0
+ then
+
+  cat $TMPDIR/fieldop.out
+  echo
+  echo FIELDOP failed
+  echo 'FIELDOP output in:' $TMPDIR/fieldop.out
+  rm $tmpfile $TMPDIR/nlist
+  return $CC
+
+fi
+
+echo 'FIELDOP output in:' $TMPDIR/fieldop.out
+
+
+#
+# Step 4 - Delete temporary files and exit
+rm $tmpfile $TMPDIR/nlist
+exit 0

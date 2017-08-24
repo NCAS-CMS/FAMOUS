@@ -1,0 +1,309 @@
+*IF DEF,A03_3A,OR,DEF,A03_5A                                               ASJ4F401.17    
+C ******************************COPYRIGHT******************************    GTS2F400.9235  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9236  
+C                                                                          GTS2F400.9237  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9238  
+C restrictions as set forth in the contract.                               GTS2F400.9239  
+C                                                                          GTS2F400.9240  
+C                Meteorological Office                                     GTS2F400.9241  
+C                London Road                                               GTS2F400.9242  
+C                BRACKNELL                                                 GTS2F400.9243  
+C                Berkshire UK                                              GTS2F400.9244  
+C                RG12 2SZ                                                  GTS2F400.9245  
+C                                                                          GTS2F400.9246  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9247  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9248  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9249  
+C Modelling at the above address.                                          GTS2F400.9250  
+C ******************************COPYRIGHT******************************    GTS2F400.9251  
+C                                                                          GTS2F400.9252  
+C*LL  SUBROUTINE SOIL_HTF-----------------------------------------------   SOILHT1A.3     
+CLL                                                                        SOILHT1A.4     
+CLL  Purpose:  For land points, calculates the heat flux between the       SOILHT1A.5     
+CLL            Top two soil layers, and updates the deep soil              SOILHT1A.6     
+CLL            temperatures.  For other points, or if there is only        SOILHT1A.7     
+CLL            one soil layer, the flux is simply set to zero.             SOILHT1A.8     
+CLL                                                                        SOILHT1A.9     
+CLL            Note the terminology used: the scheme has n soil layers,    SOILHT1A.10    
+CLL            where n is given by the argument NSOIL ( = DS_LEVELS+1).    SOILHT1A.11    
+CLL            Layer 1 is the top soil layer, assumed to be at             SOILHT1A.12    
+CLL            temperature TSTAR.  The layers beneath this one are         SOILHT1A.13    
+CLL            termed "deep" soil layers, of which there are obviously     SOILHT1A.14    
+CLL            n-1.  The first layer below the top soil layer is           SOILHT1A.15    
+CLL            referred to indifferently as "soil layer 2" or "deep soil   SOILHT1A.16    
+CLL            layer 1".                                                   SOILHT1A.17    
+CLL       Before March 1990 this routine was specific to a 4 soil layer    SOILHT1A.19    
+CLL            scheme.  To use any other number of layers, replace the     SOILHT1A.20    
+CLL            definition of PARAMETER PSOIL, which is used to dimension   SOILHT1A.21    
+CLL            a couple of small work arrays.                              SOILHT1A.22    
+CLL                                                                        SOILHT1A.23    
+CLL                                                                        SOILHT1A.25    
+CLL F.Hewer     <- programmer of some or all of previous code or changes   SOILHT1A.26    
+CLL                                                                        SOILHT1A.27    
+CLL  Model            Modification history from model version 3.0:         SOILHT1A.28    
+CLL version  Date                                                          SOILHT1A.29    
+CLL   3.4   06/06/94  DEF TIMER replaced by LOGICAL LTIMER                 ASJ1F304.402   
+CLL                   Argument LTIMER added                                ASJ1F304.403   
+CLL                                                 S.J.Swarbrick          ASJ1F304.404   
+CLL   4.1   08/05/96  decks A03_2C and A03_3B removed                      ASJ4F401.18    
+CLL                                     S D Jackson                        ASJ4F401.19    
+CLL   4.2   Oct. 96   T3E migration - *DEF CRAY removed                    GSS1F402.83    
+CLL                                     S J Swarbrick                      GSS1F402.84    
+!LL   4.3   06/03/97  Dimension T_DEEP_SOIL by LAND_FIELD                  ADR2F403.128   
+!LL                   for non-MPP and MPP runs. D. Robinson.               ADR2F403.129   
+!LL   4.5   18/06/98  Changed Timer calls to indicate non-barrier          GPB8F405.31    
+!LL                                                   P.Burton             GPB8F405.32    
+CLL   4.5    Jul. 98  Kill the IBM specific lines (JCThil)                 AJC1F405.43    
+CLL                                                                        SOILHT1A.30    
+CLL  Programming standard: Unified Model Documentation Paper No.4          SOILHT1A.31    
+CLL                        version no. 2, dated 18/1/90.                   SOILHT1A.32    
+CLL                                                                        SOILHT1A.33    
+CLL  System component covered: P242.                                       SOILHT1A.34    
+CLL                                                                        SOILHT1A.35    
+CLL  Documentation: Unified Model Documentation Paper No 24.               SOILHT1A.36    
+C*                                                                         SOILHT1A.37    
+C*L ARGUMENTS:----------------------------------------------------------   SOILHT1A.38    
+      SUBROUTINE SOIL_HTF(                                                 SOILHT1A.39    
+     + HCAP,HCON,LAYER_DEPTH,LYING_SNOW,TSTAR,LAND_MASK,TIMESTEP,          SOILHT1A.40    
+     + P_FIELD,LAND_FIELD,P_POINTS,P1,                                     SOILHT1A.41    
+     + LAND_PTS,LAND1,LAND_INDEX,                                          SOILHT1A.43    
+     + NSOIL,T_DEEP_SOIL,ASOIL_1,SOIL_HT_FLUX                              SOILHT1A.46    
+     +,LTIMER)                                                             ASJ1F304.405   
+      IMPLICIT NONE                                                        SOILHT1A.51    
+      LOGICAL LTIMER                                                       ASJ1F304.406   
+      INTEGER                                                              SOILHT1A.52    
+     + P_FIELD               ! IN Number of gridpoints in field.           SOILHT1A.53    
+     +,LAND_FIELD            ! IN Number of land points in field.          SOILHT1A.54    
+     +,P_POINTS              ! IN Number of gridpoints to be processed.    SOILHT1A.55    
+     +,P1                    ! IN First point processed within field.      SOILHT1A.56    
+     +,NSOIL                 ! IN Number of soil layers (N_S in doc).      SOILHT1A.57    
+     +,LAND_PTS              ! IN Number of land points to be processed.   SOILHT1A.59    
+     +,LAND1                 ! IN First land point to be processed.        SOILHT1A.60    
+     +,LAND_INDEX(P_FIELD)   ! IN Index of land points on the P-grid.      SOILHT1A.61    
+C                            !    The ith element contains the position    SOILHT1A.62    
+C                            !    in whole grid of the ith land point.     SOILHT1A.63    
+C                            !    (Must match parameter PSOIL.)            SOILHT1A.66    
+      REAL                                                                 SOILHT1A.68    
+     + HCAP(LAND_FIELD)      ! IN Soil heat capacity in J/K/m**3           SOILHT1A.69    
+C                            !    (C_S in documentation).                  SOILHT1A.70    
+     +,HCON(LAND_FIELD)      ! IN Soil thermal conductivity in W/m/K       SOILHT1A.71    
+C                            !    (LAMBDA_S in documentation).             SOILHT1A.72    
+     +,LAYER_DEPTH(NSOIL)    ! IN Soil layer depths as multiples of        SOILHT1A.73    
+C                            !    depth of top layer (ZETA_r in            SOILHT1A.74    
+C                            !    documentation).  The following were      SOILHT1A.75    
+C                            !    used in the GCM (5th Ann Cyc) :-         SOILHT1A.76    
+C                                                                          SOILHT1A.77    
+C            LAYER_DEPTH /1.000,3.908,14.05,44.65/  (see eqns P242.15)     SOILHT1A.78    
+C                                                                          SOILHT1A.79    
+C           (LAYER_DEPTH(1) must of course be 1.0, by definition.)         SOILHT1A.80    
+C                                                                          SOILHT1A.81    
+     +,LYING_SNOW(P_FIELD)   ! IN Lying snow amount (kg per sq m).         SOILHT1A.82    
+     +,TSTAR(P_FIELD)        ! IN Surface (i.e. soil layer 1) temp (K).    SOILHT1A.83    
+      LOGICAL                                                              SOILHT1A.84    
+     + LAND_MASK(P_FIELD)    ! IN Land mask (T if land, else F).           SOILHT1A.85    
+      REAL TIMESTEP          ! IN Timestep (s).                            SOILHT1A.86    
+      REAL                                                                 SOILHT1A.87    
+     + T_DEEP_SOIL(LAND_FIELD,NSOIL-1)                                     SOILHT1A.88    
+C                            ! INOUT Deep soil temperatures (K).           SOILHT1A.89    
+      REAL                                                                 SOILHT1A.90    
+     + ASOIL_1(P_FIELD)      ! OUT Soil coefficient used elsewhere in      SOILHT1A.91    
+C                            !     P24 (sq m K per Joule * timestep).      SOILHT1A.92    
+     +,SOIL_HT_FLUX(P_FIELD) ! OUT Heat flux from soil layer 1 to          SOILHT1A.93    
+C                            !     soil layer 2, i.e. +ve values for       SOILHT1A.94    
+C                            !     downward flux (Watts per sq m).         SOILHT1A.95    
+      INTEGER ERROR          ! OUT Error flag: 0 if AOK;                   SOILHT1A.97    
+     +                       !     1 if NSOIL & PSOIL are not the same.    SOILHT1A.98    
+C*                                                                         SOILHT1A.100   
+C  Local physical constants --------------------------------------------   SOILHT1A.101   
+C  (Must be here because contains PSOIL, used for later dimensioning.)     SOILHT1A.102   
+*CALL C_SOILH                                                              SOILHT1A.103   
+C*L  Workspace usage ---------------------------------------------------   SOILHT1A.104   
+C  Two blocks of real space, plus a few odd bits, are needed.              SOILHT1A.105   
+      REAL                                                                 SOILHT1A.107   
+     + DELT1(LAND_FIELD) ! Temperature difference across "this" soil lay   SOILHT1A.108   
+     +,DELT2(LAND_FIELD) ! Temperature difference across "next" soil lay   SOILHT1A.109   
+      REAL ASOIL(NSOIL),BSOIL(NSOIL)                                       SOILHT1A.110   
+C                                                                          SOILHT1A.119   
+      EXTERNAL TIMER                                                       SOILHT1A.122   
+C*                                                                         SOILHT1A.128   
+C  Local variables -----------------------------------------------------   SOILHT1A.129   
+      INTEGER                                                              SOILHT1A.130   
+     + I           ! Loop counter; horizontal land point field index.      SOILHT1A.131   
+     +,J           ! Loop counter; horizontal land and sea field index.    SOILHT1A.132   
+     +,THIS_LEVEL  ! Loop counter for loop through (deep) soil levels.     SOILHT1A.133   
+     +,NEXT_LEVEL  ! "Next" level during loops through soil levels.        SOILHT1A.134   
+      REAL                                                                 SOILHT1A.135   
+     + DS_RATIO   ! 2 * (Ratio of actual snowdepth to depth of top         SOILHT1A.136   
+C                 !      soil layer).                                      SOILHT1A.137   
+     +,SIFACT     ! Snow Insulation FACTor, GAMMA_SNOW in documentation.   SOILHT1A.138   
+     +,Z2_PLUS_1  ! Combined depth of top 2 soil layers.                   SOILHT1A.139   
+      IF (LTIMER) THEN                                                     ASJ1F304.407   
+      CALL TIMER('SOILHTF ',103)                                           GPB8F405.33    
+      ENDIF                                                                ASJ1F304.408   
+      Z2_PLUS_1 = LAYER_DEPTH(1) + LAYER_DEPTH(2)                          SOILHT1A.151   
+      IF (NSOIL.GT.1) THEN                                                 SOILHT1A.152   
+        DO 1 THIS_LEVEL = 1,NSOIL-1                                        SOILHT1A.153   
+          NEXT_LEVEL = THIS_LEVEL + 1                                      SOILHT1A.154   
+C-----------------------------------------------------------------------   SOILHT1A.155   
+CL 1. Set conductivity coefficients ASOIL and BSOIL, absorbing TIMESTEP    SOILHT1A.156   
+CL    from the LHS of eqns P242.3 and P242.4, where they are used.         SOILHT1A.157   
+CL    ASOIL/TIMESTEP is ASr, and BSOIL/TIMESTEP is BSr, in eqns            SOILHT1A.158   
+CL    P242.12, P242.13.  ASOIL(1), i.e. A1, is a function of soil type     SOILHT1A.159   
+CL    and therefore varies from point to point.  Therefore it is set in    SOILHT1A.160   
+CL    loop round points, and not here.                                     SOILHT1A.161   
+C-----------------------------------------------------------------------   SOILHT1A.162   
+          ASOIL(NEXT_LEVEL) = -OMEGA1 * TIMESTEP /                         SOILHT1A.163   
+     +      ( LAYER_DEPTH(NEXT_LEVEL) *                                    SOILHT1A.164   
+     +        (LAYER_DEPTH(THIS_LEVEL) + LAYER_DEPTH(NEXT_LEVEL)) )        SOILHT1A.165   
+          BSOIL(THIS_LEVEL) = OMEGA1 * TIMESTEP /                          SOILHT1A.166   
+     +      ( LAYER_DEPTH(THIS_LEVEL) *                                    SOILHT1A.167   
+     +        (LAYER_DEPTH(THIS_LEVEL) + LAYER_DEPTH(NEXT_LEVEL)) )        SOILHT1A.168   
+    1   CONTINUE                                                           SOILHT1A.169   
+        BSOIL(NSOIL)=0.0                                                   SOILHT1A.170   
+CMIC$ DO ALL VECTOR SHARED(P_POINTS, P1, P_FIELD, LAND_MASK,               SOILHT1A.171   
+CMIC$1   SOIL_HT_FLUX) PRIVATE(J)                                          SOILHT1A.172   
+CDIR$ IVDEP                                                                SOILHT1A.173   
+! Fujitsu vectorization directive                                          GRB0F405.527   
+!OCL NOVREC                                                                GRB0F405.528   
+        DO 2 J=P1,P1+P_POINTS-1                                            SOILHT1A.174   
+C-----------------------------------------------------------------------   SOILHT1A.175   
+CL 2.  Set soil heat flux to zero over sea points (including sea-ice).     SOILHT1A.176   
+C-----------------------------------------------------------------------   SOILHT1A.177   
+          IF (.NOT.LAND_MASK(J)) THEN                                      SOILHT1A.178   
+            SOIL_HT_FLUX(J)=0.0                                            SOILHT1A.179   
+          ENDIF                      !  (If a land point.)                 SOILHT1A.184   
+    2   CONTINUE                                                           SOILHT1A.185   
+CMIC$ DO ALL VECTOR SHARED(LAND_PTS, LAND1,TIMESTEP, Z2_PLUS_1, P_FIELD,   SOILHT1A.186   
+CMIC$1   LAND_FIELD, SOIL_HT_FLUX, HCON, HCAP, ASOIL_1, LYING_SNOW,        SOILHT1A.187   
+CMIC$2   T_DEEP_SOIL, TSTAR, DELT1, BSOIL, DELT2, ASOIL, LAND_INDEX)       SOILHT1A.188   
+CMIC$3   PRIVATE(SIFACT, I, J, DS_RATIO)                                   SOILHT1A.189   
+CDIR$ IVDEP                                                                SOILHT1A.190   
+! Fujitsu vectorization directive                                          GRB0F405.529   
+!OCL NOVREC                                                                GRB0F405.530   
+        DO 21 I=LAND1,LAND1+LAND_PTS-1                                     SOILHT1A.191   
+            J = LAND_INDEX(I)                                              SOILHT1A.192   
+C-----------------------------------------------------------------------   SOILHT1A.194   
+CL 3.   Land point calculations multi-soil-layer model.                    SOILHT1A.195   
+C-----------------------------------------------------------------------   SOILHT1A.196   
+C-----------------------------------------------------------------------   SOILHT1A.197   
+CL 3.1  Set A1 - see eqns P242.11, P242.14  Units: J-1 m2 K * timestep.    SOILHT1A.198   
+CL      (The variable here is set to A1 * timestep.)                       SOILHT1A.199   
+C-----------------------------------------------------------------------   SOILHT1A.200   
+            ASOIL_1(J) = SQRT( OMEGA1 / (2.0 * HCON(I) * HCAP(I)) )        SOILHT1A.201   
+     +                   * TIMESTEP                                        SOILHT1A.202   
+C-----------------------------------------------------------------------   SOILHT1A.203   
+CL 3.2 Initialise factor used to modify conductivity coefficients in       SOILHT1A.204   
+CL     the presence of lying snow (Snow Insulation FACTor).                SOILHT1A.205   
+C-----------------------------------------------------------------------   SOILHT1A.206   
+            SIFACT=1.0                                                     SOILHT1A.207   
+C-----------------------------------------------------------------------   SOILHT1A.208   
+CL 3.3 Calculate factor which modifies the thermal conductivity between    SOILHT1A.209   
+CL    the top two subsurface layers in order to represent the insulating   SOILHT1A.210   
+CL    effects of lying snow.  See eqn P242.19.                             SOILHT1A.211   
+C     Note that Z2_PLUS_1 is in fact (1+ZETA2), as the depth of the top    SOILHT1A.212   
+C     soil layer is by definition (of the units) 1.0.                      SOILHT1A.213   
+C     Also note, LYING_SNOW is held on the whole grid, not just land pts   SOILHT1A.215   
+C-----------------------------------------------------------------------   SOILHT1A.217   
+            IF (LYING_SNOW(J).GT.0.0) THEN                                 SOILHT1A.218   
+              DS_RATIO = 2.0 *                                             SOILHT1A.219   
+     +          LYING_SNOW(J) / (RHO_SNOW)  ! Actual depth of lying snow   SOILHT1A.220   
+C                                           ! in metres.                   SOILHT1A.221   
+     +          *                                                          SOILHT1A.222   
+     +        ( ASOIL_1(J) * HCAP(I)  ! Reciprocal of thickness of top     SOILHT1A.223   
+     +          / TIMESTEP )          ! soil layer in metres. Equivalent   SOILHT1A.224   
+C                                     ! formula for thickness :-           SOILHT1A.225   
+C                                     ! SQRT(2*HCON/(HCAP*OMEGA1)).        SOILHT1A.226   
+C                                                                          SOILHT1A.227   
+              IF (DS_RATIO.LE.1.0) THEN                                    SOILHT1A.228   
+                SIFACT = 1.0 / (1.0 + DS_RATIO/Z2_PLUS_1)                  SOILHT1A.229   
+              ELSEIF (LYING_SNOW(J) .LT. 5.0E3) THEN  ! See below ***      SOILHT1A.230   
+                SIFACT = Z2_PLUS_1 / (                                     SOILHT1A.231   
+     +                   (HCON(I)/SNOW_HCON) * (DS_RATIO-1.0)              SOILHT1A.232   
+     +                   + 1.0 + Z2_PLUS_1                                 SOILHT1A.233   
+     +                   )                                                 SOILHT1A.234   
+              ELSE     ! *** See final paragraph of P242 documentation.    SOILHT1A.235   
+                SIFACT=1.0                                                 SOILHT1A.236   
+              ENDIF    ! DSRATIO <= 0                                      SOILHT1A.237   
+            ENDIF      ! Lying snow                                        SOILHT1A.238   
+C-----------------------------------------------------------------------   SOILHT1A.239   
+CL 3.4 Calculate heat flux from top to next-to-top soil layer (+ve         SOILHT1A.240   
+CL     downwards), in Watts per square metre.  See eqn P242.8 (middle      SOILHT1A.241   
+CL     line), as modified according to P242.21.                            SOILHT1A.242   
+C-----------------------------------------------------------------------   SOILHT1A.243   
+            DELT1(I) = T_DEEP_SOIL(I,1) - TSTAR(J)                         SOILHT1A.244   
+            SOIL_HT_FLUX(J) = -SIFACT                                      SOILHT1A.245   
+     +                        * ( BSOIL(1)/(ASOIL_1(J)) )                  SOILHT1A.246   
+     +                        * DELT1(I)                                   SOILHT1A.247   
+C-----------------------------------------------------------------------   SOILHT1A.248   
+CL 3.5 Update deep soil temperatures.                                      SOILHT1A.249   
+C-----------------------------------------------------------------------   SOILHT1A.250   
+CL 3.6 Update first deep soil layer (i.e. soil layer 2).  This is done     SOILHT1A.251   
+CL     separately because of the need to modify ASOIL(2) to account for    SOILHT1A.252   
+CL     snow insulation.  Eqn P242.3, modified according to P242.20.        SOILHT1A.253   
+C-----------------------------------------------------------------------   SOILHT1A.254   
+            DELT2(I) = T_DEEP_SOIL(I,2) - T_DEEP_SOIL(I,1)                 SOILHT1A.255   
+            T_DEEP_SOIL(I,1) = T_DEEP_SOIL(I,1) +                          SOILHT1A.256   
+     +        SIFACT * ASOIL(2) * DELT1(I) +                               SOILHT1A.257   
+     +          BSOIL(2)*DELT2(I)                                          SOILHT1A.258   
+            DELT1(I)=DELT2(I)                                              SOILHT1A.259   
+   21   CONTINUE                                                           SOILHT1A.264   
+C-----------------------------------------------------------------------   SOILHT1A.266   
+CL 3.7 Update deep soil layers 2 to (NSOIL-2), i.e. soil layers 3 to       SOILHT1A.267   
+CL     NSOIL-1, if these layers exist in the current model.  Eqn P242.3.   SOILHT1A.268   
+C      Loop counter (THIS_LEVEL) ranges over deep soil layers.             SOILHT1A.269   
+C-----------------------------------------------------------------------   SOILHT1A.270   
+            IF (NSOIL.GT.3) THEN                                           SOILHT1A.271   
+              DO 3 THIS_LEVEL = 2,NSOIL-2                                  SOILHT1A.272   
+                NEXT_LEVEL = THIS_LEVEL + 1                                SOILHT1A.273   
+CMIC$ DO ALL VECTOR SHARED(LAND_PTS, LAND1, NEXT_LEVEL, THIS_LEVEL         SOILHT1A.274   
+CMIC$1   , LAND_FIELD, LAND_MASK, NSOIL, T_DEEP_SOIL, DELT2, ASOIL         SOILHT1A.275   
+CMIC$2   , DELT1, BSOIL) PRIVATE(I)                                        SOILHT1A.276   
+CDIR$ IVDEP                                                                SOILHT1A.277   
+! Fujitsu vectorization directive                                          GRB0F405.531   
+!OCL NOVREC                                                                GRB0F405.532   
+                DO 31 I=LAND1,LAND1+LAND_PTS-1                             SOILHT1A.283   
+                    DELT2(I) = T_DEEP_SOIL(I,NEXT_LEVEL)                   SOILHT1A.285   
+     +                             - T_DEEP_SOIL(I,THIS_LEVEL)             SOILHT1A.286   
+                    T_DEEP_SOIL(I,THIS_LEVEL)=T_DEEP_SOIL(I,THIS_LEVEL)    SOILHT1A.287   
+     +                + ASOIL(NEXT_LEVEL) * DELT1(I)                       SOILHT1A.288   
+     +                  + BSOIL(NEXT_LEVEL) * DELT2(I)                     SOILHT1A.289   
+                    DELT1(I)=DELT2(I)                                      SOILHT1A.290   
+   31           CONTINUE                                                   SOILHT1A.294   
+    3         CONTINUE                                                     SOILHT1A.295   
+            ENDIF                                                          SOILHT1A.296   
+C-----------------------------------------------------------------------   SOILHT1A.297   
+CL 3.8 Update deepest soil layer temperature, if this hasn't been done     SOILHT1A.298   
+CL     already.  This is done separately simply to avoid an IF in the      SOILHT1A.299   
+CL     DO 2 loop (there is obviously no next-layer temperature for the     SOILHT1A.300   
+CL     bottom layer).  See eqn P242.4.                                     SOILHT1A.301   
+C-----------------------------------------------------------------------   SOILHT1A.302   
+            IF (NSOIL.GT.2) THEN                                           SOILHT1A.303   
+CMIC$ DO ALL VECTOR SHARED(LAND_PTS, LAND1, NSOIL, LAND_FIELD,             SOILHT1A.304   
+CMIC$1   LAND_MASK, T_DEEP_SOIL, ASOIL, DELT1) PRIVATE(I)                  SOILHT1A.305   
+CDIR$ IVDEP                                                                SOILHT1A.306   
+! Fujitsu vectorization directive                                          GRB0F405.533   
+!OCL NOVREC                                                                GRB0F405.534   
+              DO 4 I=LAND1,LAND1+LAND_PTS-1                                SOILHT1A.312   
+                  T_DEEP_SOIL(I,NSOIL-1) = T_DEEP_SOIL(I,NSOIL-1)          SOILHT1A.314   
+     +              + ASOIL(NSOIL) * DELT1(I)                              SOILHT1A.315   
+    4         CONTINUE                                                     SOILHT1A.319   
+            ENDIF                                                          SOILHT1A.320   
+C-----------------------------------------------------------------------   SOILHT1A.321   
+CL 4. Finally, tidy up for the remaining case.                             SOILHT1A.322   
+C-----------------------------------------------------------------------   SOILHT1A.323   
+      ELSE                           !  (If 1-layer soil scheme).          SOILHT1A.324   
+CMIC$ DO ALL VECTOR SHARED(P_POINTS,P1,P_FIELD,SOIL_HT_FLUX)PRIVATE(J)     SOILHT1A.325   
+CDIR$ IVDEP                                                                SOILHT1A.326   
+! Fujitsu vectorization directive                                          GRB0F405.535   
+!OCL NOVREC                                                                GRB0F405.536   
+        DO 5 J=P1,P1+P_POINTS-1                                            SOILHT1A.327   
+          SOIL_HT_FLUX(J)=0.0                                              SOILHT1A.328   
+    5   CONTINUE                                                           SOILHT1A.329   
+      ENDIF                          !  ENDIF for > 1 soil layer.          SOILHT1A.330   
+    6 CONTINUE                       !  Branch for error exit.             SOILHT1A.332   
+      IF (LTIMER) THEN                                                     ASJ1F304.409   
+      CALL TIMER('SOILHTF ',104)                                           GPB8F405.34    
+      ENDIF                                                                ASJ1F304.410   
+      RETURN                                                               SOILHT1A.337   
+      END                                                                  SOILHT1A.338   
+*ENDIF                                                                     SOILHT1A.339   

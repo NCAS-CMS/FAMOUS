@@ -1,0 +1,1191 @@
+*IF DEF,A03_5A                                                             AJS1F401.1485  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.14487 
+C                                                                          GTS2F400.14488 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.14489 
+C restrictions as set forth in the contract.                               GTS2F400.14490 
+C                                                                          GTS2F400.14491 
+C                Meteorological Office                                     GTS2F400.14492 
+C                London Road                                               GTS2F400.14493 
+C                BRACKNELL                                                 GTS2F400.14494 
+C                Berkshire UK                                              GTS2F400.14495 
+C                RG12 2SZ                                                  GTS2F400.14496 
+C                                                                          GTS2F400.14497 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.14498 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.14499 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.14500 
+C Modelling at the above address.                                          GTS2F400.14501 
+C ******************************COPYRIGHT******************************    GTS2F400.14502 
+C                                                                          GTS2F400.14503 
+C*LL  SUBROUTINE IMPL_CAL ----------------------------------------------   IMPLCA4A.3     
+CLL                                                                        IMPLCA4A.4     
+CLL  Purpose: Calculate increments for                                     IMPLCA4A.5     
+CLL           atmospheric variables in the boundary layer, using an        IMPLCA4A.6     
+CLL           implicit numerical scheme.  The tridiagonal matrices are     IMPLCA4A.7     
+CLL           inverted using simple Gaussian elimination.                  IMPLCA4A.8     
+CLL                                                                        IMPLCA4A.9     
+CLL                                                                        IMPLCA4A.11    
+CLL  Model           Modification history from model version 3.0           IMPLCA4A.12    
+CLL version  Date                                                          IMPLCA4A.13    
+CLL  3.1    12/01/93 Alternative, more complete implicit numerical         IMPLCA4A.14    
+CLL                  scheme made available under *IF DEF,A03_2C.           IMPLCA4A.15    
+CLL  3.3  07/07/93  Only versions 1B & 2C carried forward to UM3.3         IMPLCA4A.16    
+CLL  3.4  06/06/94  DEF TIMER replaced by LOGICAL LTIMER                   IMPLCA4A.17    
+CLL                  Argument LTIMER added                                 IMPLCA4A.18    
+CLL                                                 S.J.Swarbrick          IMPLCA4A.19    
+CLL   4.2   Oct. 96   T3E migration - *DEF CRAY removed                    GSS2F402.287   
+CLL                                     S J Swarbrick                      GSS2F402.288   
+!LL   4.3  14/01/97   MPP code : Corrected setting of polar rows           GPB1F403.160   
+!LL                                                     P.Burton           GPB1F403.161   
+CLL  4.5    Jul. 98  Kill the IBM specific lines (JCThil)                  AJC1F405.144   
+CLL                                                                        IMPLCA4A.20    
+CLL                                                                        IMPLCA4A.21    
+CLL  FH, RNBS  <- Programmers of some or all of previous code or changes   IMPLCA4A.22    
+CLL                                                                        IMPLCA4A.23    
+CLL  Extensive modifications to incorporate Penman-Monteith                IMPLCA4A.24    
+CLL  formulations                                                          IMPLCA4A.25    
+CLL                                                                        IMPLCA4A.26    
+CLL                                                J.Lean                  IMPLCA4A.27    
+CLL                                                RE 31/10/94             IMPLCA4A.28    
+CLL                                                                        IMPLCA4A.29    
+CLL  Programming standard: UM Documentation Paper No 4, Version 2,         IMPLCA4A.30    
+CLL                        dated 18/1/90                                   IMPLCA4A.31    
+CLL                                                                        IMPLCA4A.32    
+CLL  System component covered: P244                                        IMPLCA4A.33    
+CLL                                                                        IMPLCA4A.34    
+CLL  Project task: P24                                                     IMPLCA4A.35    
+CLL                                                                        IMPLCA4A.36    
+CLL  Documentation: UM Documentation Paper No 24.                          IMPLCA4A.37    
+CLL                                                                        IMPLCA4A.38    
+C*----------------------------------------------------------------------   IMPLCA4A.39    
+C*L  Arguments :-                                                          IMPLCA4A.40    
+      SUBROUTINE IMPL_CAL (                                                IMPLCA4A.41    
+     + P_FIELD,U_FIELD,P1,U1,                                              IMPLCA4A.42    
+     + P_POINTS,U_POINTS,BL_LEVELS,ROW_LENGTH,P_ROWS,U_ROWS                IMPLCA4A.43    
+     +,ALPHA1,ASHTF,CDR10M,DELTA_AK,DELTA_BK                               IMPLCA4A.44    
+     +,GAMMA_RHOKH_RDZ,GAMMA_RHOKM_RDZUV                                   IMPLCA4A.45    
+     +,ICE_FRACT,LYING_SNOW,PSTAR,RADNET,RESFT,RHOKPM,RHOKPM_POT           ANG1F405.171   
+     +,U0,V0,TIMESTEP,LAND_MASK,SU10,SV10                                  IMPLCA4A.47    
+     +,EPOT,FQW,FTL,E_SEA,H_SEA,QW                                         ANG1F405.172   
+     +,GAMMA_RHOKE,GAMMA_RHOKH_1,GAMMA_RHOKM_1,TL,U,V                      IMPLCA4A.49    
+     +,DTRDZ,DTRDZ_RML,TAUX,TAUY,SURF_HT_FLUX,U10M,V10M,NRML               IMPLCA4A.50    
+     +,ERROR,LTIMER                                                        IMPLCA4A.51    
+     +)                                                                    IMPLCA4A.52    
+      IMPLICIT NONE                                                        IMPLCA4A.53    
+      LOGICAL LTIMER                                                       IMPLCA4A.54    
+      INTEGER                                                              IMPLCA4A.55    
+     + P_FIELD                     ! IN No. of points in P-grid.           IMPLCA4A.56    
+     +,U_FIELD                     ! IN No. of points in UV-grid.          IMPLCA4A.57    
+     +,P1                          ! IN First point to be processed in     IMPLCA4A.58    
+C                                  !    P-grid.                            IMPLCA4A.59    
+     +,U1                          ! IN First point to be processed in     IMPLCA4A.60    
+C                                  !    UV-grid.                           IMPLCA4A.61    
+     +,P_POINTS                    ! IN Number of P-grid points to be      IMPLCA4A.62    
+C                                  !    processed.                         IMPLCA4A.63    
+     +,U_POINTS                    ! IN Number of UV-grid points.          IMPLCA4A.67    
+     +,BL_LEVELS                   ! IN No. of atmospheric levels for      IMPLCA4A.71    
+C                                  !    which boundary layer fluxes are    IMPLCA4A.72    
+C                                  !    calculated.                        IMPLCA4A.73    
+     +,ROW_LENGTH                  ! IN No. of points in latitude row.     IMPLCA4A.74    
+     +,P_ROWS                      ! IN No. of P-rows of data to be        IMPLCA4A.78    
+C                                  !    processed.                         IMPLCA4A.79    
+     +,U_ROWS                      ! IN No. of UV-rows of data to be       IMPLCA4A.83    
+C                                  !    processed.                         IMPLCA4A.84    
+      REAL                                                                 IMPLCA4A.88    
+     + ALPHA1(P_FIELD)             ! IN Gradient of saturated specific     IMPLCA4A.89    
+C                                  !    humidity with respect to           IMPLCA4A.90    
+C                                  !    temperature between the bottom     IMPLCA4A.91    
+C                                  !    model layer and the surface.       IMPLCA4A.92    
+     +,ASHTF(P_FIELD)              ! IN Coefficient to calculate surface   IMPLCA4A.93    
+C                                  !    heat flux into soil or sea-ice     IMPLCA4A.94    
+C                                  !    (W/m2/K).                          IMPLCA4A.95    
+     +,CDR10M(U_FIELD)             ! IN Used in calc of 10m wind - from    IMPLCA4A.96    
+C                                  !    P243 (routine SF_EXCH).  First     IMPLCA4A.97    
+C                                  !    and last rows are "missing data"   IMPLCA4A.98    
+C                                  !    and not used.  UV-grid.            IMPLCA4A.99    
+     +,DELTA_AK(BL_LEVELS)         ! IN Difference of hybrid 'A' across    IMPLCA4A.100   
+C                                  !    boundary layers (K-1/2 to K+1/2)   IMPLCA4A.101   
+C                                  !    (upper minus lower).               IMPLCA4A.102   
+     +,DELTA_BK(BL_LEVELS)         ! IN Difference of hybrid 'B' across    IMPLCA4A.103   
+C                                  !    boundary layers (K-1/2 to K+1/2)   IMPLCA4A.104   
+C                                  !    (upper minus lower).               IMPLCA4A.105   
+     +,GAMMA_RHOKH_RDZ(P_FIELD,2:BL_LEVELS)                                IMPLCA4A.106   
+C                                  ! IN Exchange coeff for FTL above       IMPLCA4A.107   
+C                                  !    surface, =GAMMA(K)*RHOKH(,K)       IMPLCA4A.108   
+C                                  !    *RDZ(K) for K>=2 (from KMKH).      IMPLCA4A.109   
+     +,GAMMA_RHOKM_RDZUV(U_FIELD,2:BL_LEVELS)                              IMPLCA4A.110   
+C                                  ! IN Exchange coefficients for          IMPLCA4A.111   
+C                                  !    momentum, on UV-grid with          IMPLCA4A.112   
+C                                  !    first and last rows ignored.       IMPLCA4A.113   
+C                                  !     =GAMMA(K)*RHOKM(,K)*RDZUV(,K)at   IMPLCA4A.114   
+C                                  !    for K>=2 (from KMKH).              IMPLCA4A.115   
+      REAL                         ! Split to avoid > 19 continuations.    IMPLCA4A.116   
+     + ICE_FRACT(P_FIELD)          ! IN Fraction of grid-box which is      IMPLCA4A.117   
+C                                  !    sea-ice (decimal fraction).        IMPLCA4A.118   
+     +,LYING_SNOW(P_FIELD)         ! IN Lying snow (kg per sq m ie "mm")   IMPLCA4A.119   
+     +,PSTAR(P_FIELD)              ! IN Surface pressure (Pa).             IMPLCA4A.120   
+     +,RADNET(P_FIELD)             ! IN Area weighted ice component        IMPLCA4A.121   
+C                                  !    of surface net radiation.          IMPLCA4A.122   
+C                                  !    (+ve downwards, W per sq m)        IMPLCA4A.123   
+     +,RESFT(P_FIELD)              ! IN Total resistance factor            IMPLCA4A.124   
+     +,RHOKPM(P_FIELD)             ! IN Surface exchange coeff.            IMPLCA4A.125   
+     +,RHOKPM_POT(P_FIELD)         ! IN Surface exchange coeff. for        ANG1F405.173   
+!                                       potential evaporation.             ANG1F405.174   
+     +,U0(U_FIELD)                 ! IN Westerly component of surface      IMPLCA4A.126   
+C                                  !    current (m/s; 0 over land). UVG.   IMPLCA4A.127   
+     +,V0(U_FIELD)                 ! IN Southerly component of surface     IMPLCA4A.128   
+C                                  !    current (m/s; 0 over land). UVG.   IMPLCA4A.129   
+     +,TIMESTEP                    ! IN Timestep in seconds.               IMPLCA4A.130   
+      LOGICAL                                                              IMPLCA4A.131   
+     + LAND_MASK(P_FIELD)          ! IN T for land, F elsewhere.           IMPLCA4A.132   
+     +,SU10                        ! IN STASH flag for 10-metre W wind.    IMPLCA4A.133   
+     +,SV10                        ! IN STASH flag for 10-metre S wind.    IMPLCA4A.134   
+C                                                                          IMPLCA4A.135   
+C  Next 5 arrays are all IN as "explicit" fluxes from P243 (SF_EXCH and    IMPLCA4A.136   
+C  possibly KMKH), and OUT as "implicit" fluxes.                           IMPLCA4A.137   
+C                                                                          IMPLCA4A.138   
+      REAL                                                                 IMPLCA4A.139   
+     + FQW(P_FIELD,BL_LEVELS)      ! INOUT Flux of QW (ie., for surface,   IMPLCA4A.140   
+C                                  !       total evaporation). Kg/sq m/s   IMPLCA4A.141   
+     &,EPOT(P_FIELD)               ! INOUT Potential evaporation rate.     ANG1F405.175   
+     +,FTL(P_FIELD,BL_LEVELS)      ! INOUT Flux of TL (ie., for surface,   IMPLCA4A.142   
+C                                  !       H/Cp where H is sensible heat   IMPLCA4A.143   
+C                                  !       in W per sq m).                 IMPLCA4A.144   
+     +,E_SEA(P_FIELD)              ! INOUT Evaporation from sea times      IMPLCA4A.145   
+C                                  !       leads fraction (kg/m2/s).       IMPLCA4A.146   
+C                                  !       Zero over land.                 IMPLCA4A.147   
+     +,H_SEA(P_FIELD)              ! INOUT Surface sensible heat flux ov   IMPLCA4A.148   
+C                                  !       sea times leads fraction (W/m   IMPLCA4A.149   
+C                                  !       Zero over land.                 IMPLCA4A.150   
+     +,QW(P_FIELD,BL_LEVELS)       ! INOUT Total water content (kg per     IMPLCA4A.151   
+C                                  !       kg air).  From P243.            IMPLCA4A.152   
+     +,GAMMA_RHOKE(P_FIELD)        ! IN    Surface exchange coeff. for     IMPLCA4A.153   
+C                                  !       FQW, =GAMMA(1)*RHOKE from       IMPLCA4A.154   
+C                                  !       SF_EXCH.                        IMPLCA4A.155   
+C                                  !   OUT =RHOKE to satisfy STASH.        IMPLCA4A.156   
+     +,GAMMA_RHOKH_1(P_FIELD)      ! IN    Surface exchange coeffs for     IMPLCA4A.157   
+C                                  !       FTL, =GAMMA(1)*RHOKH(,1)        IMPLCA4A.158   
+C                                  !       from P243 (SF_EXCH).            IMPLCA4A.159   
+C                                  !   OUT =RHOKH_1 to satisfy STASH.      IMPLCA4A.160   
+     +,GAMMA_RHOKM_1(U_FIELD)      ! IN    Surface exchange coeffs for     IMPLCA4A.161   
+C                                  !       momentum, on UV-grid            IMPLCA4A.162   
+C                                  !       with first and last rows        IMPLCA4A.163   
+C                                  !       ignored. =GAMMA(1)*RHOKM(,1)    IMPLCA4A.164   
+C                                  !       from P243 (SF_EXCH).            IMPLCA4A.165   
+C                                  !   OUT =RHOKM_1 to satisfy STASH.      IMPLCA4A.166   
+     +,TL(P_FIELD,BL_LEVELS)       ! INOUT Liquid/frozen water             IMPLCA4A.167   
+C                                  !       temperature (K).  From P243.    IMPLCA4A.168   
+     +,U(U_FIELD,BL_LEVELS)        ! INOUT Westerly wind (m/s).  On UV-    IMPLCA4A.169   
+C                                  !       grid, 1st & last rows unused.   IMPLCA4A.170   
+     +,V(U_FIELD,BL_LEVELS)        ! INOUT Southerly wind (m/s).  On UV-   IMPLCA4A.171   
+C                                  !       grid, 1st & last rows unused.   IMPLCA4A.172   
+      REAL                                                                 IMPLCA4A.173   
+     + DTRDZ(P_FIELD,BL_LEVELS)    ! OUT -g.dt/dp for bottom BL_LEVELS     IMPLCA4A.174   
+C                                  !     model layers (needed in P245).    IMPLCA4A.175   
+     +,DTRDZ_RML(P_FIELD)          ! OUT -g.dt/dp for the rapidly          IMPLCA4A.176   
+C                                  !     mixing layer (needed in P245).    IMPLCA4A.177   
+     +,TAUX(U_FIELD,BL_LEVELS)     ! INOUT x-component of turbulent        IMPLCA4A.178   
+C                                  !       stress at levels k-1/2;         IMPLCA4A.179   
+C                                  !     eg. TAUX(,1) is surface stress.   IMPLCA4A.180   
+C                                  !     UV-grid, 1st and last rows set    IMPLCA4A.181   
+C                                  !     to "missing data". (N/sq m)       IMPLCA4A.182   
+     +,TAUY(U_FIELD,BL_LEVELS)     ! INOUT y-component of turbulent        IMPLCA4A.183   
+C                                  !       stress at levels k-1/2;         IMPLCA4A.184   
+C                                  !     eg. TAUY(,1) is surface stress.   IMPLCA4A.185   
+C                                  !     UV-grid, 1st and last rows set    IMPLCA4A.186   
+C                                  !     to "missing data". (N/sq m)       IMPLCA4A.187   
+     +,SURF_HT_FLUX(P_FIELD)       ! OUT Net downward heat flux at         IMPLCA4A.188   
+C                                  !     surface over land or sea-ice      IMPLCA4A.189   
+C                                  !     fraction of gridbox (W/m2).       IMPLCA4A.190   
+     +,U10M(U_FIELD)               ! OUT Westerly wind at 10m (m/s).       IMPLCA4A.191   
+C                                  !     1st & last rows "missing data".   IMPLCA4A.192   
+     +,V10M(U_FIELD)               ! OUT Southerly wind at 10m (m/s).      IMPLCA4A.193   
+C                                  !     1st & last rows "missing data".   IMPLCA4A.194   
+      INTEGER                                                              IMPLCA4A.195   
+     + NRML(P_FIELD)               ! IN The number of model layers         IMPLCA4A.196   
+C                                  !    in the unstable rapidly mixing     IMPLCA4A.197   
+C                                  !    layer. Zero if surface layer       IMPLCA4A.198   
+C                                  !    is stable.                         IMPLCA4A.199   
+     +,ERROR                       ! OUT 1 if bad arguments, else 0.       IMPLCA4A.200   
+C*                                                                         IMPLCA4A.201   
+C*L  External references :-                                                IMPLCA4A.202   
+      EXTERNAL QSAT                                                        IMPLCA4A.203   
+*IF -DEF,SCMA                                                              AJC1F405.145   
+      EXTERNAL P_TO_UV                                                     IMPLCA4A.205   
+*ENDIF                                                                     IMPLCA4A.206   
+      EXTERNAL TIMER                                                       IMPLCA4A.207   
+C*                                                                         IMPLCA4A.208   
+C*L  Local and other symbolic constants :-                                 IMPLCA4A.209   
+*CALL C_EPSLON                                                             IMPLCA4A.210   
+*CALL C_G                                                                  IMPLCA4A.211   
+*CALL C_LHEAT                                                              IMPLCA4A.212   
+*CALL C_R_CP                                                               IMPLCA4A.213   
+*CALL C_GAMMA                                                              IMPLCA4A.214   
+*CALL C_SICEHC      ! Holds integer AI                                     IMPLCA4A.215   
+      REAL LS                                                              IMPLCA4A.216   
+      PARAMETER (                                                          IMPLCA4A.217   
+     + LS=LC+LF     ! Latent heat of sublimation (J per kg).               IMPLCA4A.218   
+     +)                                                                    IMPLCA4A.219   
+C*                                                                         IMPLCA4A.220   
+C*L Workspace :-                                                           IMPLCA4A.221   
+C   6*BL_LEVELS + 2 blocks of real workspace are required.                 IMPLCA4A.222   
+      REAL                                                                 IMPLCA4A.224   
+     + AQ_AM(U_FIELD,BL_LEVELS)    ! As AQ: "Q" elements of matrix in      IMPLCA4A.225   
+C                                  ! eqn P244.79 (modified during          IMPLCA4A.226   
+C                                  ! Gaussian elimination process).        IMPLCA4A.227   
+C                                  ! As AM: elements of matrix in eqn      IMPLCA4A.228   
+C                                  ! P244.80 (also get modified).          IMPLCA4A.229   
+     +,AQ_RML(U_FIELD)             ! Matrix element for humidity in        IMPLCA4A.230   
+C                                  ! rapidly mixing layer. Then briefly    IMPLCA4A.231   
+C                                  ! used for DELTAP on the UV grid.       IMPLCA4A.232   
+     +,AT_ATQ(P_FIELD,BL_LEVELS)   ! Elements in atmospheric T rows of     IMPLCA4A.233   
+C                                  ! matrix in eqn P244.79 (modified       IMPLCA4A.234   
+C                                  ! during Gaussian elimination).         IMPLCA4A.235   
+     +,AT_RML(P_FIELD)             ! Matrix element for temperature in     IMPLCA4A.236   
+C                                  ! rapidly mixing layer.                 IMPLCA4A.237   
+     +,BPM(P_FIELD)                ! Used in calculating elements of       IMPLCA4A.238   
+C                                  ! TL(1) and QW(1) rows of matrix.       IMPLCA4A.239   
+     +,DELTAP(U_FIELD,BL_LEVELS)   ! Vertical pressure difference across   IMPLCA4A.240   
+C                                  ! hybrid layers (upper minus lower)     IMPLCA4A.241   
+C                                  ! (Pa).                                 IMPLCA4A.242   
+     +,DELTAP_RML(U_FIELD)         ! Vertical pressure difference across   IMPLCA4A.243   
+C                                  ! the rapidly mixing layer (Pa).        IMPLCA4A.244   
+     +,DQW_RML(P_FIELD)            ! Rapidly mixing layer increment        IMPLCA4A.245   
+C                                  ! to QW.                                IMPLCA4A.246   
+     +,DQW_DU(U_FIELD,BL_LEVELS)   ! As DQW: delta QW elements of vector   IMPLCA4A.247   
+C                                  ! on RHS, then LHS, of eqn P244.79.     IMPLCA4A.248   
+C                                  ! As DU: delta U elements of vector     IMPLCA4A.249   
+C                                  ! on RHS, then LHS, of eqn P244.80.     IMPLCA4A.250   
+     +,DTL_DV(U_FIELD,BL_LEVELS)   ! As DTL: delta TL (for atmosphere)     IMPLCA4A.251   
+C                                  ! elements of vector on RHS, then       IMPLCA4A.252   
+C                                  ! LHS, of eqn P244.79.                  IMPLCA4A.253   
+C                                  ! As DV: delta V elements of vector     IMPLCA4A.254   
+C                                  ! on RHS, then LHS, of eqn P244.80.     IMPLCA4A.255   
+     +,DTL_RML(U_FIELD)            ! Delta TL for rapidly mixing layer.    IMPLCA4A.256   
+     +,DTRDZ_UV(U_FIELD,BL_LEVELS) ! -g.dt/dp for model layers             IMPLCA4A.257   
+C                                  ! interpolated to the UV-grid.          IMPLCA4A.258   
+     +,FQW_ICE(P_FIELD)            ! "Explicit" surface flux of QW for     IMPLCA4A.259   
+C                                  ! sea-ice fraction of gridsquare.       IMPLCA4A.260   
+     +,FTL_ICE(P_FIELD)            ! "Explicit" surface flux of TL for     IMPLCA4A.261   
+C                                  ! sea-ice fraction of gridsquare.       IMPLCA4A.262   
+     +,LAT_HEAT(P_FIELD)           ! Latent heat of evaporation for        IMPLCA4A.263   
+C                                  ! snow-free land or sublimation for     IMPLCA4A.264   
+C                                  ! snow-covered land.                    IMPLCA4A.265   
+C*                                                                         IMPLCA4A.309   
+C  Local scalars :-                                                        IMPLCA4A.310   
+      REAL                                                                 IMPLCA4A.311   
+     + CTQ      ! Matrix element in P244.??, for local increments to rml   IMPLCA4A.312   
+     +,CM       ! Matrix element in eqn P244.80.                           IMPLCA4A.313   
+     +,CQ       ! Matrix element in "Q" row in eqn P244.79.                IMPLCA4A.314   
+     +,CQ_RML   ! As above but for rapidly mixing layer increment.         IMPLCA4A.315   
+     +,CT       ! Matrix element in "T" row in eqn P244.79.                IMPLCA4A.316   
+     +,CT_RML   ! As above but for rapidly mixing layer increment.         IMPLCA4A.317   
+     +,DTL      ! Increment in TL.                                         IMPLCA4A.318   
+     +,DQW      ! Increment in QW.                                         IMPLCA4A.319   
+     +,RBTQ     ! Reciprocal of B P244.??, for local increments to rml     IMPLCA4A.320   
+     +,RBM      ! Reciprocal of BM(') (eqns P244.81, 85, 89).              IMPLCA4A.321   
+     +,RBQ      ! Reciprocal of BQ(') (eqns P244.98, 101, 104).            IMPLCA4A.322   
+     +,RBQ_RML  ! As above but for the rapidly mixing layer increment.     IMPLCA4A.323   
+     +,RBT      ! Reciprocal of BT' (eqns P244.107, 110, 113).             IMPLCA4A.324   
+     +,RBT_RML  ! As above but for the rapidly mixing layer increment.     IMPLCA4A.325   
+     +,GAMMA_RKE_DQ ! Used in calculation of implicit increments to        IMPLCA4A.326   
+C                   ! surface latent and sesible heat fluxes.              IMPLCA4A.327   
+     +,DTIMEG   ! TIMESTEP * G (used in several places).                   IMPLCA4A.328   
+      INTEGER                                                              IMPLCA4A.329   
+     + BLM1     ! BL_LEVELS minus 1.                                       IMPLCA4A.330   
+     +,NRMLP1   ! NRML plus 1.                                             IMPLCA4A.331   
+     +,I        ! Loop counter (horizontal field index).                   IMPLCA4A.332   
+     +,J        ! Offset version of I.                                     IMPLCA4A.333   
+     +,K        ! Loop counter (vertical index).                           IMPLCA4A.334   
+     +,KM1      ! K minus 1.                                               IMPLCA4A.335   
+     +,KP1      ! K plus 1.                                                IMPLCA4A.336   
+*IF DEF,MPP                                                                GPB1F403.162   
+! MPP Common block                                                         GPB1F403.163   
+*CALL PARVARS                                                              GPB1F403.164   
+*ENDIF                                                                     GPB1F403.165   
+C                                                                          IMPLCA4A.337   
+C-----------------------------------------------------------------------   IMPLCA4A.338   
+CL  0.  Check that the scalars input to define the grid are consistent.    IMPLCA4A.339   
+C       See comments to routine SF_EXCH for details.                       IMPLCA4A.340   
+C-----------------------------------------------------------------------   IMPLCA4A.341   
+C                                                                          IMPLCA4A.342   
+      IF (LTIMER) THEN                                                     IMPLCA4A.343   
+      CALL TIMER('IMPLCAL ',3)                                             IMPLCA4A.344   
+      ENDIF                                                                IMPLCA4A.345   
+      ERROR=0                                                              IMPLCA4A.346   
+*IF DEF,MPP                                                                AJC1F405.146   
+      IF (                                                                 AJC1F405.147   
+*ELSEIF DEF,SCMA                                                           AJC1F405.148   
+      IF ( U_ROWS .NE. (P_ROWS) .OR.                                       AJC1F405.149   
+*ELSE                                                                      AJC1F405.150   
+      IF ( U_ROWS .NE. (P_ROWS+1) .OR.                                     AJC1F405.151   
+*ENDIF                                                                     AJC1F405.152   
+     +     U_POINTS .NE. (U_ROWS*ROW_LENGTH) .OR.                          IMPLCA4A.355   
+     +     P_POINTS .NE. (P_ROWS*ROW_LENGTH) )  THEN                       IMPLCA4A.356   
+        ERROR=1                                                            IMPLCA4A.357   
+        GOTO999                                                            IMPLCA4A.358   
+      ENDIF                                                                IMPLCA4A.359   
+      DTIMEG = TIMESTEP * G                                                IMPLCA4A.361   
+      BLM1 = BL_LEVELS-1                                                   IMPLCA4A.362   
+C                                                                          IMPLCA4A.363   
+CL----------------------------------------------------------------------   IMPLCA4A.364   
+CL (A) Calculations on P-grid.                                             IMPLCA4A.365   
+CL----------------------------------------------------------------------   IMPLCA4A.366   
+C                                                                          IMPLCA4A.367   
+C-----------------------------------------------------------------------   IMPLCA4A.368   
+CL 1.  Calculate pressure across layer (in hybrid coordinates), DELTAP,    IMPLCA4A.369   
+CL     and then -gdt/dP = dt/rho*dz for use throughout section (A)         IMPLCA4A.370   
+C-----------------------------------------------------------------------   IMPLCA4A.371   
+C                                                                          IMPLCA4A.372   
+      DO 1 K=1,BL_LEVELS                                                   IMPLCA4A.373   
+        DO 11 I=P1,P1+P_POINTS-1                                           IMPLCA4A.374   
+          DELTAP(I,K) = DELTA_AK(K) + PSTAR(I)*DELTA_BK(K)                 IMPLCA4A.375   
+          DTRDZ(I,K) = -DTIMEG / DELTAP(I,K)                               IMPLCA4A.376   
+   11   CONTINUE                                                           IMPLCA4A.377   
+   1  CONTINUE                                                             IMPLCA4A.378   
+C                                                                          IMPLCA4A.379   
+C-----------------------------------------------------------------------   IMPLCA4A.380   
+CL 2.  Calculate implicit T and Q increments due to local mixing within    IMPLCA4A.381   
+CL     the rapidly mixing layer (where it exists).                         IMPLCA4A.382   
+CL     The surface fluxes FTL(I,1), FQW(I,1) are used for calculating      IMPLCA4A.383   
+CL     the rapidly mixing layer (rml) increments but not here.             IMPLCA4A.384   
+CL     Therefore the matrix equation we must solve to find the implicit    IMPLCA4A.385   
+CL     T and Q increments due to local mixing within the rml does not      IMPLCA4A.386   
+CL     have a "surface" row and we can solve for the T and Q increments    IMPLCA4A.387   
+CL     for K = 1 to NRML simultaneously.                                   IMPLCA4A.388   
+C-----------------------------------------------------------------------   IMPLCA4A.389   
+C                                                                          IMPLCA4A.390   
+C-----------------------------------------------------------------------   IMPLCA4A.391   
+CL 2.1 Start 'upward sweep' with lowest model layer, which will be the     IMPLCA4A.392   
+CL     bottom of the rapidly mixing layer (rml) if it exists.              IMPLCA4A.393   
+C-----------------------------------------------------------------------   IMPLCA4A.394   
+C                                                                          IMPLCA4A.395   
+      DO 21 I=P1,P1+P_POINTS-1                                             IMPLCA4A.396   
+        LAT_HEAT(I) = LC                                                   IMPLCA4A.397   
+        IF (LAND_MASK(I)) THEN                                             IMPLCA4A.398   
+          IF (LYING_SNOW(I).GT.0.0) LAT_HEAT(I) = LS                       IMPLCA4A.399   
+        ELSE                                                               IMPLCA4A.400   
+          IF (ICE_FRACT(I).GT.0.0) LAT_HEAT(I) = LS                        IMPLCA4A.401   
+        ENDIF                                                              IMPLCA4A.402   
+        IF (NRML(I) .GE. 2) THEN                                           IMPLCA4A.403   
+C                                                                          IMPLCA4A.404   
+C  "Explicit" increments due to local mixing within the rml.               IMPLCA4A.405   
+C  P244.49/31 but surface flux used in rml increment calculations.         IMPLCA4A.406   
+C                                                                          IMPLCA4A.407   
+          DQW_DU(I,1) = -DTRDZ(I,1) * FQW(I,2)                             IMPLCA4A.408   
+          DTL_DV(I,1) = -DTRDZ(I,1) * FTL(I,2)                             IMPLCA4A.409   
+C                                                                          IMPLCA4A.410   
+C  Define matrix elements (CTQ always zero for this case).                 IMPLCA4A.411   
+C                                                                          IMPLCA4A.412   
+          AT_ATQ(I,1) = -DTRDZ(I,1) * GAMMA_RHOKH_RDZ(I,2)    ! P244.28    IMPLCA4A.413   
+          RBTQ = 1.0 / ( 1.0 - AT_ATQ(I,1) )    ! Reciprocal of P244.110   IMPLCA4A.414   
+C                                                                          IMPLCA4A.415   
+C  Now start Gaussian elimination                                          IMPLCA4A.416   
+C                                                                          IMPLCA4A.417   
+          DQW_DU(I,1) = RBTQ * DQW_DU(I,1)                    ! P244.102   IMPLCA4A.418   
+          DTL_DV(I,1) = RBTQ * DTL_DV(I,1)                    ! P244.111   IMPLCA4A.419   
+          AT_ATQ(I,1) = RBTQ * AT_ATQ(I,1)                    ! P244.112   IMPLCA4A.420   
+C                                                                          IMPLCA4A.421   
+C  Start calculating DELTAP_RML. Mid-level depths added in 2.2 below.      IMPLCA4A.422   
+C                                                                          IMPLCA4A.423   
+          DELTAP_RML(I) = DELTAP(I,1)                                      IMPLCA4A.424   
+        ELSE ! No rapidly mixing layer calculations                        IMPLCA4A.425   
+          DTRDZ_RML(I) = 1.E30                                             IMPLCA4A.426   
+          DQW_RML(I) = 1.E30                                               IMPLCA4A.427   
+          DTL_RML(I) = 1.E30                                               IMPLCA4A.428   
+          AQ_RML(I) = 1.E30                                                IMPLCA4A.429   
+          AT_RML(I) = 1.E30                                                IMPLCA4A.430   
+          DELTAP_RML(I) = 1.E30                                            IMPLCA4A.431   
+        ENDIF                                                              IMPLCA4A.432   
+   21 CONTINUE                                                             IMPLCA4A.433   
+C                                                                          IMPLCA4A.434   
+C-----------------------------------------------------------------------   IMPLCA4A.435   
+CL 2.2 Continue upward sweep through middle of the rapidly mixing layer    IMPLCA4A.436   
+CL     (if it exists) and to its top. NB NRML is always <= BLM1.           IMPLCA4A.437   
+C-----------------------------------------------------------------------   IMPLCA4A.438   
+C                                                                          IMPLCA4A.439   
+      DO 22 K=2,BLM1                                                       IMPLCA4A.440   
+        KP1 = K+1                                                          IMPLCA4A.441   
+        KM1 = K-1                                                          IMPLCA4A.442   
+        DO 221 I=P1,P1+P_POINTS-1                                          IMPLCA4A.443   
+C                                                                          IMPLCA4A.444   
+C   If in the top rapidly mixing layer then do not include flux at its     IMPLCA4A.445   
+C   top in the calculation ie FQW(I,NRML+1) and FTL(I,NRML+1) are not      IMPLCA4A.446   
+C   included here; they are taken account of in the non-local mixing       IMPLCA4A.447   
+C   through the "rapidly mixing layer".                                    IMPLCA4A.448   
+C                                                                          IMPLCA4A.449   
+          IF ( K .EQ. NRML(I) ) THEN                                       IMPLCA4A.450   
+C                                                                          IMPLCA4A.451   
+C   Add final DELTAP contribution to DELTAP_RML and then calculate         IMPLCA4A.452   
+C   DTRDZ_RML.  Lower level contributions added in 2.1 and below.          IMPLCA4A.453   
+C                                                                          IMPLCA4A.454   
+            DELTAP_RML(I) = DELTAP_RML(I) + DELTAP(I,K)                    IMPLCA4A.455   
+            DTRDZ_RML(I) = -DTIMEG / DELTAP_RML(I)                         IMPLCA4A.456   
+C                                                                          IMPLCA4A.457   
+C  "Explicit" flux divergence across layer giving explicit                 IMPLCA4A.458   
+C  increment due to the local mixing at the top of rml.                    IMPLCA4A.459   
+C                                                                          IMPLCA4A.460   
+            DQW_DU(I,K) = DTRDZ(I,K) * FQW(I,K)                            IMPLCA4A.461   
+            DTL_DV(I,K) = DTRDZ(I,K) * FTL(I,K)                            IMPLCA4A.462   
+C                                                                          IMPLCA4A.463   
+C  Define matrix elements (A always zero for this case).                   IMPLCA4A.464   
+C                                                                          IMPLCA4A.465   
+            CTQ = -DTRDZ(I,K) * GAMMA_RHOKH_RDZ(I,K)           ! P244.36   IMPLCA4A.466   
+            RBTQ = 1.0 / ( 1.0  - CTQ*( 1.0 + AT_ATQ(I,KM1) ) )            IMPLCA4A.467   
+C                                             ... Reciprocal of P244.113   IMPLCA4A.468   
+C  Now start Gaussian elimination                                          IMPLCA4A.469   
+C                                                                          IMPLCA4A.470   
+            DQW_DU(I,K) = RBTQ * ( DQW_DU(I,K) - CTQ*DQW_DU(I,KM1) )       IMPLCA4A.471   
+            DTL_DV(I,K) = RBTQ * ( DTL_DV(I,K) - CTQ*DTL_DV(I,KM1) )       IMPLCA4A.472   
+          ELSEIF (K .LT. NRML(I)) THEN                                     IMPLCA4A.473   
+C                                                                          IMPLCA4A.474   
+C  Add layer depths to form total rml depth.                               IMPLCA4A.475   
+C                                                                          IMPLCA4A.476   
+            DELTAP_RML(I) = DELTAP_RML(I) + DELTAP(I,K)                    IMPLCA4A.477   
+C                                                                          IMPLCA4A.478   
+C  "Explicit" flux divergence across layer giving explicit                 IMPLCA4A.479   
+C  increment due to the local mixing.P244.54/38                            IMPLCA4A.480   
+C                                                                          IMPLCA4A.481   
+            DQW_DU(I,K) = -DTRDZ(I,K) * ( FQW(I,KP1) - FQW(I,K) )          IMPLCA4A.482   
+            DTL_DV(I,K) = -DTRDZ(I,K) * ( FTL(I,KP1) - FTL(I,K) )          IMPLCA4A.483   
+C                                                                          IMPLCA4A.484   
+C  Define matrix elements.                                                 IMPLCA4A.485   
+C                                                                          IMPLCA4A.486   
+            AT_ATQ(I,K) = -DTRDZ(I,K) * GAMMA_RHOKH_RDZ(I,KP1) ! P244.35   IMPLCA4A.487   
+            CTQ = -DTRDZ(I,K) * GAMMA_RHOKH_RDZ(I,K)           ! P244.36   IMPLCA4A.488   
+            RBTQ = 1.0 / ( 1.0  - AT_ATQ(I,K)                              IMPLCA4A.489   
+     &                          - CTQ * ( 1.0 + AT_ATQ(I,KM1) ) )          IMPLCA4A.490   
+C                                             ... Reciprocal of P244.113   IMPLCA4A.491   
+C  Now start Gaussian elimination                                          IMPLCA4A.492   
+C                                                                          IMPLCA4A.493   
+            DQW_DU(I,K) = RBTQ * ( DQW_DU(I,K) - CTQ*DQW_DU(I,KM1) )       IMPLCA4A.494   
+            DTL_DV(I,K) = RBTQ * ( DTL_DV(I,K) - CTQ*DTL_DV(I,KM1) )       IMPLCA4A.495   
+            AT_ATQ(I,K) = RBTQ * AT_ATQ(I,K)                 ! P244.115    IMPLCA4A.496   
+          ENDIF                                                            IMPLCA4A.497   
+  221   CONTINUE                                                           IMPLCA4A.498   
+   22 CONTINUE                                                             IMPLCA4A.499   
+C                                                                          IMPLCA4A.500   
+C-----------------------------------------------------------------------   IMPLCA4A.501   
+CL 2.3 Downward sweep through matrix. Add implicit increments due to       IMPLCA4A.502   
+CL     local mixing within the rapidly mixing layer.  Update fluxes of     IMPLCA4A.503   
+CL     heat and moisture at the surface and the top-of-rml using           IMPLCA4A.504   
+CL     local mixing increments for layers 1 and NRML respectively.         IMPLCA4A.505   
+C-----------------------------------------------------------------------   IMPLCA4A.506   
+C                                                                          IMPLCA4A.507   
+      DO 23 K=BLM1,1,-1                                                    IMPLCA4A.508   
+        KP1 = K + 1                                                        IMPLCA4A.509   
+        DO 231 I=P1,P1+P_POINTS-1                                          IMPLCA4A.510   
+          IF ((NRML(I) .GE. 2) .AND. (K .EQ. NRML(I))) THEN                IMPLCA4A.511   
+            QW(I,K) = QW(I,K) + DQW_DU(I,K)                   ! P244.128   IMPLCA4A.512   
+            TL(I,K) = TL(I,K) + DTL_DV(I,K)                   ! P244.127   IMPLCA4A.513   
+            FQW(I,KP1) = FQW(I,KP1)                                        IMPLCA4A.514   
+     &                    + GAMMA_RHOKH_RDZ(I,KP1)*DQW_DU(I,K)             IMPLCA4A.515   
+            FTL(I,KP1) = FTL(I,KP1)                                        IMPLCA4A.516   
+     &                    + GAMMA_RHOKH_RDZ(I,KP1)*DTL_DV(I,K)             IMPLCA4A.517   
+          ELSEIF ((NRML(I) .GE. 2) .AND. (K .LT. NRML(I))) THEN            IMPLCA4A.518   
+            DQW_DU(I,K) = DQW_DU(I,K)                                      IMPLCA4A.519   
+     &                           - AT_ATQ(I,K)*DQW_DU(I,KP1)  ! P244.???   IMPLCA4A.520   
+            DTL_DV(I,K) = DTL_DV(I,K)                                      IMPLCA4A.521   
+     &                           - AT_ATQ(I,K)*DTL_DV(I,KP1)  ! P244.???   IMPLCA4A.522   
+            QW(I,K) = QW(I,K) + DQW_DU(I,K)                   ! P244.128   IMPLCA4A.523   
+            TL(I,K) = TL(I,K) + DTL_DV(I,K)                   ! P244.127   IMPLCA4A.524   
+          ENDIF                                                            IMPLCA4A.525   
+          IF ((NRML(I) .GE. 2) .AND. (K .EQ. 1)) THEN                      IMPLCA4A.526   
+            GAMMA_RKE_DQ = GAMMA_RHOKE(I) *                                IMPLCA4A.527   
+     &                     (DQW_DU(I,1) - ALPHA1(I)*DTL_DV(I,1))           IMPLCA4A.528   
+            IF (LAND_MASK(I)) THEN                                         IMPLCA4A.529   
+              FTL(I,1) = FTL(I,1) + RHOKPM(I)*(LAT_HEAT(I)*GAMMA_RKE_DQ    IMPLCA4A.530   
+     &                                 - GAMMA(1)*ASHTF(I)*DTL_DV(I,1))    IMPLCA4A.531   
+              FQW(I,1) = FQW(I,1) - RHOKPM(I)*(CP*GAMMA_RKE_DQ             IMPLCA4A.532   
+     &                        + GAMMA(1)*RESFT(I)*ASHTF(I)*DQW_DU(I,1))    IMPLCA4A.533   
+              EPOT(I) = EPOT(I) - RHOKPM_POT(I)*(CP*GAMMA_RKE_DQ           ANG1F405.176   
+     &                        + GAMMA(1)*ASHTF(I)*DQW_DU(I,1))             ANG1F405.177   
+            ELSEIF (ICE_FRACT(I) .GT. 0.0) THEN                            IMPLCA4A.534   
+              FQW_ICE(I) = FQW(I,1) - E_SEA(I) - RHOKPM(I) *               IMPLCA4A.535   
+     &                (CP*GAMMA_RKE_DQ + GAMMA(1)*ASHTF(I)*DQW_DU(I,1))    IMPLCA4A.536   
+              FTL_ICE(I) = FTL(I,1) - H_SEA(I)/CP + RHOKPM(I) *            IMPLCA4A.537   
+     &                (LS*GAMMA_RKE_DQ - GAMMA(1)*ASHTF(I)*DTL_DV(I,1))    IMPLCA4A.538   
+              E_SEA(I) = E_SEA(I) - (1.0 - ICE_FRACT(I)) *                 IMPLCA4A.539   
+     &                                     GAMMA_RHOKH_1(I)*DQW_DU(I,1)    IMPLCA4A.540   
+              H_SEA(I) = H_SEA(I) - (1.0 - ICE_FRACT(I)) * CP *            IMPLCA4A.541   
+     &                                     GAMMA_RHOKH_1(I)*DTL_DV(I,1)    IMPLCA4A.542   
+              FTL(I,1) = FTL_ICE(I) + H_SEA(I)/CP                          IMPLCA4A.543   
+              FQW(I,1) = FQW_ICE(I) + E_SEA(I)                             IMPLCA4A.544   
+              EPOT(I) = FQW_ICE(I) + E_SEA(I)                              ANG1F405.178   
+            ELSE ! ordinary sea point                                      IMPLCA4A.545   
+              FTL(I,1) = FTL(I,1) - GAMMA_RHOKH_1(I)*DTL_DV(I,1)           IMPLCA4A.546   
+              FQW(I,1) = FQW(I,1) - GAMMA_RHOKH_1(I)*DQW_DU(I,1)           IMPLCA4A.547   
+              EPOT(I) = EPOT(I) - GAMMA_RHOKH_1(I)*DQW_DU(I,1)             ANG1F405.179   
+            ENDIF                                                          IMPLCA4A.548   
+          ENDIF                                                            IMPLCA4A.549   
+  231   CONTINUE                                                           IMPLCA4A.550   
+   23 CONTINUE                                                             IMPLCA4A.551   
+C                                                                          IMPLCA4A.552   
+C-----------------------------------------------------------------------   IMPLCA4A.553   
+CL 3.  Calculate those matrix and vector elements on the LHS of eqn        IMPLCA4A.554   
+CL     P244.79 which are to do with implicit solution of the moisture      IMPLCA4A.555   
+CL     transport problem at the surface, above the rml (if it exists)      IMPLCA4A.556   
+CL     and between all levels if it does not.                              IMPLCA4A.557   
+CL     Begin with "upward sweep" through lower half of matrix).            IMPLCA4A.558   
+C-----------------------------------------------------------------------   IMPLCA4A.559   
+CL 3.1 Row of matrix applying to QW transport into top "boundary"          IMPLCA4A.560   
+CL     layer of model atmosphere.                                          IMPLCA4A.561   
+C-----------------------------------------------------------------------   IMPLCA4A.562   
+C                                                                          IMPLCA4A.563   
+      DO 31 I=P1,P1+P_POINTS-1                                             IMPLCA4A.564   
+        DQW_DU(I,BL_LEVELS) = DTRDZ(I,BL_LEVELS) * FQW(I,BL_LEVELS)        IMPLCA4A.565   
+C                                                            ... P244.58   IMPLCA4A.566   
+C                                                                          IMPLCA4A.567   
+        AQ_AM(I,BL_LEVELS) = -DTRDZ(I,BL_LEVELS)               ! P244.56   IMPLCA4A.568   
+     +                        * GAMMA_RHOKH_RDZ(I,BL_LEVELS)               IMPLCA4A.569   
+C                                                                          IMPLCA4A.570   
+        RBQ = 1.0 / ( 1.0 - AQ_AM(I,BL_LEVELS) )    ! Reciprocal P244.98   IMPLCA4A.571   
+        DQW_DU(I,BL_LEVELS) = RBQ * DQW_DU(I,BL_LEVELS)        ! P244.99   IMPLCA4A.572   
+        AQ_AM(I,BL_LEVELS) = RBQ * AQ_AM(I,BL_LEVELS)         ! P244.100   IMPLCA4A.573   
+   31 CONTINUE                                                             IMPLCA4A.574   
+C                                                                          IMPLCA4A.575   
+C-----------------------------------------------------------------------   IMPLCA4A.576   
+CL 3.2 Rows of matrix applying to "middle of boundary layer" model         IMPLCA4A.577   
+CL     layers, i.e. all but the topmost and bottom layers.                 IMPLCA4A.578   
+C-----------------------------------------------------------------------   IMPLCA4A.579   
+C                                                                          IMPLCA4A.580   
+      DO 32 K=BLM1,2,-1                                                    IMPLCA4A.581   
+        KP1=K+1                                                            IMPLCA4A.582   
+        DO 321 I=P1,P1+P_POINTS-1                                          IMPLCA4A.583   
+C                                                                          IMPLCA4A.584   
+C  "Explicit" flux divergence across layer giving explicit QW increment.   IMPLCA4A.585   
+C                                                                          IMPLCA4A.586   
+          IF ( K .GT. NRML(I) ) THEN                                       IMPLCA4A.587   
+            DQW_DU(I,K) = -DTRDZ(I,K) * ( FQW(I,KP1) - FQW(I,K) )          IMPLCA4A.588   
+C                                                            ... P244.54   IMPLCA4A.589   
+C                                                                          IMPLCA4A.590   
+            CQ = -DTRDZ(I,K) * GAMMA_RHOKH_RDZ(I,KP1)          ! P244.52   IMPLCA4A.591   
+            AQ_AM(I,K) = -DTRDZ(I,K) * GAMMA_RHOKH_RDZ(I,K)    ! P244.51   IMPLCA4A.592   
+            RBQ = 1.0 / ( 1.0 - AQ_AM(I,K) - CQ*( 1.0 + AQ_AM(I,KP1) ) )   IMPLCA4A.593   
+C                       1                       2                    2 1   IMPLCA4A.594   
+C                                             ... reciprocal of P244.101   IMPLCA4A.595   
+C                                                                          IMPLCA4A.596   
+            DQW_DU(I,K) = RBQ * ( DQW_DU(I,K) - CQ*DQW_DU(I,KP1) )         IMPLCA4A.597   
+C                                                           ... P244.102   IMPLCA4A.598   
+C                                                                          IMPLCA4A.599   
+            AQ_AM(I,K) = RBQ * AQ_AM(I,K)                     ! P244.103   IMPLCA4A.600   
+          ENDIF                                                            IMPLCA4A.601   
+  321   CONTINUE                                                           IMPLCA4A.602   
+   32 CONTINUE                                                             IMPLCA4A.603   
+C                                                                          IMPLCA4A.604   
+C-----------------------------------------------------------------------   IMPLCA4A.605   
+CL 3.3 Bottom model layer QW row of matrix equation.                       IMPLCA4A.606   
+C-----------------------------------------------------------------------   IMPLCA4A.607   
+C                                                                          IMPLCA4A.608   
+      DO 33 I=P1,P1+P_POINTS-1                                             IMPLCA4A.609   
+        IF (LAND_MASK(I)) THEN                                             IMPLCA4A.610   
+          BPM(I) = GAMMA(1)*ASHTF(I)*RHOKPM(I)                             IMPLCA4A.611   
+        ELSE                                                               IMPLCA4A.612   
+          BPM(I) = (1. - ICE_FRACT(I))*GAMMA_RHOKH_1(I) +                  IMPLCA4A.613   
+     &                      GAMMA(1)*ASHTF(I)*RHOKPM(I)                    IMPLCA4A.614   
+        ENDIF                                                              IMPLCA4A.615   
+        IF ( NRML(I) .GE. 2 ) THEN                                         IMPLCA4A.616   
+C                                                                          IMPLCA4A.617   
+C-----------------------------------------------------------------------   IMPLCA4A.618   
+CL 3.3.1 Start calculating rapidly mixing layer increments.                IMPLCA4A.619   
+C-----------------------------------------------------------------------   IMPLCA4A.620   
+C                                                                          IMPLCA4A.621   
+          NRMLP1 = NRML(I) + 1                                             IMPLCA4A.622   
+C                                                                          IMPLCA4A.623   
+C  "Explicit" QW increment for the rapidly mixing layer.                   IMPLCA4A.624   
+C                                                                          IMPLCA4A.625   
+          DQW_RML(I) = -DTRDZ_RML(I) * ( FQW(I,NRMLP1) - FQW(I,1) )        IMPLCA4A.626   
+C                                                                          IMPLCA4A.627   
+C  Define coefficients A,B,C, for implicit calculations.                   IMPLCA4A.628   
+C                                                                          IMPLCA4A.629   
+          AQ_RML(I) = - DTRDZ_RML(I)*GAMMA_RHOKE(I)*CP*RHOKPM(I)           IMPLCA4A.630   
+          CQ_RML = -DTRDZ_RML(I) * GAMMA_RHOKH_RDZ(I,NRMLP1)               IMPLCA4A.631   
+          RBQ_RML = 1./(1. - AQ_RML(I) - CQ_RML*(1. + AQ_AM(I,NRMLP1))     IMPLCA4A.632   
+     &                                + DTRDZ_RML(I)*RESFT(I)*BPM(I) )     IMPLCA4A.633   
+          DQW_RML(I) = RBQ_RML * ( DQW_RML(I)                              IMPLCA4A.634   
+     &                                 - CQ_RML * DQW_DU(I,NRMLP1) )       IMPLCA4A.635   
+          AQ_RML(I) = RBQ_RML * AQ_RML(I)                                  IMPLCA4A.636   
+        ELSE                                                               IMPLCA4A.637   
+C                                                                          IMPLCA4A.638   
+C  "Explicit" increment for QW(1) when there is no rapidly mixing          IMPLCA4A.639   
+C  layer or when it is only one model layer in depth.                      IMPLCA4A.640   
+C                                                                          IMPLCA4A.641   
+          DQW_DU(I,1) = - DTRDZ(I,1)*(FQW(I,2) - FQW(I,1))                 IMPLCA4A.642   
+          AQ_AM(I,1) = - DTRDZ(I,1)*GAMMA_RHOKE(I)*CP*RHOKPM(I)            IMPLCA4A.643   
+          CQ = - DTRDZ(I,1)*GAMMA_RHOKH_RDZ(I,2)                           IMPLCA4A.644   
+          RBQ = 1./( 1. - AQ_AM(I,1) - CQ*(1. + AQ_AM(I,2))                IMPLCA4A.645   
+     &                               + DTRDZ(I,1)*RESFT(I)*BPM(I) )        IMPLCA4A.646   
+          DQW_DU(I,1) = RBQ*(DQW_DU(I,1) - CQ*DQW_DU(I,2))                 IMPLCA4A.647   
+          AQ_AM(I,1) = RBQ*AQ_AM(I,1)                                      IMPLCA4A.648   
+        ENDIF                                                              IMPLCA4A.649   
+   33 CONTINUE                                                             IMPLCA4A.650   
+C                                                                          IMPLCA4A.651   
+C-----------------------------------------------------------------------   IMPLCA4A.652   
+CL 4.  Calculate those matrix and vector elements on the LHS of eqn        IMPLCA4A.653   
+CL     P244.79 which are to do with implicit solution of the heat          IMPLCA4A.654   
+CL     transport problem (i.e. for ice/liquid                              IMPLCA4A.655   
+CL     water temperatures in atmospheric boundary layer), and begin the    IMPLCA4A.656   
+CL     solution algorithm (perform "upward sweep" through upper half of    IMPLCA4A.657   
+CL     matrix).                                                            IMPLCA4A.658   
+C-----------------------------------------------------------------------   IMPLCA4A.659   
+C-----------------------------------------------------------------------   IMPLCA4A.660   
+CL 4.2 Lowest atmospheric layer TL row of matrix.                          IMPLCA4A.661   
+C-----------------------------------------------------------------------   IMPLCA4A.662   
+      DO 41 I=P1,P1+P_POINTS-1                                             IMPLCA4A.663   
+        IF (NRML(I) .GE. 2) THEN                                           IMPLCA4A.664   
+          NRMLP1 = NRML(I) + 1                                             IMPLCA4A.665   
+C                                                                          IMPLCA4A.666   
+C  "Explicit" rapidly mixing layer increment for TL.                       IMPLCA4A.667   
+C                                                                          IMPLCA4A.668   
+          DTL_RML(I) = - DTRDZ_RML(I) * ( FTL(I,NRMLP1) - FTL(I,1) )       IMPLCA4A.669   
+          AT_RML(I) = - DTRDZ_RML(I) * GAMMA_RHOKH_RDZ(I,NRMLP1)           IMPLCA4A.670   
+          CT_RML = - DTRDZ_RML(I)*GAMMA_RHOKE(I)*LAT_HEAT(I)*RHOKPM(I)     IMPLCA4A.671   
+          RBT_RML = 1./(1. - AT_RML(I) - ALPHA1(I)*CT_RML*(1.+AQ_RML(I))   IMPLCA4A.672   
+     &                                 + DTRDZ_RML(I)*BPM(I) )             IMPLCA4A.673   
+          DTL_RML(I) = RBT_RML*(DTL_RML(I) - CT_RML*DQW_RML(I))            IMPLCA4A.674   
+          AT_RML(I) = RBT_RML * AT_RML(I)                                  IMPLCA4A.675   
+        ELSE                                                               IMPLCA4A.676   
+C                                                                          IMPLCA4A.677   
+C  "Explicit" increment to TL(1) when there is no rapidly mixing layer     IMPLCA4A.678   
+C  or it does not extend beyond the bottom model layer.                    IMPLCA4A.679   
+C                                                                          IMPLCA4A.680   
+          DTL_DV(I,1) = - DTRDZ(I,1)*(FTL(I,2) - FTL(I,1))                 IMPLCA4A.681   
+          CT = - DTRDZ(I,1)*GAMMA_RHOKE(I)*LAT_HEAT(I)*RHOKPM(I)           IMPLCA4A.682   
+          AT_ATQ(I,1) = - DTRDZ(I,1)*GAMMA_RHOKH_RDZ(I,2)                  IMPLCA4A.683   
+          RBT = 1./( 1. - AT_ATQ(I,1) - ALPHA1(I)*CT*(1. + AQ_AM(I,1))     IMPLCA4A.684   
+     &                                + DTRDZ(I,1)*BPM(I) )                IMPLCA4A.685   
+C                                                                          IMPLCA4A.686   
+          DTL_DV(I,1) = RBT*(DTL_DV(I,1) - CT*DQW_DU(I,1))                 IMPLCA4A.687   
+          AT_ATQ(I,1) = RBT*AT_ATQ(I,1)                                    IMPLCA4A.688   
+        ENDIF                                                              IMPLCA4A.689   
+   41 CONTINUE                                                             IMPLCA4A.690   
+C-----------------------------------------------------------------------   IMPLCA4A.691   
+CL 4.3 Rows of matrix applying to TL transport into model layers in the    IMPLCA4A.692   
+CL     "middle" of the "boundary" layer, i.e. all but the bottom layer     IMPLCA4A.693   
+CL     and the top "boundary" layer.                                       IMPLCA4A.694   
+C-----------------------------------------------------------------------   IMPLCA4A.695   
+      DO 43 K=2,BLM1                                                       IMPLCA4A.696   
+        KP1 = K+1                                                          IMPLCA4A.697   
+        KM1 = K-1                                                          IMPLCA4A.698   
+        DO 431 I=P1,P1+P_POINTS-1                                          IMPLCA4A.699   
+C                                                                          IMPLCA4A.700   
+C   "Explicit" flux divergence across layer giving explicit TL increment   IMPLCA4A.701   
+C   due to mixing above rml if it exists or for all levels if it does      IMPLCA4A.702   
+C   not.                                                                   IMPLCA4A.703   
+C                                                                          IMPLCA4A.704   
+          NRMLP1 = NRML(I) + 1                                             IMPLCA4A.705   
+          IF (K .GT. NRML(I)) THEN                                         IMPLCA4A.706   
+            DTL_DV(I,K) = -DTRDZ(I,K) * ( FTL(I,KP1) - FTL(I,K) )          IMPLCA4A.707   
+C                                                            ... P244.38   IMPLCA4A.708   
+C                                                                          IMPLCA4A.709   
+            AT_ATQ(I,K) = -DTRDZ(I,K) * GAMMA_RHOKH_RDZ(I,KP1) ! P244.35   IMPLCA4A.710   
+            CT = -DTRDZ(I,K) * GAMMA_RHOKH_RDZ(I,K)            ! P244.36   IMPLCA4A.711   
+            IF ((NRML(I) .GE. 2) .AND. (K .EQ. NRMLP1)) THEN               IMPLCA4A.712   
+              RBT = 1.0 / ( 1.0 - AT_ATQ(I,K) - CT*( 1.0 + AT_RML(I) ) )   IMPLCA4A.713   
+              DTL_DV(I,K) = RBT * ( DTL_DV(I,K) - CT*DTL_RML(I) )          IMPLCA4A.714   
+            ELSE                                                           IMPLCA4A.715   
+              RBT = 1.0 / ( 1.0 - AT_ATQ(I,K)                              IMPLCA4A.716   
+     &                          - CT*( 1.0 + AT_ATQ(I,KM1) ) )             IMPLCA4A.717   
+C                         1          2                     2 1             IMPLCA4A.718   
+C                                             ... Reciprocal of P244.113   IMPLCA4A.719   
+C                                                                          IMPLCA4A.720   
+              DTL_DV(I,K) = RBT * ( DTL_DV(I,K) - CT*DTL_DV(I,KM1) )       IMPLCA4A.721   
+C                                                           ... P244.114   IMPLCA4A.722   
+C                                                                          IMPLCA4A.723   
+            ENDIF                                                          IMPLCA4A.724   
+            AT_ATQ(I,K) = RBT * AT_ATQ(I,K)                   ! P244.115   IMPLCA4A.725   
+          ENDIF                                                            IMPLCA4A.726   
+  431   CONTINUE                                                           IMPLCA4A.727   
+   43 CONTINUE                                                             IMPLCA4A.728   
+C-----------------------------------------------------------------------   IMPLCA4A.729   
+CL 4.4 Top "boundary" layer TL row of matrix.  TL for this layer can       IMPLCA4A.730   
+CL     then be, and is, updated.                                           IMPLCA4A.731   
+C-----------------------------------------------------------------------   IMPLCA4A.732   
+      DO 44 I=P1,P1+P_POINTS-1                                             IMPLCA4A.733   
+        DTL_DV(I,BL_LEVELS) = DTRDZ(I,BL_LEVELS) * FTL(I,BL_LEVELS)        IMPLCA4A.734   
+C                                                            ... P244.42   IMPLCA4A.735   
+C                                                                          IMPLCA4A.736   
+        CT = -DTRDZ(I,BL_LEVELS) * GAMMA_RHOKH_RDZ(I,BL_LEVELS)! P244.40   IMPLCA4A.737   
+        IF (NRML(I) .EQ. BLM1) THEN                                        IMPLCA4A.738   
+          RBT = 1.0 / ( 1.0 - CT*( 1.0 + AT_RML(I) ) )                     IMPLCA4A.739   
+          DTL_DV(I,BL_LEVELS) = RBT * ( DTL_DV(I,BL_LEVELS)                IMPLCA4A.740   
+     +                                  - CT*DTL_RML(I) )                  IMPLCA4A.741   
+        ELSE                                                               IMPLCA4A.742   
+         RBT = 1.0 / ( 1.0 - CT*( 1.0 + AT_ATQ(I,BLM1) ) )                 IMPLCA4A.743   
+C                    1          2                      2 1                 IMPLCA4A.744   
+C                                             ... Reciprocal of P244.116   IMPLCA4A.745   
+C                                                                          IMPLCA4A.746   
+          DTL_DV(I,BL_LEVELS) = RBT * ( DTL_DV(I,BL_LEVELS)   ! P244.117   IMPLCA4A.747   
+     +                                  - CT*DTL_DV(I,BLM1) )              IMPLCA4A.748   
+        ENDIF                                                              IMPLCA4A.749   
+        TL(I,BL_LEVELS) = TL(I,BL_LEVELS) + DTL_DV(I,BL_LEVELS)            IMPLCA4A.750   
+C                                                           ... P244.127   IMPLCA4A.751   
+C                                                                          IMPLCA4A.752   
+   44 CONTINUE                                                             IMPLCA4A.753   
+C                                                                          IMPLCA4A.754   
+C-----------------------------------------------------------------------   IMPLCA4A.755   
+CL 5.  "Downward sweep" through whole matrix.  TL, QW and                  IMPLCA4A.756   
+CL     updated when the final implicit increments have been calculated.    IMPLCA4A.757   
+C-----------------------------------------------------------------------   IMPLCA4A.758   
+CL 5.1 Remaining TL rows of matrix and add implicit increments above       IMPLCA4A.759   
+CL     the rml or at all levels if it is less than two layers thick.       IMPLCA4A.760   
+C-----------------------------------------------------------------------   IMPLCA4A.761   
+C                                                                          IMPLCA4A.762   
+      DO 51 K=BLM1,1,-1                                                    IMPLCA4A.763   
+        DO 511 I=P1,P1+P_POINTS-1                                          IMPLCA4A.764   
+          IF ( (K .GT. NRML(I)) .OR. (NRML(I) .LT. 2) ) THEN               IMPLCA4A.765   
+            DTL_DV(I,K) = DTL_DV(I,K) - AT_ATQ(I,K)*DTL_DV(I,K+1)          IMPLCA4A.766   
+                                                              ! P244.118   IMPLCA4A.767   
+            TL(I,K) = TL(I,K) + DTL_DV(I,K)                   ! P244.127   IMPLCA4A.768   
+          ENDIF                                                            IMPLCA4A.769   
+  511   CONTINUE                                                           IMPLCA4A.770   
+   51 CONTINUE                                                             IMPLCA4A.771   
+      DO 52 I=P1,P1+P_POINTS-1                                             IMPLCA4A.772   
+C                                                                          IMPLCA4A.773   
+C-----------------------------------------------------------------------   IMPLCA4A.774   
+CL 5.2 Rapidly mixing layer increments                                     IMPLCA4A.775   
+C-----------------------------------------------------------------------   IMPLCA4A.776   
+C                                                                          IMPLCA4A.777   
+        IF ( NRML(I) .GE. 2 ) THEN                                         IMPLCA4A.778   
+          NRMLP1 = NRML(I) + 1                                             IMPLCA4A.779   
+          DTL_RML(I) = DTL_RML(I) - AT_RML(I) * DTL_DV(I,NRMLP1)           IMPLCA4A.780   
+          DQW_RML(I) = DQW_RML(I)                                          IMPLCA4A.781   
+     &                      - AQ_RML(I) * ALPHA1(I) * DTL_RML(I)           IMPLCA4A.782   
+          TL(I,1) = TL(I,1) + DTL_RML(I)                                   IMPLCA4A.783   
+          QW(I,1) = QW(I,1) + DQW_RML(I)                                   IMPLCA4A.784   
+        ELSE                                                               IMPLCA4A.785   
+C                                                                          IMPLCA4A.786   
+C-----------------------------------------------------------------------   IMPLCA4A.787   
+CL 5.3 Lowest-level QW row of matrix; local mixing where there is no rml   IMPLCA4A.788   
+C-----------------------------------------------------------------------   IMPLCA4A.789   
+                                                                           IMPLCA4A.790   
+          DQW_DU(I,1) = DQW_DU(I,1) - ALPHA1(I)*AQ_AM(I,1)*DTL_DV(I,1)     IMPLCA4A.791   
+          QW(I,1) = QW(I,1) + DQW_DU(I,1)     ! P244.128                   IMPLCA4A.792   
+        ENDIF                                                              IMPLCA4A.793   
+   52 CONTINUE                                                             IMPLCA4A.794   
+C                                                                          IMPLCA4A.795   
+C-----------------------------------------------------------------------   IMPLCA4A.796   
+CL 5.4 Remaining QW rows of matrix + updating of QW's.                     IMPLCA4A.797   
+CL     Add implicit increments due to mixing above rml or at all levels    IMPLCA4A.798   
+CL     if there it does not exist.                                         IMPLCA4A.799   
+C-----------------------------------------------------------------------   IMPLCA4A.800   
+      DO 54 K=2,BL_LEVELS                                                  IMPLCA4A.801   
+        DO 541 I=P1,P1+P_POINTS-1                                          IMPLCA4A.802   
+          IF (K .GT. NRML(I)) THEN                                         IMPLCA4A.803   
+            IF ((NRML(I) .GE. 2) .AND. (K-1 .EQ. NRML(I))) THEN            IMPLCA4A.804   
+              DQW_DU(I,K) = DQW_DU(I,K) - AQ_AM(I,K)*DQW_RML(I)            IMPLCA4A.805   
+            ELSE                                                           IMPLCA4A.806   
+              DQW_DU(I,K) = DQW_DU(I,K) - AQ_AM(I,K)*DQW_DU(I,K-1)         IMPLCA4A.807   
+C                                                           ... P244.121   IMPLCA4A.808   
+            ENDIF                                                          IMPLCA4A.809   
+            QW(I,K) = QW(I,K) + DQW_DU(I,K)                  ! P244.128    IMPLCA4A.810   
+          ELSE                                                             IMPLCA4A.811   
+C                                                                          IMPLCA4A.812   
+C  Add the increments due to rapid mixing if in the rapidly mixing layer   IMPLCA4A.813   
+C                                                                          IMPLCA4A.814   
+            TL(I,K) = TL(I,K) + DTL_RML(I)                                 IMPLCA4A.815   
+            QW(I,K) = QW(I,K) + DQW_RML(I)                                 IMPLCA4A.816   
+          ENDIF                                                            IMPLCA4A.817   
+  541   CONTINUE                                                           IMPLCA4A.818   
+   54 CONTINUE                                                             IMPLCA4A.819   
+C                                                                          IMPLCA4A.820   
+C-----------------------------------------------------------------------   IMPLCA4A.821   
+CL 6.  Calculate final implicit fluxes of heat and moisture.               IMPLCA4A.822   
+C-----------------------------------------------------------------------   IMPLCA4A.823   
+CL 6.1 Surface fluxes for the 3 surface types: land, sea-ice, ordinary     IMPLCA4A.824   
+CL     sea. Pass out the value of RHOKH(,1) in GAMMA_RHOKH_1 to satisfy    IMPLCA4A.825   
+CL     STASH GAMMA_RHOKH_RDZ will contain precisely that on output.        IMPLCA4A.826   
+C-----------------------------------------------------------------------   IMPLCA4A.827   
+C                                                                          IMPLCA4A.828   
+      DO 61 I=P1,P1+P_POINTS-1                                             IMPLCA4A.829   
+        IF ( NRML(I) .GE. 2 ) THEN                                         IMPLCA4A.830   
+           DTL =  DTL_RML(I)                                               IMPLCA4A.831   
+           DQW = DQW_RML(I)                                                IMPLCA4A.832   
+        ELSE                                                               IMPLCA4A.833   
+           DTL = DTL_DV(I,1)                                               IMPLCA4A.834   
+           DQW = DQW_DU(I,1)                                               IMPLCA4A.835   
+        ENDIF                                                              IMPLCA4A.836   
+        GAMMA_RKE_DQ = GAMMA_RHOKE(I)*(DQW - ALPHA1(I)*DTL)                IMPLCA4A.837   
+        IF (LAND_MASK(I)) THEN                                             IMPLCA4A.838   
+          FTL_ICE(I) = 0.0                                                 IMPLCA4A.839   
+          FQW_ICE(I) = 0.0                                                 IMPLCA4A.840   
+          FTL(I,1) = FTL(I,1) + RHOKPM(I)*( LAT_HEAT(I)*GAMMA_RKE_DQ       IMPLCA4A.841   
+     &                                      - GAMMA(1)*ASHTF(I)*DTL )      IMPLCA4A.842   
+          FQW(I,1) = FQW(I,1) - RHOKPM(I)*( CP*GAMMA_RKE_DQ                IMPLCA4A.843   
+     &                             + GAMMA(1)*RESFT(I)*ASHTF(I)*DQW )      IMPLCA4A.844   
+          EPOT(I) = EPOT(I) - RHOKPM_POT(I)*( CP*GAMMA_RKE_DQ              ANG1F405.180   
+     &                             + GAMMA(1)*ASHTF(I)*DQW )               ANG1F405.181   
+          SURF_HT_FLUX(I) = RADNET(I) - LAT_HEAT(I)*FQW(I,1)               IMPLCA4A.845   
+     &                                - CP*FTL(I,1)                        IMPLCA4A.846   
+        ELSEIF (ICE_FRACT(I).GT.0.0) THEN                                  IMPLCA4A.847   
+          FQW_ICE(I) = FQW(I,1) - E_SEA(I) - RHOKPM(I) *                   IMPLCA4A.848   
+     &                      (CP*GAMMA_RKE_DQ + GAMMA(1)*ASHTF(I)*DQW)      IMPLCA4A.849   
+          FTL_ICE(I) =  FTL(I,1) - H_SEA(I)/CP + RHOKPM(I) *               IMPLCA4A.850   
+     &                  (LS*GAMMA_RKE_DQ - GAMMA(1)*ASHTF(I)*DTL)          IMPLCA4A.851   
+          E_SEA(I) = E_SEA(I) - (1.0 - ICE_FRACT(I)) *                     IMPLCA4A.852   
+     &                                        GAMMA_RHOKE(I)*DQW           IMPLCA4A.853   
+          H_SEA(I) = H_SEA(I) - (1.0 - ICE_FRACT(I)) * CP *                IMPLCA4A.854   
+     &                                        GAMMA_RHOKH_1(I)*DTL         IMPLCA4A.855   
+          FTL(I,1) = FTL_ICE(I) + H_SEA(I)/CP                              IMPLCA4A.856   
+          FQW(I,1) = FQW_ICE(I) + E_SEA(I)                                 IMPLCA4A.857   
+          EPOT(I) = FQW_ICE(I) + E_SEA(I)                                  ANG1F405.182   
+          SURF_HT_FLUX(I) = RADNET(I) - LS*FQW_ICE(I) - CP*FTL_ICE(I)      IMPLCA4A.858   
+        ELSE  ! ordinary sea point                                         IMPLCA4A.859   
+          FTL(I,1) = FTL(I,1) - GAMMA_RHOKH_1(I)*DTL                       IMPLCA4A.860   
+          FQW(I,1) = FQW(I,1) - GAMMA_RHOKH_1(I)*DQW                       IMPLCA4A.861   
+          EPOT(I) = EPOT(I) - GAMMA_RHOKH_1(I)*DQW                         ANG1F405.183   
+          E_SEA(I) = FQW(I,1)                                              IMPLCA4A.862   
+          H_SEA(I) = FTL(I,1)*CP                                           IMPLCA4A.863   
+          FTL_ICE(I) = 0.0                                                 IMPLCA4A.864   
+          FQW_ICE(I) = 0.0                                                 IMPLCA4A.865   
+        ENDIF                                                              IMPLCA4A.866   
+        GAMMA_RHOKH_1(I) = GAMMA_RHOKH_1(I) / GAMMA(1)                     IMPLCA4A.867   
+        GAMMA_RHOKE(I) = GAMMA_RHOKE(I) / GAMMA(1)                         IMPLCA4A.868   
+   61 CONTINUE                                                             IMPLCA4A.869   
+C                                                                          IMPLCA4A.870   
+C-----------------------------------------------------------------------   ANG1F405.184   
+CL  Ensures that the potential evaporation rate equals the evaporation     ANG1F405.185   
+CL  rate, when there is net condensation. Otherwise E/Ep could be          ANG1F405.186   
+CL  <0 or >1 when the implicit adjustment is added.                        ANG1F405.187   
+C-----------------------------------------------------------------------   ANG1F405.188   
+      DO I=P1,P1+P_POINTS-1                                                ANG1F405.189   
+        IF(FQW(I,1).LT.0.0)THEN                                            ANG1F405.190   
+          EPOT(I)=FQW(I,1)                                                 ANG1F405.191   
+        ENDIF                                                              ANG1F405.192   
+      ENDDO                                                                ANG1F405.193   
+C-----------------------------------------------------------------------   IMPLCA4A.871   
+CL 6.2 Fluxes at layer interfaces above the surface.                       IMPLCA4A.872   
+C-----------------------------------------------------------------------   IMPLCA4A.873   
+      DO 62 K=2,BL_LEVELS                                                  IMPLCA4A.874   
+        KM1 = K-1                                                          IMPLCA4A.875   
+        DO 621 I=P1,P1+P_POINTS-1                                          IMPLCA4A.876   
+C                                                                          IMPLCA4A.877   
+C  Calculate and store fluxes due to local mixing.                         IMPLCA4A.878   
+C  FTL(local mixing) stored in array AT,                                   IMPLCA4A.879   
+C  FQW(local mixing) stored in array AQ_AM.                                IMPLCA4A.880   
+C                                                                          IMPLCA4A.881   
+          NRMLP1 = NRML(I) + 1                                             IMPLCA4A.882   
+          IF ((NRML(I) .GE. 2) .AND. (K .EQ. NRMLP1)) THEN                 IMPLCA4A.883   
+            AT_ATQ(I,K) = FTL(I,K) - GAMMA_RHOKH_RDZ(I,K)                  IMPLCA4A.884   
+     &                              * ( DTL_DV(I,K) - DTL_RML(I) )         IMPLCA4A.885   
+            AQ_AM(I,K) = FQW(I,K) - GAMMA_RHOKH_RDZ(I,K)                   IMPLCA4A.886   
+     &                              * ( DQW_DU(I,K) - DQW_RML(I) )         IMPLCA4A.887   
+          ELSE                                                             IMPLCA4A.888   
+            AT_ATQ(I,K) = FTL(I,K) - GAMMA_RHOKH_RDZ(I,K)                  IMPLCA4A.889   
+     &                              * ( DTL_DV(I,K) - DTL_DV(I,KM1) )      IMPLCA4A.890   
+            AQ_AM(I,K) = FQW(I,K) - GAMMA_RHOKH_RDZ(I,K)                   IMPLCA4A.891   
+     &                              * ( DQW_DU(I,K) - DQW_DU(I,KM1) )      IMPLCA4A.892   
+          ENDIF                                                            IMPLCA4A.893   
+C                                                                          IMPLCA4A.894   
+C  Now calculate the implicit fluxes including both local mixing and       IMPLCA4A.895   
+C  if appropriate also the fluxes due to rapid mixing through layers.      IMPLCA4A.896   
+C                                                                          IMPLCA4A.897   
+          IF ( K .EQ. 2 ) THEN                                             IMPLCA4A.898   
+            IF ( NRML(I) .GE. 2 ) THEN                                     IMPLCA4A.899   
+              FTL(I,K) = AT_ATQ(I,K)                                       IMPLCA4A.900   
+     &                    + FTL(I,KM1) - DTL_RML(I) / DTRDZ(I,KM1)         IMPLCA4A.901   
+              FQW(I,K) = AQ_AM(I,K)                                        IMPLCA4A.902   
+     &                    + FQW(I,KM1) - DQW_RML(I) / DTRDZ(I,KM1)         IMPLCA4A.903   
+            ELSE                                                           IMPLCA4A.904   
+              FTL(I,K) = AT_ATQ(I,K)                                       IMPLCA4A.905   
+              FQW(I,K) = AQ_AM(I,K)                                        IMPLCA4A.906   
+            ENDIF                                                          IMPLCA4A.907   
+          ELSEIF ( K .LE. NRML(I) ) THEN                                   IMPLCA4A.908   
+            FTL(I,K) = AT_ATQ(I,K) - AT_ATQ(I,KM1)                         IMPLCA4A.909   
+     &                    + FTL(I,KM1) - DTL_RML(I) / DTRDZ(I,KM1)         IMPLCA4A.910   
+            FQW(I,K) = AQ_AM(I,K) - AQ_AM(I,KM1)                           IMPLCA4A.911   
+     &                    + FQW(I,KM1) - DQW_RML(I) / DTRDZ(I,KM1)         IMPLCA4A.912   
+          ELSE                                                             IMPLCA4A.913   
+            FTL(I,K) = AT_ATQ(I,K)                                         IMPLCA4A.914   
+            FQW(I,K) = AQ_AM(I,K)                                          IMPLCA4A.915   
+          ENDIF                                                            IMPLCA4A.916   
+  621   CONTINUE                                                           IMPLCA4A.917   
+   62 CONTINUE                                                             IMPLCA4A.918   
+C                                                                          IMPLCA4A.919   
+CL----------------------------------------------------------------------   IMPLCA4A.920   
+CL (B) Calculations on UV-grid.                                            IMPLCA4A.921   
+CL----------------------------------------------------------------------   IMPLCA4A.922   
+C                                                                          IMPLCA4A.923   
+C-----------------------------------------------------------------------   IMPLCA4A.924   
+CL 7.  Solve matrix equation P244.80 for implicit increments to U and V.   IMPLCA4A.925   
+C-----------------------------------------------------------------------   IMPLCA4A.926   
+C                                                                          IMPLCA4A.927   
+*IF -DEF,SCMA                                                              AJC1F405.153   
+C-----------------------------------------------------------------------   IMPLCA4A.929   
+C  7.0 Interpolate to UV-grid the pressure changes across the model        IMPLCA4A.930   
+C      layers                                                              IMPLCA4A.931   
+C-----------------------------------------------------------------------   IMPLCA4A.932   
+      DO 70 K=1,BL_LEVELS                                                  IMPLCA4A.933   
+        CALL P_TO_UV(DELTAP(P1,K),AQ_RML(U1+ROW_LENGTH),                   IMPLCA4A.934   
+     +     P_POINTS,P_POINTS-ROW_LENGTH,ROW_LENGTH,P_ROWS)                 IMPLCA4A.935   
+        DO 701 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                    IMPLCA4A.936   
+          DELTAP(I,K) = AQ_RML(I)                                          IMPLCA4A.937   
+  701   CONTINUE                                                           IMPLCA4A.938   
+   70 CONTINUE                                                             IMPLCA4A.939   
+C                                                                          IMPLCA4A.940   
+C-----------------------------------------------------------------------   IMPLCA4A.941   
+CL 7.1 Initial calculations and "upward sweep".                            IMPLCA4A.942   
+CL (a) "Surface" fluxes.                                                   IMPLCA4A.943   
+C-----------------------------------------------------------------------   IMPLCA4A.944   
+C                                                                          IMPLCA4A.945   
+      DO 71 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                       IMPLCA4A.946   
+*ELSE                                                                      IMPLCA4A.947   
+C                                                                          IMPLCA4A.948   
+C-----------------------------------------------------------------------   IMPLCA4A.949   
+CL 7.1 Initial calculations and "upward sweep".                            IMPLCA4A.950   
+C-----------------------------------------------------------------------   IMPLCA4A.951   
+CL (a) "Surface" fluxes.                                                   IMPLCA4A.952   
+C-----------------------------------------------------------------------   IMPLCA4A.953   
+      DO 71 I=1,U_POINTS                                                   IMPLCA4A.954   
+*ENDIF                                                                     IMPLCA4A.955   
+        DTRDZ_UV(I,1) = -DTIMEG / DELTAP(I,1)                              IMPLCA4A.956   
+        DELTAP_RML(I) = 0.0                                                IMPLCA4A.957   
+C                                                                          IMPLCA4A.958   
+C  "Explicit" increments to U(1) and V(1) when there is no rapidly         IMPLCA4A.959   
+C  mixing layer or it does not extend beyond the bottom model layer.       IMPLCA4A.960   
+C                                                                          IMPLCA4A.961   
+        DQW_DU(I,1) = DTRDZ_UV(I,1) * ( TAUX(I,2) - TAUX(I,1) )            IMPLCA4A.962   
+C                                                            ... P244.67   IMPLCA4A.963   
+C                                                                          IMPLCA4A.964   
+        DTL_DV(I,1) = DTRDZ_UV(I,1) * ( TAUY(I,2) - TAUY(I,1) )            IMPLCA4A.965   
+C                                                            ... P244.67   IMPLCA4A.966   
+C                                                                          IMPLCA4A.967   
+        CM = -DTRDZ_UV(I,1) * GAMMA_RHOKM_1(I)               ! P244.66     IMPLCA4A.968   
+        AQ_AM(I,1) = -DTRDZ_UV(I,1) * GAMMA_RHOKM_RDZUV(I,2)   ! P244.64   IMPLCA4A.969   
+        RBM = 1.0 / ( 1.0 - AQ_AM(I,1) - CM )    ! Reciprocal of P244.81   IMPLCA4A.970   
+        DQW_DU(I,1) = RBM * DQW_DU(I,1)                        ! P244.82   IMPLCA4A.971   
+        DTL_DV(I,1) = RBM * DTL_DV(I,1)                        ! P244.83   IMPLCA4A.972   
+        AQ_AM(I,1) = RBM * AQ_AM(I,1)                          ! P244.84   IMPLCA4A.973   
+   71 CONTINUE                                                             IMPLCA4A.974   
+C                                                                          IMPLCA4A.975   
+C                                                                          IMPLCA4A.976   
+C-----------------------------------------------------------------------   IMPLCA4A.977   
+CL (b) Fluxes at (or rows representing) layer interfaces above the         IMPLCA4A.978   
+CL     surface but below the top of the boundary layer.                    IMPLCA4A.979   
+C-----------------------------------------------------------------------   IMPLCA4A.980   
+      DO 72 K=2,BLM1                                                       IMPLCA4A.981   
+        KP1 = K+1                                                          IMPLCA4A.982   
+        KM1 = K-1                                                          IMPLCA4A.983   
+*IF -DEF,SCMA                                                              AJC1F405.154   
+        DO 721 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                    IMPLCA4A.985   
+*ELSE                                                                      IMPLCA4A.986   
+        DO 721 I=1,U_POINTS                                                IMPLCA4A.987   
+*ENDIF                                                                     IMPLCA4A.988   
+          DTRDZ_UV(I,K) = -DTIMEG / DELTAP(I,K)                            IMPLCA4A.989   
+            DQW_DU(I,K) = DTRDZ_UV(I,K) * ( TAUX(I,KP1) - TAUX(I,K) )      IMPLCA4A.990   
+C                                                            ... P244.74   IMPLCA4A.991   
+            DTL_DV(I,K) = DTRDZ_UV(I,K) * ( TAUY(I,KP1) - TAUY(I,K) )      IMPLCA4A.992   
+C                                                            ... P244.74   IMPLCA4A.993   
+            AQ_AM(I,K) = -DTRDZ_UV(I,K) * GAMMA_RHOKM_RDZUV(I,KP1)         IMPLCA4A.994   
+C                                                            ... P244.71   IMPLCA4A.995   
+          CM = -DTRDZ_UV(I,K) * GAMMA_RHOKM_RDZUV(I,K)         ! P244.72   IMPLCA4A.996   
+            RBM = 1.0 / ( 1.0 - AQ_AM(I,K) -CM*( 1.0 + AQ_AM(I,KM1) ) )    IMPLCA4A.997   
+C                     1                      2                    2 1      IMPLCA4A.998   
+C                                              ... Reciprocal of P244.85   IMPLCA4A.999   
+C                                                                          IMPLCA4A.1000  
+            DQW_DU(I,K) = RBM * ( DQW_DU(I,K) - CM*DQW_DU(I,KM1) )         IMPLCA4A.1001  
+C                                                            ... P244.86   IMPLCA4A.1002  
+C                                                                          IMPLCA4A.1003  
+            DTL_DV(I,K) = RBM * ( DTL_DV(I,K) - CM*DTL_DV(I,KM1) )         IMPLCA4A.1004  
+C                                                            ... P244.87   IMPLCA4A.1005  
+C                                                                          IMPLCA4A.1006  
+          AQ_AM(I,K) = RBM * AQ_AM(I,K)                        ! P244.88   IMPLCA4A.1007  
+  721   CONTINUE                                                           IMPLCA4A.1008  
+   72 CONTINUE                                                             IMPLCA4A.1009  
+C-----------------------------------------------------------------------   IMPLCA4A.1010  
+CL (c) Top "boundary" layer; also increment U and V here, as implicit      IMPLCA4A.1011  
+CL     flux for this layer is got from "upward sweep" alone.               IMPLCA4A.1012  
+C-----------------------------------------------------------------------   IMPLCA4A.1013  
+*IF -DEF,SCMA                                                              AJC1F405.155   
+      DO 73 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                       IMPLCA4A.1015  
+*ELSE                                                                      IMPLCA4A.1016  
+      DO 73 I=1,U_POINTS                                                   IMPLCA4A.1017  
+*ENDIF                                                                     IMPLCA4A.1018  
+        DTRDZ_UV(I,BL_LEVELS) = -DTIMEG / DELTAP(I,BL_LEVELS)              IMPLCA4A.1019  
+        DQW_DU(I,BL_LEVELS) = -DTRDZ_UV(I,BL_LEVELS) * TAUX(I,BL_LEVELS)   IMPLCA4A.1020  
+C                                                            ... P244.78   IMPLCA4A.1021  
+C                                                                          IMPLCA4A.1022  
+        DTL_DV(I,BL_LEVELS) = -DTRDZ_UV(I,BL_LEVELS) * TAUY(I,BL_LEVELS)   IMPLCA4A.1023  
+C                                                            ... P244.78   IMPLCA4A.1024  
+C                                                                          IMPLCA4A.1025  
+        CM = -DTRDZ_UV(I,BL_LEVELS) * GAMMA_RHOKM_RDZUV(I,BL_LEVELS)       IMPLCA4A.1026  
+C                                                            ... P244.76   IMPLCA4A.1027  
+        RBM = 1.0 / ( 1.0 - CM*( 1.0 + AQ_AM(I,BLM1) ) )                   IMPLCA4A.1028  
+C                     1          2                     2 1                 IMPLCA4A.1029  
+C                                              ... Reciprocal of P244.89   IMPLCA4A.1030  
+C                                                                          IMPLCA4A.1031  
+        DQW_DU(I,BL_LEVELS) = RBM * ( DQW_DU(I,BL_LEVELS)    ! P244.90     IMPLCA4A.1032  
+     +                                    - CM*DQW_DU(I,BLM1) )            IMPLCA4A.1033  
+        DTL_DV(I,BL_LEVELS) = RBM * ( DTL_DV(I,BL_LEVELS)    ! P244.91     IMPLCA4A.1034  
+     +                                    - CM*DTL_DV(I,BLM1) )            IMPLCA4A.1035  
+        U(I,BL_LEVELS) = U(I,BL_LEVELS) + DQW_DU(I,BL_LEVELS)  ! P244.94   IMPLCA4A.1036  
+        V(I,BL_LEVELS) = V(I,BL_LEVELS) + DTL_DV(I,BL_LEVELS)  ! P244.95   IMPLCA4A.1037  
+   73 CONTINUE                                                             IMPLCA4A.1038  
+                                                                           IMPLCA4A.1039  
+C-----------------------------------------------------------------------   IMPLCA4A.1040  
+CL 7.4 Complete solution of matrix equation by performing "downward        IMPLCA4A.1041  
+CL     sweep", then update U and V.                                        IMPLCA4A.1042  
+C-----------------------------------------------------------------------   IMPLCA4A.1043  
+      DO 74 K=BLM1,1,-1                                                    IMPLCA4A.1044  
+        KP1 = K+1                                                          IMPLCA4A.1045  
+*IF -DEF,SCMA                                                              AJC1F405.156   
+        DO 741 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                    IMPLCA4A.1047  
+*ELSE                                                                      IMPLCA4A.1048  
+        DO 741 I=1,U_POINTS                                                IMPLCA4A.1049  
+*ENDIF                                                                     IMPLCA4A.1050  
+          DQW_DU(I,K) = DQW_DU(I,K) - AQ_AM(I,K)*DQW_DU(I,KP1) ! P244.92   IMPLCA4A.1051  
+          DTL_DV(I,K) = DTL_DV(I,K) - AQ_AM(I,K)*DTL_DV(I,KP1) ! P244.93   IMPLCA4A.1052  
+          U(I,K) = U(I,K) + DQW_DU(I,K)                        ! P244.94   IMPLCA4A.1053  
+          V(I,K) = V(I,K) + DTL_DV(I,K)                        ! P244.95   IMPLCA4A.1054  
+  741   CONTINUE                                                           IMPLCA4A.1055  
+   74 CONTINUE                                                             IMPLCA4A.1056  
+C                                                                          IMPLCA4A.1057  
+C-----------------------------------------------------------------------   IMPLCA4A.1058  
+CL 8.  Essentially diagnostic calculations, though some values (i.e. the   IMPLCA4A.1059  
+CL     surface wind stresses) are required by the coupled version of the   IMPLCA4A.1060  
+CL     model.                                                              IMPLCA4A.1061  
+C-----------------------------------------------------------------------   IMPLCA4A.1062  
+CL 8.1 Surface wind stress components.                                     IMPLCA4A.1063  
+CL     Pass out the value of RHOKM(,1) in GAMMA_RHOKM_1 to satisfy STASH   IMPLCA4A.1064  
+CL     GAMMA_RHOKM_RDZ will contain precisely that on output.              IMPLCA4A.1065  
+C-----------------------------------------------------------------------   IMPLCA4A.1066  
+C                                                                          IMPLCA4A.1067  
+*IF -DEF,SCMA                                                              AJC1F405.157   
+      DO 81 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                       IMPLCA4A.1069  
+*ELSE                                                                      IMPLCA4A.1070  
+      DO 81 I=1,U_POINTS                                                   IMPLCA4A.1071  
+*ENDIF                                                                     IMPLCA4A.1072  
+        TAUX(I,1) = TAUX(I,1) + GAMMA_RHOKM_1(I)*DQW_DU(I,1)               IMPLCA4A.1073  
+C                                                            ... P244.61   IMPLCA4A.1074  
+C                                                                          IMPLCA4A.1075  
+        TAUY(I,1) = TAUY(I,1) + GAMMA_RHOKM_1(I)*DTL_DV(I,1)               IMPLCA4A.1076  
+C                                                            ... P244.61   IMPLCA4A.1077  
+C                                                                          IMPLCA4A.1078  
+        GAMMA_RHOKM_1(I) = GAMMA_RHOKM_1(I) / GAMMA(1)                     IMPLCA4A.1079  
+   81 CONTINUE                                                             IMPLCA4A.1080  
+*IF -DEF,SCMA                                                              AJC1F405.158   
+C                                                                          IMPLCA4A.1082  
+C  Set extreme rows to "missing data indicator".                           IMPLCA4A.1083  
+C                                                                          IMPLCA4A.1084  
+*IF DEF,MPP                                                                GPB1F403.166   
+      IF (attop) THEN                                                      GPB1F403.167   
+*ENDIF                                                                     GPB1F403.168   
+        DO I=U1,U1+ROW_LENGTH-1                                            GPB1F403.169   
+          TAUX(I,1)=1.E30                                                  GPB1F403.170   
+          TAUY(I,1)=1.E30                                                  GPB1F403.171   
+        ENDDO                                                              GPB1F403.172   
+*IF DEF,MPP                                                                GPB1F403.173   
+      ENDIF                                                                GPB1F403.174   
+                                                                           GPB1F403.175   
+      IF (atbase) THEN                                                     GPB1F403.176   
+*ENDIF                                                                     GPB1F403.177   
+        DO I= U1 + (U_ROWS-1)*ROW_LENGTH , U1 + U_ROWS*ROW_LENGTH - 1      GPB1F403.178   
+          TAUX(I,1)=1.E30                                                  GPB1F403.179   
+          TAUY(I,1)=1.E30                                                  GPB1F403.180   
+        ENDDO                                                              GPB1F403.181   
+*IF DEF,MPP                                                                GPB1F403.182   
+      ENDIF                                                                GPB1F403.183   
+*ENDIF                                                                     GPB1F403.184   
+*ENDIF                                                                     IMPLCA4A.1109  
+C                                                                          IMPLCA4A.1110  
+C-----------------------------------------------------------------------   IMPLCA4A.1111  
+CL 8.2 Wind stress components at layer interfaces above the surface.       IMPLCA4A.1112  
+C-----------------------------------------------------------------------   IMPLCA4A.1113  
+      DO 82 K=2,BL_LEVELS                                                  IMPLCA4A.1114  
+        KM1 = K-1                                                          IMPLCA4A.1115  
+*IF -DEF,SCMA                                                              AJC1F405.159   
+        DO 821 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                    IMPLCA4A.1117  
+*ELSE                                                                      IMPLCA4A.1118  
+        DO 821 I=1,U_POINTS                                                IMPLCA4A.1119  
+*ENDIF                                                                     IMPLCA4A.1120  
+          AQ_AM(I,K) = TAUX(I,K) + GAMMA_RHOKM_RDZUV(I,K)    ! P244.61     IMPLCA4A.1121  
+     +                        *( DQW_DU(I,K) - DQW_DU(I,KM1) )             IMPLCA4A.1122  
+          AT_ATQ(I,K) = TAUY(I,K) + GAMMA_RHOKM_RDZUV(I,K)   ! P244.61     IMPLCA4A.1123  
+     +                        *( DTL_DV(I,K) - DTL_DV(I,KM1) )             IMPLCA4A.1124  
+          TAUX(I,K) = AQ_AM(I,K)                                           IMPLCA4A.1125  
+          TAUY(I,K) = AT_ATQ(I,K)                                          IMPLCA4A.1126  
+  821   CONTINUE                                                           IMPLCA4A.1127  
+*IF -DEF,SCMA                                                              AJC1F405.160   
+C                                                                          IMPLCA4A.1129  
+C  Set extreme rows to "missing data indicator".                           IMPLCA4A.1130  
+C                                                                          IMPLCA4A.1131  
+*IF DEF,MPP                                                                GPB1F403.185   
+      IF (attop) THEN                                                      GPB1F403.186   
+*ENDIF                                                                     GPB1F403.187   
+        DO I=U1,U1+ROW_LENGTH-1                                            GPB1F403.188   
+          TAUX(I,K)=1.E30                                                  GPB1F403.189   
+          TAUY(I,K)=1.E30                                                  GPB1F403.190   
+        ENDDO                                                              GPB1F403.191   
+*IF DEF,MPP                                                                GPB1F403.192   
+      ENDIF                                                                GPB1F403.193   
+                                                                           GPB1F403.194   
+      IF (atbase) THEN                                                     GPB1F403.195   
+*ENDIF                                                                     GPB1F403.196   
+        DO I= U1 + (U_ROWS-1)*ROW_LENGTH , U1 + U_ROWS*ROW_LENGTH - 1      GPB1F403.197   
+          TAUX(I,K)=1.E30                                                  GPB1F403.198   
+          TAUY(I,K)=1.E30                                                  GPB1F403.199   
+        ENDDO                                                              GPB1F403.200   
+*IF DEF,MPP                                                                GPB1F403.201   
+      ENDIF                                                                GPB1F403.202   
+*ENDIF                                                                     GPB1F403.203   
+*ENDIF                                                                     IMPLCA4A.1139  
+   82 CONTINUE                                                             IMPLCA4A.1140  
+C                                                                          IMPLCA4A.1141  
+C-----------------------------------------------------------------------   IMPLCA4A.1142  
+CL 8.3 Wind components at 10 metres above the surface.                     IMPLCA4A.1143  
+C-----------------------------------------------------------------------   IMPLCA4A.1144  
+      IF (SU10 .OR. SV10) THEN                                             IMPLCA4A.1145  
+*IF -DEF,SCMA                                                              AJC1F405.161   
+CMIC$ DO ALL VECTOR SHARED(U_POINTS, ROW_LENGTH, U1, SU10, SV10, U_FIELD   IMPLCA4A.1147  
+CMIC$1   , U0, CDR10M, BL_LEVELS, U, U10M, V0, V, V10M) PRIVATE(I)         IMPLCA4A.1148  
+CDIR$ IVDEP                                                                IMPLCA4A.1149  
+! Fujitsu vectorization directive                                          GRB0F405.363   
+!OCL NOVREC                                                                GRB0F405.364   
+        DO 83 I=U1+ROW_LENGTH,U1+U_POINTS-ROW_LENGTH-1                     IMPLCA4A.1150  
+*ELSE                                                                      IMPLCA4A.1151  
+        DO 83 I=1,U_POINTS                                                 IMPLCA4A.1152  
+*ENDIF                                                                     IMPLCA4A.1153  
+          IF (SU10)                                                        IMPLCA4A.1154  
+     +      U10M(I) = U0(I) + CDR10M(I)*( U(I,1) - U0(I) )     ! P244.96   IMPLCA4A.1155  
+          IF (SV10)                                                        IMPLCA4A.1156  
+     +      V10M(I) = V0(I) + CDR10M(I)*( V(I,1) - V0(I) )     ! P244.97   IMPLCA4A.1157  
+   83   CONTINUE                                                           IMPLCA4A.1158  
+*IF -DEF,SCMA                                                              AJC1F405.162   
+C                                                                          IMPLCA4A.1160  
+C  Set extreme rows to "missing data indicator".                           IMPLCA4A.1161  
+C                                                                          IMPLCA4A.1162  
+*IF DEF,MPP                                                                GPB1F403.204   
+      IF (attop) THEN                                                      GPB1F403.205   
+*ENDIF                                                                     GPB1F403.206   
+        DO I=U1,U1+ROW_LENGTH-1                                            GPB1F403.207   
+          IF (SU10) THEN                                                   GPB1F403.208   
+            U10M(I)=1.E30                                                  GPB1F403.209   
+          ENDIF                                                            GPB1F403.210   
+          IF (SV10) THEN                                                   GPB1F403.211   
+            V10M(I)=1.E30                                                  GPB1F403.212   
+          ENDIF                                                            GPB1F403.213   
+        ENDDO                                                              GPB1F403.214   
+*IF DEF,MPP                                                                GPB1F403.215   
+      ENDIF                                                                GPB1F403.216   
+                                                                           GPB1F403.217   
+      IF (atbase) THEN                                                     GPB1F403.218   
+*ENDIF                                                                     GPB1F403.219   
+        DO I= U1 + (U_ROWS-1)*ROW_LENGTH , U1 + U_ROWS*ROW_LENGTH - 1      GPB1F403.220   
+          IF (SU10) THEN                                                   GPB1F403.221   
+            U10M(I)=1.E30                                                  GPB1F403.222   
+          ENDIF                                                            GPB1F403.223   
+          IF (SV10) THEN                                                   GPB1F403.224   
+            V10M(I)=1.E30                                                  GPB1F403.225   
+          ENDIF                                                            GPB1F403.226   
+        ENDDO                                                              GPB1F403.227   
+*IF DEF,MPP                                                                GPB1F403.228   
+      ENDIF                                                                GPB1F403.229   
+*ENDIF                                                                     GPB1F403.230   
+*ENDIF                                                                     IMPLCA4A.1195  
+      ENDIF                                                                IMPLCA4A.1196  
+  999 CONTINUE   ! Branch for error exit.                                  IMPLCA4A.1197  
+      IF (LTIMER) THEN                                                     IMPLCA4A.1198  
+      CALL TIMER('IMPLCAL ',4)                                             IMPLCA4A.1199  
+      ENDIF                                                                IMPLCA4A.1200  
+      RETURN                                                               IMPLCA4A.1201  
+      END                                                                  IMPLCA4A.1202  
+*ENDIF                                                                     IMPLCA4A.1203  

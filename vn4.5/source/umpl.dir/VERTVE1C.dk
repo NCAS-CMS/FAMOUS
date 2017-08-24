@@ -1,0 +1,528 @@
+*IF DEF,A10_1C                                                             VERTVE1C.2     
+C ******************************COPYRIGHT******************************    VERTVE1C.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    VERTVE1C.4     
+C                                                                          VERTVE1C.5     
+C Use, duplication or disclosure of this code is subject to the            VERTVE1C.6     
+C restrictions as set forth in the contract.                               VERTVE1C.7     
+C                                                                          VERTVE1C.8     
+C                Meteorological Office                                     VERTVE1C.9     
+C                London Road                                               VERTVE1C.10    
+C                BRACKNELL                                                 VERTVE1C.11    
+C                Berkshire UK                                              VERTVE1C.12    
+C                RG12 2SZ                                                  VERTVE1C.13    
+C                                                                          VERTVE1C.14    
+C If no contract has been raised with this copy of the code, the use,      VERTVE1C.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      VERTVE1C.16    
+C to do so must first be obtained in writing from the Head of Numerical    VERTVE1C.17    
+C Modelling at the above address.                                          VERTVE1C.18    
+C ******************************COPYRIGHT******************************    VERTVE1C.19    
+C                                                                          VERTVE1C.20    
+CLL   SUBROUTINE VERT_VEL -------------------------------------------      VERTVE1C.21    
+CLL                                                                        VERTVE1C.22    
+CLL   PURPOSE:  CALCULATES DIVERGENCE FROM MASS-WEIGHTED HORIZONTAL        VERTVE1C.23    
+CLL             VELOCITY COMPONENTS USING EQUATION (30).                   VERTVE1C.24    
+CLL             THEN DERIVES MASS-WEIGHTED VERTICAL VELOCITY               VERTVE1C.25    
+CLL             FIELD, EQUATION (29).                                      VERTVE1C.26    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  VERTVE1C.27    
+CLL   WAS VERSION FOR CRAY Y-MP                                            VERTVE1C.28    
+CLL   WRITTEN BY M.H MAWSON.                                               VERTVE1C.29    
+CLL                                                                        VERTVE1C.30    
+CLL  MODEL            MODIFICATION HISTORY:                                VERTVE1C.31    
+CLL VERSION  DATE                                                          VERTVE1C.32    
+CLL                                                                        VERTVE1C.33    
+!LL   4.4   11/08/97  New version optimised for T3E                        VERTVE1C.34    
+!LL                   Not bit reproducible with VERTVE1A.                  VERTVE1C.35    
+CLL   4.4   11/08/97  Initialisation of ETADOT_MEAN to zero built into     VERTVE1C.36    
+CLL                   calculation of first adjustment timestep value.      VERTVE1C.37    
+CLL                   A. Dickinson                                         VERTVE1C.38    
+CLL                                                                        VERTVE1C.39    
+!     4.4    17/07/97 SCALAR calculated using SEC_P_LATITUDE at both       VERTVE1C.40    
+!                     poles for non MPP code to enable bit comparison      VERTVE1C.41    
+!                     with MPP code.   I Edmond                            VERTVE1C.42    
+CLL  4.5  19/12/97  Set North- & Southmost rows of ETADOT_MEAN to          ARB0F405.1     
+CLL                 zero for limited area runs.  RTHBarnes.                ARB0F405.2     
+!     4.5    30/04/98 Loop merging for T3E optimisation for MES            APB3F405.430   
+!                     D.Salmond                                            APB3F405.431   
+!                                                                          APB3F405.432   
+CLL   PROGRAMMING STANDARD:                                                VERTVE1C.43    
+CLL                                                                        VERTVE1C.44    
+CLL   SYSTEM COMPONENTS COVERED: P112                                      VERTVE1C.45    
+CLL                                                                        VERTVE1C.46    
+CLL   SYSTEM TASK: P1                                                      VERTVE1C.47    
+CLL                                                                        VERTVE1C.48    
+CLL   DOCUMENTATION:       THE EQUATIONS USED ARE (29) AND (30)            VERTVE1C.49    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER NO. 10     VERTVE1C.50    
+CLL                        M.J.P. CULLEN,T.DAVIES AND M.H. MAWSON,         VERTVE1C.51    
+CLL                        VERSION 17 DATED 11/02/91.                      VERTVE1C.52    
+CLLEND-------------------------------------------------------------        VERTVE1C.53    
+                                                                           VERTVE1C.54    
+C*L   ARGUMENTS:---------------------------------------------------        VERTVE1C.55    
+                                                                           VERTVE1C.56    
+      SUBROUTINE VERT_VEL                                                  VERTVE1C.57    
+     1                  (U,V,ETADOT_MEAN,SEC_P_LATITUDE,SUM_DIVERGENCE,    VERTVE1C.58    
+     2                   U_FIELD,P_FIELD,P_LEVELS,                         VERTVE1C.59    
+*CALL ARGFLDPT                                                             VERTVE1C.60    
+     3                   ROW_LENGTH,LATITUDE_STEP_INVERSE,                 VERTVE1C.61    
+     4                   LONGITUDE_STEP_INVERSE,ADJUSTMENT_STEPS,AKH,      VERTVE1C.62    
+     5                   BKH,RS,CALL_NUMBER,RECIP_RS_SQUARED_SURFACE,      VERTVE1C.63    
+     6                   PSTAR,LLINTS,LWHITBROM)                           VERTVE1C.64    
+                                                                           VERTVE1C.65    
+      IMPLICIT NONE                                                        VERTVE1C.66    
+      LOGICAL  LLINTS, LWHITBROM                                           VERTVE1C.67    
+                                                                           VERTVE1C.68    
+      INTEGER                                                              VERTVE1C.69    
+     *  ROW_LENGTH         !IN    NUMBER OF POINTS PER ROW                 VERTVE1C.70    
+     *, P_LEVELS           !IN    NUMBER OF PRESSURE LEVELS OF DATA        VERTVE1C.71    
+     *, P_FIELD            !IN    NUMBER OF POINTS IN PRESSURE FIELD.      VERTVE1C.72    
+     *, U_FIELD            !IN    NUMBER OF POINTS IN VELOCITY FIELD.      VERTVE1C.73    
+     *, ADJUSTMENT_STEPS   !IN    HOLDS NUMBER OF ADJUSTMENT STEPS.        VERTVE1C.74    
+     *, CALL_NUMBER        !IN    CURRENT ADJUSTMENT STEP NUMBER           VERTVE1C.75    
+! All TYPFLDPT arguments are intent IN                                     VERTVE1C.76    
+*CALL TYPFLDPT                                                             VERTVE1C.77    
+                                                                           VERTVE1C.78    
+      REAL                                                                 VERTVE1C.79    
+     * U(U_FIELD,P_LEVELS)    !IN. MASS WEIGHTED U VELOCITY.               VERTVE1C.80    
+     *,V(U_FIELD,P_LEVELS)    !IN. MASS WEIGHTED V VELOCITY*               VERTVE1C.81    
+     *                        ! COS(LATITUDE)                              VERTVE1C.82    
+     *,SEC_P_LATITUDE(P_FIELD)!IN  1/COS(LAT) AT P POINTS                  VERTVE1C.83    
+     *,LONGITUDE_STEP_INVERSE !IN 1/LONGITUDE INCREMENT                    VERTVE1C.84    
+     *,LATITUDE_STEP_INVERSE  !IN 1/LATITUDE INCREMENT                     VERTVE1C.85    
+     *,BKH(P_LEVELS+1)        !IN. HOLDS COEFFICIENT WHICH                 VERTVE1C.86    
+     *                        ! MULTIPLIES PSTAR IN HYBRID CO-ORDS         VERTVE1C.87    
+     *                        ! AT LEVELS K-1/2                            VERTVE1C.88    
+     *,AKH(P_LEVELS+1)        !IN. HOLDS FIRST COEFFICIENT                 VERTVE1C.89    
+     *                        ! IN HYBRID CO-ORDS AT LEVELS K-1/2          VERTVE1C.90    
+     *,RS(P_FIELD,P_LEVELS)   !IN. RADIUS OF EARTH AT P POINTS.            VERTVE1C.91    
+     *,PSTAR(P_FIELD)         !IN. SURFACE PRESSURE AT P POINTS.           VERTVE1C.92    
+                                                                           VERTVE1C.93    
+      REAL                                                                 VERTVE1C.94    
+     * SUM_DIVERGENCE(P_FIELD,P_LEVELS) !OUT. HOLDS MASS                   VERTVE1C.95    
+     *                              ! WEIGHTED VERTICAL VELOCITY.          VERTVE1C.96    
+                                                                           VERTVE1C.97    
+      REAL                                                                 VERTVE1C.98    
+     * ETADOT_MEAN(P_FIELD,P_LEVELS) !INOUT. HOLDS ACCUMULATED MASS-       VERTVE1C.99    
+     *                              ! WEIGHTED VERTICAL VELOCITY DIVIDED   VERTVE1C.100   
+     *                              ! BY NUMBER OF ADJUSTMENT_STEPS.       VERTVE1C.101   
+     *,RECIP_RS_SQUARED_SURFACE(P_FIELD) !INOUT. HOLDS 1./(RS*RS) AT       VERTVE1C.102   
+     *                              ! MODEL SURFACE. SET ON FIRST CALL     VERTVE1C.103   
+     *                              ! AND HELD CONSTANT FOR ALL            VERTVE1C.104   
+     *                              ! SUBSEQUENT ONES.                     VERTVE1C.105   
+C*---------------------------------------------------------------------    VERTVE1C.106   
+*IF DEF,MPP                                                                VERTVE1C.107   
+! Parameters for MPP code                                                  VERTVE1C.108   
+*ENDIF                                                                     VERTVE1C.109   
+                                                                           VERTVE1C.110   
+C*L   3 LOCAL ARRAYS NEEDED. -----------------------------------------     VERTVE1C.111   
+                                                                           VERTVE1C.112   
+      REAL                                                                 VERTVE1C.113   
+     *  DU_DLONGITUDE(P_FIELD)                                             VERTVE1C.114   
+     *, DV_DLATITUDE(P_FIELD)                                              VERTVE1C.115   
+     *, DV_DLATITUDE2(U_FIELD)                                             VERTVE1C.116   
+*IF DEF,MPP,AND,DEF,GLOBAL                                                 VERTVE1C.117   
+      REAL                                                                 VERTVE1C.118   
+     & sum_tmp(ROW_LENGTH-2*EW_Halo,P_LEVELS),                             VERTVE1C.119   
+     & sums(P_LEVELS)                                                      VERTVE1C.120   
+*ENDIF                                                                     VERTVE1C.121   
+C*---------------------------------------------------------------------    VERTVE1C.122   
+                                                                           VERTVE1C.123   
+C DEFINE COUNT VARIABLES FOR DO LOOPS ETC.                                 VERTVE1C.124   
+      INTEGER                                                              VERTVE1C.125   
+     *  I,J,K                                                              VERTVE1C.126   
+     *  ,START_POINT,END_POINT                                             VERTVE1C.127   
+     *,LEVEL                                                               VERTVE1C.128   
+     &, POINTS                                                             VERTVE1C.129   
+*IF DEF,MPP                                                                VERTVE1C.130   
+      INTEGER info                                                         VERTVE1C.131   
+*ENDIF                                                                     VERTVE1C.132   
+C DEFINE LOCAL SCALARS                                                     VERTVE1C.133   
+      REAL                                                                 VERTVE1C.134   
+     * RECIP_ADJUSTMENT_STEPS                                              VERTVE1C.135   
+*IF -DEF,MPP                                                               VERTVE1C.136   
+      REAL                                                                 VERTVE1C.137   
+     *  SCALAR1                                                            VERTVE1C.138   
+     *, SCALAR2                                                            VERTVE1C.139   
+*ELSE                                                                      VERTVE1C.140   
+      REAL                                                                 VERTVE1C.141   
+     *  SCALAR                                                             VERTVE1C.142   
+*ENDIF                                                                     VERTVE1C.143   
+                                                                           VERTVE1C.144   
+*IF DEF,GLOBAL                                                             VERTVE1C.145   
+      REAL SUM_N,SUM_S                                                     VERTVE1C.146   
+*ENDIF                                                                     VERTVE1C.147   
+                                                                           VERTVE1C.148   
+C*---------------------------------------------------------------------    VERTVE1C.149   
+*CALL C_A                                                                  VERTVE1C.150   
+C*L   EXTERNAL SUBROUTINE CALLS:- ( IF LWHITBROM ) ---------------         VERTVE1C.151   
+      EXTERNAL CALC_RS                                                     VERTVE1C.152   
+C*---------------------------------------------------------------------    VERTVE1C.153   
+                                                                           VERTVE1C.154   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS ROWS*ROW_LENGTH.                    VERTVE1C.155   
+CL---------------------------------------------------------------------    VERTVE1C.156   
+CL    INTERNAL STRUCTURE.                                                  VERTVE1C.157   
+! All references to poles in the comments, apply equally to the            VERTVE1C.158   
+! Northern and Southern rows when used in LAM configuration.               VERTVE1C.159   
+! References to halos apply only to MPP code.                              VERTVE1C.160   
+CL---------------------------------------------------------------------    VERTVE1C.161   
+CL                                                                         VERTVE1C.162   
+CL---------------------------------------------------------------------    VERTVE1C.163   
+CL    SECTION 1. CALCULATE DIVERGENCE AS IN EQUATION (30).                 VERTVE1C.164   
+CL---------------------------------------------------------------------    VERTVE1C.165   
+                                                                           VERTVE1C.166   
+      POINTS=LAST_P_VALID_PT-FIRST_VALID_PT+1                              VERTVE1C.167   
+! Number of points to be processed by CALC_RS. For non-MPP runs this       VERTVE1C.168   
+! is simply P_FIELD, for MPP, it is all the points, minus any              VERTVE1C.169   
+! unused halo areas (ie. the halo above North pole row, and beneath        VERTVE1C.170   
+! South pole row)                                                          VERTVE1C.171   
+                                                                           VERTVE1C.172   
+C LOOP OVER LEVELS                                                         VERTVE1C.173   
+      DO 100 K=1,P_LEVELS                                                  VERTVE1C.174   
+                                                                           VERTVE1C.175   
+*IF DEF,GLOBAL                                                             APB3F405.433   
+C CALCULATE DU/D(LAMDA)                                                    VERTVE1C.176   
+! Loop over all points except South Pole, missing halos                    VERTVE1C.177   
+        DO 110 I=START_POINT_NO_HALO - ROW_LENGTH +1,                      VERTVE1C.178   
+     &           END_P_POINT_NO_HALO                                       VERTVE1C.179   
+          DU_DLONGITUDE(I) = LONGITUDE_STEP_INVERSE*(U(I,K)-U(I-1,K))      VERTVE1C.180   
+ 110    CONTINUE                                                           VERTVE1C.181   
+                                                                           VERTVE1C.182   
+C CALCULATE DV/D(PHI)                                                      VERTVE1C.183   
+! Loop over all non-polar points, missing halos                            VERTVE1C.184   
+        DO 120 I=START_POINT_NO_HALO , END_P_POINT_NO_HALO                 VERTVE1C.185   
+          DV_DLATITUDE(I) = LATITUDE_STEP_INVERSE*(V(I-ROW_LENGTH,K)       VERTVE1C.186   
+     *                         -V(I,K))                                    VERTVE1C.187   
+ 120    CONTINUE                                                           VERTVE1C.188   
+                                                                           VERTVE1C.189   
+C CALCULATE AVERAGE OF DV_DLATITUDE                                        VERTVE1C.191   
+! Loop over all non-polar points, missing halos and first point            VERTVE1C.192   
+        DO 130 I=START_POINT_NO_HALO+1 , END_P_POINT_NO_HALO               VERTVE1C.193   
+          DV_DLATITUDE2(I) = DV_DLATITUDE(I) + DV_DLATITUDE(I-1)           VERTVE1C.194   
+ 130    CONTINUE                                                           VERTVE1C.195   
+                                                                           VERTVE1C.196   
+*IF -DEF,MPP                                                               VERTVE1C.197   
+C NOW DO FIRST POINT ON EACH SLICE FOR DU_DLONGITUDE AND DV_DLATITUDE2     VERTVE1C.198   
+! Set the first point of the Northern row we missed in loop 110            VERTVE1C.199   
+        I=START_POINT_NO_HALO - ROW_LENGTH                                 VERTVE1C.200   
+        DU_DLONGITUDE(I) = LONGITUDE_STEP_INVERSE * (U(I,K)                VERTVE1C.201   
+     *                        - U(I + ROW_LENGTH - 1,K))                   VERTVE1C.202   
+! Loop over all non-polar points, missing halos                            VERTVE1C.203   
+        DO 140 I=START_POINT_NO_HALO , END_P_POINT_NO_HALO,                VERTVE1C.204   
+     &           ROW_LENGTH                                                VERTVE1C.205   
+          DU_DLONGITUDE(I) = LONGITUDE_STEP_INVERSE * (U(I,K)              VERTVE1C.206   
+     *                        - U(I + ROW_LENGTH - 1,K))                   VERTVE1C.207   
+         DV_DLATITUDE2(I)=DV_DLATITUDE(I)+DV_DLATITUDE(I-1+ROW_LENGTH)     VERTVE1C.208   
+ 140    CONTINUE                                                           VERTVE1C.209   
+*ELSE                                                                      VERTVE1C.210   
+! Set the first element of arrays where loops have skipped:                VERTVE1C.211   
+! Loop 110:                                                                VERTVE1C.212   
+        DU_DLONGITUDE(START_POINT_NO_HALO - ROW_LENGTH)=                   VERTVE1C.213   
+     &    DU_DLONGITUDE(START_POINT_NO_HALO - ROW_LENGTH + 1)              VERTVE1C.214   
+! Loop 130:                                                                VERTVE1C.215   
+        DV_DLATITUDE2(START_POINT_NO_HALO)=                                VERTVE1C.216   
+     &    DV_DLATITUDE2(START_POINT_NO_HALO+1)                             VERTVE1C.217   
+*ENDIF                                                                     VERTVE1C.218   
+                                                                           VERTVE1C.219   
+C CALCULATE DIVERGENCES.                                                   VERTVE1C.220   
+                                                                           VERTVE1C.221   
+! Loop over all non-polar points, missing halos                            VERTVE1C.222   
+        DO 150 J=START_POINT_NO_HALO , END_P_POINT_NO_HALO                 VERTVE1C.223   
+          SUM_DIVERGENCE(J,K)= SEC_P_LATITUDE(J)*.5*(DU_DLONGITUDE(J)      VERTVE1C.224   
+     *                           + DU_DLONGITUDE(J-ROW_LENGTH)             VERTVE1C.225   
+     *                           + DV_DLATITUDE2(J))                       VERTVE1C.226   
+ 150    CONTINUE                                                           VERTVE1C.227   
+*ELSE                                                                      VERTVE1C.228   
+! I don't think the following code is required:                            VERTVE1C.229   
+!      DU_DLONGITUDE(1) = 0.                                               VERTVE1C.230   
+! MPP: DU_DLONGITUDE(Offy*ROW_LENGTH+1) = 0.                               VERTVE1C.231   
+                                                                           VERTVE1C.232   
+C CALCULATE DIVERGENCES.                                                   VERTVE1C.233   
+                                                                           VERTVE1C.234   
+! Loop over all non-polar points, missing first and last points            VERTVE1C.235   
+        DO 130 I=START_POINT_NO_HALO+1 , END_P_POINT_NO_HALO-1             APB3F405.434   
+          SUM_DIVERGENCE(I,K)= SEC_P_LATITUDE(I)*.5*                       APB3F405.435   
+     *                  (LONGITUDE_STEP_INVERSE*(U(I,K)-U(I-1,K)           APB3F405.436   
+     *                + U(I-ROW_LENGTH,K)-U(I-1-ROW_LENGTH,K))             APB3F405.437   
+     *                + LATITUDE_STEP_INVERSE*(V(I-ROW_LENGTH,K)-V(I,K)    APB3F405.438   
+     *                + V(I-1-ROW_LENGTH,K)-V(I-1,K)))                     APB3F405.439   
+ 130    CONTINUE                                                           VERTVE1C.240   
+                                                                           VERTVE1C.241   
+*IF DEF,MPP                                                                VERTVE1C.242   
+! Put some real numbers at start and end                                   VERTVE1C.243   
+        SUM_DIVERGENCE(START_POINT_NO_HALO,K)=0.0                          VERTVE1C.244   
+        SUM_DIVERGENCE(END_P_POINT_NO_HALO,K)=0.0                          VERTVE1C.245   
+*ENDIF                                                                     VERTVE1C.246   
+C ZERO DIVERGENCES ON BOUNDARIES.                                          VERTVE1C.247   
+*IF -DEF,MPP                                                               VERTVE1C.248   
+! Loop over all non-polar points at left edge of grid (ie. first           VERTVE1C.249   
+! point of each row)                                                       VERTVE1C.250   
+        DO 140 J=START_POINT_NO_HALO,END_P_POINT_NO_HALO,ROW_LENGTH        VERTVE1C.251   
+          SUM_DIVERGENCE(J,K) = 0.                                         VERTVE1C.252   
+          SUM_DIVERGENCE(J+ROW_LENGTH-1,K) = 0.                            VERTVE1C.253   
+ 140    CONTINUE                                                           VERTVE1C.254   
+*ELSE                                                                      VERTVE1C.255   
+        IF (at_left_of_LPG) THEN                                           VERTVE1C.256   
+! Loop over first real (ie. not halo) non-polar point of each row          VERTVE1C.257   
+          DO J=START_POINT_NO_HALO+FIRST_ROW_PT-1,                         VERTVE1C.258   
+     &         END_P_POINT_NO_HALO,ROW_LENGTH                              VERTVE1C.259   
+            SUM_DIVERGENCE(J,K) = 0.0                                      VERTVE1C.260   
+          ENDDO                                                            VERTVE1C.261   
+        ENDIF                                                              VERTVE1C.262   
+                                                                           VERTVE1C.263   
+        IF (at_right_of_LPG) THEN                                          VERTVE1C.264   
+! Loop over last real (ie. not halo) non-polar point of each row           VERTVE1C.265   
+          DO J=START_POINT_NO_HALO+LAST_ROW_PT-1,                          VERTVE1C.266   
+     &         END_P_POINT_NO_HALO,ROW_LENGTH                              VERTVE1C.267   
+            SUM_DIVERGENCE(J,K) = 0.0                                      VERTVE1C.268   
+          ENDDO                                                            VERTVE1C.269   
+        ENDIF                                                              VERTVE1C.270   
+*ENDIF                                                                     VERTVE1C.271   
+*ENDIF                                                                     VERTVE1C.272   
+                                                                           VERTVE1C.273   
+                                                                           VERTVE1C.274   
+C END LOOP OVER LEVELS                                                     VERTVE1C.275   
+ 100  CONTINUE                                                             VERTVE1C.276   
+*IF DEF,GLOBAL                                                             VERTVE1C.277   
+! Calculate divergence at poles by summing DV/D(LAT) around polar          VERTVE1C.278   
+! circle and averaging.                                                    VERTVE1C.279   
+                                                                           VERTVE1C.280   
+!      START_POINT=TOP_ROW_START+LAST_ROW_PT-1   ! Last point of NP row    VERTVE1C.281   
+!      END_POINT= P_BOT_ROW_START+FIRST_ROW_PT-1 ! First point of SP row   VERTVE1C.282   
+       START_POINT=START_POINT_NO_HALO-1                                   VERTVE1C.283   
+       END_POINT=END_P_POINT_NO_HALO+1                                     VERTVE1C.284   
+                                                                           VERTVE1C.285   
+                                                                           VERTVE1C.286   
+! New start and end points to include one point of each pole               VERTVE1C.287   
+                                                                           VERTVE1C.288   
+*IF -DEF,MPP                                                               VERTVE1C.289   
+      SCALAR1= SEC_P_LATITUDE(TOP_ROW_START)*LATITUDE_STEP_INVERSE /       VERTVE1C.290   
+     &         GLOBAL_ROW_LENGTH                                           VERTVE1C.291   
+      SCALAR2= SEC_P_LATITUDE(P_BOT_ROW_START)                             VERTVE1C.292   
+     &          *LATITUDE_STEP_INVERSE / GLOBAL_ROW_LENGTH                 VERTVE1C.293   
+                                                                           VERTVE1C.294   
+      DO K=1,P_LEVELS                                                      VERTVE1C.295   
+        SUM_N=0.0                                                          VERTVE1C.296   
+        SUM_S=0.0                                                          VERTVE1C.297   
+        DO I=1,ROW_LENGTH                                                  VERTVE1C.298   
+          SUM_N = SUM_N - V(I,K)*SCALAR1                                   VERTVE1C.299   
+          SUM_S = SUM_S + V(U_BOT_ROW_START-1+I,K)*SCALAR2                 VERTVE1C.300   
+        ENDDO                                                              VERTVE1C.301   
+        SUM_DIVERGENCE(START_POINT,K) = SUM_N                              VERTVE1C.302   
+        SUM_DIVERGENCE(END_POINT,K) = SUM_S                                VERTVE1C.303   
+      ENDDO                                                                VERTVE1C.304   
+*ELSE                                                                      VERTVE1C.305   
+! Do sum across North Pole                                                 VERTVE1C.306   
+      IF (at_top_of_LPG) THEN                                              VERTVE1C.307   
+        SCALAR = SEC_P_LATITUDE(TOP_ROW_START)*LATITUDE_STEP_INVERSE /     VERTVE1C.308   
+     &           GLOBAL_ROW_LENGTH                                         VERTVE1C.309   
+        DO K=1,P_LEVELS                                                    VERTVE1C.310   
+! Copy up the items to be summed into a temporary array                    VERTVE1C.311   
+! Loop over all the non-halo points on a row                               VERTVE1C.312   
+          DO I=FIRST_ROW_PT,LAST_ROW_PT                                    VERTVE1C.313   
+            sum_tmp(I-FIRST_ROW_PT+1,K)=                                   VERTVE1C.314   
+     &         -V(TOP_ROW_START+I-1,K)*SCALAR                              VERTVE1C.315   
+          ENDDO                                                            VERTVE1C.316   
+        ENDDO                                                              VERTVE1C.317   
+                                                                           VERTVE1C.318   
+! And perform the sum                                                      VERTVE1C.319   
+        CALL GCG_RVECSUMR(ROW_LENGTH-2*EW_Halo , ROW_LENGTH-2*EW_Halo,     VERTVE1C.320   
+     &                    1,P_LEVELS,sum_tmp,GC_ROW_GROUP,                 VERTVE1C.321   
+     &                    info,sums)                                       VERTVE1C.322   
+                                                                           VERTVE1C.323   
+! And store the result back                                                VERTVE1C.324   
+        DO K=1,P_LEVELS                                                    VERTVE1C.325   
+          SUM_DIVERGENCE(START_POINT,K)=sums(K)                            VERTVE1C.326   
+        ENDDO                                                              VERTVE1C.327   
+      ELSE  ! If this processor not at top of LPG                          VERTVE1C.328   
+        START_POINT=START_POINT_NO_HALO  ! no North Pole point here        VERTVE1C.329   
+      ENDIF                                                                VERTVE1C.330   
+                                                                           VERTVE1C.331   
+! And sum across South Pole                                                VERTVE1C.332   
+      IF (at_base_of_LPG) THEN                                             VERTVE1C.333   
+        SCALAR=SEC_P_LATITUDE(P_BOT_ROW_START)*LATITUDE_STEP_INVERSE/      VERTVE1C.334   
+     &         GLOBAL_ROW_LENGTH                                           VERTVE1C.335   
+                                                                           VERTVE1C.336   
+        DO K=1,P_LEVELS                                                    VERTVE1C.337   
+! Copy up the items to be summed into a temporary array                    VERTVE1C.338   
+! Loop over all the non-halo points on a row                               VERTVE1C.339   
+          DO I=FIRST_ROW_PT,LAST_ROW_PT                                    VERTVE1C.340   
+            sum_tmp(I-FIRST_ROW_PT+1,K)=                                   VERTVE1C.341   
+     &        V(U_BOT_ROW_START+I-1,K)*SCALAR                              VERTVE1C.342   
+          ENDDO                                                            VERTVE1C.343   
+        ENDDO                                                              VERTVE1C.344   
+                                                                           VERTVE1C.345   
+! And perform the sum                                                      VERTVE1C.346   
+        CALL GCG_RVECSUMR(ROW_LENGTH-2*EW_Halo , ROW_LENGTH-2*EW_Halo,     VERTVE1C.347   
+     &                    1,P_LEVELS,sum_tmp,GC_ROW_GROUP,                 VERTVE1C.348   
+     &                    info,sums)                                       VERTVE1C.349   
+                                                                           VERTVE1C.350   
+! And store the result back                                                VERTVE1C.351   
+        DO K=1,P_LEVELS                                                    VERTVE1C.352   
+          SUM_DIVERGENCE(END_POINT,K)=sums(K)                              VERTVE1C.353   
+        ENDDO                                                              VERTVE1C.354   
+      ELSE  ! If this processor not at the bottom of LPG                   VERTVE1C.355   
+        END_POINT=END_P_POINT_NO_HALO  ! no South Pole point here          VERTVE1C.356   
+      ENDIF                                                                VERTVE1C.357   
+*ENDIF                                                                     VERTVE1C.358   
+*ELSE                                                                      VERTVE1C.359   
+      START_POINT=START_POINT_NO_HALO                                      VERTVE1C.360   
+      END_POINT=END_P_POINT_NO_HALO                                        VERTVE1C.361   
+*ENDIF                                                                     VERTVE1C.362   
+                                                                           VERTVE1C.363   
+CL                                                                         VERTVE1C.364   
+CL---------------------------------------------------------------------    VERTVE1C.365   
+CL    SECTION 2. CALCULATE VERTICAL VELOCITY. EQUATION (29).               VERTVE1C.366   
+CL---------------------------------------------------------------------    VERTVE1C.367   
+                                                                           VERTVE1C.368   
+                                                                           VERTVE1C.369   
+C ---------------------------------------------------------------------    VERTVE1C.370   
+CL    SECTION 2.1 SUM DIVERGENCES THROUGHOUT ATMOSPHERE.                   VERTVE1C.371   
+C ---------------------------------------------------------------------    VERTVE1C.372   
+                                                                           VERTVE1C.373   
+C BY CODING THE SUMMATION AS FOLLOWS THE VALUES PUT INTO EACH LEVEL        VERTVE1C.374   
+C OF SUM_DIVERGENCE ARE THE ONES NEEDED FOR THE SECOND SUMMATION TERM      VERTVE1C.375   
+C IN EQUATION 29, WHILE THE TOTAL SUM IS HELD IN SUM_DIVERGENCE( ,1)       VERTVE1C.376   
+                                                                           VERTVE1C.377   
+      DO 210 K=P_LEVELS-1,1,-1                                             VERTVE1C.378   
+        DO 212 I=START_POINT,END_POINT                                     VERTVE1C.379   
+          SUM_DIVERGENCE(I,K)= SUM_DIVERGENCE(I,K)+SUM_DIVERGENCE(I,K+1)   VERTVE1C.380   
+ 212    CONTINUE                                                           VERTVE1C.381   
+ 210  CONTINUE                                                             VERTVE1C.382   
+                                                                           VERTVE1C.383   
+C ---------------------------------------------------------------------    VERTVE1C.384   
+CL    SECTION 2.2 CALCULATE MASS-WEIGHTED VERTICAL VELOCITY.               VERTVE1C.385   
+CL                CALCULATE 1/(RS*RS) IF THIS IS CALL NUMBER ONE.          VERTVE1C.386   
+C ---------------------------------------------------------------------    VERTVE1C.387   
+                                                                           VERTVE1C.388   
+      IF(CALL_NUMBER.EQ.1) THEN                                            VERTVE1C.389   
+CL    CALCULATE 1/(RS*RS) AT MODEL SURFACE                                 VERTVE1C.390   
+                                                                           VERTVE1C.391   
+      IF (.NOT.LWHITBROM) THEN                                             VERTVE1C.392   
+                                                                           VERTVE1C.393   
+! loop over all points, including valid halos                              VERTVE1C.394   
+        DO 220 I=FIRST_VALID_PT,LAST_P_VALID_PT                            VERTVE1C.395   
+          RECIP_RS_SQUARED_SURFACE(I) = 1./(A*A)                           VERTVE1C.396   
+ 220    CONTINUE                                                           VERTVE1C.397   
+                                                                           VERTVE1C.398   
+      ELSE                                                                 VERTVE1C.399   
+                                                                           VERTVE1C.400   
+        LEVEL=1                                                            VERTVE1C.401   
+C DV_DLATITUDE,DU_DLONGITUDE ARE DUMMY ARRAYS REQUIRED BY CALC_RS AND      VERTVE1C.402   
+C THE CONTENTS TRANSFERED TO AND RETURNED FROM IT ARE IRRELEVANT.          VERTVE1C.403   
+        CALL CALC_RS(PSTAR(FIRST_VALID_PT),AKH,BKH,                        VERTVE1C.404   
+     &               DV_DLATITUDE(FIRST_VALID_PT),                         VERTVE1C.405   
+     &               DU_DLONGITUDE(FIRST_VALID_PT),                        VERTVE1C.406   
+     *               RECIP_RS_SQUARED_SURFACE(FIRST_VALID_PT),             VERTVE1C.407   
+     &               POINTS,LEVEL,P_LEVELS,LLINTS)                         VERTVE1C.408   
+! loop over all points, including valid halos                              VERTVE1C.409   
+        DO 320 I=FIRST_VALID_PT,LAST_P_VALID_PT                            VERTVE1C.410   
+          RECIP_RS_SQUARED_SURFACE(I)= 1./(RECIP_RS_SQUARED_SURFACE(I)*    VERTVE1C.411   
+     *                                 RECIP_RS_SQUARED_SURFACE(I))        VERTVE1C.412   
+ 320    CONTINUE                                                           VERTVE1C.413   
+                                                                           VERTVE1C.414   
+      END IF      !     LWHITBROM                                          VERTVE1C.415   
+                                                                           VERTVE1C.416   
+      END IF                                                               VERTVE1C.417   
+                                                                           VERTVE1C.418   
+C DP/D(PSTAR) IS NOTHING MORE THAN THE BK COEFFICENT.                      VERTVE1C.419   
+*IF -DEF,STRAT                                                             VERTVE1C.420   
+                                                                           VERTVE1C.421   
+      DO 222 K= P_LEVELS,2,-1                                              VERTVE1C.422   
+CFPP$ SELECT(CONCUR)                                                       VERTVE1C.423   
+        DO 224 I=START_POINT,END_POINT                                     VERTVE1C.424   
+          SUM_DIVERGENCE(I,K)= SUM_DIVERGENCE(I,K) - BKH(K)                VERTVE1C.425   
+     *                          * SUM_DIVERGENCE(I,1)*RS(I,K)*RS(I,K)*     VERTVE1C.426   
+     *                          RECIP_RS_SQUARED_SURFACE(I)                VERTVE1C.427   
+ 224    CONTINUE                                                           VERTVE1C.428   
+ 222  CONTINUE                                                             VERTVE1C.429   
+                                                                           VERTVE1C.430   
+*ENDIF                                                                     VERTVE1C.431   
+C ---------------------------------------------------------------------    VERTVE1C.432   
+CL    SECTION 2.3 ACCUMULATE MASS-WEIGHTED VERTICAL VELOCITY DIVIDED       VERTVE1C.433   
+CL                BY NUMBER OF ADJUSTMENT TIMESTEPS.                       VERTVE1C.434   
+C ---------------------------------------------------------------------    VERTVE1C.435   
+                                                                           VERTVE1C.436   
+      RECIP_ADJUSTMENT_STEPS = 1./ ADJUSTMENT_STEPS                        VERTVE1C.437   
+      DO K= 1,P_LEVELS                                                     VERTVE1C.438   
+                                                                           VERTVE1C.439   
+      IF (CALL_NUMBER.EQ.1)THEN                                            VERTVE1C.440   
+                                                                           VERTVE1C.441   
+CFPP$ SELECT(CONCUR)                                                       VERTVE1C.442   
+        DO  I=START_POINT,END_POINT                                        VERTVE1C.443   
+          ETADOT_MEAN(I,K)= SUM_DIVERGENCE(I,K)                            VERTVE1C.444   
+     *                          * RECIP_ADJUSTMENT_STEPS                   VERTVE1C.445   
+        ENDDO                                                              VERTVE1C.446   
+                                                                           VERTVE1C.447   
+*IF -DEF,GLOBAL                                                            ARB0F405.3     
+C For limited area runs need to set North- & Southmost rows of             ARB0F405.4     
+C ETADOT_MEAN to zero, to avoid failure in P_TO_UV in UV_ADV.              ARB0F405.5     
+                                                                           ARB0F405.6     
+*IF DEF,MPP                                                                ARB0F405.7     
+        IF (at_top_of_LPG) THEN                                            ARB0F405.8     
+*ENDIF                                                                     ARB0F405.9     
+          DO I = TOP_ROW_START,TOP_ROW_START+ROW_LENGTH                    ARB0F405.10    
+            ETADOT_MEAN(I,K) = 0.0                                         ARB0F405.11    
+          END DO                                                           ARB0F405.12    
+*IF DEF,MPP                                                                ARB0F405.13    
+        END IF                                                             ARB0F405.14    
+                                                                           ARB0F405.15    
+        IF (at_base_of_LPG) THEN                                           ARB0F405.16    
+*ENDIF                                                                     ARB0F405.17    
+          DO I = P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH                ARB0F405.18    
+            ETADOT_MEAN(I,K) = 0.0                                         ARB0F405.19    
+          END DO                                                           ARB0F405.20    
+*IF DEF,MPP                                                                ARB0F405.21    
+        END IF                                                             ARB0F405.22    
+*ENDIF                                                                     ARB0F405.23    
+                                                                           ARB0F405.24    
+*ENDIF                                                                     ARB0F405.25    
+      ELSE                                                                 VERTVE1C.448   
+                                                                           VERTVE1C.449   
+CFPP$ SELECT(CONCUR)                                                       VERTVE1C.450   
+        DO  I=START_POINT,END_POINT                                        VERTVE1C.451   
+          ETADOT_MEAN(I,K)= ETADOT_MEAN(I,K) + SUM_DIVERGENCE(I,K)         VERTVE1C.452   
+     *                          * RECIP_ADJUSTMENT_STEPS                   VERTVE1C.453   
+        ENDDO                                                              VERTVE1C.454   
+                                                                           VERTVE1C.455   
+      ENDIF                                                                VERTVE1C.456   
+      ENDDO                                                                VERTVE1C.457   
+                                                                           VERTVE1C.458   
+*IF DEF,GLOBAL                                                             VERTVE1C.459   
+C IF GLOBAL MODEL SET ALL POINTS AT POLES TO THE UNIQUE VALUE.             VERTVE1C.460   
+      DO 240 K=1,P_LEVELS                                                  VERTVE1C.461   
+CDIR$ IVDEP                                                                VERTVE1C.462   
+! Fujitsu vectorization directive                                          GRB0F405.555   
+!OCL NOVREC                                                                GRB0F405.556   
+*IF DEF,MPP                                                                VERTVE1C.463   
+        IF (at_top_of_LPG) THEN                                            VERTVE1C.464   
+*ENDIF                                                                     VERTVE1C.465   
+! Loop over North Pole points, missing out the last (START_POINT)          VERTVE1C.466   
+! point.                                                                   VERTVE1C.467   
+          DO I=TOP_ROW_START+FIRST_ROW_PT-1,                               VERTVE1C.468   
+     &         TOP_ROW_START+LAST_ROW_PT-1                                 VERTVE1C.469   
+            ETADOT_MEAN(I,K)=ETADOT_MEAN(START_POINT,K)                    VERTVE1C.470   
+            SUM_DIVERGENCE(I,K)=SUM_DIVERGENCE(START_POINT,K)              VERTVE1C.471   
+          ENDDO                                                            VERTVE1C.472   
+*IF DEF,MPP                                                                VERTVE1C.473   
+        ENDIF  ! at North Pole                                             VERTVE1C.474   
+*ENDIF                                                                     VERTVE1C.475   
+                                                                           VERTVE1C.476   
+*IF DEF,MPP                                                                VERTVE1C.477   
+        IF (at_base_of_LPG) THEN                                           VERTVE1C.478   
+*ENDIF                                                                     VERTVE1C.479   
+! Loop over South Pole points, missing out the first (END_POINT)           VERTVE1C.480   
+! point.                                                                   VERTVE1C.481   
+          DO I=P_BOT_ROW_START+FIRST_ROW_PT-1,                             VERTVE1C.482   
+     &         P_BOT_ROW_START+LAST_ROW_PT-1                               VERTVE1C.483   
+            ETADOT_MEAN(I,K)=ETADOT_MEAN(END_POINT,K)                      VERTVE1C.484   
+            SUM_DIVERGENCE(I,K)=SUM_DIVERGENCE(END_POINT,K)                VERTVE1C.485   
+          ENDDO                                                            VERTVE1C.486   
+*IF DEF,MPP                                                                VERTVE1C.487   
+        ENDIF  ! at South Pole                                             VERTVE1C.488   
+*ENDIF                                                                     VERTVE1C.489   
+ 240  CONTINUE                                                             VERTVE1C.490   
+*ENDIF                                                                     VERTVE1C.491   
+                                                                           VERTVE1C.492   
+CL    END OF ROUTINE VERT_VEL                                              VERTVE1C.493   
+                                                                           VERTVE1C.494   
+      RETURN                                                               VERTVE1C.495   
+      END                                                                  VERTVE1C.496   
+*ENDIF                                                                     VERTVE1C.497   

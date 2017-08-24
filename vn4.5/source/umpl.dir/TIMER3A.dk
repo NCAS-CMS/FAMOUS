@@ -1,0 +1,1325 @@
+*IF DEF,C97_3A                                                             TIMER3A.2     
+C ******************************COPYRIGHT******************************    TIMER3A.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    TIMER3A.4     
+C                                                                          TIMER3A.5     
+C Use, duplication or disclosure of this code is subject to the            TIMER3A.6     
+C restrictions as set forth in the contract.                               TIMER3A.7     
+C                                                                          TIMER3A.8     
+C                Meteorological Office                                     TIMER3A.9     
+C                London Road                                               TIMER3A.10    
+C                BRACKNELL                                                 TIMER3A.11    
+C                Berkshire UK                                              TIMER3A.12    
+C                RG12 2SZ                                                  TIMER3A.13    
+C                                                                          TIMER3A.14    
+C If no contract has been raised with this copy of the code, the use,      TIMER3A.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      TIMER3A.16    
+C to do so must first be obtained in writing from the Head of Numerical    TIMER3A.17    
+C Modelling at the above address.                                          TIMER3A.18    
+C ******************************COPYRIGHT******************************    TIMER3A.19    
+C                                                                          TIMER3A.20    
+CLL SUBROUTINE TIMER ------------------------------------------------      TIMER3A.21    
+CLL                                                                        TIMER3A.22    
+CLL                    Purpose:                                            TIMER3A.23    
+CLL Allows the recording of time spent in any section of the program       TIMER3A.24    
+CLL Two types of timings are supported:                                    TIMER3A.25    
+CLL non-inclusive : if a timed section of code (1) contains another        TIMER3A.26    
+CLL                 timed section of code (2), then the timing for         TIMER3A.27    
+CLL                 section (1) will not include the time spent in         TIMER3A.28    
+CLL                 section (2). This is the normal use for the timer      TIMER3A.29    
+CLL                 routine in the UM up to vn3.4                          TIMER3A.30    
+CLL inclusive     : allows the user to measure the time taken between      TIMER3A.31    
+CLL                 any two points in the code, irrespective of any        TIMER3A.32    
+CLL                 other calls to the timer routine within the timed      TIMER3A.33    
+CLL                 section                                                TIMER3A.34    
+CLL                                                                        TIMER3A.35    
+CLL NB: Non-inclusive timers DO INCLUDE any inclusive timer sections       TIMER3A.36    
+CLL     contained within them. If this section of code should not be       TIMER3A.37    
+CLL     included, then also time it with a non-inclusive timer             TIMER3A.38    
+CLL                                                                        TIMER3A.39    
+CLL Timer now also records the time spent in itself                        TIMER3A.40    
+CLL Parameters:                                                            TIMER3A.41    
+CLL section_name - 20 byte character string containing name of             TIMER3A.42    
+CLL                timer reference                                         TIMER3A.43    
+CLL                                                                        TIMER3A.44    
+CLL action:                                                                TIMER3A.45    
+CLL  1 -> first call to timer (timer initialisation)                       TIMER3A.46    
+CLL  2 -> last call to timer (prints out the collected data)               TIMER3A.47    
+CLL  3 -> non-inclusive start timer                                        TIMER3A.48    
+CLL  4 -> non-inclusive end timer                                          TIMER3A.49    
+CLL  5 -> inclusive start timer                                            TIMER3A.50    
+CLL  6 -> inclusive end timer                                              TIMER3A.51    
+CLL                                                                        TIMER3A.52    
+CLL Timer should be called with action=1 before the first executable       TIMER3A.53    
+CLL statement, and with action=2 after the last executable statement.      TIMER3A.54    
+CLL                                                                        TIMER3A.55    
+CLL   Model               Modification History                             TIMER3A.56    
+CLL  version    Date                                                       TIMER3A.57    
+CLL   4.1       16/08/94  Based on old UM timer routine                    TIMER3A.58    
+!LL   4.2       08/10/96  Corrected intermediate timer error in            APB4F402.1     
+!LL                       elapsed times.                                   APB4F402.2     
+!LL                       Corrected size of message arg. in                APB4F402.3     
+!LL                       TIMER_OUTPUT.                                    APB4F402.4     
+!LL                       P.Burton                                         APB4F402.5     
+!LL   4.3       23/01/97  Added better overview for MPP runs               GPB3F403.122   
+!LL                       Corrected T3E wallclock time calculation         GPB3F403.123   
+!LL                       P.Burton                                         GPB3F403.124   
+!LL   4.5       17/04/98  Added barrier to allow imbalance to be           GPB8F405.1     
+!LL                       included in the correct timer section            GPB8F405.2     
+!LL                                                     P.Burton           GPB8F405.3     
+!LL   4.5       09/07/98  Replaced missing array index for                 GPB0F405.128   
+!LL                       last_ni_wallclock_time_elapsed.                  GPB0F405.129   
+!LL                                                     P. Burton          GPB0F405.130   
+CLL                                                                        TIMER3A.59    
+CLL  Author : Paul Burton                                                  TIMER3A.60    
+CLL                                                                        TIMER3A.61    
+                                                                           TIMER3A.62    
+      SUBROUTINE TIMER(section_name,action)                                TIMER3A.63    
+                                                                           TIMER3A.64    
+      IMPLICIT NONE                                                        TIMER3A.65    
+                                                                           TIMER3A.66    
+! Arguments:                                                               TIMER3A.67    
+      CHARACTER*(*) section_name  ! IN reference name for timed section    TIMER3A.68    
+      INTEGER action            ! IN what action to take                   TIMER3A.69    
+                                                                           TIMER3A.70    
+! Local variables:                                                         TIMER3A.71    
+! ni prefix = non-inclusive timings                                        TIMER3A.72    
+! in prefix = inclusive timings                                            TIMER3A.73    
+                                                                           TIMER3A.74    
+                                                                           TIMER3A.75    
+      INTEGER max_timers      ! maximum number of timings to be handled    TIMER3A.76    
+         PARAMETER ( max_timers=300 )                                      TIMER3A.77    
+                                                                           TIMER3A.78    
+      CHARACTER*20 ni_timer_name(max_timers),                              TIMER3A.79    
+     &                        ! names of timer references                  TIMER3A.80    
+     &             in_timer_name(max_timers)                               TIMER3A.81    
+     &                        ! names of timer references                  TIMER3A.82    
+                                                                           TIMER3A.83    
+      INTEGER ni_number_of_times_timed(max_timers),                        TIMER3A.84    
+     &                        ! number of times that a section of code     TIMER3A.85    
+     &                        ! has been timed                             TIMER3A.86    
+     &        in_number_of_times_timed(max_timers)                         TIMER3A.87    
+     &                        ! number of times that a section of code     TIMER3A.88    
+     &                        ! has been timed                             TIMER3A.89    
+                                                                           TIMER3A.90    
+      INTEGER old_timer(max_timers)                                        TIMER3A.91    
+     &                        ! the reference of the timer stopped when    TIMER3A.92    
+     &                        ! a new one is started                       TIMER3A.93    
+                                                                           TIMER3A.94    
+      REAL ni_cpu_time_elapsed(max_timers),                                TIMER3A.95    
+     &                        ! total amount of cpu time spent in          TIMER3A.96    
+     &                        ! a section of code                          TIMER3A.97    
+     &     ni_wallclock_time_elapsed(max_timers),                          TIMER3A.98    
+     &                        ! total amount of wallclock time             TIMER3A.99    
+     &     in_cpu_time_elapsed(max_timers),                                TIMER3A.100   
+     &                        ! total amount of time spent in a section    TIMER3A.101   
+     &                        ! of code                                    TIMER3A.102   
+     &     in_wallclock_time_elapsed(max_timers)                           TIMER3A.103   
+     &                        ! total amount of wallclock time             TIMER3A.104   
+                                                                           TIMER3A.105   
+      REAL ni_cpu_time_started,                                            TIMER3A.106   
+     &                        ! for non-inclusive timer - cpu time         TIMER3A.107   
+     &                        ! of starting                                TIMER3A.108   
+     &     ni_wallclock_time_started,                                      TIMER3A.109   
+     &                        ! wallclock time of starting                 TIMER3A.110   
+     &     in_cpu_time_started(max_timers),                                TIMER3A.111   
+     &                        ! for inclusive timer - cpu time             TIMER3A.112   
+     &                        !of starting                                 TIMER3A.113   
+     &     in_wallclock_time_started(max_timers)                           TIMER3A.114   
+     &                        ! wallclock time of starting                 TIMER3A.115   
+                                                                           TIMER3A.116   
+      INTEGER current_timer   ! for non-inclusive timer - current          TIMER3A.117   
+     &                        ! section of code being timed                TIMER3A.118   
+      INTEGER ni_number_of_timers,                                         TIMER3A.119   
+     &                        ! number of timers currently known about     TIMER3A.120   
+     &        in_number_of_timers                                          TIMER3A.121   
+     &                        ! number of timers currently known about     TIMER3A.122   
+                                                                           TIMER3A.123   
+      LOGICAL in_timer_running(max_timers)                                 TIMER3A.124   
+     &                        ! is a particular timer running?             TIMER3A.125   
+                                                                           TIMER3A.126   
+      INTEGER section_ref     ! reference of the current section           TIMER3A.127   
+                                                                           TIMER3A.128   
+                                                                           TIMER3A.129   
+                                                                           TIMER3A.130   
+      REAL cpu_time_into_timer,                                            TIMER3A.131   
+     &                        ! cpu time at which timer routine entered    TIMER3A.132   
+     &     wallclock_time_into_timer ! wallclock "                         TIMER3A.133   
+                                                                           TIMER3A.134   
+      LOGICAL timer_on        ! set to FALSE if an error occurs            TIMER3A.135   
+                                                                           TIMER3A.136   
+! Saved variables:                                                         TIMER3A.137   
+      SAVE ni_timer_name,in_timer_name,                                    TIMER3A.138   
+     &     ni_number_of_times_timed,in_number_of_times_timed,              TIMER3A.139   
+     &     ni_cpu_time_elapsed,in_cpu_time_elapsed,                        TIMER3A.140   
+     &     ni_wallclock_time_elapsed,in_wallclock_time_elapsed,            TIMER3A.141   
+     &     ni_cpu_time_started,in_cpu_time_started,                        TIMER3A.142   
+     &     ni_wallclock_time_started,in_wallclock_time_started,            TIMER3A.143   
+     &     current_timer ,                                                 TIMER3A.144   
+     &     ni_number_of_timers, in_number_of_timers,                       TIMER3A.145   
+     &     in_timer_running,                                               TIMER3A.146   
+     &     old_timer, timer_on                                             TIMER3A.147   
+                                                                           TIMER3A.148   
+! Magic numbers (action types):                                            TIMER3A.149   
+      INTEGER first_call_to_timer,                                         TIMER3A.150   
+     &        last_call_to_timer,                                          TIMER3A.151   
+     &        non_incl_start_timer,                                        TIMER3A.152   
+     &        non_incl_end_timer,                                          TIMER3A.153   
+     &        incl_start_timer,                                            TIMER3A.154   
+     &        incl_end_timer,                                              TIMER3A.155   
+     &        intermediate_output                                          TIMER3A.156   
+                                                                           TIMER3A.157   
+      PARAMETER ( first_call_to_timer = 1,                                 TIMER3A.158   
+     &            last_call_to_timer = 2,                                  TIMER3A.159   
+     &            non_incl_start_timer = 3,                                TIMER3A.160   
+     &            non_incl_end_timer = 4,                                  TIMER3A.161   
+     &            incl_start_timer = 5,                                    TIMER3A.162   
+     &            incl_end_timer = 6,                                      TIMER3A.163   
+     &            intermediate_output = 7 )                                TIMER3A.164   
+                                                                           TIMER3A.165   
+*IF DEF,MPP                                                                PXTIMER3.1     
+*CALL PARVARS                                                              GPB8F405.5     
+      INTEGER info                                                         GPB8F405.6     
+*ENDIF                                                                     GPB8F405.7     
+! Loop counters etc.                                                       TIMER3A.166   
+      INTEGER I                                                            TIMER3A.167   
+                                                                           TIMER3A.168   
+                                                                           TIMER3A.169   
+                                                                           TIMER3A.170   
+      EXTERNAL get_cpu_time,get_wallclock_time                             TIMER3A.171   
+      REAL get_cpu_time,get_wallclock_time                                 TIMER3A.172   
+! ----------------------------------------------------------------------   TIMER3A.173   
+                                                                           TIMER3A.174   
+*IF DEF,MPP                                                                GPB8F405.8     
+      IF (( action .EQ. first_call_to_timer) .OR.                          GPB8F405.9     
+     &    ( action .EQ. non_incl_start_timer) .OR.                         GPB8F405.10    
+     &    ( action .EQ. incl_start_timer)) THEN                            GPB8F405.11    
+*IF DEF,T3E                                                                GPB8F405.12    
+        CALL barrier()                                                     GPB8F405.13    
+*ELSE                                                                      GPB8F405.14    
+        CALL GC_GSYNC(nproc,info)                                          GPB8F405.15    
+*ENDIF                                                                     GPB8F405.16    
+      ENDIF                                                                GPB8F405.17    
+*ENDIF                                                                     GPB8F405.18    
+      IF (action .GT. 100) action=action-100                               GPB8F405.19    
+! The following line is useful for general debugging purposes              TIMER3A.175   
+! It prints out the name of every timed routine on entry and exit          TIMER3A.176   
+!         WRITE(6,*) section_name,' action= ',action                       TIMER3A.177   
+                                                                           TIMER3A.178   
+! start up the timer timer                                                 TIMER3A.179   
+                                                                           TIMER3A.180   
+      cpu_time_into_timer = get_cpu_time()                                 TIMER3A.181   
+      wallclock_time_into_timer = get_wallclock_time()                     TIMER3A.182   
+      in_number_of_times_timed(1) = in_number_of_times_timed(1) + 1        TIMER3A.183   
+                                                                           TIMER3A.184   
+! check the length of the section_name                                     TIMER3A.185   
+                                                                           TIMER3A.186   
+      IF (LEN(section_name) .GT. 20) THEN                                  TIMER3A.187   
+        WRITE(6,*) 'TIMER has detected a non-fatal ERROR'                  TIMER3A.188   
+        WRITE(6,*) 'Section name ',section_name,' is too long.'            TIMER3A.189   
+        WRITE(6,*) 'Maximum of 20 characters is allowed'                   TIMER3A.190   
+        WRITE(6,*) section_name,' will be truncated to 20 chars.'          TIMER3A.191   
+      ENDIF                                                                TIMER3A.192   
+                                                                           TIMER3A.193   
+                                                                           TIMER3A.194   
+! diagnose what action to take:                                            TIMER3A.195   
+                                                                           TIMER3A.196   
+      IF (action .EQ. first_call_to_timer) THEN                            TIMER3A.197   
+                                                                           TIMER3A.198   
+! First call to timer - do initialisation                                  TIMER3A.199   
+                                                                           TIMER3A.200   
+        DO I=1,max_timers                                                  TIMER3A.201   
+          ni_timer_name(I)            = '                    '             TIMER3A.202   
+          in_timer_name(I)            = '                    '             TIMER3A.203   
+                                                                           TIMER3A.204   
+          ni_number_of_times_timed(I) = 0                                  TIMER3A.205   
+          in_number_of_times_timed(I) = 0                                  TIMER3A.206   
+                                                                           TIMER3A.207   
+          ni_cpu_time_elapsed(I)      = 0.                                 TIMER3A.208   
+          in_cpu_time_elapsed(I)      = 0.                                 TIMER3A.209   
+          ni_wallclock_time_elapsed(I)= 0.                                 TIMER3A.210   
+          in_wallclock_time_elapsed(I)= 0.                                 TIMER3A.211   
+                                                                           TIMER3A.212   
+          in_timer_running(I)=.FALSE.                                      TIMER3A.213   
+        ENDDO                                                              TIMER3A.214   
+                                                                           TIMER3A.215   
+        timer_on = .TRUE.                                                  TIMER3A.216   
+                                                                           TIMER3A.217   
+        current_timer = 1                                                  TIMER3A.218   
+        ni_number_of_timers = 1                                            TIMER3A.219   
+        in_number_of_timers = 1                                            TIMER3A.220   
+        in_timer_name(1) = 'TIMER'                                         TIMER3A.221   
+                                                                           TIMER3A.222   
+! and start the timer running                                              TIMER3A.223   
+                                                                           TIMER3A.224   
+        ni_cpu_time_started = get_cpu_time()                               TIMER3A.225   
+        ni_wallclock_time_started = get_wallclock_time()                   TIMER3A.226   
+        ni_number_of_times_timed(current_timer) = 1                        TIMER3A.227   
+        old_timer(current_timer) = 0                                       TIMER3A.228   
+        ni_timer_name(current_timer) = section_name                        TIMER3A.229   
+                                                                           TIMER3A.230   
+! ----------------------------------------------------------------------   TIMER3A.231   
+                                                                           TIMER3A.232   
+      ELSEIF (timer_on .AND.                                               TIMER3A.233   
+     &        ( (action .EQ. last_call_to_timer) .OR.                      TIMER3A.234   
+     &          (action .EQ. intermediate_output) ) )THEN                  TIMER3A.235   
+                                                                           TIMER3A.236   
+! Last call to timer - or intermediate output required, so                 TIMER3A.237   
+! print out table of results                                               TIMER3A.238   
+                                                                           TIMER3A.239   
+      IF (action .EQ. last_call_to_timer) THEN                             TIMER3A.240   
+! the only active timer should be no.1                                     TIMER3A.241   
+                                                                           TIMER3A.242   
+        IF (current_timer .NE. 1) THEN                                     TIMER3A.243   
+          WRITE(6,*) 'TIMER has detected an ERROR'                         TIMER3A.244   
+          WRITE(6,*) 'Attempted to print results without switching ',      TIMER3A.245   
+     &             'off all running non-inclusive timers.'                 TIMER3A.246   
+          WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'            TIMER3A.247   
+          timer_on = .FALSE.                                               TIMER3A.248   
+          GOTO 9999                                                        TIMER3A.249   
+        ENDIF                                                              TIMER3A.250   
+                                                                           TIMER3A.251   
+! Make sure there are no inclusive timers still running                    TIMER3A.252   
+                                                                           TIMER3A.253   
+        section_ref = 0                                                    TIMER3A.254   
+        DO I=1,in_number_of_timers                                         TIMER3A.255   
+          IF (in_timer_running(I)) section_ref = I                         TIMER3A.256   
+        ENDDO                                                              TIMER3A.257   
+                                                                           TIMER3A.258   
+        IF (section_ref .NE.0) THEN                                        TIMER3A.259   
+          WRITE(6,*) 'TIMER has detected an ERROR'                         TIMER3A.260   
+          WRITE(6,*) 'Attempted to print results without switching ',      TIMER3A.261   
+     &             'off all running inclusive timers.'                     TIMER3A.262   
+          WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'            TIMER3A.263   
+          timer_on = .FALSE.                                               TIMER3A.264   
+          GOTO 9999                                                        TIMER3A.265   
+        ENDIF                                                              TIMER3A.266   
+                                                                           TIMER3A.267   
+! Just to make sure that timer isn't called again                          TIMER3A.268   
+        timer_on = .FALSE.                                                 TIMER3A.269   
+                                                                           TIMER3A.270   
+! and switch off the top level non-inclusive timer                         TIMER3A.271   
+                                                                           TIMER3A.272   
+        ni_cpu_time_elapsed(current_timer) =                               TIMER3A.273   
+     &      ni_cpu_time_elapsed(current_timer) +                           TIMER3A.274   
+     &      get_cpu_time() - ni_cpu_time_started                           TIMER3A.275   
+                                                                           TIMER3A.276   
+        ni_wallclock_time_elapsed(current_timer) =                         TIMER3A.277   
+     &      ni_wallclock_time_elapsed(current_timer) +                     TIMER3A.278   
+     &      get_wallclock_time() - ni_wallclock_time_started               TIMER3A.279   
+                                                                           TIMER3A.280   
+      ENDIF ! If this is the final call to timer                           TIMER3A.281   
+                                                                           TIMER3A.282   
+      CALL TIMER_OUTPUT(                                                   TIMER3A.283   
+     &  in_number_of_timers, ni_number_of_timers,                          TIMER3A.284   
+     &  in_cpu_time_elapsed, ni_cpu_time_elapsed,                          TIMER3A.285   
+     &  in_wallclock_time_elapsed, ni_wallclock_time_elapsed,              TIMER3A.286   
+     &  in_number_of_times_timed, ni_number_of_times_timed,                TIMER3A.287   
+     &  in_timer_name, ni_timer_name,                                      TIMER3A.288   
+     &  action,section_name)                                               TIMER3A.289   
+                                                                           TIMER3A.290   
+                                                                           TIMER3A.291   
+                                                                           TIMER3A.292   
+! that's it                                                                TIMER3A.293   
+                                                                           TIMER3A.294   
+! ----------------------------------------------------------------------   TIMER3A.295   
+                                                                           TIMER3A.296   
+      ELSEIF (timer_on .AND.                                               TIMER3A.297   
+     &        (action .EQ. non_incl_start_timer) ) THEN                    TIMER3A.298   
+                                                                           TIMER3A.299   
+! Start a non-inclusive timer running                                      TIMER3A.300   
+                                                                           TIMER3A.301   
+! Switch off the current timer                                             TIMER3A.302   
+      ni_cpu_time_elapsed(current_timer) =                                 TIMER3A.303   
+     &    ni_cpu_time_elapsed(current_timer) +                             TIMER3A.304   
+     &    get_cpu_time() - ni_cpu_time_started                             TIMER3A.305   
+                                                                           TIMER3A.306   
+      ni_wallclock_time_elapsed(current_timer) =                           TIMER3A.307   
+     &    ni_wallclock_time_elapsed(current_timer) +                       TIMER3A.308   
+     &    get_wallclock_time() - ni_wallclock_time_started                 TIMER3A.309   
+                                                                           TIMER3A.310   
+! See if we're already keeping records for this section                    TIMER3A.311   
+                                                                           TIMER3A.312   
+      section_ref = 0                                                      TIMER3A.313   
+      DO I=1,ni_number_of_timers                                           TIMER3A.314   
+        IF (ni_timer_name(I) .EQ. section_name) section_ref = I            TIMER3A.315   
+      ENDDO                                                                TIMER3A.316   
+                                                                           TIMER3A.317   
+! Check to make sure that there is no timer already running for            TIMER3A.318   
+! this section                                                             TIMER3A.319   
+! (NB an inclusive timer with the same reference name is allowed           TIMER3A.320   
+!  to run simultaneously with this one)                                    TIMER3A.321   
+                                                                           TIMER3A.322   
+      IF (section_ref .EQ. current_timer) THEN                             TIMER3A.323   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.324   
+        WRITE(6,*) 'Simultaneous non-inclusive timers attempted ',         TIMER3A.325   
+     &             'for section ',section_name                             TIMER3A.326   
+        WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'              TIMER3A.327   
+        timer_on = .FALSE.                                                 TIMER3A.328   
+        GOTO 9999                                                          TIMER3A.329   
+      ENDIF                                                                TIMER3A.330   
+                                                                           TIMER3A.331   
+! calculate the section reference for the new timer                        TIMER3A.332   
+                                                                           TIMER3A.333   
+      IF (section_ref .EQ. 0) THEN                                         TIMER3A.334   
+!       this is a new section                                              TIMER3A.335   
+        section_ref = ni_number_of_timers+1                                TIMER3A.336   
+        ni_timer_name(section_ref) = section_name                          TIMER3A.337   
+        ni_number_of_timers = section_ref                                  TIMER3A.338   
+      ENDIF                                                                TIMER3A.339   
+                                                                           TIMER3A.340   
+! check that max_timers isn't exceeded:                                    TIMER3A.341   
+      IF (ni_number_of_timers .GT. max_timers) THEN                        TIMER3A.342   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.343   
+        WRITE(6,*) 'More than ',max_timers,' non-inclusive ',              TIMER3A.344   
+     &             'timers is not allowed.'                                TIMER3A.345   
+        WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'              TIMER3A.346   
+        timer_on = .FALSE.                                                 TIMER3A.347   
+        GOTO 9999                                                          TIMER3A.348   
+      ENDIF                                                                TIMER3A.349   
+                                                                           TIMER3A.350   
+! set up old_timer so that when this new timer is stopped, the             TIMER3A.351   
+! current timer (that we've just stopped) can be restarted                 TIMER3A.352   
+                                                                           TIMER3A.353   
+      old_timer(section_ref)=current_timer                                 TIMER3A.354   
+                                                                           TIMER3A.355   
+! now start up the new timer                                               TIMER3A.356   
+                                                                           TIMER3A.357   
+      current_timer = section_ref                                          TIMER3A.358   
+      ni_number_of_times_timed(current_timer) =                            TIMER3A.359   
+     &  ni_number_of_times_timed(current_timer) + 1                        TIMER3A.360   
+      ni_cpu_time_started = get_cpu_time()                                 TIMER3A.361   
+      ni_wallclock_time_started = get_wallclock_time()                     TIMER3A.362   
+                                                                           TIMER3A.363   
+! that's it                                                                TIMER3A.364   
+                                                                           TIMER3A.365   
+! ----------------------------------------------------------------------   TIMER3A.366   
+                                                                           TIMER3A.367   
+      ELSEIF (timer_on .AND.                                               TIMER3A.368   
+     &        (action .EQ. non_incl_end_timer) ) THEN                      TIMER3A.369   
+                                                                           TIMER3A.370   
+! Stop a non-inclusive timer                                               TIMER3A.371   
+                                                                           TIMER3A.372   
+! Make sure that we're being asked to end a timer that's actually          TIMER3A.373   
+! running.                                                                 TIMER3A.374   
+                                                                           TIMER3A.375   
+      IF (ni_timer_name(current_timer) .NE. section_name) THEN             TIMER3A.376   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.377   
+        WRITE(6,*) 'Attempted to stop a non-active ',                      TIMER3A.378   
+     &             'non-inclusive timer ',section_name                     TIMER3A.379   
+        WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'              TIMER3A.380   
+        timer_on = .FALSE.                                                 TIMER3A.381   
+        GOTO 9999                                                          TIMER3A.382   
+      ENDIF                                                                TIMER3A.383   
+                                                                           TIMER3A.384   
+! OK - so stop this timer:                                                 TIMER3A.385   
+                                                                           TIMER3A.386   
+      ni_cpu_time_elapsed(current_timer) =                                 TIMER3A.387   
+     &    ni_cpu_time_elapsed(current_timer) +                             TIMER3A.388   
+     &    get_cpu_time() - ni_cpu_time_started                             TIMER3A.389   
+                                                                           TIMER3A.390   
+      ni_wallclock_time_elapsed(current_timer) =                           TIMER3A.391   
+     &    ni_wallclock_time_elapsed(current_timer) +                       TIMER3A.392   
+     &    get_wallclock_time() - ni_wallclock_time_started                 TIMER3A.393   
+                                                                           TIMER3A.394   
+! and now restart the old timer (ie. the one that was in                   TIMER3A.395   
+! operation at the time this one was started)                              TIMER3A.396   
+                                                                           TIMER3A.397   
+      IF (old_timer(current_timer) .EQ. 0) THEN                            TIMER3A.398   
+! this means I have just stopped the top level timer - there               TIMER3A.399   
+! are no more to stop. This is an error - I should do this                 TIMER3A.400   
+! by calling the timer with action=2                                       TIMER3A.401   
+         WRITE(6,*) 'TIMER has detected an ERROR'                          TIMER3A.402   
+         WRITE(6,*) 'The top-level timer has been stopped'                 TIMER3A.403   
+         WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'             TIMER3A.404   
+        timer_on = .FALSE.                                                 TIMER3A.405   
+        GOTO 9999                                                          TIMER3A.406   
+      ENDIF                                                                TIMER3A.407   
+                                                                           TIMER3A.408   
+      current_timer=old_timer(current_timer)                               TIMER3A.409   
+      ni_cpu_time_started=get_cpu_time()                                   TIMER3A.410   
+      ni_wallclock_time_started=get_wallclock_time()                       TIMER3A.411   
+                                                                           TIMER3A.412   
+! ----------------------------------------------------------------------   TIMER3A.413   
+                                                                           TIMER3A.414   
+      ELSEIF (timer_on .AND.                                               TIMER3A.415   
+     &        (action .EQ. incl_start_timer) ) THEN                        TIMER3A.416   
+                                                                           TIMER3A.417   
+! Start an inclusive timer running                                         TIMER3A.418   
+                                                                           TIMER3A.419   
+! See if we're already keeping records for this section                    TIMER3A.420   
+                                                                           TIMER3A.421   
+      section_ref = 0                                                      TIMER3A.422   
+      DO I=1,in_number_of_timers                                           TIMER3A.423   
+        IF (in_timer_name(I) .EQ. section_name) section_ref = I            TIMER3A.424   
+      ENDDO                                                                TIMER3A.425   
+                                                                           TIMER3A.426   
+! and calculate the section reference                                      TIMER3A.427   
+                                                                           TIMER3A.428   
+      IF (section_ref .EQ. 0) THEN                                         TIMER3A.429   
+!       this is a new one                                                  TIMER3A.430   
+        section_ref = in_number_of_timers + 1                              TIMER3A.431   
+        in_timer_name(section_ref) = section_name                          TIMER3A.432   
+        in_number_of_timers = section_ref                                  TIMER3A.433   
+      ENDIF                                                                TIMER3A.434   
+                                                                           TIMER3A.435   
+! check that max_timers isn't exceeded:                                    TIMER3A.436   
+                                                                           TIMER3A.437   
+      IF (in_number_of_timers .GT. max_timers) THEN                        TIMER3A.438   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.439   
+        WRITE(6,*) 'More than ',max_timers,' inclusive ',                  TIMER3A.440   
+     &             'timers is not allowed.'                                TIMER3A.441   
+        WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'              TIMER3A.442   
+        timer_on = .FALSE.                                                 TIMER3A.443   
+        GOTO 9999                                                          TIMER3A.444   
+      ENDIF                                                                TIMER3A.445   
+                                                                           TIMER3A.446   
+! Check to make sure that there is no timer already running for            TIMER3A.447   
+! this section                                                             TIMER3A.448   
+! (NB a non-inclusive timer with the same reference name is allowed        TIMER3A.449   
+!  to run simultaneously with this one)                                    TIMER3A.450   
+                                                                           TIMER3A.451   
+      IF (in_timer_running(section_ref)) THEN                              TIMER3A.452   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.453   
+        WRITE(6,*) 'Inclusive timer already running for ',                 TIMER3A.454   
+     &             section_name                                            TIMER3A.455   
+        WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'              TIMER3A.456   
+        timer_on = .FALSE.                                                 TIMER3A.457   
+        GOTO 9999                                                          TIMER3A.458   
+      ENDIF                                                                TIMER3A.459   
+                                                                           TIMER3A.460   
+! so now we can start the timer for this section                           TIMER3A.461   
+      in_number_of_times_timed(section_ref) =                              TIMER3A.462   
+     &  in_number_of_times_timed(section_ref) + 1                          TIMER3A.463   
+      in_timer_running(section_ref) = .TRUE.                               TIMER3A.464   
+      in_cpu_time_started(section_ref) = get_cpu_time()                    TIMER3A.465   
+      in_wallclock_time_started(section_ref) = get_wallclock_time()        TIMER3A.466   
+                                                                           TIMER3A.467   
+! that's it                                                                TIMER3A.468   
+                                                                           TIMER3A.469   
+                                                                           TIMER3A.470   
+! ----------------------------------------------------------------------   TIMER3A.471   
+                                                                           TIMER3A.472   
+      ELSEIF (timer_on .AND.                                               TIMER3A.473   
+     &        (action .EQ. incl_end_timer) ) THEN                          TIMER3A.474   
+                                                                           TIMER3A.475   
+! Stop an inclusive timer                                                  TIMER3A.476   
+                                                                           TIMER3A.477   
+! Find out what the reference number of this timer is                      TIMER3A.478   
+                                                                           TIMER3A.479   
+      section_ref = 0                                                      TIMER3A.480   
+      DO I=1,in_number_of_timers                                           TIMER3A.481   
+        IF (in_timer_name(I) .EQ. section_name) section_ref = I            TIMER3A.482   
+      ENDDO                                                                TIMER3A.483   
+                                                                           TIMER3A.484   
+      IF (section_ref .EQ. 0) THEN                                         TIMER3A.485   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.486   
+        WRITE(6,*) 'Attempting to stop a non-existent ',                   TIMER3A.487   
+     &             'inclusive timer ',section_name                         TIMER3A.488   
+        WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'              TIMER3A.489   
+        timer_on = .FALSE.                                                 TIMER3A.490   
+        GOTO 9999                                                          TIMER3A.491   
+      ENDIF                                                                TIMER3A.492   
+                                                                           TIMER3A.493   
+! Make sure this timer is actually running at the moment                   TIMER3A.494   
+                                                                           TIMER3A.495   
+      IF (.NOT. in_timer_running(section_ref)) THEN                        TIMER3A.496   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.497   
+        WRITE(6,*) 'Attempting to stop a non-running ',                    TIMER3A.498   
+     &             'inclusive timer ',section_name                         TIMER3A.499   
+        WRITE(6,*) '** TIMER SWITCHED OFF FOR REST OF RUN **'              TIMER3A.500   
+        timer_on = .FALSE.                                                 TIMER3A.501   
+        GOTO 9999                                                          TIMER3A.502   
+      ENDIF                                                                TIMER3A.503   
+                                                                           TIMER3A.504   
+! now we can stop it                                                       TIMER3A.505   
+      in_cpu_time_elapsed(section_ref) =                                   TIMER3A.506   
+     &   in_cpu_time_elapsed(section_ref) +                                TIMER3A.507   
+     &   get_cpu_time() - in_cpu_time_started(section_ref)                 TIMER3A.508   
+                                                                           TIMER3A.509   
+      in_wallclock_time_elapsed(section_ref) =                             TIMER3A.510   
+     &   in_wallclock_time_elapsed(section_ref) +                          TIMER3A.511   
+     &   get_wallclock_time() - in_wallclock_time_started(section_ref)     TIMER3A.512   
+                                                                           TIMER3A.513   
+      in_timer_running(section_ref) = .FALSE.                              TIMER3A.514   
+                                                                           TIMER3A.515   
+! that's it                                                                TIMER3A.516   
+                                                                           TIMER3A.517   
+! ----------------------------------------------------------------------   TIMER3A.518   
+                                                                           TIMER3A.519   
+      ELSEIF (timer_on) THEN                                               TIMER3A.520   
+                                                                           TIMER3A.521   
+        WRITE(6,*) 'TIMER has detected an ERROR'                           TIMER3A.522   
+        WRITE(6,*) 'Incorrect action= ',action,' supplied by ',            TIMER3A.523   
+     &             'section ',section_name                                 TIMER3A.524   
+        WRITE(6,*) 'Non-fatal error - TIMER will continue'                 TIMER3A.525   
+                                                                           TIMER3A.526   
+      ENDIF                                                                TIMER3A.527   
+                                                                           TIMER3A.528   
+ 9999 CONTINUE                                                             TIMER3A.529   
+                                                                           TIMER3A.530   
+! stop the timer timer                                                     TIMER3A.531   
+      in_cpu_time_elapsed(1) = in_cpu_time_elapsed(1) +                    TIMER3A.532   
+     &     get_cpu_time() - cpu_time_into_timer                            TIMER3A.533   
+      in_wallclock_time_elapsed(1) = in_wallclock_time_elapsed(1) +        TIMER3A.534   
+     &     get_wallclock_time() - wallclock_time_into_timer                TIMER3A.535   
+                                                                           TIMER3A.536   
+      RETURN                                                               TIMER3A.537   
+      END                                                                  TIMER3A.538   
+                                                                           TIMER3A.539   
+!*********************************************************************     TIMER3A.540   
+                                                                           TIMER3A.541   
+                                                                           TIMER3A.542   
+      SUBROUTINE TIMER_OUTPUT(                                             TIMER3A.543   
+     &  in_number_of_timers, ni_number_of_timers,                          TIMER3A.544   
+     &  in_cpu_time_elapsed, ni_cpu_time_elapsed,                          TIMER3A.545   
+     &  in_wallclock_time_elapsed, ni_wallclock_time_elapsed,              TIMER3A.546   
+     &  in_number_of_times_timed, ni_number_of_times_timed,                TIMER3A.547   
+     &  in_timer_name, ni_timer_name,                                      TIMER3A.548   
+     &  action,message)                                                    TIMER3A.549   
+                                                                           TIMER3A.550   
+      IMPLICIT NONE                                                        TIMER3A.551   
+                                                                           TIMER3A.552   
+! Arguments                                                                TIMER3A.553   
+                                                                           TIMER3A.554   
+      INTEGER                                                              TIMER3A.555   
+     &  in_number_of_timers  ! IN number of inclusive timers               TIMER3A.556   
+     &, ni_number_of_timers  ! IN number of non-inclusive timers           TIMER3A.557   
+     &, in_number_of_times_timed(in_number_of_timers)                      TIMER3A.558   
+!                            ! IN number of times timed - inclusive        TIMER3A.559   
+     &, ni_number_of_times_timed(ni_number_of_timers)                      TIMER3A.560   
+!                            ! IN number of times timed - non-incl.        TIMER3A.561   
+     &, action  ! final output or intermediate                             TIMER3A.562   
+                                                                           TIMER3A.563   
+      REAL                                                                 TIMER3A.564   
+     &  in_cpu_time_elapsed(in_number_of_timers)                           TIMER3A.565   
+!                            ! IN elapsed inclusive CPU time               TIMER3A.566   
+     &, ni_cpu_time_elapsed(ni_number_of_timers)                           TIMER3A.567   
+!                            ! IN elapsed non-inclusive CPU time           TIMER3A.568   
+     &, in_wallclock_time_elapsed(in_number_of_timers)                     TIMER3A.569   
+!                            ! IN elapsed inclusive wallclock time         TIMER3A.570   
+     &, ni_wallclock_time_elapsed(ni_number_of_timers)                     TIMER3A.571   
+                                                                           TIMER3A.572   
+      CHARACTER*20                                                         TIMER3A.573   
+     &  in_timer_name(in_number_of_timers)                                 TIMER3A.574   
+!                            ! IN name of timed section - inclusive        TIMER3A.575   
+     &, ni_timer_name(ni_number_of_timers)                                 TIMER3A.576   
+!                            ! IN name of timed section - non-incl.        TIMER3A.577   
+                                                                           APB4F402.6     
+      CHARACTER*(*)                                                        APB4F402.7     
+     &   message              ! IN message to print                        APB4F402.8     
+                                                                           TIMER3A.579   
+                                                                           TIMER3A.580   
+! Local variables                                                          TIMER3A.581   
+                                                                           TIMER3A.582   
+      INTEGER max_timers                                                   TIMER3A.583   
+      PARAMETER(max_timers=300)                                            TIMER3A.584   
+                                                                           TIMER3A.585   
+      INTEGER last_call_to_timer,intermediate_output                       TIMER3A.586   
+      PARAMETER(last_call_to_timer=2,                                      TIMER3A.587   
+     &          intermediate_output=7)                                     TIMER3A.588   
+                                                                           TIMER3A.589   
+      INTEGER                                                              TIMER3A.590   
+     &  number_of_timers                                                   TIMER3A.591   
+     &, local_number_of_times_timed(max_timers)                            TIMER3A.592   
+                                                                           TIMER3A.593   
+      REAL                                                                 TIMER3A.594   
+     &  local_cpu_time_elapsed(max_timers)                                 TIMER3A.595   
+     &, local_wallclock_time_elapsed(max_timers)                           TIMER3A.596   
+                                                                           TIMER3A.597   
+      CHARACTER*20                                                         TIMER3A.598   
+     &  local_timer_name(max_timers)                                       TIMER3A.599   
+                                                                           TIMER3A.600   
+! Variables required for using intermediate timers                         TIMER3A.601   
+! They record the values on the last call to this routine                  TIMER3A.602   
+      INTEGER                                                              TIMER3A.603   
+     &  last_in_number_of_times_timed(max_timers)                          TIMER3A.604   
+     &, last_ni_number_of_times_timed(max_timers)                          TIMER3A.605   
+                                                                           TIMER3A.606   
+      REAL                                                                 TIMER3A.607   
+     &  last_in_cpu_time_elapsed(max_timers)                               TIMER3A.608   
+     &, last_ni_cpu_time_elapsed(max_timers)                               TIMER3A.609   
+     &, last_in_wallclock_time_elapsed(max_timers)                         TIMER3A.610   
+     &, last_ni_wallclock_time_elapsed(max_timers)                         TIMER3A.611   
+                                                                           TIMER3A.612   
+      LOGICAL                                                              TIMER3A.613   
+     &  first_intermediate_timer_call                                      TIMER3A.614   
+                                                                           TIMER3A.615   
+      DATA first_intermediate_timer_call /.TRUE./                          TIMER3A.616   
+      DATA last_in_number_of_times_timed /max_timers*0/                    TIMER3A.617   
+      DATA last_ni_number_of_times_timed /max_timers*0/                    TIMER3A.618   
+      DATA last_in_cpu_time_elapsed /max_timers*0.0/                       TIMER3A.619   
+      DATA last_ni_cpu_time_elapsed /max_timers*0.0/                       TIMER3A.620   
+      DATA last_in_wallclock_time_elapsed /max_timers*0.0/                 TIMER3A.621   
+      DATA last_ni_wallclock_time_elapsed /max_timers*0.0/                 TIMER3A.622   
+                                                                           TIMER3A.623   
+      SAVE                                                                 TIMER3A.624   
+     &  last_in_number_of_times_timed, last_ni_number_of_times_timed,      TIMER3A.625   
+     &  last_in_cpu_time_elapsed, last_ni_cpu_time_elapsed,                TIMER3A.626   
+     &  last_in_wallclock_time_elapsed, last_ni_wallclock_time_elapsed,    TIMER3A.627   
+     &  first_intermediate_timer_call                                      TIMER3A.628   
+                                                                           TIMER3A.629   
+                                                                           TIMER3A.630   
+                                                                           TIMER3A.631   
+      INTEGER sortwork_int    ! work variable for sort                     TIMER3A.632   
+      REAL    sortwork_real   ! work variable for sort                     TIMER3A.633   
+      CHARACTER*20 sortwork_char ! work variable for sort                  TIMER3A.634   
+                                                                           TIMER3A.635   
+      REAL total_cpu_time,         ! total cpu time spent in program       TIMER3A.636   
+     &     total_wallclock_time,   ! total wallclock time spent in         TIMER3A.637   
+!                                  ! program                               TIMER3A.638   
+     &     average_cpu_elapsed,    ! average cpu elapsed time              TIMER3A.639   
+     &     average_wallclock_elapsed, ! average wallclock elapsed time     TIMER3A.640   
+     &     percent_of_cpu_total,   ! % of cpu time spent in a section      TIMER3A.641   
+     &     percent_of_wallclock_total,                                     TIMER3A.642   
+     &                            ! % of wallclock time spent in a         TIMER3A.643   
+!                                 ! section                                TIMER3A.644   
+     &     speed_up               ! speed_up=cpu/wallclock                 TIMER3A.645   
+                                                                           TIMER3A.646   
+*IF DEF,MPP                                                                TIMER3A.647   
+*CALL PARVARS                                                              TIMER3A.648   
+                                                                           TIMER3A.649   
+! These are the declarations for MPP timer                                 TIMER3A.650   
+                                                                           TIMER3A.651   
+      INTEGER info,                                                        TIMER3A.652   
+     &  wallclock_max_pe(max_timers),wallclock_min_pe(max_timers),         TIMER3A.653   
+     &  cpu_max_pe(max_timers),cpu_min_pe(max_timers)                      TIMER3A.654   
+                                                                           TIMER3A.655   
+      REAL wallclock_mean(max_timers),cpu_mean(max_timers),                TIMER3A.656   
+     &     wallclock_median(max_timers),cpu_median(max_timers),            TIMER3A.657   
+     &     wallclock_sd(max_timers),cpu_sd(max_timers),                    TIMER3A.658   
+     &     wallclock_max(max_timers),wallclock_min(max_timers),            TIMER3A.659   
+     &     cpu_max(max_timers),cpu_min(max_timers),                        TIMER3A.660   
+     &     cpu_total(max_timers),speedup(max_timers),                      TIMER3A.661   
+     &     efficiency(max_timers)                                          TIMER3A.662   
+                                                                           TIMER3A.663   
+      INTEGER                                                              TIMER3A.664   
+     &  summ_n_timers    ! number of routines for ni summary               TIMER3A.665   
+     &, routine_id          ! routine id on this processor                 TIMER3A.666   
+                                                                           TIMER3A.667   
+      REAL                                                                 TIMER3A.668   
+     &  wallclock_times(0:MAXPROC)  ! wallclock time from each proc        TIMER3A.669   
+     &, cpu_times(0:MAXPROC)        ! cpu time from each proc              TIMER3A.670   
+     &, total_cpu,max_wall       ! total cpu, maxumum wallclock times      GPB3F403.125   
+                                                                           TIMER3A.671   
+      CHARACTER*20 summ_section(max_timers)  ! names of sections           TIMER3A.672   
+      COMMON /MPP_TIMER/ summ_n_timers,total_cpu,max_wall,                 GPB3F403.126   
+     &                   wallclock_times,cpu_times,                        TIMER3A.674   
+     &                   summ_section                                      TIMER3A.675   
+*ENDIF                                                                     TIMER3A.676   
+                                                                           TIMER3A.677   
+! Variables for loops etc.                                                 TIMER3A.678   
+      INTEGER I,J,K,timer_kind                                             TIMER3A.679   
+                                                                           TIMER3A.680   
+! Check to see if this is an intermediate output, and the first            TIMER3A.681   
+! time it has been called                                                  TIMER3A.682   
+      IF ((action .EQ. intermediate_output) .AND.                          TIMER3A.683   
+     &    (first_intermediate_timer_call  ) ) THEN                         TIMER3A.684   
+! Copy the arguments into the last_* arrays                                TIMER3A.685   
+        first_intermediate_timer_call=.FALSE.                              TIMER3A.686   
+                                                                           TIMER3A.687   
+        DO I=1,in_number_of_timers                                         TIMER3A.688   
+          last_in_number_of_times_timed(I)=in_number_of_times_timed(I)     TIMER3A.689   
+          last_in_cpu_time_elapsed(I)=in_cpu_time_elapsed(I)               TIMER3A.690   
+          last_in_wallclock_time_elapsed(I)=                               TIMER3A.691   
+     &      in_wallclock_time_elapsed(I)                                   TIMER3A.692   
+        ENDDO                                                              TIMER3A.693   
+                                                                           TIMER3A.694   
+        DO I=1,ni_number_of_timers                                         TIMER3A.695   
+          last_ni_number_of_times_timed(I)=ni_number_of_times_timed(I)     TIMER3A.696   
+          last_ni_cpu_time_elapsed(I)=ni_cpu_time_elapsed(I)               TIMER3A.697   
+          last_ni_wallclock_time_elapsed(I)=                               GPB0F405.131   
+     &      ni_wallclock_time_elapsed(I)                                   TIMER3A.699   
+        ENDDO                                                              TIMER3A.700   
+                                                                           TIMER3A.701   
+        GOTO 9999  ! jump to end - no output on first call                 TIMER3A.702   
+      ENDIF                                                                TIMER3A.703   
+                                                                           TIMER3A.704   
+      WRITE(6,*)                                                           TIMER3A.705   
+      WRITE(6,*) '******************************************'              TIMER3A.706   
+      WRITE(6,*)                                                           TIMER3A.707   
+                                                                           TIMER3A.708   
+      DO timer_kind=1,2  ! 1 is non-inclusive and 2 is inclusive           TIMER3A.709   
+! Copy arguments into local arrays                                         TIMER3A.710   
+        IF (action .EQ. last_call_to_timer) THEN                           TIMER3A.711   
+          WRITE(6,*) 'END OF RUN - TIMER OUTPUT'                           TIMER3A.712   
+          WRITE(6,*) 'Timer information is for whole run'                  TIMER3A.713   
+          IF (timer_kind .EQ. 1) THEN  ! non-inclusive timer               TIMER3A.714   
+            number_of_timers=ni_number_of_timers                           TIMER3A.715   
+            DO I=1,number_of_timers                                        TIMER3A.716   
+              local_timer_name(I)=ni_timer_name(I)                         TIMER3A.717   
+              local_cpu_time_elapsed(I)=ni_cpu_time_elapsed(I)             TIMER3A.718   
+              local_wallclock_time_elapsed(I)=                             TIMER3A.719   
+     &          ni_wallclock_time_elapsed(I)                               TIMER3A.720   
+              local_number_of_times_timed(I)=                              TIMER3A.721   
+     &          ni_number_of_times_timed(I)                                TIMER3A.722   
+            ENDDO                                                          TIMER3A.723   
+          ELSE ! timer_kind .EQ. 2 - inclusive timer                       TIMER3A.724   
+            number_of_timers=in_number_of_timers                           TIMER3A.725   
+            DO I=1,number_of_timers                                        TIMER3A.726   
+              local_timer_name(I)=in_timer_name(I)                         TIMER3A.727   
+              local_cpu_time_elapsed(I)=in_cpu_time_elapsed(I)             TIMER3A.728   
+              local_wallclock_time_elapsed(I)=                             TIMER3A.729   
+     &          in_wallclock_time_elapsed(I)                               TIMER3A.730   
+              local_number_of_times_timed(I)=                              TIMER3A.731   
+     &          in_number_of_times_timed(I)                                TIMER3A.732   
+            ENDDO                                                          TIMER3A.733   
+          ENDIF ! which timer kind this was                                TIMER3A.734   
+        ELSE  ! this is an intermediate output call                        TIMER3A.735   
+          WRITE(6,*) 'INTERMEDIATE TIMER OUTPUT :',message                 TIMER3A.736   
+          WRITE(6,*) 'Timer information is only for code executed ',       TIMER3A.737   
+     &               'since last intermediate timer output.'               TIMER3A.738   
+          IF (timer_kind .EQ. 1) THEN  ! non-inclusive timer               TIMER3A.739   
+            number_of_timers=ni_number_of_timers                           TIMER3A.740   
+            DO I=1,number_of_timers                                        TIMER3A.741   
+              local_timer_name(I)=ni_timer_name(I)                         TIMER3A.742   
+              local_cpu_time_elapsed(I)=ni_cpu_time_elapsed(I)-            TIMER3A.743   
+     &                                  last_ni_cpu_time_elapsed(I)        TIMER3A.744   
+              local_wallclock_time_elapsed(I)=                             TIMER3A.745   
+     &          ni_wallclock_time_elapsed(I)-                              TIMER3A.746   
+     &          last_ni_wallclock_time_elapsed(I)                          TIMER3A.747   
+              local_number_of_times_timed(I)=                              TIMER3A.748   
+     &          ni_number_of_times_timed(I)-                               TIMER3A.749   
+     &          last_ni_number_of_times_timed(I)                           TIMER3A.750   
+            ENDDO                                                          TIMER3A.751   
+          ELSE ! timer kind .EQ. 2 - inclusive timer                       TIMER3A.752   
+            number_of_timers=in_number_of_timers                           TIMER3A.753   
+            DO I=1,number_of_timers                                        TIMER3A.754   
+              local_timer_name(I)=in_timer_name(I)                         TIMER3A.755   
+              local_cpu_time_elapsed(I)=in_cpu_time_elapsed(I)-            TIMER3A.756   
+     &                                  last_in_cpu_time_elapsed(I)        TIMER3A.757   
+              local_wallclock_time_elapsed(I)=                             TIMER3A.758   
+     &          in_wallclock_time_elapsed(I)-                              TIMER3A.759   
+     &          last_in_wallclock_time_elapsed(I)                          TIMER3A.760   
+              local_number_of_times_timed(I)=                              TIMER3A.761   
+     &          in_number_of_times_timed(I)-                               TIMER3A.762   
+     &          last_in_number_of_times_timed(I)                           TIMER3A.763   
+            ENDDO                                                          TIMER3A.764   
+          ENDIF  ! what timer type                                         TIMER3A.765   
+        ENDIF  ! what action to perform                                    TIMER3A.766   
+                                                                           TIMER3A.767   
+! Do work for non-inclusive timers                                         TIMER3A.768   
+                                                                           TIMER3A.769   
+! Calculate the total time in the program (based on non-inclusive          TIMER3A.770   
+! timers)                                                                  TIMER3A.771   
+        IF (timer_kind .EQ. 1) THEN                                        TIMER3A.772   
+          total_cpu_time = 0.0                                             TIMER3A.773   
+          total_wallclock_time = 0.0                                       TIMER3A.774   
+          DO I=1,number_of_timers                                          TIMER3A.775   
+          total_cpu_time = total_cpu_time + local_cpu_time_elapsed(I)      TIMER3A.776   
+          total_wallclock_time =                                           TIMER3A.777   
+     &      total_wallclock_time + local_wallclock_time_elapsed(I)         TIMER3A.778   
+          ENDDO                                                            TIMER3A.779   
+                                                                           TIMER3A.780   
+*IF -DEF,MPP                                                               GPB3F403.127   
+          WRITE(6,*) 'Total Elapsed CPU Time: ',total_cpu_time             TIMER3A.781   
+          WRITE(6,*) 'Total Elapsed Wallclock Time: ',                     TIMER3A.782   
+     &                total_wallclock_time                                 TIMER3A.783   
+          WRITE(6,*) 'Total Speed-up: ',                                   TIMER3A.784   
+     &                total_cpu_time/total_wallclock_time                  TIMER3A.785   
+*ELSE                                                                      GPB3F403.128   
+          WRITE(6,*) 'PE ',mype,' Elapsed CPU Time: ',                     GPB3F403.129   
+     &               total_cpu_time                                        GPB3F403.130   
+          WRITE(6,*) 'PE ',mype,'  Elapsed Wallclock Time: ',              GPB3F403.131   
+     &                total_wallclock_time                                 GPB3F403.132   
+                                                                           GPB3F403.133   
+! Calculate the total cpu time over all processors and the                 GPB3F403.134   
+! maximum elapsed time - so allowing a speedup to be caclulated            GPB3F403.135   
+                                                                           GPB3F403.136   
+          total_cpu=total_cpu_time                                         GPB3F403.137   
+          max_wall=total_wallclock_time                                    GPB3F403.138   
+                                                                           GPB3F403.139   
+          CALL GC_RSUM(1,nproc,info,total_cpu)                             GPB3F403.140   
+          CALL GC_RMAX(1,nproc,info,max_wall)                              GPB3F403.141   
+                                                                           GPB3F403.142   
+          max_wall=MAX(max_wall,0.000001)                                  GPB3F403.143   
+          WRITE(6,*)                                                       GPB3F403.144   
+          WRITE(6,*) 'Total Elapsed CPU Time: ',                           GPB3F403.145   
+     &               total_cpu                                             GPB3F403.146   
+          WRITE(6,*) 'Maximum Elapsed Wallclock Time: ',                   GPB3F403.147   
+     &               max_wall                                              GPB3F403.148   
+          WRITE(6,*) 'Speedup: ',total_cpu/max_wall                        GPB3F403.149   
+          WRITE(6,*) '--------------------------------------------'        GPB3F403.150   
+*ENDIF                                                                     GPB3F403.151   
+                                                                           TIMER3A.786   
+        ENDIF                                                              TIMER3A.787   
+                                                                           TIMER3A.788   
+! Sort subroutines into time order (based on wallclock time)               TIMER3A.789   
+                                                                           TIMER3A.790   
+        DO I=1,number_of_timers-1                                          TIMER3A.791   
+          DO J=(I+1),number_of_timers                                      TIMER3A.792   
+            IF (local_wallclock_time_elapsed(J) .GT.                       TIMER3A.793   
+     &          local_wallclock_time_elapsed(I)) THEN                      TIMER3A.794   
+                                                                           TIMER3A.795   
+!             Swap the two entries                                         TIMER3A.796   
+              sortwork_real = local_cpu_time_elapsed(I)                    TIMER3A.797   
+              local_cpu_time_elapsed(I) = local_cpu_time_elapsed(J)        TIMER3A.798   
+              local_cpu_time_elapsed(J) = sortwork_real                    TIMER3A.799   
+                                                                           TIMER3A.800   
+              sortwork_real = local_wallclock_time_elapsed(I)              TIMER3A.801   
+              local_wallclock_time_elapsed(I) =                            TIMER3A.802   
+     &          local_wallclock_time_elapsed(J)                            TIMER3A.803   
+              local_wallclock_time_elapsed(J) = sortwork_real              TIMER3A.804   
+                                                                           TIMER3A.805   
+              sortwork_int = local_number_of_times_timed(I)                TIMER3A.806   
+              local_number_of_times_timed(I) =                             TIMER3A.807   
+     &          local_number_of_times_timed(J)                             TIMER3A.808   
+              local_number_of_times_timed(J) = sortwork_int                TIMER3A.809   
+                                                                           TIMER3A.810   
+              sortwork_char = local_timer_name(I)                          TIMER3A.811   
+              local_timer_name(I) = local_timer_name(J)                    TIMER3A.812   
+              local_timer_name(J) = sortwork_char                          TIMER3A.813   
+                                                                           TIMER3A.814   
+            ENDIF                                                          TIMER3A.815   
+          ENDDO                                                            TIMER3A.816   
+        ENDDO                                                              TIMER3A.817   
+                                                                           TIMER3A.818   
+ 20     FORMAT(20X, A45,I4)                                                GPB3F403.152   
+ 21     FORMAT(3X,'ROUTINE',6X,'CALLS',2X,'TOT CPU',4X,                    TIMER3A.820   
+     &       'AVERAGE',3X,'TOT WALL',2X,'AVERAGE',2X,                      TIMER3A.821   
+     &       '% CPU',4X,'% WALL',4X,'SPEED-UP')                            TIMER3A.822   
+ 22     FORMAT(3X,'ROUTINE',6X,'CALLS',2X,'TOT CPU',4X,                    TIMER3A.823   
+     &         'AVERAGE',3X,'TOT WALL',2X,'AVERAGE',2X,'SPEED-UP')         TIMER3A.824   
+ 23     FORMAT(/,I3,1X,A12,1X,I4,4(2X,F8.2),2(2X,F6.2),4X,F6.2)            TIMER3A.825   
+        IF (timer_kind .EQ. 1) THEN                                        TIMER3A.826   
+*IF -DEF,MPP                                                               GPB3F403.153   
+          WRITE(6,20) 'Non-Inclusive Timer Summary'                        TIMER3A.827   
+*ELSE                                                                      GPB3F403.154   
+          WRITE(6,20) 'Non-Inclusive Timer Summary for PE ',mype           GPB3F403.155   
+*ENDIF                                                                     GPB3F403.156   
+          WRITE(6,21)                                                      TIMER3A.828   
+        ELSE                                                               TIMER3A.829   
+*IF -DEF,MPP                                                               GPB3F403.157   
+          WRITE(6,20) 'Inclusive Timer Summary'                            TIMER3A.830   
+*ELSE                                                                      GPB3F403.158   
+          WRITE(6,20) 'Inclusive Timer Summary for PE ',mype               GPB3F403.159   
+*ENDIF                                                                     GPB3F403.160   
+          WRITE(6,22)                                                      TIMER3A.831   
+        ENDIF                                                              TIMER3A.832   
+                                                                           TIMER3A.833   
+        DO I=1,number_of_timers                                            TIMER3A.834   
+          IF (local_number_of_times_timed(I) .NE. 0) THEN                  TIMER3A.835   
+            average_cpu_elapsed =  local_cpu_time_elapsed(I)/              TIMER3A.836   
+     &                             local_number_of_times_timed(I)          TIMER3A.837   
+            average_wallclock_elapsed = local_wallclock_time_elapsed(I)/   TIMER3A.838   
+     &                                  local_number_of_times_timed(I)     TIMER3A.839   
+          ELSE                                                             TIMER3A.840   
+             average_cpu_elapsed = 0.0                                     TIMER3A.841   
+             average_wallclock_elapsed = 0.0                               TIMER3A.842   
+          ENDIF                                                            TIMER3A.843   
+                                                                           TIMER3A.844   
+          IF (local_wallclock_time_elapsed(I) .GT. 0) THEN                 TIMER3A.845   
+            speed_up=local_cpu_time_elapsed(I)/                            TIMER3A.846   
+     &               local_wallclock_time_elapsed(I)                       TIMER3A.847   
+          ELSE                                                             TIMER3A.848   
+            speed_up=1.0                                                   TIMER3A.849   
+          ENDIF                                                            TIMER3A.850   
+                                                                           TIMER3A.851   
+          IF (timer_kind .EQ. 1) THEN  ! non-inclusive timer has some      TIMER3A.852   
+!                                      ! extra output                      TIMER3A.853   
+                                                                           TIMER3A.854   
+            percent_of_cpu_total = 100.0*local_cpu_time_elapsed(I)/        TIMER3A.855   
+     &                             total_cpu_time                          TIMER3A.856   
+            percent_of_wallclock_total =                                   TIMER3A.857   
+     &        100.0*local_wallclock_time_elapsed(I)/                       TIMER3A.858   
+     &        total_wallclock_time                                         TIMER3A.859   
+                                                                           TIMER3A.860   
+                                                                           TIMER3A.861   
+            WRITE(6,23) I,local_timer_name(I),                             TIMER3A.862   
+     &                  local_number_of_times_timed(I),                    TIMER3A.863   
+     &                  local_cpu_time_elapsed(I),average_cpu_elapsed,     TIMER3A.864   
+     &                  local_wallclock_time_elapsed(I),                   TIMER3A.865   
+     &                  average_wallclock_elapsed,                         TIMER3A.866   
+     &                  percent_of_cpu_total,                              TIMER3A.867   
+     &                  percent_of_wallclock_total,speed_up                TIMER3A.868   
+                                                                           TIMER3A.869   
+          ELSE ! inclusive timer has slightly less to output               TIMER3A.870   
+                                                                           TIMER3A.871   
+            WRITE(6,23) I,local_timer_name(I),                             TIMER3A.872   
+     &                  local_number_of_times_timed(I),                    TIMER3A.873   
+     &                  local_cpu_time_elapsed(I),average_cpu_elapsed,     TIMER3A.874   
+     &                  local_wallclock_time_elapsed(I),                   TIMER3A.875   
+     &                  average_wallclock_elapsed,speed_up                 TIMER3A.876   
+                                                                           TIMER3A.877   
+          ENDIF                                                            TIMER3A.878   
+                                                                           TIMER3A.879   
+        ENDDO                                                              TIMER3A.880   
+                                                                           TIMER3A.881   
+                                                                           TIMER3A.882   
+*IF DEF,MPP                                                                TIMER3A.883   
+                                                                           TIMER3A.884   
+! And now to assemble an overall timing assesment on PE0                   TIMER3A.885   
+! Each PE sends it total wallclock and cpu time spent in each routine      TIMER3A.886   
+! to PE0, which calculates the average, s.d., max and min, and             TIMER3A.887   
+! sorts on the basis of the average wallclock time                         TIMER3A.888   
+!                                                                          TIMER3A.889   
+!                                                                          TIMER3A.890   
+! We'll use the list of routines that PE0 already has as the master        TIMER3A.891   
+! list.                                                                    TIMER3A.892   
+                                                                           TIMER3A.893   
+        IF (mype .EQ. 0) THEN                                              TIMER3A.894   
+          WRITE(6,*)                                                       TIMER3A.895   
+          WRITE(6,*) 'MPP Timing information : '                           TIMER3A.896   
+          WRITE(6,*)  nproc,' processors in configuration ',nproc_x,       TIMER3A.897   
+     &                ' x ',nproc_y                                        TIMER3A.898   
+                                                                           TIMER3A.899   
+          summ_n_timers=number_of_timers                                   TIMER3A.900   
+          DO I=1,summ_n_timers                                             TIMER3A.901   
+            summ_section(I)=local_timer_name(I)                            TIMER3A.902   
+          ENDDO                                                            TIMER3A.903   
+        ENDIF                                                              TIMER3A.904   
+                                                                           TIMER3A.905   
+! tell everyone else how many routines to do summary on - and which        TIMER3A.906   
+! routines they are                                                        TIMER3A.907   
+        CALL GC_IBCAST(3213,1,0,nproc,info,summ_n_timers)                  TIMER3A.908   
+        CALL GC_CBCAST(3214,20*summ_n_timers,0,nproc,info,                 TIMER3A.909   
+     &                 summ_section)                                       TIMER3A.910   
+                                                                           TIMER3A.911   
+                                                                           TIMER3A.912   
+        DO I=1,summ_n_timers                                               TIMER3A.913   
+                                                                           TIMER3A.914   
+! which section_ref is this for me?                                        TIMER3A.915   
+                                                                           TIMER3A.916   
+          routine_id=0                                                     TIMER3A.917   
+          DO J=1,number_of_timers                                          TIMER3A.918   
+            IF (local_timer_name(J) .EQ. summ_section(I))                  TIMER3A.919   
+     &        routine_id=J                                                 TIMER3A.920   
+          ENDDO                                                            TIMER3A.921   
+                                                                           TIMER3A.922   
+          IF (routine_id .GT. 0) THEN                                      TIMER3A.923   
+            wallclock_times(mype)=                                         TIMER3A.924   
+     &        local_wallclock_time_elapsed(routine_id)                     TIMER3A.925   
+            cpu_times(mype)=local_cpu_time_elapsed(routine_id)             TIMER3A.926   
+          ELSE                                                             TIMER3A.927   
+            wallclock_times(mype)=0.0                                      TIMER3A.928   
+            cpu_times(mype)=0.0                                            TIMER3A.929   
+          ENDIF                                                            TIMER3A.930   
+                                                                           TIMER3A.931   
+! send my information to PE 0.                                             TIMER3A.932   
+          CALL GC_GSYNC (nproc,info)                                       TIMER3A.933   
+                                                                           TIMER3A.934   
+          CALL GC_RSEND(1000+mype,1,0,info,wallclock_times(mype),          TIMER3A.935   
+     &                wallclock_times(mype))                               TIMER3A.936   
+          CALL GC_GSYNC(nproc,info)                                        TIMER3A.937   
+                                                                           TIMER3A.938   
+          IF (mype .EQ. 0) THEN                                            TIMER3A.939   
+            DO J=0,nproc-1                                                 TIMER3A.940   
+              CALL GC_RRECV(1000+J,1,J,info,wallclock_times(J),            TIMER3A.941   
+     &                      wallclock_times(J))                            TIMER3A.942   
+            ENDDO                                                          TIMER3A.943   
+          ENDIF                                                            TIMER3A.944   
+          CALL GC_GSYNC(nproc,info)                                        TIMER3A.945   
+                                                                           TIMER3A.946   
+          CALL GC_RSEND(10000+mype,1,0,info,cpu_times(mype),               TIMER3A.947   
+     &                cpu_times(mype))                                     TIMER3A.948   
+          CALL GC_GSYNC(nproc,info)                                        TIMER3A.949   
+                                                                           TIMER3A.950   
+          IF (mype .EQ. 0) THEN                                            TIMER3A.951   
+            DO J=0,nproc-1                                                 TIMER3A.952   
+              CALL GC_RRECV(10000+J,1,J,info,cpu_times(J),                 TIMER3A.953   
+     &                      cpu_times(J))                                  TIMER3A.954   
+            ENDDO                                                          TIMER3A.955   
+          ENDIF                                                            TIMER3A.956   
+                                                                           TIMER3A.957   
+          IF (mype .EQ. 0) THEN                                            TIMER3A.958   
+! collect all the information - and start calculating the statistics       TIMER3A.959   
+            wallclock_mean(I)=0.0                                          TIMER3A.960   
+            cpu_total(I)=0.0                                               TIMER3A.961   
+            wallclock_max(I)=-1.0E30                                       TIMER3A.962   
+            wallclock_min(I)=1.0E30                                        TIMER3A.963   
+            cpu_max(I)=-1.0E30                                             TIMER3A.964   
+            cpu_min(I)=1.0E30                                              TIMER3A.965   
+                                                                           TIMER3A.966   
+            DO J=0,nproc-1                                                 TIMER3A.967   
+                                                                           TIMER3A.968   
+              wallclock_mean(I)=wallclock_mean(I)+wallclock_times(J)       TIMER3A.969   
+              cpu_total(I)=cpu_total(I)+cpu_times(J)                       TIMER3A.970   
+                                                                           TIMER3A.971   
+              IF (wallclock_times(J).GT.wallclock_max(I)) THEN             TIMER3A.972   
+                wallclock_max(I)=wallclock_times(J)                        TIMER3A.973   
+                wallclock_max_pe(I)=J                                      TIMER3A.974   
+              ENDIF                                                        TIMER3A.975   
+              IF (wallclock_times(J).LT.wallclock_min(I)) THEN             TIMER3A.976   
+                wallclock_min(I)=wallclock_times(J)                        TIMER3A.977   
+                wallclock_min_pe(I)=J                                      TIMER3A.978   
+              ENDIF                                                        TIMER3A.979   
+              IF (cpu_times(J).GT.cpu_max(I)) THEN                         TIMER3A.980   
+                cpu_max(I)=cpu_times(J)                                    TIMER3A.981   
+                cpu_max_pe(I)=J                                            TIMER3A.982   
+              ENDIF                                                        TIMER3A.983   
+              IF (cpu_times(J).LT.cpu_min(I)) THEN                         TIMER3A.984   
+                cpu_min(I)=cpu_times(J)                                    TIMER3A.985   
+                cpu_min_pe(I)=J                                            TIMER3A.986   
+              ENDIF                                                        TIMER3A.987   
+                                                                           TIMER3A.988   
+            ENDDO ! loop over processors                                   TIMER3A.989   
+                                                                           TIMER3A.990   
+            IF (wallclock_max(I) .GT. 0.0) THEN                            TIMER3A.991   
+              speedup(I)=cpu_total(I)/wallclock_max(I)                     TIMER3A.992   
+            ELSE                                                           TIMER3A.993   
+              speedup(I)=1.0                                               TIMER3A.994   
+            ENDIF                                                          TIMER3A.995   
+            efficiency(I)=speedup(I)/nproc                                 TIMER3A.996   
+                                                                           TIMER3A.997   
+! and calculate the statistics                                             TIMER3A.998   
+! first calculate the means                                                TIMER3A.999   
+            wallclock_mean(I)=wallclock_mean(I)/nproc                      TIMER3A.1000  
+            cpu_mean(I)=cpu_total(I)/nproc                                 TIMER3A.1001  
+! To stop a divide by zero later:                                          TIMER3A.1002  
+            IF (wallclock_mean(I) .EQ. 0.0) wallclock_mean(I)=1.0E-20      TIMER3A.1003  
+            IF (cpu_mean(I) .EQ. 0.0) cpu_mean(I)=1.0E-20                  TIMER3A.1004  
+! and now the standard deviation                                           TIMER3A.1005  
+            wallclock_sd(I)=0.0                                            TIMER3A.1006  
+            cpu_sd(I)=0.0                                                  TIMER3A.1007  
+            DO J=0,nproc-1                                                 TIMER3A.1008  
+              wallclock_sd(I)=wallclock_sd(I)+                             TIMER3A.1009  
+     &          (wallclock_times(J)-wallclock_mean(I))*                    TIMER3A.1010  
+     &          (wallclock_times(J)-wallclock_mean(I))                     TIMER3A.1011  
+              cpu_sd(I)=cpu_sd(I)+(cpu_times(J)-cpu_mean(I))*              TIMER3A.1012  
+     &                      (cpu_times(J)-cpu_mean(I))                     TIMER3A.1013  
+            ENDDO                                                          TIMER3A.1014  
+            wallclock_sd(I)=SQRT(wallclock_sd(I)/nproc)                    TIMER3A.1015  
+            cpu_sd(I)=SQRT(cpu_sd(I)/nproc)                                TIMER3A.1016  
+                                                                           TIMER3A.1017  
+! Calculate the median                                                     TIMER3A.1018  
+            DO J=0,nproc-2                                                 TIMER3A.1019  
+              DO K=J+1,nproc-1                                             TIMER3A.1020  
+                IF (wallclock_times(K) .GT. wallclock_times(J)) THEN       TIMER3A.1021  
+                  sortwork_real=wallclock_times(J)                         TIMER3A.1022  
+                  wallclock_times(J)=wallclock_times(K)                    TIMER3A.1023  
+                  wallclock_times(K)=sortwork_real                         TIMER3A.1024  
+                ENDIF                                                      TIMER3A.1025  
+                IF (cpu_times(K) .GT. cpu_times(J)) THEN                   TIMER3A.1026  
+                  sortwork_real=cpu_times(J)                               TIMER3A.1027  
+                  cpu_times(J)=cpu_times(K)                                TIMER3A.1028  
+                  cpu_times(K)=sortwork_real                               TIMER3A.1029  
+                ENDIF                                                      TIMER3A.1030  
+              ENDDO                                                        TIMER3A.1031  
+            ENDDO                                                          TIMER3A.1032  
+                                                                           TIMER3A.1033  
+            IF (MOD(nproc,2) .EQ. 0) THEN                                  TIMER3A.1034  
+              wallclock_median(I)=(wallclock_times((nproc/2)-1)+           TIMER3A.1035  
+     &                             wallclock_times(nproc/2))*0.5           TIMER3A.1036  
+              cpu_median(I)=(cpu_times((nproc/2)-1)+                       TIMER3A.1037  
+     &                       cpu_times(nproc/2))*0.5                       TIMER3A.1038  
+            ELSE                                                           TIMER3A.1039  
+              wallclock_median(I)=wallclock_times(nproc/2)                 TIMER3A.1040  
+              cpu_median(I)=cpu_times(nproc/2)                             TIMER3A.1041  
+            ENDIF                                                          TIMER3A.1042  
+                                                                           TIMER3A.1043  
+          ENDIF ! am I PE 0?                                               TIMER3A.1044  
+                                                                           TIMER3A.1045  
+        ENDDO ! loop over sections                                         TIMER3A.1046  
+                                                                           TIMER3A.1047  
+! Sort and output the information on PE 0                                  TIMER3A.1048  
+                                                                           TIMER3A.1049  
+        IF (mype .EQ. 0) THEN                                              TIMER3A.1050  
+                                                                           TIMER3A.1051  
+          DO I=1,summ_n_timers-1                                           TIMER3A.1052  
+            DO J=(I+1),summ_n_timers                                       TIMER3A.1053  
+              IF (wallclock_max(J) .GT. wallclock_max(I)) THEN             TIMER3A.1054  
+                                                                           TIMER3A.1055  
+! Swap the entries I and J                                                 TIMER3A.1056  
+                                                                           TIMER3A.1057  
+              sortwork_char=summ_section(I)                                TIMER3A.1058  
+              summ_section(I)=summ_section(J)                              TIMER3A.1059  
+              summ_section(J)=sortwork_char                                TIMER3A.1060  
+                                                                           TIMER3A.1061  
+              sortwork_real=wallclock_mean(I)                              TIMER3A.1062  
+              wallclock_mean(I)=wallclock_mean(J)                          TIMER3A.1063  
+              wallclock_mean(J)=sortwork_real                              TIMER3A.1064  
+                                                                           TIMER3A.1065  
+              sortwork_real=wallclock_median(I)                            TIMER3A.1066  
+              wallclock_median(I)=wallclock_median(J)                      TIMER3A.1067  
+              wallclock_median(J)=sortwork_real                            TIMER3A.1068  
+                                                                           TIMER3A.1069  
+              sortwork_real=wallclock_sd(I)                                TIMER3A.1070  
+              wallclock_sd(I)=wallclock_sd(J)                              TIMER3A.1071  
+              wallclock_sd(J)=sortwork_real                                TIMER3A.1072  
+                                                                           TIMER3A.1073  
+              sortwork_real=wallclock_max(I)                               TIMER3A.1074  
+              wallclock_max(I)=wallclock_max(J)                            TIMER3A.1075  
+              wallclock_max(J)=sortwork_real                               TIMER3A.1076  
+                                                                           TIMER3A.1077  
+              sortwork_real=wallclock_min(I)                               TIMER3A.1078  
+              wallclock_min(I)=wallclock_min(J)                            TIMER3A.1079  
+              wallclock_min(J)=sortwork_real                               TIMER3A.1080  
+                                                                           TIMER3A.1081  
+              sortwork_int=wallclock_min_pe(I)                             TIMER3A.1082  
+              wallclock_min_pe(I)=wallclock_min_pe(J)                      TIMER3A.1083  
+              wallclock_min_pe(J)=sortwork_int                             TIMER3A.1084  
+                                                                           TIMER3A.1085  
+              sortwork_int=wallclock_max_pe(I)                             TIMER3A.1086  
+              wallclock_max_pe(I)=wallclock_max_pe(J)                      TIMER3A.1087  
+              wallclock_max_pe(J)=sortwork_int                             TIMER3A.1088  
+                                                                           TIMER3A.1089  
+              sortwork_real=cpu_mean(I)                                    TIMER3A.1090  
+              cpu_mean(I)=cpu_mean(J)                                      TIMER3A.1091  
+              cpu_mean(J)=sortwork_real                                    TIMER3A.1092  
+                                                                           TIMER3A.1093  
+              sortwork_real=cpu_median(I)                                  TIMER3A.1094  
+              cpu_median(I)=cpu_median(J)                                  TIMER3A.1095  
+              cpu_median(J)=sortwork_real                                  TIMER3A.1096  
+                                                                           TIMER3A.1097  
+              sortwork_real=cpu_sd(I)                                      TIMER3A.1098  
+              cpu_sd(I)=cpu_sd(J)                                          TIMER3A.1099  
+              cpu_sd(J)=sortwork_real                                      TIMER3A.1100  
+                                                                           TIMER3A.1101  
+              sortwork_real=cpu_max(I)                                     TIMER3A.1102  
+              cpu_max(I)=cpu_max(J)                                        TIMER3A.1103  
+              cpu_max(J)=sortwork_real                                     TIMER3A.1104  
+                                                                           TIMER3A.1105  
+              sortwork_real=cpu_min(I)                                     TIMER3A.1106  
+              cpu_min(I)=cpu_min(J)                                        TIMER3A.1107  
+              cpu_min(J)=sortwork_real                                     TIMER3A.1108  
+                                                                           TIMER3A.1109  
+              sortwork_real=cpu_total(I)                                   TIMER3A.1110  
+              cpu_total(I)=cpu_total(J)                                    TIMER3A.1111  
+              cpu_total(J)=sortwork_real                                   TIMER3A.1112  
+                                                                           TIMER3A.1113  
+              sortwork_real=speedup(I)                                     TIMER3A.1114  
+              speedup(I)=speedup(J)                                        TIMER3A.1115  
+              speedup(J)=sortwork_real                                     TIMER3A.1116  
+                                                                           TIMER3A.1117  
+              sortwork_real=efficiency(I)                                  TIMER3A.1118  
+              efficiency(I)=efficiency(J)                                  TIMER3A.1119  
+              efficiency(J)=sortwork_real                                  TIMER3A.1120  
+                                                                           TIMER3A.1121  
+              sortwork_int=cpu_min_pe(I)                                   TIMER3A.1122  
+              cpu_min_pe(I)=cpu_min_pe(J)                                  TIMER3A.1123  
+              cpu_min_pe(J)=sortwork_int                                   TIMER3A.1124  
+                                                                           TIMER3A.1125  
+              sortwork_int=cpu_max_pe(I)                                   TIMER3A.1126  
+              cpu_max_pe(I)=cpu_max_pe(J)                                  TIMER3A.1127  
+              cpu_max_pe(J)=sortwork_int                                   TIMER3A.1128  
+                                                                           TIMER3A.1129  
+              ENDIF                                                        TIMER3A.1130  
+            ENDDO                                                          TIMER3A.1131  
+          ENDDO                                                            TIMER3A.1132  
+                                                                           TIMER3A.1133  
+! and write out the information                                            TIMER3A.1134  
+          WRITE(6,*)                                                       TIMER3A.1135  
+          IF (timer_kind .EQ. 1) THEN                                      TIMER3A.1136  
+            WRITE(6,*) 'MPP : None Inclusive timer summary'                TIMER3A.1137  
+          ELSE                                                             TIMER3A.1138  
+            WRITE(6,*) 'MPP : Inclusive timer summary'                     TIMER3A.1139  
+          ENDIF                                                            TIMER3A.1140  
+                                                                           TIMER3A.1141  
+          WRITE(6,*)                                                       TIMER3A.1142  
+          WRITE(6,*)  'WALLCLOCK  TIMES'                                   TIMER3A.1143  
+          WRITE(6,40)                                                      TIMER3A.1144  
+          DO I=1,summ_n_timers                                             TIMER3A.1145  
+                                                                           TIMER3A.1146  
+            WRITE(6,41) I,summ_section(I),                                 TIMER3A.1147  
+     &                 wallclock_mean(I),wallclock_median(I),              TIMER3A.1148  
+     &                 wallclock_sd(I),                                    TIMER3A.1149  
+     &                 (wallclock_sd(I)/wallclock_mean(I))*100.0,          TIMER3A.1150  
+     &                 wallclock_max(I),wallclock_max_pe(I),               TIMER3A.1151  
+     &                 wallclock_min(I),wallclock_min_pe(I)                TIMER3A.1152  
+          ENDDO                                                            TIMER3A.1153  
+                                                                           TIMER3A.1154  
+          WRITE(6,*)                                                       TIMER3A.1155  
+          WRITE(6,*)  'CPU TIMES (sorted by wallclock times)'              TIMER3A.1156  
+          WRITE(6,40)                                                      TIMER3A.1157  
+          DO I=1,summ_n_timers                                             TIMER3A.1158  
+            WRITE(6,41) I,summ_section(I),                                 TIMER3A.1159  
+     &                 cpu_mean(I),cpu_median(I),                          TIMER3A.1160  
+     &                 cpu_sd(I),                                          TIMER3A.1161  
+     &                 (cpu_sd(I)/cpu_mean(I))*100.0,                      TIMER3A.1162  
+     &                 cpu_max(I),cpu_max_pe(I),                           TIMER3A.1163  
+     &                 cpu_min(I),cpu_min_pe(I)                            TIMER3A.1164  
+          ENDDO                                                            TIMER3A.1165  
+                                                                           TIMER3A.1166  
+          WRITE(6,*)                                                       TIMER3A.1167  
+          WRITE(6,*) 'PARALLEL SPEEDUP SUMMARY ',                          TIMER3A.1168  
+     &             '(sorted by wallclock times)'                           TIMER3A.1169  
+          WRITE(6,50)                                                      TIMER3A.1170  
+          DO I=1,summ_n_timers                                             TIMER3A.1171  
+            WRITE(6,51) I,summ_section(I),cpu_total(I),                    TIMER3A.1172  
+     &                  wallclock_max(I),speedup(I),                       TIMER3A.1173  
+     &                  efficiency(I)                                      TIMER3A.1174  
+          ENDDO                                                            TIMER3A.1175  
+                                                                           TIMER3A.1176  
+                                                                           TIMER3A.1177  
+ 40       FORMAT(4X,'ROUTINE',11X,'MEAN',3X,'MEDIAN',7X,                   TIMER3A.1178  
+     &           'SD',3X,'% of mean',6X,'MAX',3X,                          TIMER3A.1179  
+     &           '(PE)',6X,'MIN',3X,'(PE)')                                TIMER3A.1180  
+                                                                           TIMER3A.1181  
+ 41       FORMAT(/,I3,1X,A12,1X,                                           TIMER3A.1182  
+     &           3(1X,F8.2),5X,F6.2,'%'                                    TIMER3A.1183  
+     &           2(1X,F8.2,1X,'(',I4,')'))                                 TIMER3A.1184  
+                                                                           TIMER3A.1185  
+ 50       FORMAT(4X,'ROUTINE',11X,'CPU TOTAL',3X,                          TIMER3A.1186  
+     &           'WALLCLOCK MAX',3X,'SPEEDUP',3X,                          TIMER3A.1187  
+     &           'PARALLEL EFFICIENCY')                                    TIMER3A.1188  
+                                                                           TIMER3A.1189  
+ 51       FORMAT(/,I3,1X,A17,1X,                                           TIMER3A.1190  
+     &           1X,F8.2,8X,F8.2,2X,F8.2,14X,F8.2)                         TIMER3A.1191  
+                                                                           TIMER3A.1192  
+        ENDIF                                                              TIMER3A.1193  
+        WRITE(6,*)                                                         TIMER3A.1194  
+                                                                           TIMER3A.1195  
+*ENDIF                                                                     TIMER3A.1196  
+                                                                           TIMER3A.1197  
+      ENDDO ! loop over timer kind                                         TIMER3A.1198  
+                                                                           TIMER3A.1199  
+! Finally copy the timer info into the last_* arrays so that the           TIMER3A.1200  
+! intermediate timer can calculate the timings since this point            TIMER3A.1201  
+                                                                           TIMER3A.1202  
+      DO I=1,in_number_of_timers                                           TIMER3A.1203  
+        last_in_number_of_times_timed(I)=in_number_of_times_timed(I)       TIMER3A.1204  
+        last_in_cpu_time_elapsed(I)=in_cpu_time_elapsed(I)                 TIMER3A.1205  
+        last_in_wallclock_time_elapsed(I)=                                 TIMER3A.1206  
+     &    in_wallclock_time_elapsed(I)                                     TIMER3A.1207  
+      ENDDO                                                                TIMER3A.1208  
+                                                                           TIMER3A.1209  
+      DO I=1,ni_number_of_timers                                           TIMER3A.1210  
+        last_ni_number_of_times_timed(I)=ni_number_of_times_timed(I)       TIMER3A.1211  
+        last_ni_cpu_time_elapsed(I)=ni_cpu_time_elapsed(I)                 TIMER3A.1212  
+        last_ni_wallclock_time_elapsed(I)=                                 APB4F402.9     
+     &    ni_wallclock_time_elapsed(I)                                     TIMER3A.1214  
+      ENDDO                                                                TIMER3A.1215  
+                                                                           TIMER3A.1216  
+                                                                           TIMER3A.1217  
+ 9999 CONTINUE                                                             TIMER3A.1218  
+                                                                           TIMER3A.1219  
+      RETURN                                                               TIMER3A.1220  
+                                                                           TIMER3A.1221  
+      END                                                                  TIMER3A.1222  
+                                                                           TIMER3A.1223  
+                                                                           TIMER3A.1224  
+                                                                           TIMER3A.1225  
+                                                                           TIMER3A.1226  
+                                                                           TIMER3A.1227  
+!*******************************************************************       TIMER3A.1228  
+      REAL FUNCTION get_cpu_time()                                         TIMER3A.1229  
+                                                                           TIMER3A.1230  
+! Gets the cpu time from the system.                                       TIMER3A.1231  
+                                                                           TIMER3A.1232  
+      IMPLICIT NONE                                                        TIMER3A.1233  
+      REAL SECOND                                                          TIMER3A.1234  
+                                                                           TIMER3A.1235  
+      get_cpu_time=SECOND()                                                TIMER3A.1236  
+                                                                           TIMER3A.1237  
+      RETURN                                                               TIMER3A.1238  
+      END                                                                  TIMER3A.1239  
+                                                                           TIMER3A.1240  
+      REAL FUNCTION get_wallclock_time()                                   TIMER3A.1241  
+                                                                           TIMER3A.1242  
+! Gets the wallclock time from the wallclock.                              TIMER3A.1243  
+                                                                           TIMER3A.1244  
+      IMPLICIT NONE                                                        TIMER3A.1245  
+      REAL temp                                                            TIMER3A.1246  
+*IF DEF,SGI                                                                PXTIMEFN.53    
+      REAL (KIND=8) TIMEF                                                  PXTIMEFN.54    
+*ENDIF                                                                     PXTIMEFN.55    
+                                                                           TIMER3A.1247  
+*IF -DEF,SGI                                                               PXTIMEFN.56    
+      CALL TIMEF(temp)                                                     TIMER3A.1248  
+*ELSE                                                                      PXTIMEFN.57    
+      temp=TIMEF()/1000.0                                                  PXTIMEFN.58    
+*ENDIF                                                                     PXTIMEFN.59    
+                                                                           TIMER3A.1249  
+      get_wallclock_time=temp                                              GPB3F403.161   
+      RETURN                                                               TIMER3A.1251  
+      END                                                                  TIMER3A.1252  
+*ENDIF                                                                     TIMER3A.1253  

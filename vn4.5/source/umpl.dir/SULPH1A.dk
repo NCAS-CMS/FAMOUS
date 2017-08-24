@@ -1,0 +1,632 @@
+*IF DEF,A17_1A                                                             SULPH1A.2     
+!    Subroutine SULPHUR ---------------------------------------------      SULPH1A.3     
+!                                                                          SULPH1A.4     
+! Purpose: To perform oxidation chemistry of sulphur dioxide to 3 modes    SULPH1A.5     
+!          of Sulphate aerosol (Aitken, accumulation and dissolved),       SULPH1A.6     
+!          and dimethyl sulphide to sulphur dioxide and methyl sulphonic   SULPH1A.7     
+!          acid.                                                           SULPH1A.8     
+!          There is also exchange between the 3 modes of slphateaerosol    SULPH1A.9     
+!          due to nucleation, diffusion and evaporation processes.         SULPH1A.10    
+!          Called by CHEM_CTL                                              SULPH1A.11    
+!                                                                          SULPH1A.12    
+! Current owners of code:                M J Woodage                       SULPH1A.13    
+!                                                                          SULPH1A.14    
+! History:                                                                 SULPH1A.15    
+! Version     Date     Comment                                             SULPH1A.16    
+! -------     ----     -------                                             SULPH1A.17    
+!  4.1      10/06/96   Original code       M J Woodage                     SULPH1A.18    
+!                      + Additional code   R Colvile, D Roberts            SULPH1A.19    
+!                                                                          SULPH1A.20    
+!  4.4      30/09/97    Partition dry oxidised SO2 so that some becomes    AWO1F404.1     
+!                       Aitken mode, and some accumulation mode SO4.       AWO1F404.2     
+!                                                                          AWO1F404.3     
+!                       Replenish H2O2 from HO2 in daylight only.          AWO1F404.4     
+!                                                                          AWO1F404.5     
+!                       Evaporate dissolved SO4 circulating through        AWO1F404.6     
+!                       non_cloudy part of grid box when cloud fraction    AWO1F404.7     
+!                       less than 0.95.                                    AWO1F404.8     
+!                                                 (M. Woodage)             AWO1F404.9     
+!  4.5    1/06/98   Add code for oxidation by ozone using ammonia          AWO6F405.171   
+!                   as a buffer, to wet oxidation section.     MJW         AWO6F405.172   
+! Code Description:                                                        SULPH1A.21    
+!  Language: FORTRAN77 + common extensions                                 SULPH1A.22    
+!  This code is written to UMDP3 v6 programming standards                  SULPH1A.23    
+!                                                                          SULPH1A.24    
+! System components covered:                                               SULPH1A.25    
+!                                                                          SULPH1A.26    
+! System task:                                                             SULPH1A.27    
+!                                                                          SULPH1A.28    
+! Documentation: Not yet available                                         SULPH1A.29    
+!                                                                          SULPH1A.30    
+!-----------------------------------------------------------------         SULPH1A.31    
+!                                                                          SULPH1A.32    
+      SUBROUTINE SULPHUR(SO2,                                              SULPH1A.33    
+     &             SO4_AIT,SO4_ACC,SO4_DIS,                                SULPH1A.34    
+     &            NH3,NH3_DEP,O3,L_SULPC_OZONE,                            AWO6F405.173   
+     &             DMS,H2O2_MXR,CLOUDF,                                    SULPH1A.35    
+     &             NPNTS,QPNTS,NPFLD,TSTEP,                                SULPH1A.36    
+     &             QCL,QCF,LAND_MASK,COSZA2D,                              SULPH1A.37    
+     &             P,T,Q,                                                  SULPH1A.38    
+     &             OH_CONC,H2O2_LMT,HO2_CONC,                              SULPH1A.39    
+     &             FIRST_POINT,LAST_POINT,                                 SULPH1A.40    
+     &             MSA,L_SULPC_DMS)                                        SULPH1A.41    
+!                                                                          SULPH1A.42    
+!                                                                          SULPH1A.43    
+      IMPLICIT NONE                                                        SULPH1A.44    
+!                                                                          SULPH1A.45    
+*CALL C_R_CP                  ! CONTAINS GAS CONST R=287.05 J/KG/K         SULPH1A.46    
+*CALL C_MICRO                 ! CONTAINS CLOUD DROPLET CONCENTRATIONS      SULPH1A.47    
+*CALL C_DENSTY                ! CONTAINS DENSITY OF WATER, RHO_WATER.      SULPH1A.48    
+*CALL C_SULCHM                ! CONTAINS OTHER REQUIRED PARAMETERS         SULPH1A.49    
+*CALL C_PI                                                                 AWO1F404.10    
+!                                                                          SULPH1A.50    
+      INTEGER                                                              SULPH1A.51    
+     &        NPNTS,            !IN no. of pts in 3_D array on P_LEVS      SULPH1A.52    
+     &        QPNTS,            !IN no. of pts in 3_D array on Q_LEVS      SULPH1A.53    
+     &        NPFLD,            !IN no. of pts in 2_D field                SULPH1A.54    
+     &        FIRST_POINT,      !IN first point for calcns to be done      SULPH1A.55    
+     &        LAST_POINT        !IN last  point for calcns to be done      SULPH1A.56    
+!                                                                          SULPH1A.57    
+      REAL TSTEP                ! IN chemistry tstep: may be less than     SULPH1A.58    
+!                                     physics tstep                        SULPH1A.59    
+!                                                                          SULPH1A.60    
+      REAL SO2(NPNTS),      !INOUT mass mix rat of sulphur in SO2 gas      SULPH1A.61    
+     &     DMS(NPNTS),      !INOUT mass mix rat of S in DMS gas            SULPH1A.62    
+     &     SO4_AIT(NPNTS),  !INOUT mass mix rat of S in SO4 AITKEN mode    SULPH1A.63    
+     &     SO4_ACC(NPNTS),  !INOUT mass mix rat of S in SO4 ACCUM  mods    SULPH1A.64    
+     &     SO4_DIS(NPNTS),  !INOUT mass mix rat of S in dissolved SO4      SULPH1A.65    
+     &     NH3(NPNTS),        !INOUT mass mix rat of N in NH3              AWO6F405.174   
+     &     H2O2_MXR(NPNTS)  !INOUT mass mix rat of hydrogen peroxide       SULPH1A.66    
+!                                                                          SULPH1A.67    
+      REAL CLOUDF(QPNTS),      !IN  cloud fraction (range 0 TO 1)          SULPH1A.68    
+     &     QCL(QPNTS),         !IN  cloud liquid water (mmr)               SULPH1A.69    
+     &     QCF(QPNTS),         !IN  cloud frozen water (mmr)               SULPH1A.70    
+     &     COSZA2D(NPFLD),     !IN  cos(zenith angle) 2_D field            SULPH1A.71    
+     &     P(NPNTS),           !IN  pressure at model level                SULPH1A.72    
+     &     T(NPNTS),           !IN  temperature                            SULPH1A.73    
+     &     Q(QPNTS)            !IN  specific humidity (kg/kg)              SULPH1A.74    
+!                                                                          SULPH1A.75    
+      REAL OH_CONC(NPNTS),     !IN  OH concentration (3_D array)           SULPH1A.76    
+     &     HO2_CONC(NPNTS),    !IN  HO2 concn (3_D array)                  SULPH1A.77    
+     &     H2O2_LMT(NPNTS)     !IN  H2O2 max limit field (3_D array)       SULPH1A.78    
+      REAL O3(NPNTS)          !IN O3 mass mix rat field (3_D array)        AWO6F405.175   
+      REAL NH3_DEP(NPNTS)     !OUT NH3 mmr depleted by buffering           AWO6F405.176   
+      REAL MSA(NPNTS)          !OUT mass mix rat of S in MSA               SULPH1A.79    
+!                                                                          SULPH1A.80    
+      LOGICAL L_SULPC_DMS,        !IN, TRUE if DMS chemistry required      SULPH1A.81    
+     &        L_SULPC_OZONE,     !IN, TRUE if O3 oxidn required            AWO6F405.177   
+     &        LAND_MASK(NPFLD)    !IN, TRUE IF LAND, FALSE IF SEA.         SULPH1A.82    
+!                                                                          SULPH1A.83    
+! Local variables                                                          SULPH1A.84    
+!                                                                          SULPH1A.85    
+      INTEGER I,J,K               ! loop variables                         SULPH1A.86    
+!                                                                          SULPH1A.87    
+      REAL                                                                 SULPH1A.88    
+     &     DRYRATE,               ! rate of dry oxidn SO2  in 1/s          SULPH1A.89    
+     &     WETRATE,               ! rate of wet oxidn SO2  in 1/s          SULPH1A.90    
+     &     DMSRATE                ! rate of dry oxidn DMS in 1/s           SULPH1A.91    
+!                                                                          SULPH1A.92    
+      REAL CLEARF(QPNTS),         ! clear air fraction (1-CLOUDF)          SULPH1A.93    
+     &     DELTAS_DRY(NPNTS),     ! amount SO2 dry oxidised per ts         SULPH1A.94    
+     &     DELTAS_WET(NPNTS),     ! amount SO2 wet oxidised per ts         SULPH1A.95    
+     &     DELTAS_WET_O3(NPNTS), !amount of SO2 oxidised by O3 per ts      AWO6F405.179   
+     &     DELTAS_TOT(NPNTS),     ! total amount SO2 oxidised per ts       SULPH1A.96    
+     &     DELTA_DMS(NPNTS),      ! amount DMS dry oxidised per ts         SULPH1A.97    
+     &     DELTAS_EVAP(NPNTS), ! amount of dissolved SO4 released due      SULPH1A.98    
+!                                to the evapn of cloud droplets per ts     SULPH1A.99    
+     &     DELTAS_NUCL(NPNTS), ! amount of accu mode SO4 transfered to     SULPH1A.100   
+!                                dissolved SO4 by nucleation per ts        SULPH1A.101   
+     &     DELTAS_DIFFUSE(NPNTS), ! amount of Aitken mode SO4 transfd      SULPH1A.102   
+!                                   to dissolved SO4 by diffusion per ts   SULPH1A.103   
+     &     QCTOTAL(QPNTS)      ! total condensed water amount.(QCL+QCF)    SULPH1A.104   
+!                                                                          SULPH1A.105   
+      REAL                                                                 SULPH1A.106   
+     &     EVAPTIME,        ! timescale for cloud droplets to evaporate    AWO1F404.11    
+     &     NUCTIME,        ! timescale for particles to enter a cloud      SULPH1A.107   
+!                            and nucleate.                                 SULPH1A.108   
+     &     DIFFUSE_TAU,    ! diffusive lifetime of Aitken mode particles   SULPH1A.109   
+!                            once they enter a cloud                       SULPH1A.110   
+     &     NLAND23,        ! NTOT_LAND**(-2/3)                             SULPH1A.111   
+     &     NSEA23,         ! NTOT_SEA**(-2/3)                              SULPH1A.112   
+     &     RHO_CUBEROOT,   ! cube root of density of water.                SULPH1A.113   
+     &     DIFFUSE_TAURATIO, ! CLOUDTAU/DIFFUSE_TAU                        SULPH1A.114   
+     &     PROBDIFF_INV,   ! inverse of probability of a particle being    SULPH1A.115   
+!                            diffusionallly scavenged in a cloud.          SULPH1A.116   
+     &     PROBDIFF_FN1,   ! PROBDIFF_INV - 0.5                            SULPH1A.117   
+     &     PROBDIFF_FN2,   ! PROBDIFF_INV*EXP(DIFFUSE_TAURATIO*0.5)        SULPH1A.118   
+     &     PROBDIFF_CLOUD, ! probability of an Aitken mode particle        SULPH1A.119   
+!                            being in cloud at the start of a step.        SULPH1A.120   
+     &     PROBDIFF_CLEAR, ! probability of an Aitken mode particle        SULPH1A.121   
+!                            being in clear air at the start of a step.    SULPH1A.122   
+     &     LAMBDA_AITKEN,  ! ratio of concentrations of Aitken mode        SULPH1A.123   
+!                            particles in cloudy to clear air.             SULPH1A.124   
+     &     DIFFRATE ! rate of diffusive capture of Aitken mode particles   SULPH1A.125   
+!                                                                          SULPH1A.126   
+      REAL AIR_CONC,              ! air concentration on molecules/cc      SULPH1A.127   
+     &     W_CONC,                ! H2O concentration in molecules/cc      SULPH1A.128   
+     &     K_SO2_OH,              ! reaction rate for SO2+OH  cc/mcl/s     SULPH1A.129   
+     &     K_SO2OH_LO,            ! low_pressure reaction rate limit       SULPH1A.130   
+     &     K_LIMRAT,              ! ratio  reaction rate limits (LO/HI)    SULPH1A.131   
+     &     K_HO2_HO2,             ! reaction rate for HO2 to H2O2          SULPH1A.132   
+     &     H2O2_CON_TO_MXR        ! conversion factor =                    SULPH1A.133   
+!                                 ! RMM_H2O2/AVAGADRO/AIR DENSITY          SULPH1A.134   
+      REAL FAC2,FAC3              ! for interp between LO and HI K_SO2OH   SULPH1A.135   
+!                                 !    reaction rate limits                SULPH1A.136   
+!                                                                          SULPH1A.137   
+      REAL TERM1,                 ! dummy variables to assist              SULPH1A.138   
+     &     TERM2,                 !  wet oxidn calculation                 SULPH1A.139   
+     &     DENOM,                 !                                        SULPH1A.140   
+     &     TERM3,                 ! dummy variables to assist              SULPH1A.141   
+     &     TERM4,                 ! calculation of diffusive capture.      SULPH1A.142   
+     &     TAURATIO,              ! CLOUDTAU/CHEMTAU                       SULPH1A.143   
+     &     HFTAURAT,              ! CLOUDTAU/2*CHEMTAU                     SULPH1A.144   
+     &     PROBOX_INV,            ! 1/probability of oxidn in cloud        SULPH1A.145   
+     &     PROBOX_FN1,            ! PROBOX_INV - 0.5                       SULPH1A.146   
+     &     PROBOX_FN2,            ! PROBOX_INV * EXP(-HFTAURAT)            SULPH1A.147   
+     &     PROB_CLOUD,            ! probability SO2 starts in cloud        SULPH1A.148   
+     &     PROB_CLEAR,            ! probability SO2 starts in clear air    SULPH1A.149   
+     &     LAMDA,                 ! ratio SO2 in cloud/clear air           SULPH1A.150   
+     &     H2O2_REP               ! replenished H2O2                       SULPH1A.151   
+!                                                                          SULPH1A.152   
+      REAL PSI(NPNTS)      ! fraction of dry oxidised SO2 becoming Ait     AWO1F404.12    
+                           !  mode SO4 (remainder becomes accu mode)       AWO1F404.13    
+      REAL MMR_STAR        ! threshold mmr of SO4_ACC below which PSI=1    AWO1F404.14    
+      REAL RHO_AIR         ! air density kg/m3                             AWO1F404.15    
+      REAL CON_1,          ! constants required for PSI calcn              AWO1F404.16    
+     &     CON_2                                                           AWO1F404.17    
+      REAL SCALE_FACTOR          ! to prevent negative SO2                 AWO6F405.178   
+!                                                                          SULPH1A.153   
+!--------------------------------------------------------------------      SULPH1A.154   
+! 0. Set up constants and initialise DELTA increments to 0                 SULPH1A.155   
+!--------------------------------------------------------------------      SULPH1A.156   
+!                                                                          SULPH1A.157   
+! The next few constants cannot be declared as PARAMETERs because          SULPH1A.158   
+! they involve non-integer exponents.                                      SULPH1A.159   
+!                                                                          SULPH1A.160   
+      NLAND23 = 1.0/(NTOT_LAND**0.666667)                                  SULPH1A.161   
+      NSEA23 = 1.0/(NTOT_SEA**0.666667)                                    SULPH1A.162   
+      RHO_CUBEROOT = RHO_WATER**0.333333                                   SULPH1A.163   
+!                                                                          SULPH1A.164   
+!                                                                          SULPH1A.165   
+! Calculate parameters which are same for each grid box (for wet oxidn)    SULPH1A.166   
+!                                                                          SULPH1A.167   
+      TAURATIO=CLOUDTAU/CHEMTAU                                            SULPH1A.168   
+      HFTAURAT=TAURATIO/2.0                                                SULPH1A.169   
+      PROBOX_INV=1.0/(1.0-EXP(-TAURATIO))                                  SULPH1A.170   
+      PROBOX_FN1=PROBOX_INV-0.5                                            SULPH1A.171   
+      PROBOX_FN2=PROBOX_INV*EXP(-HFTAURAT)                                 SULPH1A.172   
+!                                                                          SULPH1A.173   
+      DO J=1,NPNTS-NPFLD+1,NPFLD      ! J loops over all model points      SULPH1A.174   
+        DO I=FIRST_POINT,LAST_POINT   ! I loop omits N AND S polar rows    SULPH1A.175   
+          K=I+J-1                                                          SULPH1A.176   
+          DELTAS_DRY(K)  = 0.0                                             SULPH1A.177   
+          DELTAS_WET(K)  = 0.0                                             SULPH1A.178   
+          DELTAS_WET_O3(K) = 0.0                                           AWO6F405.180   
+          NH3_DEP(K)  = 0.0                                                AWO6F405.181   
+          DELTAS_TOT(K)  = 0.0                                             SULPH1A.179   
+          DELTA_DMS(K)   = 0.0                                             SULPH1A.180   
+          DELTAS_EVAP(K) = 0.0                                             SULPH1A.181   
+          DELTAS_NUCL(K) = 0.0                                             SULPH1A.182   
+          DELTAS_DIFFUSE(K) = 0.0                                          SULPH1A.183   
+        END DO                                                             SULPH1A.184   
+      END DO                                                               SULPH1A.185   
+!                                                                          SULPH1A.186   
+!---------------------------------------------------------------------     SULPH1A.187   
+! 1.  This section calculates amount of SO2 dry oxidised using a           SULPH1A.188   
+!     3_D OH concentration field to control the oxidn rate when            SULPH1A.189   
+!     cos(zenith angle) is G.T. 10-6  (else rate is zero).                 SULPH1A.190   
+!  Reaction rates are dependent on temperature and pressure (R.Colvile)    SULPH1A.191   
+!---------------------------------------------------------------------     SULPH1A.192   
+!                                                                          SULPH1A.193   
+      CON_1 = EXP(4.5*LOG(SIGMA)*LOG(SIGMA))                               AWO1F404.18    
+      CON_2 = 4.0*PI*RHO_SO4*CHI*NUM_STAR*(RAD_ACC)**3.0                   AWO1F404.19    
+      DO J=1,NPNTS-NPFLD+1,NPFLD      ! J loops over all model points      SULPH1A.194   
+        DO I=FIRST_POINT,LAST_POINT   ! I loop omits N AND S polar rows    SULPH1A.195   
+           K=I+J-1                                                         SULPH1A.196   
+!                                                                          SULPH1A.197   
+         AIR_CONC = (AVOGADRO*P(K)) / (R*T(K)*RMM_AIR*1.0E6)  ! mcls/cc    SULPH1A.198   
+         K_SO2OH_LO = AIR_CONC * K1 * (T1/T(K))**PARH                      SULPH1A.199   
+!                                                                          SULPH1A.200   
+         K_LIMRAT = K_SO2OH_LO / K_SO2OH_HI                                SULPH1A.201   
+             FAC2 = K_SO2OH_LO /(1.0+ K_LIMRAT)                            SULPH1A.202   
+             FAC3 = 1.0 + (LOG10(K_LIMRAT)/FAC1)**2.0                      SULPH1A.203   
+!                                                                          SULPH1A.204   
+         K_SO2_OH = FAC2 * FC**(1.0/FAC3)         ! Variable K_SO2_OH      SULPH1A.205   
+!                                                                          SULPH1A.206   
+!  Only calculate the dry oxidation rate in the daytime.                   SULPH1A.207   
+!                                                                          SULPH1A.208   
+         IF (COSZA2D(I).GT.1.0E-06) THEN                                   SULPH1A.209   
+           DRYRATE=K_SO2_OH * OH_CONC(K)                                   SULPH1A.210   
+         ELSE                     ! Zero rate if nightime                  SULPH1A.211   
+           DRYRATE=0.0                                                     SULPH1A.212   
+         ENDIF                                                             SULPH1A.213   
+!                                                                          SULPH1A.214   
+         DELTAS_DRY(K) = DRYRATE*TSTEP*SO2(K) ! Amnt SO2 dry oxidised      SULPH1A.215   
+!  Calculate fraction becoming Aitken mode SO4                             AWO1F404.20    
+      RHO_AIR = P(K)/R*T(K)                                                AWO1F404.21    
+      MMR_STAR = CON_1*CON_2/(3.0*RHO_AIR)                                 AWO1F404.22    
+!                                                                          AWO1F404.23    
+      IF (SO4_ACC(K).LT.MMR_STAR)   THEN                                   AWO1F404.24    
+        PSI(K) = 1.0                                                       AWO1F404.25    
+      ELSE                                                                 AWO1F404.26    
+        PSI(K) = RAD_ACC*E_PARM*SO4_AIT(K)/                                AWO1F404.27    
+     &          (RAD_ACC*E_PARM*SO4_AIT(K)+RAD_AIT*SO4_ACC(K))             AWO1F404.28    
+      END IF                                                               AWO1F404.29    
+!                                                                          AWO1F404.30    
+        END DO                                                             SULPH1A.216   
+      END DO                                                               SULPH1A.217   
+!                                                                          SULPH1A.218   
+!--------------------------------------------------------------            SULPH1A.219   
+! 2. This section calculates amount of SO2 wet oxidised using a            SULPH1A.220   
+!    3_D H2O2 field to control the oxidn rate. As H2O2 is depleted, it     SULPH1A.221   
+!    is replenished from the HO2 concn field (via a reaction rate), but    SULPH1A.222   
+!    it may not exceed the H2O2 LIMIT field .                              SULPH1A.223   
+!    The reaction rate is a function of pressure, temp and humidity.       SULPH1A.224   
+!    It uses D.Roberts' formula for the wet oxidn rate, and R.Colvile's    SULPH1A.225   
+!    H2O2 and HO2 chemistry.                                               SULPH1A.226   
+!    Depletion and replenishment of H2O2 is done at the end of the         AWO6F405.182   
+!    routine, after scaling to avoid SO2 becoming negative.                AWO6F405.183   
+!                                                                          AWO6F405.184   
+!    If H2O2 is limiting, further oxidation by O3 occurs if there is       AWO6F405.185   
+!    sufficient NH3 available to buffer the reaction; Choularton's         AWO6F405.186   
+!    suggested procedure is:                                               AWO6F405.187   
+!    a) Do oxidn of SO2 by H2O2                                            AWO6F405.188   
+!    b) Neutralise sulphate produced with NH3                              AWO6F405.189   
+!    c) If SO2 remains do oxidn by O3 until SO2 or NH3 required to         AWO6F405.190   
+!       neutralise it is exhausted.                                        AWO6F405.191   
+!                                                                          AWO6F405.192   
+!--------------------------------------------------------------            SULPH1A.227   
+!                                                                          SULPH1A.228   
+      DO J=1,QPNTS-NPFLD+1,NPFLD     ! J loops over all model points       SULPH1A.229   
+        DO I=FIRST_POINT,LAST_POINT  ! I loop omits N AND S polar rows     SULPH1A.230   
+           K=I+J-1                                                         SULPH1A.231   
+!                                                                          SULPH1A.232   
+          CLEARF(K)=1.0-CLOUDF(K)    ! CALCULATE CLEAR AIR FRACTION        SULPH1A.233   
+!                                                                          SULPH1A.234   
+        IF ( (QCL(K).GE.THOLD) .AND. (CLOUDF(K).GT.0.0) ) THEN             SULPH1A.235   
+!                                                                          SULPH1A.236   
+!   CALCULATE LAMDA                                                        SULPH1A.237   
+          TERM1=(CLEARF(K)*TAURATIO)**2                                    SULPH1A.238   
+          TERM1=TERM1+2.0*TAURATIO*CLEARF(K)*(CLEARF(K)-CLOUDF(K))         SULPH1A.239   
+          TERM1=SQRT(1.0+TERM1)                                            SULPH1A.240   
+          TERM2=2.0*CLOUDF(K)-TAURATIO*CLEARF(K)-1.0                       SULPH1A.241   
+          TERM2=TERM2+TERM1                                                SULPH1A.242   
+          LAMDA=TERM2/(2.0*CLOUDF(K))                                      SULPH1A.243   
+!                                                                          SULPH1A.244   
+!   CALCULATE PROB_CLEAR AND PROB_CLOUD                                    SULPH1A.245   
+           DENOM=CLEARF(K)+CLOUDF(K)*LAMDA                                 SULPH1A.246   
+         PROB_CLEAR=CLEARF(K)/DENOM                                        SULPH1A.247   
+         PROB_CLOUD=CLOUDF(K)*LAMDA/DENOM                                  SULPH1A.248   
+!                                                                          SULPH1A.249   
+!   CALCULATE EXPECTED LIFETIME OF SO2 (WHICH IS 1/WETRATE)                SULPH1A.250   
+           TERM1=PROBOX_FN1*PROB_CLEAR                                     SULPH1A.251   
+           TERM2=PROBOX_FN2*PROB_CLOUD                                     SULPH1A.252   
+           TERM2=(TERM1+TERM2)*CLEARF(K)/CLOUDF(K)                         SULPH1A.253   
+        DENOM=TERM2*CLOUDTAU+CHEMTAU                                       SULPH1A.254   
+        WETRATE=1.0/DENOM                                                  SULPH1A.255   
+!                                                                          SULPH1A.256   
+!!  RC'S H2O2 CHEMISTRY: OXIDATION OF SO2 TO SO4 IS CONTROLLED BY THE      SULPH1A.257   
+!                        SMALLER OF THE SO2 AND H2O2 MIX RAT FIELDS        SULPH1A.258   
+!                                                                          SULPH1A.259   
+       IF (SO2(K).LE.(H2O2_MXR(K)*RELM_S_H2O2)) THEN                       SULPH1A.260   
+!                                                                          SULPH1A.261   
+           DELTAS_WET(K) = (1.0-EXP(-WETRATE*TSTEP))*SO2(K)                SULPH1A.262   
+!                                                                          SULPH1A.263   
+       ELSE                                                                SULPH1A.264   
+!                                                                          SULPH1A.265   
+       DELTAS_WET(K)=(1.0-EXP(-WETRATE*TSTEP))*H2O2_MXR(K)*RELM_S_H2O2     SULPH1A.266   
+!                                                                          SULPH1A.267   
+!   H2O2 field is limiting, so oxidise SO2 further with O3, using NH3      AWO6F405.193   
+!   as buffer, if sufficient O3 and NH3 available.                         AWO6F405.194   
+!                                                                          AWO6F405.195   
+         IF ( L_SULPC_OZONE .AND. (O3(K).GE.O3_MIN) .AND.                  AWO6F405.196   
+     &           (NH3(K) .GT. DELTAS_WET(K)/RELM_S_2N) ) THEN              AWO6F405.197   
+!                                                                          AWO6F405.198   
+! O3 oxidation is controlled by smaller of SO2 and NH3 fields.             AWO6F405.199   
+! 2 atoms of N required for each S atom in ammonium sulphate.              AWO6F405.200   
+! Sufficient NH3 must be available to neutralise all sulphate produced     AWO6F405.201   
+! in grid box for O3 reaction to continue (otherwise PH too low)           AWO6F405.202   
+! Note that all SO2 or NH3 is used in DELTAS_WET_O3 calcn; adjustment by   AWO6F405.203   
+! SCALE_FACTOR at end of routine prevents removing too much.               AWO6F405.204   
+                                                                           AWO6F405.205   
+           IF (SO2(K) .LE. (NH3(K)*RELM_S_2N))  THEN   ! SO2 limiting      AWO6F405.206   
+!                                                                          AWO6F405.207   
+           DELTAS_WET_O3(K)=(1.0-EXP(-WETRATE*TSTEP))*SO2(K)               AWO6F405.208   
+!                                                                          AWO6F405.209   
+           ELSE                                        ! NH3 limiting      AWO6F405.210   
+!                                                                          AWO6F405.211   
+           DELTAS_WET_O3(K)=(1.0-EXP(-WETRATE*TSTEP))*NH3(K)*RELM_S_2N     AWO6F405.212   
+!                                                                          AWO6F405.213   
+           END IF                                                          AWO6F405.214   
+!                                                                          AWO6F405.215   
+         END IF               ! End ozone oxidation block                  AWO6F405.216   
+!                                                                          AWO6F405.217   
+       END IF                 ! End peroxide oxidation block               AWO6F405.218   
+!                                                                          AWO6F405.219   
+       END IF                 ! End cloud present condition                AWO6F405.220   
+!                                                                          AWO6F405.221   
+!                                                                          SULPH1A.269   
+!                                                                          SULPH1A.270   
+!                                                                          SULPH1A.307   
+      END DO                                                               SULPH1A.308   
+      END DO                                                               SULPH1A.309   
+!                                                                          SULPH1A.310   
+!------------------------------------------------------------------        SULPH1A.311   
+! 3.  This section calculates amount of DMS dry oxidised to SO2            SULPH1A.312   
+!     and MSA using a 3D OH concentration field to control the oxidn       SULPH1A.313   
+!     rate when cos zenith angle is G.T. 10-6  (else rate is zero).        SULPH1A.314   
+!     MSA is not saved, and K_DMS_OH is constant in this version.          SULPH1A.315   
+!------------------------------------------------------------------        SULPH1A.316   
+!                                                                          SULPH1A.317   
+      IF (L_SULPC_DMS) THEN                                                AWO6F405.222   
+!                                                                          SULPH1A.328   
+      DO J=1,NPNTS-NPFLD+1,NPFLD      ! J loops over all model points      SULPH1A.329   
+        DO I=FIRST_POINT,LAST_POINT   ! I loop omits N AND S polar rows    SULPH1A.330   
+          K=I+J-1                                                          SULPH1A.331   
+!                                                                          SULPH1A.332   
+!  Calculate DMS oxidation rate if daytime.                                SULPH1A.333   
+          IF (COSZA2D(I).GT.1.0E-06) THEN                                  SULPH1A.334   
+            DMSRATE = K_DMS_OH * OH_CONC(K)                                SULPH1A.335   
+          ELSE                 ! ZERO RATE IF NIGHTIME                     SULPH1A.336   
+            DMSRATE=0.0                                                    SULPH1A.337   
+          ENDIF                   ! END COSZA2D IF                         SULPH1A.338   
+!                                                                          SULPH1A.339   
+!  CALCULATE FRACTION OF DMS OXIDISED                                      SULPH1A.340   
+!                                                                          SULPH1A.341   
+          DELTA_DMS(K)=DMSRATE*TSTEP*DMS(K)    !*****DELTA_DMS*****        SULPH1A.342   
+!                                                                          SULPH1A.343   
+        END DO                                                             SULPH1A.344   
+      END DO                                                               SULPH1A.345   
+!                                                                          SULPH1A.346   
+      END IF                   ! END L_SULPC_DMS IF                        SULPH1A.347   
+                                                                           SULPH1A.348   
+!---------------------------------------------------------------------     SULPH1A.349   
+! 4. Release of aerosol from evaporating cloud droplets:                   SULPH1A.350   
+!    if no condensed water (liquid + ice) in grid box, release             SULPH1A.351   
+!    dissolved sulphate as accumulation mode aerosol.                      SULPH1A.352   
+!     If cloud fraction less than 0.95, release some in clear  air.        AWO1F404.35    
+!--------------------------------------------------------------------      SULPH1A.353   
+!                                                                          SULPH1A.354   
+      DO J=1,QPNTS-NPFLD+1,NPFLD      ! J loops over all model points      SULPH1A.355   
+        DO I=FIRST_POINT,LAST_POINT   ! I loop omits N AND S polar rows    SULPH1A.356   
+          K=I+J-1                                                          SULPH1A.357   
+          QCTOTAL(K) = QCL(K) + QCF(K)                                     SULPH1A.358   
+          IF ( QCTOTAL(K) .LT. THOLD ) THEN                                SULPH1A.359   
+            DELTAS_EVAP(K) = SO4_DIS(K)                                    SULPH1A.360   
+          ELSE IF  ( CLOUDF(K).LT.0.95 ) THEN                              AWO1F404.36    
+            EVAPTIME = EVAPTAU + 0.5*CLOUDTAU                              AWO1F404.37    
+            DELTAS_EVAP(K) = ( 1.0 - EXP(-TSTEP/EVAPTIME) )*SO4_DIS(K)     AWO1F404.38    
+          ELSE                                                             SULPH1A.361   
+            DELTAS_EVAP(K) = 0.0                                           SULPH1A.362   
+          ENDIF                                                            SULPH1A.363   
+        END DO                                                             SULPH1A.364   
+      END DO                                                               SULPH1A.365   
+!                                                                          SULPH1A.366   
+!     Also release any dissolved aerosol in a non-wet level,               SULPH1A.367   
+!     where it should not be.                                              SULPH1A.368   
+!                                                                          SULPH1A.369   
+      IF (QPNTS .LT. NPNTS) THEN                                           AWO1F403.2     
+      DO J = QPNTS+1,NPNTS-NPFLD+1,NPFLD                                   AWO1F403.3     
+        DO I=FIRST_POINT,LAST_POINT    ! I loop omits N AND S polar rows   SULPH1A.371   
+          K=I+J-1                                                          SULPH1A.372   
+          DELTAS_EVAP(K) = SO4_DIS(K)                                      SULPH1A.373   
+        END DO                                                             SULPH1A.374   
+      END DO                                                               SULPH1A.375   
+!                                                                          SULPH1A.376   
+      ENDIF                                                                AWO1F403.4     
+!                                                                          SULPH1A.377   
+!-------------------------------------------------------------------       SULPH1A.378   
+! 5. Nucleation of accumulation mode aerosol forming dissolved SO4         SULPH1A.379   
+!-------------------------------------------------------------------       SULPH1A.380   
+!                                                                          SULPH1A.381   
+!    THIS CODE ASSUMES THAT THE PARAMETER NUCTAU, WHICH IS THE             SULPH1A.382   
+!    TIMESCALE FOR NUCLEATION ONCE A PARTICLE ENTERS A CLOUD, IS           SULPH1A.383   
+!    VERY SHORT COMPARED WITH CLOUDTAU.                                    SULPH1A.384   
+!                                                                          SULPH1A.385   
+      DO J=1,QPNTS-NPFLD+1,NPFLD     ! J loops over all model points       SULPH1A.386   
+        DO I=FIRST_POINT,LAST_POINT  ! I loop omits N AND S polar rows     SULPH1A.387   
+           K=I+J-1                                                         SULPH1A.388   
+          IF ((QCTOTAL(K) .GE. THOLD) .AND. (CLOUDF(K).GT.0.0)) THEN       SULPH1A.389   
+            NUCTIME=NUCTAU + ( (CLEARF(K)*CLOUDTAU)/(2.0*CLOUDF(K)) )      SULPH1A.390   
+            DELTAS_NUCL(K) = ( 1.0 - EXP(-TSTEP/NUCTIME) )*SO4_ACC(K)      SULPH1A.391   
+          ENDIF                                                            SULPH1A.392   
+        END DO                                                             SULPH1A.393   
+      END DO                                                               SULPH1A.394   
+!                                                                          SULPH1A.395   
+!-------------------------------------------------------------------       SULPH1A.396   
+! 6. Diffusional scavenging of Aitken mode SO4 forming dissolved SO4       SULPH1A.397   
+!-------------------------------------------------------------------       SULPH1A.398   
+!                                                                          SULPH1A.399   
+!    THIS IS A MUCH SLOWER PROCESS THAN NUCLEATION AND THEREFORE WE        SULPH1A.400   
+!    CANNOT MAKE THE SAME APPROXIMATIONS USED IN THAT CASE.                SULPH1A.401   
+!                                                                          SULPH1A.402   
+      DO J=1,QPNTS-NPFLD+1,NPFLD     ! J loops over all model points       SULPH1A.403   
+        DO I=FIRST_POINT,LAST_POINT  ! I loop omits N AND S polar rows     SULPH1A.404   
+           K=I+J-1                                                         SULPH1A.405   
+!                                                                          SULPH1A.406   
+          IF ((QCTOTAL(K) .GE. THOLD) .AND. (CLOUDF(K).GT.0.0)) THEN       SULPH1A.407   
+!                                                                          SULPH1A.408   
+!    FIRST COMPUTE IN-CLOUD TIMESCALE FOR DIFFUSIONAL CAPTURE,             SULPH1A.409   
+!    USING TOTAL CONDENSED WATER WITHIN THE CLOUDY PORTION OF THE BOX.     SULPH1A.410   
+!    THE DIFFERENCE BETWEEN LIQUID WATER AND ICE IS NEGLECTED HERE.        SULPH1A.411   
+!    THIS SHOULD BE IMPROVED ON EVENTUALLY.                                SULPH1A.412   
+!                                                                          SULPH1A.413   
+            DIFFUSE_TAU =                                                  SULPH1A.414   
+     &      (RHO_CUBEROOT*(CLOUDF(K)/QCTOTAL(K))**0.333333)                SULPH1A.415   
+     &               / ( 7.8*DIFFUSE_AIT )                                 SULPH1A.416   
+!                                                                          SULPH1A.417   
+!    USE DIFFERENT DROPLET DENSITIES OVER LAND AND SEA.                    SULPH1A.418   
+!    (AVOID THE TEMPTATION TO USE THE AEROSOL TO CONTROL THE DROPLET       SULPH1A.419   
+!    CONCENTRATION, AS WE ARE ONLY SIMULATING ONE KIND OF AEROSOL.)        SULPH1A.420   
+!                                                                          SULPH1A.421   
+            IF( LAND_MASK(I) ) THEN                                        SULPH1A.422   
+              DIFFUSE_TAU = DIFFUSE_TAU*NLAND23                            SULPH1A.423   
+            ELSE                                                           SULPH1A.424   
+              DIFFUSE_TAU = DIFFUSE_TAU*NSEA23                             SULPH1A.425   
+            ENDIF                                                          SULPH1A.426   
+!                                                                          SULPH1A.427   
+            DIFFUSE_TAURATIO = CLOUDTAU/DIFFUSE_TAU                        SULPH1A.428   
+            PROBDIFF_INV = 1.0/( 1.0 - EXP(-DIFFUSE_TAURATIO) )            SULPH1A.429   
+            PROBDIFF_FN1 = PROBDIFF_INV - 0.5                              SULPH1A.430   
+            PROBDIFF_FN2 = PROBDIFF_INV*EXP(-(0.5*DIFFUSE_TAURATIO) )      SULPH1A.431   
+!                                                                          SULPH1A.432   
+!     CALCULATE LAMBDA_AITKEN.                                             SULPH1A.433   
+!                                                                          SULPH1A.434   
+            TERM3 = (CLEARF(K)*DIFFUSE_TAURATIO)**2                        SULPH1A.435   
+            TERM3 = TERM3 + ( 2.0*DIFFUSE_TAURATIO                         SULPH1A.436   
+     &                       *CLEARF(K)*(CLEARF(K)-CLOUDF(K)) )            SULPH1A.437   
+            TERM3 = SQRT(1.0+TERM3)                                        SULPH1A.438   
+          TERM4=2.0*CLOUDF(K)-DIFFUSE_TAURATIO*CLEARF(K)-1.0               AWO1F403.5     
+            TERM4 = TERM4 + TERM3                                          SULPH1A.440   
+            LAMBDA_AITKEN = TERM4/(2.0*CLOUDF(K))                          SULPH1A.441   
+!                                                                          SULPH1A.442   
+!   CALCULATE PROBDIFF_CLEAR AND PROBDIFF_CLOUD                            SULPH1A.443   
+!                                                                          SULPH1A.444   
+            DENOM = CLEARF(K) + CLOUDF(K)*LAMBDA_AITKEN                    SULPH1A.445   
+            PROBDIFF_CLEAR = CLEARF(K)/DENOM                               SULPH1A.446   
+            PROBDIFF_CLOUD = (CLOUDF(K)*LAMBDA_AITKEN)/DENOM               SULPH1A.447   
+!                                                                          SULPH1A.448   
+!   CALCULATE EXPECTED LIFETIME OF AN AITKEN MODE PARTICLE WITH            SULPH1A.449   
+!   RESPECT TO DIFFUSIVE CAPTURE BY CLOUD DROPLETS.                        SULPH1A.450   
+!                                                                          SULPH1A.451   
+            TERM3 = PROBDIFF_FN1*PROBDIFF_CLEAR                            SULPH1A.452   
+            TERM4 = PROBDIFF_FN2*PROBDIFF_CLOUD                            SULPH1A.453   
+            TERM4 = (TERM3+TERM4)*CLEARF(K)/CLOUDF(K)                      SULPH1A.454   
+            DENOM = TERM4*CLOUDTAU + DIFFUSE_TAU                           SULPH1A.455   
+            DIFFRATE = 1.0/DENOM                                           SULPH1A.456   
+!                                                                          SULPH1A.457   
+!   NOW COMPUTE THE AMOUNT OF AITKEN MODE SO4 CONVERTED TO DISSOLVED       SULPH1A.458   
+!   SO4 BY DIFFUSIVE CAPTURE DURING THE STEP.                              SULPH1A.459   
+!                                                                          SULPH1A.460   
+            DELTAS_DIFFUSE(K) = (1.0-EXP(-DIFFRATE*TSTEP))*SO4_AIT(K)      SULPH1A.461   
+!                                                                          SULPH1A.462   
+          ENDIF                                                            SULPH1A.463   
+        END DO                                                             SULPH1A.464   
+      END DO                                                               SULPH1A.465   
+!                                                                          SULPH1A.466   
+!-------------------------------------------------------------------       SULPH1A.467   
+! 7. UPDATE SO2, SO4 modes and DMS, assuming:                              SULPH1A.468   
+!    Dry oxidation SO2 produces SO4 Aitken mode aerosol                    SULPH1A.469   
+!    Wet oxidation SO2 produces dissolved SO4                              SULPH1A.470   
+!    Dry oxidation DMS produces SO2 and MSA                                SULPH1A.471   
+!---------------------------------------------------------------------     SULPH1A.472   
+!                                                                          SULPH1A.473   
+! CHECK THAT AMOUNTS OF SO2 & DMS OXIDISED NOT GREATER THAN SO2 & DMS      SULPH1A.474   
+! AVAILABLE AND SCALE INCREMENTS IF NECESSARY                              SULPH1A.475   
+!                                                                          SULPH1A.476   
+      DO J=1,NPNTS-NPFLD+1,NPFLD     ! J loops over all model points       SULPH1A.477   
+        DO I=FIRST_POINT,LAST_POINT  ! I loop omits N AND S polar rows     SULPH1A.478   
+           K=I+J-1                                                         SULPH1A.479   
+          DELTAS_TOT(K) = DELTAS_DRY(K) + DELTAS_WET(K)                    SULPH1A.480   
+     &                              + DELTAS_WET_O3(K)                     AWO6F405.223   
+                                                                           AWO6F405.224   
+!                                                                          SULPH1A.481   
+          IF (DELTAS_TOT(K) .GT. SO2(K))  THEN                             SULPH1A.482   
+               SCALE_FACTOR = SO2(K)/DELTAS_TOT(K)                         AWO6F405.225   
+              DELTAS_DRY(K) = DELTAS_DRY(K) * SCALE_FACTOR                 AWO6F405.226   
+              DELTAS_WET(K) = DELTAS_WET(K) * SCALE_FACTOR                 AWO6F405.227   
+!                                                                          AWO6F405.228   
+            IF (L_SULPC_OZONE) THEN                                        AWO6F405.229   
+              DELTAS_WET_O3(K) = DELTAS_WET_O3(K) * SCALE_FACTOR           AWO6F405.230   
+            END IF                                                         AWO6F405.231   
+!                                                                          AWO6F405.232   
+            DELTAS_TOT(K) = SO2(K)                                         SULPH1A.485   
+          END IF                                                           SULPH1A.486   
+!                                                                          SULPH1A.487   
+          IF (DELTA_DMS(K) .GT. DMS(K)) THEN                               SULPH1A.488   
+            DELTA_DMS(K) = DMS(K)                                          SULPH1A.489   
+          END IF                                                           SULPH1A.490   
+!                                                                          SULPH1A.491   
+!  UPDATE SO2, SO4 MODES AND DMS                                           SULPH1A.492   
+!                                                                          SULPH1A.493   
+          SO2(K) = SO2(K) + DELTA_DMS(K)*BRAT_SO2 - DELTAS_TOT(K)          SULPH1A.494   
+!                                                                          SULPH1A.495   
+      SO4_AIT(K)=SO4_AIT(K) + PSI(K)*DELTAS_DRY(K) - DELTAS_DIFFUSE(K)     AWO1F404.39    
+!                                                                          SULPH1A.497   
+          SO4_DIS(K) = SO4_DIS(K) + DELTAS_WET(K) - DELTAS_EVAP(K)         SULPH1A.498   
+     &             + DELTAS_NUCL(K) + DELTAS_DIFFUSE(K)                    SULPH1A.499   
+     &                   + DELTAS_WET_O3(K)                                AWO6F405.233   
+!                                                                          SULPH1A.500   
+          DMS(K) = DMS(K) - DELTA_DMS(K)                                   SULPH1A.501   
+!                                                                          SULPH1A.502   
+          MSA(K) = DELTA_DMS(K)*BRAT_MSA                                   SULPH1A.503   
+!                                                                          SULPH1A.504   
+          SO4_ACC(K) = SO4_ACC(K) + DELTAS_EVAP(K) - DELTAS_NUCL(K)        SULPH1A.505   
+     &             + (1.0-PSI(K))*DELTAS_DRY(K)                            AWO1F404.40    
+!                                                                          SULPH1A.506   
+        END DO             ! END OF I LOOP                                 SULPH1A.507   
+      END DO             ! END OF J LOOP                                   SULPH1A.508   
+!                                                                          SULPH1A.509   
+!                                                                          AWO6F405.234   
+!--------------------------------------------------------------------      AWO6F405.235   
+! 8.  DEPLETE  NH3 and H2O2, REPLENISH H2O2 from HO2                       AWO6F405.236   
+!--------------------------------------------------------------------      AWO6F405.237   
+!                                                                          AWO6F405.238   
+      DO J=1,QPNTS-NPFLD+1,NPFLD     ! J loops over wet levels             AWO6F405.239   
+      DO I=FIRST_POINT,LAST_POINT  ! I loop omits N AND S polar rows       AWO6F405.240   
+        K=I+J-1                                                            AWO6F405.241   
+!                                                                          AWO6F405.242   
+!!  Deplete H2O2                                                           AWO6F405.243   
+!                                                                          AWO6F405.244   
+        IF (DELTAS_WET(K) .GT. 0.0)  THEN                                  AWO6F405.245   
+          H2O2_MXR(K)=H2O2_MXR(K) - DELTAS_WET(K)/RELM_S_H2O2              AWO6F405.246   
+        END IF                                                             AWO6F405.247   
+!                                                                          AWO6F405.248   
+!   Replenish H2O2_MXR field from HO2 field in dry part of grid box        AWO6F405.249   
+!   (whether or not oxidn has occurred) in daylight only.                  AWO6F405.250   
+!                                                                          AWO6F405.251   
+        IF ( (H2O2_MXR(K) .LT. H2O2_LMT(K)) .AND.                          AWO6F405.252   
+     &          (COSZA2D(I) .GT. 1.0E-06) )  THEN                          AWO6F405.253   
+!                                                                          AWO6F405.254   
+!   Calculate replenishment in concn, then convert to mix ratio            AWO6F405.255   
+!   Reaction rate K_HO2_HO2 is a fn of T, P, AND Q                         AWO6F405.256   
+!                                                                          AWO6F405.257   
+          AIR_CONC = (AVOGADRO*P(K)) / (R*T(K)*RMM_AIR*1.0E6) !MCLS/CC     AWO6F405.258   
+                                                                           AWO6F405.259   
+            W_CONC = Q(K) * AIR_CONC * RMM_AIR / RMM_W        !MCL/CC      AWO6F405.260   
+!                                                                          AWO6F405.261   
+          H2O2_CON_TO_MXR = RMM_H2O2 / (RMM_AIR * AIR_CONC)   !CC/MCL      AWO6F405.262   
+!                                                                          AWO6F405.263   
+          K_HO2_HO2 = ( K2*EXP(T2/T(K)) + AIR_CONC*K3*EXP(T3/T(K)) ) *     AWO6F405.264   
+     &                (1.0 + W_CONC*K4*EXP(T4/T(K)) )                      AWO6F405.265   
+!                                                                          AWO6F405.266   
+!                                                                          AWO6F405.267   
+          H2O2_REP = HO2_CONC(K)*HO2_CONC(K)*K_HO2_HO2*TSTEP*CLEARF(K)     AWO6F405.268   
+!                                                                          AWO6F405.269   
+          H2O2_REP = H2O2_CON_TO_MXR * H2O2_REP                            AWO6F405.270   
+!                                                                          AWO6F405.271   
+!  Increment H2O2_MXR up to H2O2_LMT value                                 AWO6F405.272   
+!                                                                          AWO6F405.273   
+          H2O2_MXR(K) = H2O2_MXR(K) + H2O2_REP                             AWO6F405.274   
+!                                                                          AWO6F405.275   
+          IF ( H2O2_MXR(K) .GT. H2O2_LMT(K) ) THEN                         AWO6F405.276   
+            H2O2_MXR(K)=H2O2_LMT(K)                                        AWO6F405.277   
+          END IF                                                           AWO6F405.278   
+!                                                                          AWO6F405.279   
+      END IF                     !End replenishment condition              AWO6F405.280   
+!                                                                          AWO6F405.281   
+!! Deplete NH3 if ozone oxidation included and wet oxidn has occurred      AWO6F405.282   
+!                                                                          AWO6F405.283   
+      IF (L_SULPC_OZONE .AND. ((DELTAS_WET(K) .GT. 0.0) .OR.               AWO6F405.284   
+     &                      (DELTAS_WET_O3(K) .GT. 0.0)) )   THEN          AWO6F405.285   
+!                                                                          AWO6F405.286   
+        NH3_DEP(K) = (DELTAS_WET(K)+DELTAS_WET_O3(K))/RELM_S_2N            AWO6F405.287   
+!                                                                          AWO6F405.288   
+        IF ( NH3_DEP(K) .GT. NH3(K) ) THEN                                 AWO6F405.289   
+          NH3_DEP(K) = NH3(K)                                              AWO6F405.290   
+        END IF                                                             AWO6F405.291   
+!                                                                          AWO6F405.292   
+        NH3(K) = NH3(K) - NH3_DEP(K)                                       AWO6F405.293   
+!                                                                          AWO6F405.294   
+      END IF       ! end L_SULPC_OZONE                                     AWO6F405.295   
+!                                                                          AWO6F405.296   
+      END DO                                                               AWO6F405.297   
+      END DO                                                               AWO6F405.298   
+!                                                                          AWO6F405.299   
+!-----------------------------------------------------------------------   AWO6F405.300   
+!                                                                          SULPH1A.510   
+!                                                                          SULPH1A.511   
+      RETURN                                                               SULPH1A.512   
+      END                                                                  SULPH1A.513   
+!                                                                          SULPH1A.514   
+*ENDIF                                                                     SULPH1A.515   

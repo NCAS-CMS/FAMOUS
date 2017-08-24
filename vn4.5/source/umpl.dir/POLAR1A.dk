@@ -1,0 +1,142 @@
+*IF DEF,C90_1A,OR,DEF,C90_2A,OR,DEF,C90_2B                                 AAD2F404.286   
+C ******************************COPYRIGHT******************************    GTS2F400.7309  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.7310  
+C                                                                          GTS2F400.7311  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.7312  
+C restrictions as set forth in the contract.                               GTS2F400.7313  
+C                                                                          GTS2F400.7314  
+C                Meteorological Office                                     GTS2F400.7315  
+C                London Road                                               GTS2F400.7316  
+C                BRACKNELL                                                 GTS2F400.7317  
+C                Berkshire UK                                              GTS2F400.7318  
+C                RG12 2SZ                                                  GTS2F400.7319  
+C                                                                          GTS2F400.7320  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.7321  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.7322  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.7323  
+C Modelling at the above address.                                          GTS2F400.7324  
+C ******************************COPYRIGHT******************************    GTS2F400.7325  
+C                                                                          GTS2F400.7326  
+CLL  SUBROUTINE POLAR-------------------------------------------------     POLAR1A.3     
+CLL                                                                        POLAR1A.4     
+CLL  Purpose:  This routine updates the polar values along one level for   POLAR1A.5     
+CLL            a primary model variable stored at p-points (ie pstar,      POLAR1A.6     
+CLL            thetaL or qT).  This is done by adding in the               POLAR1A.7     
+CLL            average meridional flux from the adjacent                   POLAR1A.8     
+CLL            equatorward row.                                            POLAR1A.9     
+CLL                                                                        POLAR1A.10    
+CLL M.Mawson    <- programmer of some or all of previous code or changes   POLAR1A.11    
+CLL                                                                        POLAR1A.12    
+CLL  Model            Modification history from model version 3.0:         POLAR1A.13    
+CLL version  Date                                                          POLAR1A.14    
+!  4.1    28/06/95   Changed interface to allow multiple levels to         APB2F401.97    
+!                    be processed in single call + added MPP code.         APB2F401.98    
+!                                                     P.Burton             APB2F401.99    
+!  4.4    11/08/97   Added fast non-reproducible sums    P.Burton          GPB3F404.1     
+!LL  4.5  27/04/98  Add Fujitsu vectorization directive.                   GRB0F405.45    
+!LL                                           RBarnes@ecmwf.int            GRB0F405.46    
+CLL                                                                        POLAR1A.15    
+CLL  Documentation:                                                        POLAR1A.16    
+CLL            Section 3.6 of Unified Model Documention Paper No 10.       POLAR1A.17    
+CLL  -----------------------------------------------------------------     POLAR1A.18    
+C                                                                          POLAR1A.19    
+C*L  ARGUMENTS:-------------------------------------------------------     POLAR1A.20    
+      SUBROUTINE POLAR(FIELD,NP_FLUX_FIELD,SP_FLUX_FIELD,                  APB2F401.100   
+*CALL ARGFLDPT                                                             APB2F401.101   
+     &                 FIELD_SIZE,NP_FLUX_FIELD_SIZE,SP_FLUX_FIELD_SIZE,   APB2F401.102   
+     &                 NP_FLUX_START,SP_FLUX_START,ROW_LENGTH,             APB2F401.103   
+     &                 N_LEVELS)                                           APB2F401.104   
+                                                                           APB2F401.105   
+      IMPLICIT NONE                                                        APB2F401.106   
+                                                                           APB2F401.107   
+      INTEGER                                                              APB2F401.108   
+     &  FIELD_SIZE           ! IN size of single level of FIELD            APB2F401.109   
+     &, NP_FLUX_FIELD_SIZE   ! IN size of single level of NP_FLUX_FIELD    APB2F401.110   
+     &, SP_FLUX_FIELD_SIZE   ! IN size of single level of SP_FLUX_FIELD    APB2F401.111   
+     &, NP_FLUX_START        ! IN offset in NP_FLUX_FIELD of NP flux       APB2F401.112   
+     &, SP_FLUX_START        ! IN offset in SP_FLUX_FIELD of SP flux       APB2F401.113   
+     &, ROW_LENGTH           ! IN points per row                           APB2F401.114   
+     &, N_LEVELS             ! IN number of levels to process              APB2F401.115   
+                                                                           APB2F401.116   
+! All TYPFLDPT arguments are intent IN                                     APB2F401.117   
+*CALL TYPFLDPT                                                             APB2F401.118   
+                                                                           APB2F401.119   
+      REAL                                                                 APB2F401.120   
+     &  FIELD(FIELD_SIZE,N_LEVELS)                                         APB2F401.121   
+     &                    ! INOUT primary field to be updated              APB2F401.122   
+     &, NP_FLUX_FIELD(NP_FLUX_FIELD_SIZE,N_LEVELS)                         APB2F401.123   
+     &                    ! IN field containing fluxes for north pole      APB2F401.124   
+     &, SP_FLUX_FIELD(SP_FLUX_FIELD_SIZE,N_LEVELS)                         APB2F401.125   
+     &                    ! IN field containing fluxes for south pole      APB2F401.126   
+                                                                           APB2F401.127   
+*IF DEF,MPP                                                                APB2F401.128   
+      INTEGER info                                                         APB2F401.129   
+*ENDIF                                                                     APB2F401.130   
+                                                                           APB2F401.131   
+! Local variables:                                                         APB2F401.132   
+      INTEGER I,K                                                          APB2F401.133   
+                                                                           APB2F401.134   
+      REAL MEAN_NP(N_LEVELS),MEAN_SP(N_LEVELS)                             APB2F401.135   
+                                                                           APB2F401.136   
+      DO K=1,N_LEVELS                                                      APB2F401.137   
+        MEAN_NP(K)=0.0                                                     APB2F401.138   
+        MEAN_SP(K)=0.0                                                     APB2F401.139   
+      ENDDO                                                                APB2F401.140   
+                                                                           APB2F401.141   
+*IF -DEF,MPP                                                               APB2F401.142   
+      DO K=1,N_LEVELS                                                      APB2F401.143   
+        DO I=1,ROW_LENGTH                                                  APB2F401.144   
+          MEAN_NP(K)=MEAN_NP(K)+NP_FLUX_FIELD(NP_FLUX_START+I-1,K)         APB2F401.145   
+          MEAN_SP(K)=MEAN_SP(K)+SP_FLUX_FIELD(SP_FLUX_START+I-1,K)         APB2F401.146   
+        ENDDO                                                              APB2F401.147   
+                                                                           APB2F401.148   
+        MEAN_NP(K)=MEAN_NP(K)/ROW_LENGTH                                   APB2F401.149   
+        MEAN_SP(K)=MEAN_SP(K)/ROW_LENGTH                                   APB2F401.150   
+                                                                           APB2F401.151   
+! Fujitsu vectorization directive                                          GRB0F405.47    
+!OCL NOVREC                                                                GRB0F405.48    
+        DO I=1,ROW_LENGTH                                                  APB2F401.152   
+          FIELD(I,K)=FIELD(I,K)+MEAN_NP(K)                                 APB2F401.153   
+          FIELD(I+FIELD_SIZE-ROW_LENGTH,K)=                                APB2F401.154   
+     &      FIELD(I+FIELD_SIZE-ROW_LENGTH,K)+MEAN_SP(K)                    APB2F401.155   
+        ENDDO                                                              APB2F401.156   
+                                                                           APB2F401.157   
+      ENDDO                                                                APB2F401.158   
+                                                                           APB2F401.159   
+*ELSE                                                                      APB2F401.160   
+      IF (at_top_of_LPG) THEN                                              APB2F401.161   
+*IF DEF,REPROD                                                             GPB3F404.2     
+        CALL GCG_RVECSUMR(NP_FLUX_FIELD_SIZE,ROW_LENGTH-2*EW_Halo,         APB2F401.162   
+*ELSE                                                                      GPB3F404.3     
+        CALL GCG_RVECSUMF(NP_FLUX_FIELD_SIZE,ROW_LENGTH-2*EW_Halo,         GPB3F404.4     
+*ENDIF                                                                     GPB3F404.5     
+     &                    NP_FLUX_START+EW_Halo,N_LEVELS,                  APB2F401.163   
+     &                    NP_FLUX_FIELD,GC_ROW_GROUP,info,MEAN_NP)         APB2F401.164   
+        DO K=1,N_LEVELS                                                    APB2F401.165   
+          MEAN_NP(K)=MEAN_NP(K)/GLOBAL_ROW_LENGTH                          APB2F401.166   
+          DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                    APB2F401.167   
+            FIELD(I,K)=FIELD(I,K)+MEAN_NP(K)                               APB2F401.168   
+          ENDDO                                                            APB2F401.169   
+        ENDDO                                                              APB2F401.170   
+      ENDIF                                                                APB2F401.171   
+                                                                           APB2F401.172   
+      IF (at_base_of_LPG) THEN                                             APB2F401.173   
+*IF DEF,REPROD                                                             GPB3F404.6     
+        CALL GCG_RVECSUMR(SP_FLUX_FIELD_SIZE,ROW_LENGTH-2*EW_Halo,         APB2F401.174   
+*ELSE                                                                      GPB3F404.7     
+        CALL GCG_RVECSUMF(SP_FLUX_FIELD_SIZE,ROW_LENGTH-2*EW_Halo,         GPB3F404.8     
+*ENDIF                                                                     GPB3F404.9     
+     &                    SP_FLUX_START+EW_Halo,N_LEVELS,                  APB2F401.175   
+     &                    SP_FLUX_FIELD,GC_ROW_GROUP,info,MEAN_SP)         APB2F401.176   
+        DO K=1,N_LEVELS                                                    APB2F401.177   
+          MEAN_SP(K)=MEAN_SP(K)/GLOBAL_ROW_LENGTH                          APB2F401.178   
+          DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                APB2F401.179   
+            FIELD(I,K)=FIELD(I,K)+MEAN_SP(K)                               APB2F401.180   
+          ENDDO                                                            APB2F401.181   
+        ENDDO                                                              APB2F401.182   
+      ENDIF                                                                APB2F401.183   
+*ENDIF                                                                     APB2F401.184   
+                                                                           APB2F401.185   
+      RETURN                                                               POLAR1A.64    
+      END                                                                  POLAR1A.65    
+*ENDIF                                                                     POLAR1A.66    

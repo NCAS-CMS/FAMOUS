@@ -1,0 +1,187 @@
+*IF DEF,CONTROL                                                            EXITCHK1.2     
+C ******************************COPYRIGHT******************************    GTS2F400.2629  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.2630  
+C                                                                          GTS2F400.2631  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.2632  
+C restrictions as set forth in the contract.                               GTS2F400.2633  
+C                                                                          GTS2F400.2634  
+C                Meteorological Office                                     GTS2F400.2635  
+C                London Road                                               GTS2F400.2636  
+C                BRACKNELL                                                 GTS2F400.2637  
+C                Berkshire UK                                              GTS2F400.2638  
+C                RG12 2SZ                                                  GTS2F400.2639  
+C                                                                          GTS2F400.2640  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.2641  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.2642  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.2643  
+C Modelling at the above address.                                          GTS2F400.2644  
+C ******************************COPYRIGHT******************************    GTS2F400.2645  
+C                                                                          GTS2F400.2646  
+CLL  Routine: EXITCHEK -------------------------------------------------   EXITCHK1.3     
+CLL                                                                        EXITCHK1.4     
+CLL  Purpose: Checks for end-of-run condition and returns a logical to     EXITCHK1.5     
+CLL           the top level.  There are three reasons for stopping,        EXITCHK1.6     
+CLL           namely:                                                      EXITCHK1.7     
+CLL           (i)   Model has completed the required integration;          EXITCHK1.8     
+CLL           (ii)  Operator has requested model to stop;                  EXITCHK1.9     
+CLL           (iii) CPU time remaining is insufficient to complete a       EXITCHK1.10    
+CLL                 further batch of timesteps.                            EXITCHK1.11    
+CLL                                                                        EXITCHK1.12    
+CLL  Tested under compiler:   cft77                                        EXITCHK1.13    
+CLL  Tested under OS version: UNICOS 5.1                                   EXITCHK1.14    
+CLL                                                                        EXITCHK1.15    
+CLL  Author:   T.C.Johns                                                   EXITCHK1.16    
+CLL                                                                        EXITCHK1.17    
+CLL  Model            Modification history from model version 3.0:         EXITCHK1.18    
+CLL version  Date                                                          EXITCHK1.19    
+CLL  3.1   02/02/93 : Added comdeck CHSUNITS to define NUNITS for i/o.     RS030293.80    
+CLL                                                                        AD050293.196   
+CLL   3.1  05/02/93    Portable Fortran unit no assigns                    AD050293.197   
+CLL                    Author: A. Dickinson    Reviewer: R. Stratton       AD050293.198   
+CLL   3.5    28/03/95 MPP code: Only do check on PE 0 and broadcast        GPB0F305.39    
+CLL                   result.                          P.Burton            GPB0F305.40    
+CLL  4.1  30/07/96  Introduce Wave sub-model.  M Holt                      WRB1F401.1201  
+CLL  4.3  30/05/97  Ignore server failure until have reached end           GKR7F403.1     
+CLL                 of ocean part of dump period. K Rogers                 GKR7F403.2     
+!LL  4.5  09/11/98  Change test around history file update to work         GKR2F405.1     
+!LL                 correctly for slab model. K Rogers                     GKR2F405.2     
+CLL                                                                        EXITCHK1.20    
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             EXITCHK1.21    
+CLL                                                                        EXITCHK1.22    
+CLL  Logical components covered: C0                                        EXITCHK1.23    
+CLL                                                                        EXITCHK1.24    
+CLL  Project task: C0                                                      EXITCHK1.25    
+CLL                                                                        EXITCHK1.26    
+CLL  External documentation: On-line UM document C0 - The top-level        EXITCHK1.27    
+CLL                          control system                                EXITCHK1.28    
+CLL                                                                        EXITCHK1.29    
+CLL  -------------------------------------------------------------------   EXITCHK1.30    
+C*L  Interface and arguments: ------------------------------------------   EXITCHK1.31    
+C                                                                          EXITCHK1.32    
+      SUBROUTINE EXITCHEK                                                  EXITCHK1.33    
+     &         ( internal_model, LEXITNOW )                                GKR7F403.3     
+C                                                                          EXITCHK1.35    
+      IMPLICIT NONE                                                        EXITCHK1.36    
+      INTEGER internal_model ! In  - id of current internal model          GKR7F403.4     
+      LOGICAL      LEXITNOW  ! Out - True/False flag for stopping          EXITCHK1.37    
+C                                                                          EXITCHK1.38    
+C*----------------------------------------------------------------------   EXITCHK1.39    
+C  Common blocks                                                           EXITCHK1.40    
+C                                                                          EXITCHK1.41    
+*CALL CHSUNITS                                                             RS030293.81    
+*CALL CMAXSIZE                                                             GDR3F305.59    
+*CALL CSUBMODL                                                             GDR3F305.60    
+*CALL CHISTORY                                                             GDR3F305.61    
+*CALL CCONTROL                                                             GDR3F305.62    
+*CALL CTIME                                                                EXITCHK1.44    
+*IF DEF,MPP                                                                GPB0F305.41    
+*CALL PARVARS                                                              GPB0F305.42    
+*ENDIF                                                                     GPB0F305.43    
+C                                                                          AD050293.200   
+C External Subroutines                                                     AD050293.201   
+C                                                                          AD050293.202   
+      EXTERNAL GET_FILE                                                    AD050293.203   
+C                                                                          EXITCHK1.45    
+C  Local variables                                                         EXITCHK1.46    
+C                                                                          EXITCHK1.47    
+      LOGICAL   LERRFLAG ! error flag true/false indicates stop request    EXITCHK1.48    
+     &         ,LCHK14   ! true if to check unit 14                        EXITCHK1.49    
+      CHARACTER*80 CERRMESS  ! explaination of stop request.               EXITCHK1.50    
+      CHARACTER*80 FILENAME                                                AD050293.199   
+      INTEGER   ICODE        ! IO status                                   EXITCHK1.51    
+*IF DEF,MPP                                                                GPB0F305.44    
+      INTEGER end_run   ! integer used in bcast of end_condition state     GPB0F305.45    
+      INTEGER info                                                         GPB0F305.46    
+*ENDIF                                                                     GPB0F305.47    
+C                                                                          EXITCHK1.52    
+      DATA LCHK14/.TRUE./                                                  EXITCHK1.53    
+C                                                                          EXITCHK1.54    
+CL----------------------------------------------------------------------   EXITCHK1.55    
+CL 1. Check for completed run (unless means remain to be completed)        EXITCHK1.56    
+CL                                                                         EXITCHK1.57    
+      IF (.NOT.RUN_MEANS_TO_DO.EQ."Y") THEN                                EXITCHK1.58    
+                                                                           EXITCHK1.59    
+*IF DEF,ATMOS                                                              EXITCHK1.60    
+*IF -DEF,OCEAN,AND,-DEF,SLAB                                               EXITCHK1.61    
+        LEXITNOW = ( STEPim(a_im).GE.TARGET_END_STEPim(a_im) )             GDR3F305.63    
+*ELSEIF DEF,OCEAN                                                          GDR3F305.64    
+        LEXITNOW = ( STEPim(a_im).GE.TARGET_END_STEPim(a_im) .AND.         GDR3F305.65    
+     &               STEPim(o_im).GE.TARGET_END_STEPim(o_im) )             GDR3F305.66    
+*ELSEIF DEF,SLAB                                                           GDR3F305.67    
+        LEXITNOW = ( STEPim(a_im).GE.TARGET_END_STEPim(a_im) .AND.         GDR3F305.68    
+     &               STEPim(s_im).GE.TARGET_END_STEPim(s_im) )             GDR3F305.69    
+*ENDIF                                                                     EXITCHK1.66    
+*ELSE                                                                      EXITCHK1.67    
+*IF DEF,OCEAN                                                              EXITCHK1.68    
+        LEXITNOW = ( STEPim(o_im).GE.TARGET_END_STEPim(o_im) )             GDR3F305.70    
+*ENDIF                                                                     EXITCHK1.70    
+*ENDIF                                                                     EXITCHK1.71    
+                                                                           EXITCHK1.72    
+*IF DEF,WAVE                                                               WRB1F401.1202  
+        LEXITNOW = ( STEPim(w_im).GE.TARGET_END_STEPim(w_im) )             WRB1F401.1203  
+*ENDIF                                                                     WRB1F401.1204  
+      ENDIF                                                                EXITCHK1.73    
+CL----------------------------------------------------------------------   EXITCHK1.74    
+CL 2. Check for server stop request.                                       EXITCHK1.75    
+CL                                                                         EXITCHK1.76    
+      IF (MODEL_STATUS.NE."Operational".AND.LCHK14) THEN                   EXITCHK1.77    
+!     Ignore server failure until have reached end of ocean part of        GKR7F403.5     
+!     dump period so correct restart dumps are available in coupled        GKR7F403.6     
+!     models where the dump frequency is different to the coupling         GKR7F403.7     
+!     period.  (May not be needed once a permanent fix is done.)           GKR7F403.8     
+      IF (.NOT. (N_SUBMODEL_PARTITION .GT.1 .AND.                          GKR2F405.3     
+     &    SUBMODEL_FOR_SM(INTERNAL_MODEL)                                  GKR2F405.4     
+     &    .ne. SUBMODEL_PARTITION_LIST(N_SUBMODEL_PARTITION))) then        GKR2F405.5     
+*IF DEF,MPP                                                                GPB0F305.48    
+      IF (mype .EQ. 0) THEN                                                GPB0F305.49    
+*ENDIF                                                                     GPB0F305.50    
+        CALL GET_FILE(14,FILENAME,80,ICODE)                                GTD0F400.154   
+        OPEN(14,FILE=FILENAME,ERR=900,IOSTAT=ICODE)                        AD050293.205   
+        READ(14,10,ERR=902,IOSTAT=ICODE) LERRFLAG,CERRMESS                 EXITCHK1.79    
+   10   FORMAT(L1,A80)                                                     EXITCHK1.80    
+        CLOSE(14)                                                          EXITCHK1.81    
+*IF DEF,MPP                                                                GPB0F305.51    
+      IF (LERRFLAG) THEN                                                   GPB0F305.52    
+        end_run=1                                                          GPB0F305.53    
+      ELSE                                                                 GPB0F305.54    
+        end_run=0                                                          GPB0F305.55    
+      ENDIF                                                                GPB0F305.56    
+      ENDIF                                                                GPB0F305.57    
+                                                                           GPB0F305.58    
+      CALL GC_IBCAST(1,1,0,nproc,info,end_run)                             GPB0F305.59    
+                                                                           GPB0F305.60    
+      IF (end_run .EQ. 1) THEN                                             GPB0F305.61    
+        LERRFLAG=.TRUE.                                                    GPB0F305.62    
+        IF (mype .NE. 0) THEN                                              GPB0F305.63    
+          CERRMESS='PE 0 Signaled a sever stop request'                    GPB0F305.64    
+        ENDIF                                                              GPB0F305.65    
+      ELSE                                                                 GPB0F305.66    
+        LERRFLAG=.FALSE.                                                   GPB0F305.67    
+      ENDIF                                                                GPB0F305.68    
+*ENDIF                                                                     GPB0F305.69    
+C                                                                          EXITCHK1.82    
+        IF (LERRFLAG) THEN                                                 EXITCHK1.83    
+          WRITE(6,*)'EXITCHK: Request to stop model run received'          GIE0F403.144   
+          WRITE(6,*)CERRMESS                                               GIE0F403.145   
+          LEXITNOW=.TRUE.                                                  EXITCHK1.86    
+        END IF                                                             EXITCHK1.87    
+      END IF                                                               GKR7F403.11    
+      END IF                                                               EXITCHK1.88    
+CL----------------------------------------------------------------------   EXITCHK1.89    
+CL 3. Check for insufficient time to complete a batch of timesteps         EXITCHK1.90    
+CL      .. not yet implemented                                             EXITCHK1.91    
+CL                                                                         EXITCHK1.92    
+      RETURN                                                               EXITCHK1.93    
+CL----------------------------------------------------------------------   EXITCHK1.94    
+CL   Error exits                                                           EXITCHK1.95    
+CL                                                                         EXITCHK1.96    
+  900 WRITE(6,*)'EXITCHK: Error trying to open unit 14 error flag'         GIE0F403.146   
+      LCHK14=.FALSE.                                                       EXITCHK1.98    
+      RETURN                                                               EXITCHK1.99    
+C                                                                          EXITCHK1.100   
+  902 WRITE(6,*)'EXITCHK: Error trying to read unit 14 error flag'         GIE0F403.147   
+      LCHK14=.FALSE.                                                       EXITCHK1.102   
+      RETURN                                                               EXITCHK1.103   
+CL----------------------------------------------------------------------   EXITCHK1.104   
+      END                                                                  EXITCHK1.105   
+*ENDIF                                                                     EXITCHK1.106   

@@ -1,0 +1,292 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL------------------------------------------------------------------
+#LL  Script:  qsoasis
+#LL------------------------------------------------------------------
+#LL
+#LL  Purpose: Prepare OASIS and launcher executables
+#LL
+#LL  Author:  R Brugge                 Date: 3 June 1997
+#LL  Reviewer:                         Date of review:
+#LL
+#LL  Not yet tested                    Date:
+#LL
+#LL  UM version no: 4.1                Date:
+#LL
+#LL   Model
+#LL  version  Date     Modification history:
+#LL
+#LL    4.1    03/06/1997 Creation
+#LL
+#LL  Programming standard:
+#LL
+#LL  Project task:
+#LL
+#LL  Logical components covered:
+#LL
+#LL  External documentation:
+#LL
+#LL
+#L   Interface and arguments: ---------------------------------------
+#L
+#L   qsoasis
+#L
+#L     job_id ::= 5 character job identifier
+#L
+#L   ----------------------------------------------------------------
+#L
+#L   Called by: qsmaster
+#L   Calls    : none
+#L
+#L   Imports:
+#L     SETOPT        - shell options
+#L     STEPC         - controls mode of operation of coupler
+#L     TIMESTRATEGY  - defines time strategy of coupling
+#L     UMMACHINE     - machine type
+#L     MESSAGEPASSING- type of message passing used by oasis
+#L     NFIELDS       - number of fields exchangedby oasis
+#L     RUNID         - run identifier
+#L     MASTERNAME    - master name
+#L     SUBMASTERNAME - submaster name
+#L     FIELDSTRINGS  - pathname of file containing exchange field info
+#L     CNTLALL       - filepath for file CNTLALL
+#L
+#L   Exports:
+#L     OASISEXEC     - ready-to-use copy of coupler executable
+#L     LAUNCHEXEC    - ready-to-use launcher executable
+#L
+#L   Local variables:
+#L     OASISRUNDIR   - OASIS running directory
+#L     LIBCPL        - Coupler source code location
+#L     LIBPVM        - PVM archives.
+#L     FORK          - directory containing launcher
+#L     LAUNCH_C      - launcher C-code
+#L     CC            - contains exit status of last command
+#L     IDATA         - Cray or IEEE data format
+#L     RUNNINGSECS   - running time (secs) of current integration job
+#L     LCAL360       - Logical variable defining 360-day calendar
+#L     DAYINIT       - Starting time of job
+#L     a1-6          - Work variables
+#L     CALEND        - T for 360 day calendar, else F
+#L
+#L
+#L   ----------------------------------------------------------------
+#L   Section A - OMASTER = true
+if [ $OMASTER = 'true' ]
+then
+#L   ----------------------------------------------------------------
+#L   Step 0 - set up environment variables
+#L
+   set -$SETOPT
+   set -vSx
+   set -e
+   FORK=$SRCCPL/coupler/Sig
+   LAUNCH_C=fork.c
+   DUMMY=$SRCCPL/ukmo-tools/dummy
+   DATES2=$SRCCPL/ukmo-tools/dates2.f
+#
+#L
+#L   Step 1 - create OASISEXP file to export necessary variables
+cat >OASISEXP <<EOF
+$OASISRUNDIR/LAUNCHEXEC $OASISRUNDIR/OASISEXEC
+EOF
+   CNTLALL=$CNTLALL ; export CNTLALL
+#L
+#L   ----------------------------------------------------------------
+#L   Step 2 - compile the coupler
+#L
+##
+## * building the coupler :
+##
+   if test $STEPC -le 1
+   then
+      ( cd $SRCCPL/jobs ; make all )
+      CC=$?
+      if test $CC -ne 0
+      then
+         echo -e "$0: Error in OASIS compilation"
+         exit $CC
+      fi
+      if [ ! -s $OASISRUNDIR/tempoasis ]
+      then
+         mkdir $OASISRUNDIR/tempoasis
+      fi
+      cd $OASISRUNDIR/tempoasis
+#        Pick up original archives
+      cp $LIBCPL/libcpl.a libcpl.a
+      cp $LIBCPL/fscint.a fscint.a
+      cp $LIBCPL/anaism.a anaism.a
+      cp $LIBCPL/anaisg.a anaisg.a
+      cp $LIBCPL/clim.a clim.a
+      cp $LIBCPL/pipe.a pipe.a
+      cp $LIBCPL/blkdata.o blkdata.o
+      cp $LIBCPL/couple.o couple.o
+      cp $LIBPVM/libpvm3.a libpvm3.a
+      cp $LIBPVM/libfpvm3.a libfpvm3.a
+      cp $LIBPVM/libgpvm3.a libgpvm3.a
+
+
+      f90 -g -Wl"-DSTACK=128 -M ,s -f indef -l ./pipe.a,\
+      ./libcpl.a,./fscint.a,./anaism.a,./anaisg.a,\
+      ./clim.a,./libfpvm3.a,./libgpvm3.a,./libpvm3.a"\
+      couple.o  blkdata.o -o $OASISRUNDIR/OASISEXEC
+      CC=$?
+      cp $OASISRUNDIR/OASISEXEC $LIBCPL/OASISEXEC
+      if test $CC -ne 0
+      then
+         echo -e "$0: Error in OASIS compilation"
+         exit $CC
+      fi
+   else   # no compilation
+      cp $LIBCPL/OASISEXEC $OASISRUNDIR/OASISEXEC
+   fi  # y/n compile
+#
+   chmod a+x $OASISRUNDIR/OASISEXEC
+#
+#L
+#L   -----------------------------------------------------------------
+#L   Step 3 - compile the launcher
+#L
+   if test $STEPC -le 1
+   then
+      cc -o $OASISRUNDIR/LAUNCHEXEC $FORK/$LAUNCH_C
+#
+      CC=$?
+      if test $CC -ne 0
+      then
+         echo -e "$0: Error in launcher compilation"
+         exit $CC
+      fi
+      cp $OASISRUNDIR/LAUNCHEXEC $LIBCPL/LAUNCHEXEC
+   else
+      cp $LIBCPL/LAUNCHEXEC $OASISRUNDIR/LAUNCHEXEC
+   fi
+#
+#L
+#L   -----------------------------------------------------------------
+#L   Step 4 - prepare for execution
+#L
+   if test $STEPC -eq 0
+   then
+      echo -e "$1: Successfully built OASIS and launcher executables --"
+      echo -e "                          no run requested"
+      exit
+   else
+      echo -e "$1: qsoasis -- preparing for execution"
+   fi
+#
+#L
+#L   Step 4.1 - create/access the namelist file
+#L
+
+   IDATA=IEEE
+#if [ UMMACHINE = CRAYPVP -o UMMACHINE = METOCRAY ]
+#then
+   IDATA=CRAY
+#fi
+
+# Create time variables for namelist namcouple
+
+# A bit of housekeeping
+   [ -s $OASISRUNDIR/cplout ] && rm $OASISRUNDIR/cplout
+   [ -s $OASISRUNDIR/namcouple ] && rm $OASISRUNDIR/namcouple
+
+   if [ ! -s $OASISRUNDIR/tempoasis ]
+   then
+      mkdir $OASISRUNDIR/tempoasis
+   fi
+   cd $OASISRUNDIR/tempoasis
+
+   cp $DUMMY .
+   cp $DATES2 .
+   echo -e "compile dates2.f"
+   f90 -o dates dates2.f
+   echo -e "execute dates program"
+   chmod a+rwx dummy
+   ./dummy
+   cat ./dummyexport
+   pwd
+   ls -al
+   ./dates
+   set `cat dummyexport`
+   CALEND=$1
+   echo -e " CALEND = $CALEND ; test only "
+#
+   set `cat oasis1`
+   DAYINIT=$1
+   RUNNINGSECS=`echo -e $2 86400 $3 | $UM_AWK '{print $1 * $2 + $3 } '`
+   echo -e $DAYINIT $RUNNINGSECS
+# THE NEXT LINE NEEDS ALTERING
+   RUNIDCOUPLE=BRU
+
+cat >$OASISRUNDIR/namcouple <<EOF
+ \$SEQMODE
+              $TIMESTRATEGY
+ \$END
+ \$MACHINE
+              $IDATA
+ \$END
+ \$CHANNEL
+              $MESSAGEPASSING
+ \$END
+ \$NFIELDS
+              $NFIELDS
+ \$END
+ \$JOBNAME
+              $RUNIDCOUPLE
+ \$END
+ \$NBMODEL
+  $NMODELS  $MASTERNAME $SUBMASTERNAME
+ \$END
+ \$RUNTIME
+   $RUNNINGSECS  $CALEND
+ \$END
+ \$INIDATE
+   $DAYINIT
+ \$END
+EOF
+#
+#L Incorporate field definitions into coupler namelist file
+   cat $FIELDSTRINGS >> $OASISRUNDIR/namcouple
+
+#L
+#L   Step 4.2 - files required by OASIS
+#L
+#    Grid and mask data
+   [ -s $OASISRUNDIR/grids ] && rm $OASISRUNDIR/grids
+   [ -s $OASISRUNDIR/masks ] && rm $OASISRUNDIR/masks
+   [ -s $OASISRUNDIR/areas ] && rm $OASISRUNDIR/areas
+# weights for interpolation routines
+   [ -s $OASISRUNDIR/gweights ] && rm $OASISRUNDIR/gweights
+   [ -s $OASISRUNDIR/mweights ] && rm $OASISRUNDIR/mweights
+#
+#
+   cat $OASISRUNDIR/namcouple
+
+#L   ----------------------------------------------------------------
+#L   Section B - independant of OMASTER
+fi
+#L   ----------------------------------------------------------------
+#L   Handle the input file(s) for the UM
+cd $OASISRUNDIR
+CC=$?
+if [[ $CC -ne 0 ]]
+then
+  echo -e $0 : cd to $OASISRUNDIR has failed
+  exit $CC
+fi
+[ -s $localnamoasis ] && rm $localnamoasis
+cp $namoasis $localnamoasis
+
+# END OF FILE
+
+
+

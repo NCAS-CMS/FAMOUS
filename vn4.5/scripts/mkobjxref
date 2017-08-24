@@ -1,0 +1,298 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#
+#  Script:
+#
+#  Description:
+#
+#  Interface and arguments:
+#
+#  Author : Shona Robertson
+#  Owner:
+#
+#  History:
+#  vn4.4	25.09.97	Original Code. (S Robertson)
+#  vn4.4        14.11.97        Extra comments and changed
+#                               format of stdout. (A Brady)
+#  vn4.5        12.06.98        Added functionality for MACHINE=OTHER
+#                               (A Van der Wal)
+#  vn4.5        26.06.98        Added line to allow C91_2A to be built
+#                               for workstations only (A Van der Wal)
+#  vn4.5        14.07.98        Moved functions to a separate file
+#                               and autoloaded them. (A Van der Wal)
+#
+#  Script called by: unpackmodel
+#  Script calls:
+#
+#  argument1:
+#
+#  input :
+#
+#  output :
+#
+#  Variables that must be imported:
+#    BUILDHOST    identifies the system the UM is being built upon
+#                 e.g. T3E_f90 machine and compiler
+#    PROGDEFS     list of machine specific DEFS taken from setglobalvars
+#
+#  Variables that can be imported:
+#    XREF         pathname of the xref file created for the platform
+#                 the UM is being installed upon
+#    XREFIN       pathname of the input xref file which is processed
+#    XREFMID      temporary file to hold intermediate version of the
+#                 xref file
+#    SEDSCRIPT    temporary file
+#    TMPDIR       directory in which temporary files are created
+#    UMDIR	  pathname for the UM files and directories
+#    VN		  a given version of the UM	
+#
+#  Variables that are exported:
+#
+#  Local variables:
+#----------------------------------------------------------------
+
+TMPDIR=${TMPDIR:-/tmp}
+
+# If this script has 3 arguments then $1 is the input xref file,
+# $2 is the output xref file and #3 is the BUILDHOST. If there
+# are no arguments, then
+# the environment variables are used. If there are no environment
+# variables then the defaults are used.
+if test $# -eq 3
+then
+  XREFIN=$1
+  XREF=$2
+  BUILDHOST=$3
+else
+  if [ -z "$UMDIR" ] || [ -z "$VN" ]
+  then
+    echo -e "ERROR: UMDIR or VN not defined"
+    exit 1
+  fi
+  XREF=${XREF:-$UMDIR/vn$VN/source/obj_xref}
+  XREFIN=${XREFIN:-$UMDIR/vn$VN/source/obj_xref_base}
+  BUILDHOST=${BUILDHOST:-T3E_f90}
+fi
+
+# The input file cannot be found.
+if [ ! -f "$XREFIN" ]
+then
+  echo -e "ERROR: file $XREFIN not found"
+  exit 1
+fi
+
+XREFMID=${XREFMID:-$TMPDIR/obj_xref.mid}
+XREFTMP=${XREFTMP:-$TMPDIR/obj_xref.tmp}
+
+SEDSCRIPT=${SEDSCRIPT:-$TMPDIR/sedscript}
+
+autoload createcomb mergecomb sortarray addcompileopts \
+         nocombinations max checkhdefs findstr
+
+# Add a MACHINE @host@ line for section C91_2A for workstations
+$UM_AWK '{print $0}
+{if ($0 ~ /C91_2A CODE  Fortran/)
+{print "C91_2A BUILD @host@   G0"}}' $XREFIN > $XREFTMP
+# parse the BUILDHOST into the base xref file (replacing
+# @host@ markers) and remove any trailing blanks from the file
+$UM_SED -e "s/@host@/$BUILDHOST/g" -e "s/ *$//" $XREFTMP > $XREFMID
+
+# parse the machine DEFS for MACHINE=OTHER into the base xref file
+# (replacing @??@ markers).
+
+p1=`findstr C_LOW "$PROGDEFS"`
+p2=`findstr C_LOW_U "$PROGDEFS"`
+p4=`findstr FRL8 "$PROGDEFS"`
+p7=`findstr CRI_OPEN "$PROGDEFS"`
+g1=`findstr MPP "$PROGDEFS"`
+gp=`findstr T3E "$PROGDEFS"`
+gm=`findstr T3D "$PROGDEFS"`
+# gn=`findstr Y "$gp $gn"`
+gn=`findstr CRAY "$PROGDEFS"`
+pa=`findstr FUJITSU "$PROGDEFS"`
+pb=`findstr VECTLIB "$PROGDEFS"`
+pc=`findstr SGI "$PROGDEFS"`
+pd=`findstr SUN "$PROGDEFS"`
+pe=`findstr LINUX "$PROGDEFS"`
+pf=`findstr INTLL "$PROGDEFS"`
+g1x=`findstr BLDNOMPP "$PROGDEFS"`
+if [ "$g1x" = "Y" -a "$g1" = "Y" ]
+then
+  g1="Y:N"
+fi
+
+$UM_SED -e "s/@gn@/$gn/g" -e "s/@p1@/$p1/g" -e "s/@p2@/$p2/g" \
+    -e "s/@p4@/$p4/g" -e "s/@p7@/$p7/g" -e "s/@g1@/$g1/g" \
+    -e "s/@gp@/$gp/g" -e "s/@pa@/$pa/g" -e "s/@pb@/$pb/g" \
+    -e "s/@pc@/$pc/g" -e "s/@pd@/$pd/g" -e "s/@pe@/$pe/g" \
+    -e "s/@pf@/$pf/g" -e "s/@pg@/$pg/g" \
+    -e "s/@buildhost@/$BUILDHOST/g" $XREFMID  > $XREFTMP
+mv $XREFTMP $XREFMID
+
+# Set up.
+
+# These are the machine specific DEFS selection
+mccomb=`$UM_AWK "/^MACHINE .*DEFS .*<*>/"'{for (i=3; i<=NF; i++)
+                                      print $i}' $XREFMID`
+echo -e mccomb=$mccomb
+
+# These are compilation specific DEF selections
+ccomb=`$UM_AWK "/^COMPILE .*$BUILDHOST .*<*>/"'{for (i=3; i<=NF; i++)
+                                      print $i}' $XREFMID`
+echo -e ccomb=$ccomb
+
+#
+# Main
+#
+
+# remove any existing file(s) containing sed commands
+rm -f $SEDSCRIPT*
+
+# initialise the variable HDEFS which indicates whether there are any
+# hard defs declared for a given section
+
+HDEFS=false
+export SKIPSECTION
+
+for section in `$UM_AWK /TITLE/'{print $1}' $XREFMID | sort -u`
+do
+
+  echo -e
+
+  # These are default combinations that should be built on
+  # every machine type or at least the root combinations
+  # before the machine DEFS are added.
+  defcomb=`\
+     $UM_AWK "/^$section .*BUILD .*$BUILDHOST/"'{print $4}' $XREFMID`
+
+  echo -e $section: defcomb=$defcomb
+
+  #
+  SKIPSECTION=false
+
+  # Identify any hard defs declared for the section
+  # Sectional hard defs are defs that must always be set for
+  # a section. These are defined at the top of the input
+  # xref file. eg. G1/ATMOS is a common hard def.
+  hdefstring=`$UM_AWK "/^SECTION .*$section/"'{for (i=3; i<=NF; i++)
+                             print $i }' $XREFMID`
+  echo -e $section: hdefstring=$hdefstring
+
+  if [[ ! -z "$hdefstring" ]]
+  then
+    # make a temporary copy of the mccomb line and set the variable
+    # to indicate that there are hard defs declared for this section
+    mccomb_tmp=$mccomb
+    HDEFS=true
+  fi
+
+  # Check for declared hard defs. This may modify mccomb
+  # if a harddef has been defined and the machine defs
+  # are in conflict. eg. if the hard def is G1 and the
+  # machine def for G1 is <Y:N> then it will become
+  # <Y>. Similarly if the machine def for G1 is <N>,
+  # then the section will be skipped (SKIPSECTION=true)
+  # and only default combinations will be output.
+  checkhdefs
+
+  echo -e $section: mccomb=$mccomb
+
+  if [[ "$SKIPSECTION" = "true" ]]
+  then
+    # Output only default combinations for this section.
+    for defc in `echo -e $defcomb`
+    do
+      echo -e "s^$section .*BUILD .*$BUILDHOST .* $defc$^^g" \
+ >> $SEDSCRIPT\1
+    done
+  else
+    #
+    defsm=`$UM_AWK "/$section .*DEFSM /"'{for (i=3; i<=NF; i++)
+                             print $i }' $XREFMID`
+
+    echo -e $section: defsm=$defsm
+
+    # Create a list of ":" seperated def combinations
+    # from defsm and mccomb
+    mdefcomb=$(createcomb $defsm)
+    print "$section: mdefcomb=$mdefcomb"
+
+    n=$(nocombinations $mdefcomb)
+    echo -e $section: NO OF COMBINATIONS IS $n
+
+    maxno=$(max $maxno $n)
+    echo -e $section: maxno=$maxno
+
+    nextcomb=$mdefcomb
+
+    while [[ "$mdefcomb" != "" ]]
+    do
+      nextcomb=${mdefcomb%%:*}
+
+      # merge the given machine def combination with each def
+      # combination listed in the xref file for that section
+
+      for defc in `echo -e $defcomb`
+      do
+        mergeout=$(mergecomb $nextcomb $defc)
+        outstring=""
+        for opt in `echo -e $ccomb`
+        do
+          final=$(addcompileopts $mergeout $opt)
+          if [[ -n $final ]]
+          then
+            outstring=$outstring$final" "
+          fi
+        done
+
+        if [[ $n > 1 ]]
+        then
+          echo -e \
+"s^\($section .*BUILD .*$BUILDHOST .* $defc\)$\
+^$section BUILD $BUILDHOST  $outstring\\" \
+>> $SEDSCRIPT$n
+          echo -e "\1^g" >> $SEDSCRIPT$n
+        else
+          echo -e \
+"s^$section .*BUILD .*$BUILDHOST .* $defc$^\
+$section BUILD $BUILDHOST  $outstring^g"\
+ >> $SEDSCRIPT$n
+        fi
+        echo -e $section: OUTSTRING $outstring
+      done
+      (( n = n - 1 ))
+      mdefcomb=${mdefcomb#$nextcomb:}
+    done
+  fi
+
+  # restore the original mccomb line if any hard defs were
+  # declared for this section
+  if [[ "$HDEFS" = "true" ]]
+  then
+    mccomb=$mccomb_tmp
+    HDEFS=false
+  fi
+done
+
+# Execute the sedscript(s) to create the final xref file
+
+i=$maxno
+while [[ $i != 0 ]]
+do
+  echo -e $section: I $i
+  $UM_SED -f $SEDSCRIPT$i < $XREFMID > $XREFTMP
+  mv $XREFTMP $XREFMID
+  (( i = i - 1 ))
+done
+
+# Install the final version of the xref file in the UM
+# source directory.
+mv $XREFMID $XREF

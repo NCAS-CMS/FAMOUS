@@ -1,0 +1,440 @@
+*IF DEF,OCEAN                                                              OFLTCNTL.2     
+*IF DEF,T3E,AND,DEF,MPP                                                    ORH1F405.522   
+C *****************************COPYRIGHT******************************     OFLTCNTL.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    OFLTCNTL.4     
+C                                                                          OFLTCNTL.5     
+C Use, duplication or disclosure of this code is subject to the            OFLTCNTL.6     
+C restrictions as set forth in the contract.                               OFLTCNTL.7     
+C                                                                          OFLTCNTL.8     
+C                Meteorological Office                                     OFLTCNTL.9     
+C                London Road                                               OFLTCNTL.10    
+C                BRACKNELL                                                 OFLTCNTL.11    
+C                Berkshire UK                                              OFLTCNTL.12    
+C                RG12 2SZ                                                  OFLTCNTL.13    
+C                                                                          OFLTCNTL.14    
+C If no contract has been raised with this copy of the code, the use,      OFLTCNTL.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      OFLTCNTL.16    
+C to do so must first be obtained in writing from the Head of Numerical    OFLTCNTL.17    
+C Modelling at the above address.                                          OFLTCNTL.18    
+C ******************************COPYRIGHT******************************    OFLTCNTL.19    
+      SUBROUTINE OFILTR_CNTL(                                              OFLTCNTL.20    
+*CALL ARGSIZE                                                              OFLTCNTL.21    
+*CALL ARGOCALL                                                             OFLTCNTL.22    
+*CALL ARGOINDX                                                             OFLTCNTL.23    
+     & J,FTARR,                                                            ORH1F405.523   
+*CALL COCAWRKA                                                             OFLTCNTL.25    
+     & )                                                                   OFLTCNTL.26    
+!                                                                          OFLTCNTL.27    
+!     Description: This subroutine is intended to provide an interface     OFLTCNTL.28    
+!     to the calling of the Ocean model Fourier Filtering subroutine       OFLTCNTL.29    
+!     OFILTR when called from CLINIC and TRACER. The routine contains      OFLTCNTL.30    
+!     direct shmem calls and barriers to allow the filtering work          OFLTCNTL.31    
+!     to be distributed over all available pes when running on the t3e     OFLTCNTL.32    
+!     in MPP mode. In non t3e mode (mpp and non-mpp) the filtering         OFLTCNTL.33    
+!     is not distributed and is just performed by those pes who            OFLTCNTL.34    
+!     happen to be responsible for the rows in question.                   OFLTCNTL.35    
+!                                                                          OFLTCNTL.36    
+!                                                                          OFLTCNTL.37    
+!     Author: R. Hill                                                      OFLTCNTL.38    
+!                                                                          OFLTCNTL.39    
+!     Date  : April 1997                                                   OFLTCNTL.40    
+!                                                                          OFLTCNTL.41    
+!     Modification History:                                                OFLTCNTL.42    
+!                                                                          OFLTCNTL.43    
+!     Date       Name        Description                                   OFLTCNTL.44    
+!     ------     ---------   ----------------------------------------      OFLTCNTL.45    
+!                                                                          OFLTCNTL.46    
+!********************************************************************      OFLTCNTL.47    
+                                                                           OFLTCNTL.48    
+      IMPLICIT NONE                                                        OFLTCNTL.49    
+                                                                           OFLTCNTL.50    
+*CALL PARVARS                                                              ORH1F405.524   
+*CALL OARRYSIZ                                                             OFLTCNTL.51    
+*CALL TYPSIZE                                                              OFLTCNTL.52    
+*CALL TYPOINDX                                                             PXORDER.35    
+*CALL TYPOCALL                                                             OFLTCNTL.53    
+*CALL COCTWRKA                                                             OFLTCNTL.55    
+*CALL CNTLOCN                                                              OFLTCNTL.56    
+*CALL UMSCALAR                                                             OFLTCNTL.57    
+                                                                           OFLTCNTL.58    
+       INTEGER IPROC       ! loop index over PEs                           ORH1F405.525   
+     &,        J_TO_FILTER ! Row value to be filtered                      ORH1F405.526   
+     &,        KMT1_TEMP   ! Temp KMT(1)                                   ORH1F405.527   
+     &,        I,J,K,L,IS,IE,ISM1,IEA,IEB                                  ORH1F405.528   
+     &,        IREDO,JJ,M,N,IM,II,IDX,MM                                   ORH1F405.529   
+     &,        TS,TE,TLAST ! Tracer loop controls come into play           ORH1F405.530   
+!                            only if more than the normal two tracers      ORH1F405.531   
+!                            need to be filtered. (Eg Biology model)       ORH1F405.532   
+!                            In this case, the load balancing may          ORH1F405.533   
+!                            be less than optimal.                         ORH1F405.534   
+     &,        SIZEA, SIZEB, IWK, KMT1_FILT                                ORH1F405.535   
+                                                                           ORH1F405.536   
+                                                                           OFLTCNTL.77    
+                                                                           OFLTCNTL.81    
+       REAL CS_TEMP                                                        OFLTCNTL.82    
+     &,     PHI_TEMP                                                       OFLTCNTL.83    
+     &,     CST_TEMP                                                       OFLTCNTL.84    
+     &,     FTARR(IMTIMT_FLT)                                              OFLTCNTL.85    
+     &,     FX                                                             OFLTCNTL.86    
+     &,     CS_FILT                                                        ORH1F405.537   
+     &,     CST_FILT                                                       ORH1F405.538   
+     &,     PHI_FILT                                                       ORH1F405.539   
+                                                                           ORH1F405.540   
+                                                                           OFLTCNTL.87    
+                                                                           OFLTCNTL.88    
+*IF DEF,T3E,AND,DEF,MPP                                                    OFLTCNTL.89    
+       ! Arrays used in t3e mpp mode only                                  OFLTCNTL.90    
+                                                                           ORH1F405.541   
+       INTEGER MAX_UVT_COLS                                                ORH1F405.542   
+     &,        MAX_LEVELS                                                  ORH1F405.543   
+                                                                           ORH1F405.544   
+       ! The following parameters may be decreased to save space           ORH1F405.545   
+       ! in lower resolution models or increased to cater for higher       ORH1F405.546   
+       ! resolutions                                                       ORH1F405.547   
+       PARAMETER (MAX_UVT_COLS = 1082)  ! Max no of grid pts E-W           ORH1F405.548   
+       PARAMETER (MAX_LEVELS   = 20)    ! Max no of vertical levels        ORH1F405.549   
+                                                                           ORH1F405.550   
+       REAL FIELD_TEMP(MAX_UVT_COLS*2,MAX_LEVELS*2)                        ORH1F405.551   
+     &,     FIELD_FILT(MAX_UVT_COLS*2)                                     ORH1F405.552   
+                                                                           ORH1F405.553   
+                                                                           OFLTCNTL.94    
+       ! Variables in common for use with direct shmem calls.              OFLTCNTL.95    
+       COMMON /SHMEM_FL/ FIELD_TEMP,FIELD_FILT,CS_TEMP, PHI_TEMP           ORH1F405.554   
+     &,CST_TEMP,KMT1_TEMP                                                  ORH1F405.555   
+                                                                           OFLTCNTL.99    
+                                                                           OFLTCNTL.100   
+*ENDIF                                                                     OFLTCNTL.106   
+                                                                           OFLTCNTL.107   
+      ! If we're filtering the U/V fields:                                 ORH1F405.556   
+                                                                           OFLTCNTL.110   
+         TS = 1                                                            ORH1F405.557   
+         TE = 2                                                            ORH1F405.558   
+         TLAST = 0                                                         ORH1F405.559   
+         IF (SLAV_CNT_U(J).GT.0) THEN                                      ORH1F405.560   
+            ! IF I have slaves to help my filtering, then                  ORH1F405.561   
+            ! I must set up my UA and VA fields in a common block          ORH1F405.562   
+            ! ready to be "got" by the slaves.                             ORH1F405.563   
+            DO K = 1, KM                                                   ORH1F405.564   
+               DO I = 1, IMT                                               ORH1F405.565   
+                  FIELD_TEMP(I,K) = UA(I,K)                                ORH1F405.566   
+                  FIELD_TEMP(I+IMT,K) = VA(I,K)                            ORH1F405.567   
+               ENDDO                                                       ORH1F405.568   
+            ENDDO                                                          ORH1F405.569   
+                                                                           OFLTCNTL.114   
+            CS_TEMP  = CS(J)                                               ORH1F405.570   
+            PHI_TEMP = PHI(J)                                              ORH1F405.571   
+                                                                           OFLTCNTL.118   
+         ENDIF                                                             ORH1F405.572   
+                                                                           OFLTCNTL.190   
+                                                                           OFLTCNTL.191   
+ 0200    CONTINUE                                                          ORH1F405.573   
+         IF (SLAV_CNT_T(J).GT.0) THEN                                      ORH1F405.574   
+            ! If I have slaves to help my filtering, then                  ORH1F405.575   
+            ! I must set up my TA fields (T and S) in a                    ORH1F405.576   
+            ! common block ready to be "got" by the slaves.                ORH1F405.577   
+            ! The filtering can only cope with two TRACERS                 ORH1F405.578   
+            ! at a time - TS and TE control this.                          ORH1F405.579   
+            DO MM = TS, TE                                                 ORH1F405.580   
+               DO K = 1, KM                                                ORH1F405.581   
+                  DO I = 1, IMT                                            ORH1F405.582   
+                     FIELD_TEMP((IMT*(MM-1-TLAST))+I,K+KM) = TA(I,K,MM)    ORH1F405.583   
+                  ENDDO                                                    ORH1F405.584   
+               ENDDO                                                       ORH1F405.585   
+            ENDDO                                                          ORH1F405.586   
+                                                                           OFLTCNTL.199   
+            CST_TEMP  = CST(J)                                             ORH1F405.587   
+            KMT1_TEMP = KMT(1)                                             ORH1F405.588   
+                                                                           OFLTCNTL.203   
+         ENDIF                                                             ORH1F405.589   
+                                                                           OFLTCNTL.209   
+         CALL BARRIER()                                                    ORH1F405.590   
+         ! If we're filtering extra tracers, make sure we dont repeat      ORH1F405.591   
+         ! the UV filtering.                                               ORH1F405.592   
+         IF (TLAST.GT.0) GOTO 0400                                         ORH1F405.593   
+                                                                           ORH1F405.594   
+                                                                           OFLTCNTL.211   
+         ! For each MAST PE I help (on this J) get the data.               ORH1F405.595   
+         DO IWK = 1, MAST_CNT_U(J)                                         ORH1F405.596   
+                                                                           OFLTCNTL.258   
+           ! Which master PE, level and segment?                           ORH1F405.597   
+           IPROC = MAST_PE_U(IWK,J)                                        ORH1F405.598   
+           K = MAST_K_U(IWK,J)                                             ORH1F405.599   
+           L = MAST_SEG_U(IWK,J)                                           ORH1F405.600   
+                                                                           OFLTCNTL.276   
+           ! Which row are we filtering (in global terms)                  ORH1F405.601   
+           J_TO_FILTER = g_datastart(2,IPROC) + J - O_NS_HALO - 1          ORH1F405.602   
+                                                                           ORH1F405.603   
+           ! How does this row map into our list of sea segment            ORH1F405.604   
+           ! indices                                                       ORH1F405.605   
+           JJ=J_TO_FILTER-JFRST+1                                          ORH1F405.606   
+           IF (J_TO_FILTER.GE.JFU2) JJ=JJ-JSKPU+1                          ORH1F405.607   
+                                                                           ORH1F405.608   
+           ! Get a cosine and phi values for this row from                 ORH1F405.609   
+           ! the PE which ows it.                                          ORH1F405.610   
+           CALL SHMEM_GET(CS_FILT,CS_TEMP,1,IPROC)                         ORH1F405.611   
+           CALL SHMEM_GET(PHI_FILT,PHI_TEMP,1,IPROC)                       ORH1F405.612   
+                                                                           ORH1F405.613   
+           FX=-1.0                                                         ORH1F405.614   
+           IF (PHI_FILT.GT.0.) FX=1.0                                      ORH1F405.615   
+                                                                           ORH1F405.616   
+           ! Where, in the master array is the segment we need?            ORH1F405.617   
+           IS=ISUF(JJ,L,K)                                                 ORH1F405.618   
+           IE=IEUF(JJ,L,K)                                                 ORH1F405.619   
+           IM=IE-IS+1                                                      ORH1F405.620   
+                                                                           ORH1F405.621   
+           IREDO=0                                                         ORH1F405.622   
+           IF (.NOT.(L_OCYCLIC)) THEN                                      ORH1F405.623   
+               M=2                                                         ORH1F405.624   
+               N=NINT((IM*CS_FILT)*CSR_JFU0)                               ORH1F405.625   
+           ELSE                                                            ORH1F405.626   
+               IF (IM.NE.IMTM2) THEN                                       ORH1F405.627   
+                  M=2                                                      ORH1F405.628   
+                  N=NINT((IM*CS_FILT)*CSR_JFU0)                            ORH1F405.629   
+               ELSE                                                        ORH1F405.630   
+                  M=3                                                      ORH1F405.631   
+                  N=NINT(((IM*CS_FILT)*CSR_JFU0)*.5)                       ORH1F405.632   
+               ENDIF                                                       ORH1F405.633   
+           ENDIF                                                           ORH1F405.634   
+                                                                           ORH1F405.635   
+                                                                           ORH1F405.636   
+           ISM1=IS-1                                                       ORH1F405.637   
+           IEA=IE                                                          ORH1F405.638   
+                                                                           ORH1F405.639   
+           ! Does this segment end after the last column? ie does          ORH1F405.640   
+           ! this segment go over the wrap around points?                  ORH1F405.641   
+           IF (IE.GE.IMU) THEN                                             ORH1F405.642   
+                                                                           ORH1F405.643   
+              ! We get such segments in two parts, 2nd part first.         ORH1F405.644   
+              IEA=IMUM1                                                    ORH1F405.645   
+              IEB=IE-IMUM2                                                 ORH1F405.646   
+              II=IMUM1-IS                                                  ORH1F405.647   
+                                                                           ORH1F405.648   
+              SIZEB = IEB -2 + 1                                           ORH1F405.649   
+              DO MM = 1, 2                                                 ORH1F405.650   
+                 CALL SHMEM_GET(FIELD_FILT(((MM-1)*IMT)+2)                 ORH1F405.651   
+     &             ,FIELD_TEMP(((MM-1)*IMT)+2,K),SIZEB,IPROC)              ORH1F405.652   
+              ENDDO                                                        ORH1F405.653   
+           ENDIF                                                           ORH1F405.654   
+                                                                           ORH1F405.655   
+           SIZEA = IEA - IS + 1                                            ORH1F405.656   
+           DO MM = 1, 2                                                    ORH1F405.657   
+              CALL SHMEM_GET(FIELD_FILT(((MM-1)*IMT)+IS)                   ORH1F405.658   
+     &             ,FIELD_TEMP(((MM-1)*IMT)+IS,K),SIZEA,IPROC)             ORH1F405.659   
+           ENDDO                                                           ORH1F405.660   
+                                                                           ORH1F405.661   
+           DO I=IS,IEA                                                     ORH1F405.662   
+               UDIF(I-ISM1 ,K)=-((FX*FIELD_FILT(I))*SPSIN(I))-             ORH1F405.663   
+     &                        FIELD_FILT(I+IMT)*SPCOS(I)                   ORH1F405.664   
+               VDIF(I-ISM1 ,K)= ((FX*FIELD_FILT(I))*SPCOS(I))-             ORH1F405.665   
+     &                        FIELD_FILT(I+IMT)*SPSIN(I)                   ORH1F405.666   
+           ENDDO                                                           ORH1F405.667   
+                                                                           ORH1F405.668   
+           IF (IE.GE.IMU)THEN                                              ORH1F405.669   
+               DO I=2,IEB                                                  ORH1F405.670   
+                 UDIF(I+II,K)=((-FX*FIELD_FILT(I))*SPSIN(I))-              ORH1F405.671   
+     &                           FIELD_FILT(I+IMT)*SPCOS(I)                ORH1F405.672   
+                 VDIF(I+II,K)= ((FX*FIELD_FILT(I))*SPCOS(I))-              ORH1F405.673   
+     &                           FIELD_FILT(I+IMT)*SPSIN(I)                ORH1F405.674   
+               ENDDO                                                       ORH1F405.675   
+           ENDIF                                                           ORH1F405.676   
+                                                                           ORH1F405.677   
+                                                                           ORH1F405.678   
+           CALL FILTR(                                                     ORH1F405.679   
+*CALL ARGSIZE                                                              OFLTCNTL.278   
+*CALL ARGOCFIL                                                             OFLTCNTL.279   
+     &                FTARR,UDIF(1,K),IM,M,N,IREDO)                        OFLTCNTL.280   
+C                                                                          OFLTCNTL.281   
+           CALL FILTR(                                                     ORH1F405.680   
+*CALL ARGSIZE                                                              OFLTCNTL.283   
+*CALL ARGOCFIL                                                             OFLTCNTL.284   
+     &                FTARR,VDIF(1,K),IM,M,N,1)                            OFLTCNTL.285   
+                                                                           OFLTCNTL.286   
+           DO 720 I=IS,IEA                                                 ORH1F405.681   
+                    FIELD_FILT(I)=FX*(-UDIF(I-ISM1 ,K)*SPSIN(I)            ORH1F405.682   
+     &                  +VDIF(I-ISM1 ,K)*SPCOS(I))                         OFLTCNTL.290   
+                    FIELD_FILT(I+IMT)=-UDIF(I-ISM1 ,K)*SPCOS(I)-           ORH1F405.683   
+     &                   VDIF(I-ISM1 ,K)*SPSIN(I)                          OFLTCNTL.292   
+  720      CONTINUE                                                        ORH1F405.684   
+                                                                           OFLTCNTL.300   
+           IF(IE.GE.IMU) THEN                                              ORH1F405.685   
+                    DO 722 I=2,IEB                                         OFLTCNTL.302   
+                       FIELD_FILT(I)=FX*(-UDIF(I+II,K)*SPSIN(I)            ORH1F405.686   
+     &                    +VDIF(I+II,K)*SPCOS(I))                          OFLTCNTL.305   
+                       FIELD_FILT(I+IMT)=-UDIF(I+II,K)*SPCOS(I)-           ORH1F405.687   
+     &                     VDIF(I+II,K)*SPSIN(I)                           OFLTCNTL.307   
+  722               CONTINUE                                               OFLTCNTL.314   
+           ENDIF                                                           ORH1F405.688   
+                                                                           OFLTCNTL.323   
+                                                                           OFLTCNTL.324   
+                                                                           OFLTCNTL.328   
+                                                                           OFLTCNTL.340   
+           ! Send filtered baroclinic velocities back to the owner         ORH1F405.689   
+           DO MM = 1, 2                                                    ORH1F405.690   
+              CALL SHMEM_PUT(FIELD_TEMP(((MM-1)*IMT)+IS,K)                 ORH1F405.691   
+     &                   ,FIELD_FILT(((MM-1)*IMT)+IS),SIZEA,IPROC)         ORH1F405.692   
+              IF(IE.GE.IMU) THEN                                           ORH1F405.693   
+                 CALL SHMEM_PUT(FIELD_TEMP(((MM-1)*IMT)+2,K)               ORH1F405.694   
+     &               ,FIELD_FILT(((MM-1)*IMT)+2),SIZEB,IPROC)              ORH1F405.695   
+              ENDIF                                                        ORH1F405.696   
+           ENDDO                                                           ORH1F405.697   
+                                                                           OFLTCNTL.342   
+        ENDDO ! Over IWK                                                   ORH1F405.698   
+                                                                           ORH1F405.699   
+ 0400   CONTINUE                                                           ORH1F405.700   
+                                                                           ORH1F405.701   
+        ! For each MASTER PE I help (on this J) get the data.              ORH1F405.702   
+        DO IWK = 1, MAST_CNT_T(J)                                          ORH1F405.703   
+                                                                           ORH1F405.704   
+           ! Which PE, level and segment?                                  ORH1F405.705   
+           IPROC = MAST_PE_T(IWK,J)                                        ORH1F405.706   
+           K = MAST_K_T(IWK,J)                                             ORH1F405.707   
+           L = MAST_SEG_T(IWK,J)                                           ORH1F405.708   
+                                                                           ORH1F405.709   
+           ! Which row?                                                    ORH1F405.710   
+           J_TO_FILTER = g_datastart(2,IPROC) + J - O_NS_HALO - 1          ORH1F405.711   
+                                                                           ORH1F405.712   
+           JJ=J_TO_FILTER-JFRST+1                                          ORH1F405.713   
+           IF (J_TO_FILTER.GE.JFT2) JJ=JJ-JSKPT+1                          ORH1F405.714   
+                                                                           ORH1F405.715   
+           CALL SHMEM_GET(CST_FILT,CST_TEMP,1,IPROC)                       ORH1F405.716   
+           CALL SHMEM_GET(KMT1_FILT,KMT1_TEMP,1,IPROC)                     ORH1F405.717   
+                                                                           OFLTCNTL.344   
+                                                                           OFLTCNTL.345   
+                                                                           OFLTCNTL.377   
+                                                                           OFLTCNTL.379   
+           IS=ISTF(JJ,L,K)                                                 ORH1F405.718   
+           IE=IETF(JJ,L,K)                                                 ORH1F405.719   
+                                                                           OFLTCNTL.383   
+           IREDO=-1                                                        ORH1F405.720   
+           IM=IE-IS+1                                                      ORH1F405.721   
+           IF (.NOT.(L_OCYCLIC)) THEN                                      ORH1F405.722   
+              M=1                                                          ORH1F405.723   
+              N=NINT((IM*CST_FILT)*CSTR_JFT0)                              ORH1F405.724   
+           ELSE                                                            ORH1F405.725   
+              IF(IM.NE.IMTM2.OR.KMT1_FILT.LT.K) THEN                       ORH1F405.726   
+                 M=1                                                       ORH1F405.727   
+                 N=NINT((IM*CST_FILT)*CSTR_JFT0)                           ORH1F405.728   
+              ELSE                                                         ORH1F405.729   
+                 M=3                                                       ORH1F405.730   
+                 N=NINT(((IM*CST_FILT)*CSTR_JFT0)*.5)                      ORH1F405.731   
+              ENDIF                                                        ORH1F405.732   
+           ENDIF                                                           ORH1F405.733   
+                                                                           ORH1F405.734   
+           IEA=IE                                                          ORH1F405.735   
+           IF (IE.GE.IMT) THEN                                             ORH1F405.736   
+              ! If the segment covers the wrap around points               ORH1F405.737   
+              ! get it in two parts, 2nd part first.                       ORH1F405.738   
+              IEA=IMTM1                                                    ORH1F405.739   
+              IEB=IE-IMTM2                                                 ORH1F405.740   
+              II=IMTM1-IS                                                  ORH1F405.741   
+              SIZEB = IEB - 2 + 1                                          ORH1F405.742   
+              SIZEA = IEA - IS + 1                                         ORH1F405.743   
+              DO MM = TS, TE                                               ORH1F405.744   
+                 CALL SHMEM_GET(FIELD_FILT(((MM-1-TLAST)*IMT)+SIZEA+1)     ORH1F405.745   
+     &           ,FIELD_TEMP(((MM-1-TLAST)*IMT)+2,K+KM),SIZEB,IPROC)       ORH1F405.746   
+              ENDDO                                                        ORH1F405.747   
+           ENDIF                                                           ORH1F405.748   
+                                                                           ORH1F405.749   
+           SIZEA = IEA - IS + 1                                            ORH1F405.750   
+           DO MM = TS, TE                                                  ORH1F405.751   
+              CALL SHMEM_GET(FIELD_FILT(((MM-1-TLAST)*IMT)+1)              ORH1F405.752   
+     &              ,FIELD_TEMP(((MM-1-TLAST)*IMT)+IS,K+KM),SIZEA,IPROC)   ORH1F405.753   
+                                                                           ORH1F405.754   
+                                                                           OFLTCNTL.508   
+!   FOURIER FILTERING performed for all tracers.                           OJP0F404.882   
+              IDX=IREDO+MM-TLAST                                           ORH1F405.755   
+                                                                           OFLTCNTL.533   
+                                                                           ORH1F405.756   
+              CALL FILTR(                                                  ORH1F405.757   
+*CALL ARGSIZE                                                              OFLTCNTL.535   
+*CALL ARGOCFIL                                                             OFLTCNTL.536   
+     &           FTARR,FIELD_FILT(((MM-1-TLAST)*IMT)+1),IM,M,N,IDX)        ORH1F405.758   
+                                                                           OFLTCNTL.538   
+                                                                           ORH1F405.759   
+              ! Send filtered tracers back to the master PE                ORH1F405.760   
+              CALL SHMEM_PUT(FIELD_TEMP(((MM-1-TLAST)*IMT)+IS,K+KM),       ORH1F405.761   
+     &                    FIELD_FILT(((MM-1-TLAST)*IMT)+1),                ORH1F405.762   
+     &                    SIZEA,IPROC)                                     ORH1F405.763   
+              IF (IE.GE.IMT) THEN                                          ORH1F405.764   
+                 CALL SHMEM_PUT(FIELD_TEMP(((MM-1-TLAST)*IMT)+2,K+KM),     ORH1F405.765   
+     &                    FIELD_FILT(((MM-1-TLAST)*IMT)+SIZEA+1),          ORH1F405.766   
+     &                    SIZEB,IPROC)                                     ORH1F405.767   
+              ENDIF                                                        ORH1F405.768   
+           ENDDO  ! Over MM                                                ORH1F405.769   
+        ENDDO  ! OVER IWK                                                  ORH1F405.770   
+                                                                           OFLTCNTL.540   
+*IF DEF,T3E,AND,DEF,MPP                                                    OFLTCNTL.541   
+      ! Synchronize before further processing.                             ORH1F405.771   
+      CALL BARRIER()                                                       ORH1F405.772   
+*ENDIF                                                                     OFLTCNTL.545   
+                                                                           OFLTCNTL.547   
+                                                                           OFLTCNTL.557   
+      IF (SLAV_CNT_T(J).GT.0) THEN                                         ORH1F405.773   
+                                                                           OFLTCNTL.561   
+                                                                           OFLTCNTL.564   
+          DO MM = TS, TE                                                   ORH1F405.774   
+             DO K = 1, KM                                                  ORH1F405.775   
+                DO I = 1, IMT                                              ORH1F405.776   
+                   TA(I,K,MM) = FIELD_TEMP(((MM-1-TLAST)*IMT)+I,K+KM)      ORH1F405.777   
+                ENDDO                                                      ORH1F405.778   
+             ENDDO                                                         ORH1F405.779   
+          ENDDO                                                            ORH1F405.780   
+      ENDIF                                                                ORH1F405.781   
+                                                                           ORH1F405.782   
+      IF (NT.GT.TE) THEN                                                   ORH1F405.783   
+         ! If there are more TRACERS to be filtered, set up indexes        ORH1F405.784   
+         ! for them and go back to the filtering code.                     ORH1F405.785   
+         TLAST = TE                                                        ORH1F405.786   
+         TS = TE + 1                                                       ORH1F405.787   
+         TE = MIN(TS+1,NT)                                                 ORH1F405.788   
+                                                                           ORH1F405.789   
+         CALL BARRIER()                                                    ORH1F405.790   
+                                                                           ORH1F405.791   
+         GOTO 0200                                                         ORH1F405.792   
+      ENDIF                                                                ORH1F405.793   
+                                                                           OFLTCNTL.567   
+          ! If I'm a filter pe and I have helpers, then I must             OFLTCNTL.568   
+          ! get the info back                                              OFLTCNTL.569   
+      IF (SLAV_CNT_U(J).GT.0) THEN                                         ORH1F405.794   
+                                                                           ORH1F405.795   
+          ! The following is only performed on filtered rows               ORH1F405.796   
+          DO I=1,IMT                                                       ORH1F405.797   
+             UOVER(I)=0.0                                                  ORH1F405.798   
+             VOVER(I)=0.0                                                  ORH1F405.799   
+          ENDDO                                                            ORH1F405.800   
+                                                                           ORH1F405.801   
+          ! We use FIELD_TEMP directly rather than moving                  ORH1F405.802   
+          ! to UA and VA first. This saves a bit of extra time.            ORH1F405.803   
+          DO K=1,KM                                                        ORH1F405.804   
+             DO I=1,IMT                                                    ORH1F405.805   
+                UOVER(I)=UOVER(I)+FIELD_TEMP(I,K)*DZ(K)                    ORH1F405.806   
+                VOVER(I)=VOVER(I)+FIELD_TEMP(I+IMT,K)*DZ(K)                ORH1F405.807   
+             ENDDO                                                         ORH1F405.808   
+          ENDDO                                                            ORH1F405.809   
+          DO I=1,IMT                                                       ORH1F405.810   
+             UOVER(I)=UOVER(I)*HR(I,J)                                     ORH1F405.811   
+             VOVER(I)=VOVER(I)*HR(I,J)                                     ORH1F405.812   
+          ENDDO                                                            ORH1F405.813   
+          DO K=1,KM                                                        ORH1F405.814   
+             DO I=1,IMT                                                    ORH1F405.815   
+                UA(I,K)=FIELD_TEMP(I,K)-UOVER(I)                           ORH1F405.816   
+                VA(I,K)=FIELD_TEMP(I+IMT,K)-VOVER(I)                       ORH1F405.817   
+             ENDDO                                                         ORH1F405.818   
+          ENDDO                                                            ORH1F405.819   
+          DO K=1,KM                                                        ORH1F405.820   
+             DO I=1,IMT                                                    ORH1F405.821   
+                UA(I,K)=UA(I,K)*GM(I,K)                                    ORH1F405.822   
+                VA(I,K)=VA(I,K)*GM(I,K)                                    ORH1F405.823   
+             ENDDO                                                         ORH1F405.824   
+          ENDDO                                                            ORH1F405.825   
+                                                                           ORH1F405.826   
+                                                                           ORH1F405.827   
+          ENDIF                                                            OFLTCNTL.580   
+                                                                           OFLTCNTL.581   
+                                                                           ORH1F405.828   
+                                                                           OFLTCNTL.595   
+      RETURN                                                               OFLTCNTL.596   
+                                                                           OFLTCNTL.597   
+      END                                                                  OFLTCNTL.598   
+*ENDIF                                                                     ORH1F405.829   
+*ENDIF                                                                     OFLTCNTL.599   

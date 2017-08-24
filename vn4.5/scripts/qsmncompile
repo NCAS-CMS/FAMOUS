@@ -1,0 +1,926 @@
+#!/bin/ksh
+#set -x
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#
+#  Script: qsmncompile
+#
+#  Description: performs the compilation and link editing of code for a
+#               model run		
+#
+#  Interface and arguments: qsmncompile
+#
+#  Author: Andy Brady
+#  Owner:
+#
+#  History:
+#  Vn   Date      Change
+#  4.2 	?.?.96    Original Code.  (A Brady)		
+#  4.4	22.05.97  Script header and some comments added.  (S Robertson)
+#  4.4  01.08.97  Added code to test the return value from qslistobj to
+#                 ensure a message is output if the model executable
+#                 has been removed prior to relinking.  (S Robertson)
+#LL    4.5    29-09-99 Changes relating to shortening of
+#LL                    final load line and splitting of main
+#LL                    makefile into makefile.compile and makefile.link
+#LL                                             Luke Robinson.
+#  4.5  14.07.98  Moved functions to a separate file and autoloaded
+#                 them. (A Van der Wal)
+#
+#  Script called by: qsmain
+#  Script calls: qsconf, comp_parse, load_parse
+#
+#  Variables that must be imported:
+#	BUILDSECT logical to indicate whether a section def combination
+#                 which has not been pre-built should now be built	
+#	COMPDIR	  temporary directory into which nupdate extracts code
+#	LOADMODULE the model run executable 	
+#	UCOMPDIR  the u(ser)comp(ile)dir(rectory) which contains the
+#                 source and object files required for the run
+#
+#  Variables that can be imported:
+#       BUILDHOST identifies the system the UM is being built upon
+#                 e.g. CrPVPf77 machine and compiler
+#       BUILDSECT_LOG log file to note section	
+#       CONFIGURE Unified Model global configuration script
+#       DECKLIST  a list of the decks which were extracted in the
+#                 previous run
+#       MAKEFILEUCOMP the user compile makefile
+#       MAKEFILEULINK the user link makefile
+#       MAKEFILEUCOMPIN makefile template for user compile
+#       MAKEFILEULINKIN makefile template for user link
+#       MAKETMPFILEC temp file to hold makefile directives for C files
+#       MAKETMPFILEF temp file to hold makefile directives for fortran
+#       NPROC     the number of processes to be run in parallel
+#       QSLISTOBJ script which returns a list of build combinations
+#                 required to run the given model configuration
+#       REBUILD_DIR directory into which code for given section def
+#                   combination, built during the run, is extracted
+#       SEDSCRIPT script (of sed commands) used to parse content into
+#                 the user Makefile
+#       TMPLIST   temp file which lists decks extracted during the run
+#
+#  Variables that are exported: <list of environment variables>
+#
+#  Local variables:
+#	FORT      global fortran compiler command e.g. f90
+#	FORTOPTS  global fortran compiler options
+#	CC        global C compiler command e.g. cc
+#	CCOPTS    global C compiler options
+#	LOAD      global loader compiler command
+#	LOADOPTS  global loader compiler options
+#	OBJS      a list of .o files to be parsed into the user Makefile
+#	PREOBJS   a list of pre-compiled .o files to be parsed into the
+#                 user Makefile
+#------------------------------------------------
+
+# Miscelleneous options
+NPROC=${NPROC:-10}
+MAKEFILEUCOMPIN=\
+${MAKEFILEUCOMPIN:-$UMDIR/vn$VN/source/makefileu_comp_in}
+MAKEFILEULINKIN=\
+${MAKEFILEULINKIN:-$UMDIR/vn$VN/source/makefileu_link_in}
+MAKEFILEUCOMP=${MAKEFILEUCOMP:-$UCOMPDIR/makefile.compile}
+MAKEFILEULINK=${MAKEFILEULINK:-$UCOMPDIR/makefile.link}
+BUILDSECT_LOG=${BUILDSECT_LOG:-$UMDIR/vn$VN/src/UserBuild.log}
+DECKLIST=${DECKLIST:-$UCOMPDIR/decklist}
+CONFIGURE=${CONFIGURE:-qsconf}
+QSLISTOBJ=${QSLISTOBJ:-qslistobj}
+BUILDHOST=${BUILDHOST:-T3E_f90}
+REBUILD_DIR=${REBUILD_DIR:-$DATAW/Rebuilt}
+
+# Temporary files
+MAKETMPFILEC=$TEMP/make_tmp_c_$$
+MAKETMPFILEF=$TEMP/make_tmp_f_$$
+SEDSCRIPT=$TEMP/sed_script_$$
+TMPLIST=$TEMP/tmplist_$$
+
+autoload gen_sed_string fnnewcom fnmydiff fnmycut fnlistopt
+
+# Global fortran compiler command and options
+line=`fnlistopt "$UCOMPVARS.tmp" "" FCOM`
+FORT=${line%:::*}
+FORTOPTS=${line#$FORT:::}
+
+# Global C-compiler command and options
+line=`fnlistopt "$UCOMPVARS.tmp" "" CCOM`
+CC=${line%:::*}
+CCOPTS=${line#$CC:::}
+
+# Global load command and options
+line=`fnlistopt "$UCOMPVARS.tmp" "" LCOM`
+LOAD=${line%:::*}
+LOADOPTS=${line#$LOAD:::}
+
+# changes to compiler options, between runs, are held in changelistor.
+# From this it can be determined whether a change is global e.g. compile
+# change applicable to all fortran decks or if there has been a change
+# for a specific deck.
+
+typeset -l changelistor
+changelistor=`fnnewcom "$UCOMPVARS.tmp" "$COMPVARS"`
+
+if [ -f "$UCOMPVARS" ]
+then
+
+  # changes to compiler options, between this run and any previous run,
+  # are held in changelistruns.  This list is scanned during extraction
+  # so that files that need to be re-compiled are removed.
+
+  typeset -l changelistruns
+  changelistruns=`fnnewcom "$UCOMPVARS.tmp" "$UCOMPVARS"`
+fi
+
+echo -e "\nqsmncompile($SECONDS): ***\tCompile vars diff information."
+
+echo -e "qsmncompile($SECONDS): ***\t  System differences."
+for comtag in $changelistor
+do
+  echo -e "qsmncompile($SECONDS): ***\t    $comtag"
+done
+
+if [ -f "$UCOMPVARS" ]
+then
+  echo -e "qsmncompile($SECONDS): ***\t  Last user run differences."
+  for comtag in $changelistruns
+  do
+    echo -e "qsmncompile($SECONDS): ***\t    $comtag"
+  done
+fi
+
+echo -e "qsmncompile($SECONDS): ***\tEnd of compile vars info."
+## Remove all symlinked files from the user compile directory.
+## The files are relinked in the next step. It is safer to
+## remove then re-create the link.
+
+echo -e \
+"\nqsmncompile($SECONDS): ***\tRemoving symlinks in compilation dir."
+
+# We do it like this for two reasons:
+#   1) We have reduced the number of individual process calls
+#      that have to be made to 14 from 1+N(files)
+#   2) We should not reach the 1000+ argument limit on the rm()
+#      call on some platforms, as there are less than 200 decks
+#      in each iteration.
+# The last iteration could be removed, if we were sure that there
+# would never be any decks that do not start with an alpha char.
+
+for letter in abce dfgh ijklp mor ns qtuvwxyz1234567890_
+do
+  lnfiles=`find $UCOMPDIR -type l -name [$letter]\*.[ofc] -print`
+  if [ ! -z "$lnfiles" ]
+  then
+    rm -f $lnfiles
+  fi
+done
+echo -e "qsmncompile($SECONDS): ***\tFinished removing symlinks\n"
+
+
+## Step ?.? - Check files from previous compilations in parent dir.
+##            Create temporary files (c & f) for inclusion in Makefile.
+##            Move file to parent directory if new or changed
+##            Remove zero length files.
+
+# Remove the zero length files in the User Compile Directory.
+echo -e "\nqsmncompile($SECONDS): ***\tRemoving zero length files"
+find $UCOMPDIR -size 0 -exec rm {} \;
+echo -e "qsmncompile($SECONDS): ***\tFinished removing files\n"
+
+## decks modified in previous runs which are no longer modifed must
+## be removed and replaced with the original source and linked to the
+## pre-compiled code
+
+## to do this a list of the files that have been extracted in this run
+## is kept, in DECKLIST, for comparison in subsequent runs
+
+ls $COMPDIR > $TMPLIST
+
+echo -e "\nqsmncompile($SECONDS): ***\tRemoving previously modified files"
+
+if [ -f "$DECKLIST" ]
+then
+  # get a list of decks that have been modified in this run but not in
+  # the previous run
+  typeset -l list
+  list=`diff $DECKLIST $TMPLIST|$UM_GREP -E '^<'|$UM_AWK '{print $2}'|\
+        sort -u`
+
+  if [ -z "$list" ]
+  then
+    echo -e \
+"qsmncompile($SECONDS): ***\t  No files to rm. Modified same decks."
+    need_reload_step=false
+  else
+    need_reload_step=true
+
+    for file in $list
+    do
+      need_reload_step=true
+      name=${file%.[cf]}
+      if [ -f "$UCOMPDIR/$file" ]
+      then
+        # the source file exists in the u(ser)comp(ile)dir(ectory)
+        # - remove it
+        echo -e \
+"qsmncompile($SECONDS): ***\t  Removing unmodified file $file"
+        rm -f $UCOMPDIR/$file
+      else
+        echo -e \
+"qsmncompile($SECONDS): ***\t  Cannot find source file $file"
+      fi
+      if [ -f "$UCOMPDIR/$name.o" ]
+      then
+        # the object file exist in the u(ser)comp(ile)dir(ectory)
+        # - remove it
+        echo -e \
+"qsmncompile($SECONDS): ***\t  Removing unmodified object file $name.o"
+        rm -f $UCOMPDIR/$name.o
+      else
+        echo -e \
+"qsmncompile($SECONDS): ***\t  Cannot find object file $name.o"
+      fi
+    done
+  fi
+
+  # keep a copy of the list of modified decks at the start of the run
+  # i.e. from the previous run
+  mv -f $DECKLIST $DECKLIST.old
+else
+  echo -e \
+"qsmncompile($SECONDS): ***\t  This looks new. No files to remove"
+  need_reload_step=false
+fi
+
+# keep a list of decks modified during this run
+mv -f $TMPLIST $DECKLIST
+
+echo -e "qsmncompile($SECONDS): ***\tFinished removing modified files\n"
+
+if [[ "$changelistruns" = *"all_load"* ]] ||\
+   [[ "$changelistor" = *"all_load"* ]]
+then
+  need_reload_step=true
+fi
+
+if [ "$need_reload_step" = "true" ] && [ -f "$LOADMODULE" ]
+then
+  echo -e \
+"\nqsmncompile($SECONDS): ***\tDecks have changed. Executable removed\n"
+  rm -f $LOADMODULE
+fi
+
+echo -e "\nqsmncompile($SECONDS): ***\tSTARTING control source comparison"
+
+# Loop over .c and .f files in directory.
+#   1) Sed entries in a file for fortran source decks
+#   2) Sed entries in a file for c source decks
+#   3) Compare with files from any previous compilation
+#   4) Move source up if necessary
+
+# From $UCOMPVARS, the u(ser)comp(ile)vars file, obtain a list of deck
+# names for which specific compiler options are given -> u(ser)decklist.
+
+typeset -l udecklist
+
+# Ignore all lines that are comments (#) or global references
+# (@ or +@).  Take the first element of the lines taht are left
+# i.e. the deck names.
+
+udecklist=`$UM_GREP -E -v '^#|^\@|^\+\@' $UCOMPVARS.tmp |\
+             cut -d" " -f1 |\
+             $UM_SED 's/^+//g'|\
+             sort -u`
+
+# For decks in the list, udecklist, the options can be scanned
+# in the following loop, with a call to fnlistopt.
+
+# Consider each file in $COMPDIR, the temporary directory which nupdate
+# extracts to.  Create a makefile directive for each file.
+
+
+for file in `ls | $UM_GREP -E '\.f$|\.c$'`
+do
+  name=${file%.[cfCF]} # return file name
+  type=${file##$name.} # return file suffix (c|C|f|F]
+  echo -e "qsmncompile($SECONDS): ***\t  $name\c"
+
+  test=`fnmydiff $file $UCOMPDIR/$file`    # Are files different.
+  if [ $test -eq 1 ]
+  then
+    echo -e "\t(Diff)\c"         # extracted vn. is different from user vn.
+    mv -f $file $UCOMPDIR/.   # move extracted vn. to user directory
+  elif [ $test -ne 0 ]
+  then
+    echo -e "\t(New) \c"           # no user vn. of the file
+    mv -f $file $UCOMPDIR/.     # move extracted vn. to user directory
+  else
+    # the extracted vn. is the same as the user vn. do nothing
+    echo -e "\t(Same)\c"
+  fi
+
+  if [ "$type" = "f" ]  || [ "$type" = "F" ]
+  then     # Must be fortran source
+    echo -e "\t(F)\c"
+    if [[ "$udecklist" = *"$name"* ]]
+    then
+
+      # deck has specific compiler options, call fnlistopt to
+      # obtain them
+      echo -e "\t(Opts:new)\c"
+      line=`fnlistopt "$UCOMPVARS.tmp" "$name" FCOM`
+      fort=${line%:::*}
+      opts=${line#$fort:::}
+
+      # Set the values of thisfort (the fortran compiler) and thisopts
+      # (the compiler options) by comparing the deck specific values
+      # with global values
+
+      if [ "$fort" != "$FORT" ]
+      then
+        thisfort=$fort
+      else
+        thisfort='$(FORT)'
+      fi
+      if [ "$opts" != "$FORTOPTS" ]
+      then
+        thisopts=$opts
+      else
+        thisopts='$(FORTOPTS)'
+      fi
+    else
+      # deck has no specific compiler options use global default values
+      thisfort='$(FORT)'
+      thisopts='$(FORTOPTS)'
+    fi
+    # create a makefile directive for the current file
+    echo -e \
+  "$name.o: $file\n\t$thisfort $thisopts -c $file\n" \
+      >> $MAKETMPFILEF
+  elif  [ "$type" = "c" ]  || [ "$type" = "C" ]
+  then     # Must be c source
+    echo -e "\t(C)\c"
+    if [[ "$udecklist" = *"$name"* ]]
+    then
+    # deck has specific compiler options, call fnlistopt to obtain them
+      echo -e "\t(Opts:new)\c"
+      line=`fnlistopt "$UCOMPVARS.tmp" "$name" CCOM`
+      cc=${line%:::*}
+      opts=${line#$cc:::}
+
+      # set the values of thiscc (the c compiler) and thisopts
+      # (the compiler options) by comparing the deck specific values
+      # with global values
+      if [ "$cc" != "$CC" ]
+      then
+        thiscc=$cc
+      else
+        thiscc='$(CC)'
+      fi
+      if [ "$opts" != "$CCOPTS" ]
+      then
+        thisopts=$opts
+      else
+        thisopts='$(CCOPTS)'
+      fi
+    else
+      # the deck has no specific compiler options use global defaults
+      thiscc='$(CC)'
+      thisopts='$(CCOPTS)'
+    fi
+    # create a makefile directive for the current file
+    echo -e "$name.o: $file\n\t$thiscc $thisopts -c $file\n" \
+      >> $MAKETMPFILEC
+  else
+    echo -e "ERROR: file type \"$type\" for \"$file\" is unknown."
+    exit 1
+  fi
+
+  # Maintain a list of object files which will be parsed directly into
+  # the Makefile.  OBJS is of the form, OBJS=abcalc1.o ac_ctl1.o
+  if (( $(echo -e $OBJS1 | wc -c) < 2000 ))
+  then
+    OBJS1="$OBJS1 $name.o"
+  else
+    OBJS2="$OBJS2 $name.o"
+  fi
+
+  # Now we check the changelistruns (generated using shell function
+  # fnnewcom, above) to see if compiler options from this run are
+  # different from those in a previous run
+
+  unset needcompileruns
+  if [ ! -z "$changelistruns" ]
+  then
+    if [[ "$changelistruns" = *"all_fortran"* ]] && [ "$type" = "f" ]
+    then
+      needcompileruns=true
+    elif [[ "$changelistruns" = *"all_ccode"* ]] && [ "$type" = "c" ]
+    then
+      needcompileruns=true
+    elif [[ "$changelistruns" = *$name* ]]
+    then
+      needcompileruns=true
+    fi
+  fi
+
+  # remove object file if recompilation is indicated
+  if [ "$needcompileruns" = "true" ]
+  then
+    if [ -f "$UCOMPDIR/$name.o" ]
+    then
+      echo -e "\t(O:rm)\c"
+      rm -f $UCOMPDIR/$name.o
+    fi
+  fi
+  echo -e
+done
+
+echo -e "qsmncompile($SECONDS): ***\tFINISHED control source comparison\n"
+
+## Step ?.? -- extract pre-compiled objects from archive or rebuild
+##             them if required. Set up loader libraries and path
+##             accordingly
+
+echo -e \
+"\nqsmncompile($SECONDS): ***\tSymlink-ing pre-compiled code"
+
+# execute the script held in environment variable QSLISTOBJ to
+# populate dirs.  The elements of dirs are strings of the form
+# a01_3a/G0/NORMAL which are subdirectory pathnames used to facilitate
+# linking of pre-compiled code
+
+dirs=`$QSLISTOBJ $DEFS $SECTMODE $OBJXREF $BUILDHOST`
+
+estat=$?
+
+if test $estat = 99
+then
+  echo -e \
+"qsmncompile($SECONDS): ***\tNeed to relink, removed executable."
+fi
+
+for dir in $dirs
+do
+  unset no_section_defs
+
+  # the directory PREOBJDIR is composed of sub directories, one for
+  # each section of the model e.g.$PREOBJDIR/a12_1a
+
+  # These directories contain further directories, one for each section
+  # def combination that is pre-compiled e.g. $PREOBJDIR/a12_1a/G1G3Gn
+
+  # The pre-built object code is located within this directory structure
+
+#SSW
+#  if [ ! -d $PREOBJDIR/$dir ]
+  if [ ! -d $PRESRCDIR/$dir ]
+  then
+    # pre-built code does not exist
+    echo -e \
+"\nqsmncompile($SECONDS): ***\t  ERROR: $PRESRCDIR/$dir not found."
+    if [ "$BUILDSECT" = "true" ]
+    then
+      # build a section def combination that has not been pre-built
+      if [ -w "$BUILDSECT_LOG" ]
+      then
+        echo -e "`whoami`@`hostname`:`date +%D`:$dir" >> $BUILDSECT_LOG
+      fi
+      if [ ! -d "$REBUILD_DIR/obj/$dir" ]
+      then
+        echo -e \
+"qsmncompile($SECONDS): ***\t  BUILDSECT is set. Calling configure.\n"
+        sect=${dir%%/*}
+        rest=${dir#$sect/}
+        defs=${rest%/*}
+        mode=${rest#$defs/}
+        $CONFIGURE -outdir  $REBUILD_DIR \
+                   -cgopts  $mode \
+                   -defcom  $defs \
+                   -compvar $UCOMPVARS.tmp \
+                   -ignore \
+                   -quiet1 \
+                   -sections $sect
+        if [ $? -ne 0 ]
+        then
+          echo -e "\nERROR: Call to script \"$CONFIGURE\" has failed."
+          echo -e "       Contact UM team.\n"
+          exit 1
+        fi
+        echo -e \
+"qsmncompile($SECONDS): ***\t  Configuration finished.\n"
+        echo -e \
+"qsmncompile($SECONDS): ***\t  Running make(1) for section $sect.\n"
+#        ( cd $REBUILD_DIR/src/$sect ; make )
+#        if [ $? -ne 0 ]
+#        then
+#          echo -e "\nERROR: make(1) has failed."
+#          echo -e "       Contact UM team.\n"
+#          exit 1
+#        fi
+        echo -e \
+"\nqsmncompile($SECONDS): ***\t  make(1) complete.\n"
+        cp $UCOMPVARS.tmp $REBUILD_DIR/src/$dir/CompileVars
+      fi
+      symcompvars=$REBUILD_DIR/src/$dir/CompileVars
+      symobjdir=$REBUILD_DIR/obj
+      symsrcdir=$REBUILD_DIR/src
+    else
+      no_section_defs=true
+    fi
+  else
+    # pre-built code does exist use central src and obj directories
+    symcompvars=$UCOMPVARS.tmp
+    symobjdir=$PREOBJDIR
+    symsrcdir=$PRESRCDIR
+  fi
+
+  if [ "$no_section_defs" = "true" ]
+  then
+    # This will cause a failure when all the sections have been looped.
+    no_section_def_list="$no_section_def_list $dir"
+  else
+    echo -e "\nqsmncompile($SECONDS): ***\t  Linking $symobjdir/$dir."
+
+    # Carry out linking of the pre-compiled code.  Loop over the .o
+    # files in the directory indicated by each element of dirs.
+#SSW
+#    for file in `ls $symobjdir/$dir |$UM_GREP -E '\.o$'`
+    for file in `ls $symsrcdir/$dir/.. |$UM_GREP -E '\.f$|\.c$'`
+    do
+      unset source_exists
+      unset need_make_rule
+#SSW
+#      name=${file%.o}
+      name=`basename $file .f`
+      name=`basename $name .c`
+      echo -e "qsmncompile($SECONDS): ***\t    $name\c"
+
+      # If, in the user compile directory there is no source file for
+      # .o file being looked at.  Create a sym(bolic) link to the source
+      # file in $PRESRCDIR.
+
+      if [ -f "$symsrcdir/$dir/../$name.f" ]
+      then
+        type="f"
+        if [ ! -f "$UCOMPDIR/$name.f" ]
+        then
+          # link source from system prebuilt directories
+          ln -s $symsrcdir/$dir/../$name.f $UCOMPDIR/.
+          echo -e "\t(F:ok)\c"
+        else
+          if [[ "$PREOBJS1" = *"$name"* || "$PREOBJS2" = *"$name"* ]]
+          then
+            # source already exists in UCOMPDIR linked in previous
+            # section def combination in current run
+            echo -e "\t(F:Sec)\c"
+          elif [[ "$OTHEROBJ" = *"$name"* ]]
+          then
+            # O(utside)S(ystem)O(ld) deck in previous section def
+            # combination and labelled OSN already (see below)
+            echo -e "\t(F:OSO)\c"
+          elif [[ "$OBJS1" = *"$name"* || "$OBJS2" = *"$name"* ]]
+          then
+            # source already exists in UCOMPDIR which, modified and
+            # extracted in previous nupdate step
+            echo -e "\t(F:src)\c"
+          else
+            # O(utside)S(ystem)N(ew) user removed symlinked file and
+            # created a real file
+            echo -e "\t(F:OSN)\c"
+            OTHEROBJ="$OTHEROBJ $file"
+            need_make_rule="true"
+          fi
+          source_exists="true"
+        fi
+      elif [ -f "$symsrcdir/$dir/../$name.c" ]
+      then
+        type="c"
+        if [ ! -f "$UCOMPDIR/$name.c" ]
+        then
+          # link source from system prebuilt directories
+          ln -s $symsrcdir/$dir/../$name.c $UCOMPDIR/.
+          echo -e "\t(C:ok)\c"
+        else
+          if [[ "$PREOBJS1" = *"$name"* || "$PREOBJS2" = *"$name"* ]]
+          then
+            # source already exists in UCOMPDIR linked in previous
+            # section def combination in current run
+            echo -e "\t(C:Sec)\c"
+          elif [[ "$OBJS1" = *"$name"* || "$OBJS2" = *"$name"* ]]
+          then
+            # source already exists in UCOMPDIR, modified and
+            # extracted in previous nupdate step
+            echo -e "\t(C:src)\c"
+          elif [[ "$OTHEROBJ" = *"$name"* ]]
+          then
+            # O(utside)S(ystem)O(ld) deck in previous section def
+            # combination and labelled OSN already (see below)
+            echo -e "\t(C:OSO)\c"
+          else
+            # O(utside)S(ystem)N(ew) user removed symlinked file and
+            # created a real file
+            echo -e "\t(C:OSN)\c"
+            OTHEROBJ="$OTHEROBJ $file"
+            need_make_rule="true"
+          fi
+          source_exists="true"
+        fi
+      else
+        echo -e "\n\nERROR: Source for $name not found in $symsrcdir/$dir"
+        echo -e "       Please contact UM support group."
+        exit 1
+      fi
+
+      # If the source file was linked in the step, then we need to get
+      # the object here. If not, then the source file was either created
+      # by the extract step and the object will be created by the
+      # makefile or the source file exists from outside the run.
+
+      if [ -z "$source_exists" ] || [ ! -z "$need_make_rule" ]
+      then
+
+        if [ -z "$need_make_rule" ]
+        then
+          # Find out whether or not this object needs to be re-compiled
+          # by parsing the changelistor env var produced by fnnewcom
+          # function at the top of this script.
+          unset needcompileor
+          if [ ! -z "$changelistor" ]
+          then
+            if [[ "$changelistor" = *"all_fortran"* ]] && \
+               [ "$type" = "f" ]
+            then
+              needcompileor=true
+            elif [[ "$changelistor" = *"all_ccode"* ]] &&\
+                 [ "$type" = "c" ]
+             then
+               needcompileor=true
+            elif [[ "$changelistor" = *$name* ]]
+            then
+              needcompileor=true
+            fi
+          fi
+        else
+          needcompileor=true
+        fi
+
+#SSW force recompile
+ needcompileor=true
+
+
+        # Either produce a symlink to the pre-compiled object, if
+        # a compilation is not needed, or generate an entry for the
+        # makefile to enable compilation at make time.
+
+        if [ -z "$needcompileor" ]
+        then
+          # Object does not need compiling, it can be linked.
+          if [ ! -f "$UCOMPDIR/$file" ]
+          then
+            # object file linked from prebuilt system directories
+            echo -e "\t(O:ok)\c"
+          else
+            # Object from previous compilation should be removed.
+            rm -f $UCOMPDIR/$file
+            echo -e "\t(O:rm/ok)\c"
+          fi
+          ln -s $symobjdir/$dir/$file $UCOMPDIR/.
+          if (( $(echo -e $PREOBJS1 | wc -c) < 2000 ))
+          then
+            PREOBJS1="$PREOBJS1 $file"
+          else
+            PREOBJS2="$PREOBJS2 $file"
+          fi
+        else
+	  unset needcompileruns
+          if [ ! -z "$changelistruns" ]
+          then
+            if [[ "$changelistruns" = *"all_fortran"* ]] && \
+               [ "$type" = "f" ]
+            then
+              needcompileruns=true
+            elif [[ "$changelistruns" = *"all_ccode"* ]] && \
+                 [ "$type" = "c" ]
+            then
+              needcompileruns=true
+            elif [[ "$changelistruns" = *$name* ]]
+            then
+              needcompileruns=true
+            fi
+          fi
+
+          if [ "$needcompileruns" = "true" ]
+          then
+            if [ -f "$UCOMPDIR/$name.o" ]
+            then
+              # object file needs to be removed and recompiled
+              echo -e "\t(O:rm)\c"
+              rm -f $UCOMPDIR/$name.o
+            fi
+          fi
+          # entry in the make file will be made to allow for compilation
+          echo -e "\t(O:com)\c"
+
+          if [ "$type" = "f" ]  || [ "$type" = "F" ]
+          then     # Must be fortran source
+            if [[ "$udecklist" = *"$name"* ]]
+            then
+              # deck has specific compiler options, call fnlistopt to
+              # obtain them
+              echo -e "\t(Opts:ok)\c"
+              line=`fnlistopt "$symcompvars" "$name" FCOM`
+              fort=${line%:::*}
+              opts=${line#$fort:::}
+
+              # Set the values of thisfort (the fortran compiler) and
+              # thisopts (the compiler options) by comparing the deck
+              # specific values with global values
+
+              if [ "$fort" != "$FORT" ]
+              then
+                thisfort=$fort
+              else
+                thisfort='$(FORT)'
+              fi
+              if [ "$opts" != "$FORTOPTS" ]
+              then
+                thisopts=$opts
+              else
+                thisopts='$(FORTOPTS)'
+              fi
+            else
+              # the deck has no specific compiler options use global
+              # defaults
+              thisfort='$(FORT)'
+              thisopts='$(FORTOPTS)'
+            fi
+            # create a makefile directive for the current file
+            echo -e \
+"$name.o: $name.f\n\t$thisfort $thisopts -c $name.f\n" \
+              >> $MAKETMPFILEF
+          elif  [ "$type" = "c" ]  || [ "$type" = "C" ]
+          then     # Must be c source
+            if [[ "$udecklist" = *"$name"* ]]
+            then
+              # deck has specific compiler options, call fnlistopt to
+              # obtain them
+              echo -e "\t(Opts:ok)\c"
+              line=`fnlistopt "$symcompvars" "$name" CCOM`
+              cc=${line%:::*}
+              opts=${line#$cc:::}
+
+              # Set the values of thiscc (the C compiler) and thisopts
+              # (the compiler options) by comparing the deck specific
+              # values with global values
+
+              if [ "$cc" != "$CC" ]
+              then
+                thiscc=$cc
+              else
+                thiscc='$(CC)'
+              fi
+              if [ "$opts" != "$CCOPTS" ]
+              then
+                thisopts=$opts
+              else
+                thisopts='$(CCOPTS)'
+              fi
+            else
+              # the deck has no specific compiler options use global
+              # defaults
+              thiscc='$(CC)'
+              thisopts='$(CCOPTS)'
+            fi
+            # create a makefile directive for the current file
+            echo -e \
+"$name.o: $name.c\n\t$thiscc $thisopts -c $name.c\n" \
+>>$MAKETMPFILEC
+          else
+            echo -e \
+"\n\nERROR: file type \"$type\" for \"$file\" is unknown."
+            exit 1
+          fi
+          if (( $(echo -e $OBJS1 | wc -c) < 2000 ))
+          then
+            OBJS1="$OBJS1 $name.o"
+          else
+            OBJS2="$OBJS2 $name.o"
+          fi
+        fi
+      fi
+      echo -e
+    done
+  fi
+done
+
+echo -e "\nqsmncompile($SECONDS): ***\tFinished symlink-ing object code\n"
+
+if [ ! -z "$no_section_def_list" ]
+then
+  cat << EOF
+qsmncompile($SECONDS): ***	The following section-def combinations
+qsmncompile($SECONDS): ***	cannot be found:
+
+EOF
+
+  for sd in $no_section_def_list
+  do
+    echo -e "qsmncompile($SECONDS): ***\t  $sd"
+  done
+
+  cat << EOF
+
+qsmncompile($SECONDS): ***	You will need to resolve this or set
+qsmncompile($SECONDS): ***	BUILDSECT to true in SUBMIT to build
+qsmncompile($SECONDS): ***	them in this run.
+
+qsmncompile($SECONDS): ***	EXITING from qsmncompile.
+
+
+EOF
+  exit 1
+fi
+
+## Create the compile and link makefiles from the templates
+## MAKEFILEUCOMPIN and MAKEFILEULINKIN
+
+echo -e "\nqsmncompile($SECONDS): ***\
+\tGenerating sed script for compile makefile"
+
+echo -e "s^@nproc@^$NPROC^g"                            > $SEDSCRIPT
+echo -e `gen_sed_string "@objects@" "6" "$OBJS1 $OBJS2"`          >> $SEDSCRIPT
+echo -e `gen_sed_string "@preobjects@" "6" "$PREOBJS1 $PREOBJS2"` >> $SEDSCRIPT
+echo -e "s^@fort@^$FORT^g"                             >> $SEDSCRIPT
+echo -e "s^@fortopts@^$FORTOPTS^g"                     >> $SEDSCRIPT
+echo -e "s^@cc@^$CC^g"                                 >> $SEDSCRIPT
+echo -e "s^@ccopts@^$CCOPTS^g"                         >> $SEDSCRIPT
+echo -e "s^@iflags@^$IFLAGS^g"                         >> $SEDSCRIPT
+echo -e "s^@ciflags@^$CIFLAGS^g"                       >> $SEDSCRIPT
+#  This is a default rule to remove any unparsed directives
+echo -e "s^@.*@^^g"                                    >> $SEDSCRIPT
+
+echo -e "qsmncompile($SECONDS): ***\tSed script generated\n"
+
+## Parse Makefile
+# Run sed to create the compile Makefile.
+
+echo -e "\nqsmncompile($SECONDS): ***\
+\tRunning sed to create compile makefile"
+$UM_SED -f $SEDSCRIPT < $MAKEFILEUCOMPIN > $MAKEFILEUCOMP
+
+# Add the directives:
+if [ -f "$MAKETMPFILEF" ]
+then
+  echo -e >> $MAKEFILEUCOMP
+  cat $MAKETMPFILEF >> $MAKEFILEUCOMP
+fi
+
+if [ -f "$MAKETMPFILEC" ]
+then
+  echo -e >> $MAKEFILEUCOMP
+  cat $MAKETMPFILEC >> $MAKEFILEUCOMP
+fi
+
+#echo -e This is the compile makefile $MAKEFILEUCOMP
+#cat $MAKEFILEUCOMP
+
+echo -e "\nqsmncompile($SECONDS): ***\
+\tGenerating sed script for link makefile"
+
+echo -e "s^@output@^$LOADMODULE^g"      > $SEDSCRIPT # Create sed script.
+echo -e "s^@load@^$LOAD^g"             >> $SEDSCRIPT #
+echo -e "s^@loadopts@^$LOADOPTS^g"     >> $SEDSCRIPT #
+#  This is a default rule to remove any unparsed directives
+echo -e "s^@.*@^^g"                    >> $SEDSCRIPT
+
+echo -e "qsmncompile($SECONDS): ***\tSed script generated\n"
+
+## Parse Makefile
+
+# Now run sed to create the link Makefile.
+
+echo -e "\nqsmncompile($SECONDS): ***\
+\tRunning sed to create link Makefile"
+$UM_SED -f $SEDSCRIPT < $MAKEFILEULINKIN > $MAKEFILEULINK
+
+#echo -e This is the link makefile $MAKEFILEULINK
+#cat $MAKEFILEULINK
+
+echo -e "qsmncompile($SECONDS): ***\tFinished sed\n"
+
+
+# Now update UCOMPVARS file as we have finished.
+
+if [ -f "$UCOMPVARS" ]
+then
+  mv -f $UCOMPVARS $UCOMPVARS.old
+fi
+
+mv -f $UCOMPVARS.tmp $UCOMPVARS

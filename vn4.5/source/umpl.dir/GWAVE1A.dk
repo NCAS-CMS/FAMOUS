@@ -1,0 +1,389 @@
+*IF DEF,A06_1A,OR,DEF,A06_2A                                               GWAVE1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.3529  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.3530  
+C                                                                          GTS2F400.3531  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.3532  
+C restrictions as set forth in the contract.                               GTS2F400.3533  
+C                                                                          GTS2F400.3534  
+C                Meteorological Office                                     GTS2F400.3535  
+C                London Road                                               GTS2F400.3536  
+C                BRACKNELL                                                 GTS2F400.3537  
+C                Berkshire UK                                              GTS2F400.3538  
+C                RG12 2SZ                                                  GTS2F400.3539  
+C                                                                          GTS2F400.3540  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.3541  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.3542  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.3543  
+C Modelling at the above address.                                          GTS2F400.3544  
+C ******************************COPYRIGHT******************************    GTS2F400.3545  
+C                                                                          GTS2F400.3546  
+CLL  SUBROUTINE G_WAVE-------------------------------------------          GWAVE1A.3     
+CLL                                                                        GWAVE1A.4     
+CLL  PURPOSE:   1) INTERPOLATE WINDS TO P/THETA POINTS                     GWAVE1A.5     
+CLL             2) GATHER DATA FOR LAND POINTS ONLY                        GWAVE1A.6     
+CLL             3) CALL SURFACE STRESS ROUTINE                             GWAVE1A.7     
+CLL             4) CALL VERTICAL STRESS PROFILE ROUTINE TO CALCULATE       GWAVE1A.8     
+CLL                DRAG AT EACH LEVEL                                      GWAVE1A.9     
+CLL             5) INTERPOLATE ACCELERATION TO WIND POINTS AND UPDATE      GWAVE1A.10    
+CLL                WINDS                                                   GWAVE1A.11    
+CLL  SUITABLE FOR SINGLE COLUMN USE, WITH CALLS TO: UV_TO_P REMOVED        GWAVE1A.12    
+CLL                                                 P_TO_UV REMOVED        GWAVE1A.13    
+!                                                (SCMA on)                 AJC1F405.276   
+CLL  SUITABLE FOR ROTATED GRIDS                                            GWAVE1A.14    
+CLL                                                                        GWAVE1A.15    
+CLL  ORIGINAL VERSION FOR CRAY Y-MP                                        GWAVE1A.16    
+CLL  WRITTEN BY C. WILSON                                                  GWAVE1A.17    
+CLL  FURTHER ALTERATIONS MAY BE REQUIRED FOR AUTOTASKING EFFICIENCY        GWAVE1A.18    
+CLL                                                                        GWAVE1A.19    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         GWAVE1A.20    
+CLL VERSION  DATE                                                          GWAVE1A.21    
+CLL   3.3   25/10/93  Removal of DIAG06 directive. New arguments to        DR251093.43    
+CLL                   dimension diagnostic arrays. D. Robinson.            DR251093.44    
+CLL   3.4   11/05/94  Argument LFROUDE added and passed to GW_SURF         GSS1F304.55    
+CLL                   DEF GWLINP replaced by LOGICAL LGWLINP               GSS1F304.56    
+CLL                                                S.J.Swarbrick           GSS1F304.57    
+!LL   4.1   31/05/96  Added MPP code    P.Burton                           APBEF401.27    
+CLL                                                                        GWAVE1A.22    
+CLL   4.4   19/09/97  Remove *IF -DEF,CRAY compile options. S.Webster      ASW1F404.1     
+CLL  4.5    Jul. 98  Kill the IBM specific lines.                          AJC1F405.274   
+CLL                  Replace IBM with SCMA  (JCThil)                       AJC1F405.275   
+CLL                                                                        ASW1F404.2     
+CLL   4.5   17/03/97   Correct MPP GWD diagnostic bug. S.Webster           ASW1F405.1     
+CLL                                                                        ASW1F405.2     
+CLL  PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,        GWAVE1A.23    
+CLL  VERSION 1, DATED 12/09/89                                             GWAVE1A.24    
+CLL                                                                        GWAVE1A.25    
+CLL  SYSTEM TASK: CONTROL PART OF P22                                      GWAVE1A.26    
+CLL                                                                        GWAVE1A.27    
+CLL  DOCUMENTATION:                                                        GWAVE1A.28    
+CLL                                                                        GWAVE1A.29    
+CLLEND-------------------------------------------------------------        GWAVE1A.30    
+                                                                           GWAVE1A.31    
+C                                                                          GWAVE1A.32    
+C*L  ARGUMENTS:---------------------------------------------------         GWAVE1A.33    
+      SUBROUTINE G_WAVE                                                    GWAVE1A.34    
+     1  (PSTAR,PEXNER,THETA,U,V,P_FIELD,U_FIELD,                           GWAVE1A.35    
+     2   ROWS_P,ROW_LENGTH,START_LEVEL,LEVELS,                             GWAVE1A.36    
+*CALL ARGFLDPT                                                             APBEF401.28    
+     3   AK,BK,AKH,BKH,DELTA_AK,DELTA_BK,SD_OROG_LAND,                     GWAVE1A.37    
+     4   LAND_INDEX,LAND_POINTS, TIMESTEP,KAY,                             GWAVE1A.38    
+     5   STRESS_UD,LEN_STRESS_UD,STRESS_UD_ON,U_LIST,LAND_POINTS_UD,       DR251093.45    
+     6   STRESS_VD,LEN_STRESS_VD,STRESS_VD_ON,V_LIST,LAND_POINTS_VD,       DR251093.46    
+     7  IRET,LFROUDE,LGWLINP)                                              GSS1F304.58    
+                                                                           GWAVE1A.48    
+      IMPLICIT NONE                                                        GWAVE1A.49    
+                                                                           GWAVE1A.50    
+      INTEGER                                                              GWAVE1A.51    
+     *  P_FIELD            !IN    1ST DIMENSION OF FIELD OF PSTAR          GWAVE1A.52    
+     *, U_FIELD            !IN    1ST DIMENSION OF FIELD OF U,V            GWAVE1A.53    
+     *, ROWS_P             !IN    NUMBER OF ROWS of P grid                 GWAVE1A.54    
+     *, ROW_LENGTH         !IN    NUMBER OF POINTS PER ROW                 GWAVE1A.55    
+     *, START_LEVEL        !IN    START OF WAVE-BREAKING TEST              GWAVE1A.56    
+     *, LEVELS             !IN    NUMBER OF MODEL LEVELS                   GWAVE1A.57    
+     *, LAND_POINTS        !IN    NUMBER OF LAND POINTS                    GWAVE1A.58    
+     *, LAND_INDEX((ROWS_P)*ROW_LENGTH) ! INDEX FOR LAND POINTS            GWAVE1A.59    
+     *, LEN_STRESS_UD      !IN    ) Dimension of diagnostic arrays         DR251093.47    
+     *, LEN_STRESS_VD      !IN    ) for GW stress - u and v                DR251093.48    
+     *, LAND_POINTS_UD     !IN    ) No of land points in diagnostic        DR251093.49    
+     *, LAND_POINTS_VD     !IN    ) arrays for GW stress - u and v         DR251093.50    
+     *, IRET               ! RETURN CODE      :    IRET=0   NORMAL EXIT    GWAVE1A.60    
+C                          ! RETURN CODE      :    IRET=1   ?????          GWAVE1A.61    
+                                                                           APBEF401.29    
+! All TYPFLDPT variables are intent IN                                     APBEF401.30    
+*CALL TYPFLDPT                                                             APBEF401.31    
+                                                                           GWAVE1A.64    
+      REAL                                                                 GWAVE1A.65    
+     * PSTAR(P_FIELD)         !IN    PRIMARY MODEL ARRAY FOR PSTAR FIELD   GWAVE1A.66    
+     *,PEXNER(P_FIELD,LEVELS+1) !IN    ARRAY FOR EXNER PRESSURE FIELD      GWAVE1A.67    
+     *,THETA(P_FIELD,LEVELS)  !IN    PRIMARY MODEL ARRAY FOR THETA FIELD   GWAVE1A.68    
+     *,U(U_FIELD,LEVELS)      !INOUT PRIMARY MODEL ARRAY FOR U FIELD       GWAVE1A.69    
+     *,V(U_FIELD,LEVELS)      !INOUT PRIMARY MODEL ARRAY FOR V FIELD       GWAVE1A.70    
+C            AK,BK  DEFINE HYBRID VERTICAL COORDINATES P=A+BP*,            GWAVE1A.71    
+C       DELTA_AK,DELTA_BK  DEFINE LAYER PRESSURE THICKNESS PD=AD+BDP*,     GWAVE1A.72    
+                                                                           GWAVE1A.73    
+      REAL                                                                 GWAVE1A.74    
+     * DELTA_AK(LEVELS)       !IN    LAYER THICKNESS                       GWAVE1A.75    
+     *,DELTA_BK(LEVELS)       !IN    LAYER THICKNESS                       GWAVE1A.76    
+     *,AK (LEVELS)            !IN    VALUE AT LAYER CENTRE                 GWAVE1A.77    
+     *,BK (LEVELS)            !IN    VALUE AT LAYER CENTRE                 GWAVE1A.78    
+     *,AKH(LEVELS+1)          !IN    VALUE AT LAYER BOUNDARY               GWAVE1A.79    
+     *,BKH(LEVELS+1)          !IN    VALUE AT LAYER BOUNDARY               GWAVE1A.80    
+     *,SD_OROG_LAND(LAND_POINTS),  !IN STANDARD DEVIATION OF OROGRAPHY     GWAVE1A.81    
+     * TIMESTEP               !IN    TIMESTEP                              GWAVE1A.82    
+     *,KAY                    !IN    surface stress constant ( m-1)        GWAVE1A.83    
+     *,STRESS_UD(LEN_STRESS_UD,*) !U STRESS DIAGNOSTIC                     DR251093.51    
+     *,STRESS_VD(LEN_STRESS_VD,*) !V STRESS DIAGNOSTIC                     DR251093.52    
+                                                                           GWAVE1A.89    
+C WARNING: Storage will only be assigned by the calling routine for        GWAVE1A.90    
+C          for the number of levels required.                              GWAVE1A.91    
+                                                                           GWAVE1A.92    
+      LOGICAL                                                              GWAVE1A.93    
+     * STRESS_UD_ON           !U stress diagnostic switch                  GWAVE1A.94    
+     *,STRESS_VD_ON           !V stress diagnostic switch                  GWAVE1A.95    
+     *,U_LIST(LEVELS+1),      ! Lists of levels for which stresses         GWAVE1A.96    
+     * V_LIST(LEVELS+1)       ! required.                                  GWAVE1A.97    
+     *,LFROUDE,LGWLINP        ! Logical switches                           GSS1F304.59    
+C*---------------------------------------------------------------------    GWAVE1A.101   
+                                                                           GWAVE1A.102   
+C*L  WORKSPACE USAGE:-------------------------------------------------     GWAVE1A.103   
+C   DEFINE LOCAL WORKSPACE ARRAYS:                                         GWAVE1A.104   
+C   4 REAL ARRAYS AT FULL FIELD LENGTH REQUIRED                            GWAVE1A.105   
+C   6*LEVELS+5 REAL ARRAYS OF LAND_POINTS LENGTH REQUIRED                  GWAVE1A.106   
+                                                                           GWAVE1A.107   
+C   2*LEVELS REAL ARRAYS OF LAND_POINTS LENGTH REQUIRED FOR DIAGNOSTICS    DR251093.53    
+                                                                           GWAVE1A.113   
+                                                                           GWAVE1A.128   
+      REAL                                                                 GWAVE1A.129   
+     * WORK(P_FIELD,4)               ! GENERAL PURPOSE WORK                GWAVE1A.130   
+     *,UP_LAND(LAND_POINTS,LEVELS)   ! INTERPOLATED U COMPONENT ON PGRID   GWAVE1A.131   
+     *,VP_LAND(LAND_POINTS,LEVELS)   ! INTERPOLATED U COMPONENT ON PGRID   GWAVE1A.132   
+     *,THETA_LAND(LAND_POINTS,LEVELS)! THETA LAND POINTS                   GWAVE1A.133   
+     *,S_STRESS(LAND_POINTS)         ! 'SURFACE' STRESS LAND POINTS        GWAVE1A.134   
+     *,SIN_A(LAND_POINTS)        ! SIN ('SURFACE' WIND ANGLE FROM NORTH)   GWAVE1A.135   
+     *,COS_A(LAND_POINTS)        ! COS ('SURFACE' WIND ANGLE FROM NORTH)   GWAVE1A.136   
+     *,PSTAR_LAND(LAND_POINTS)       ! PSTAR LAND POINTS                   GWAVE1A.137   
+     *,PEXNER_LAND(LAND_POINTS,LEVELS+1)  ! PEXNER LAND POINTS             GWAVE1A.138   
+     *,DU_DT(LAND_POINTS,LEVELS)     ! U-ACCELERATION                      GWAVE1A.139   
+     *,DV_DT(LAND_POINTS,LEVELS)     ! V-ACCELERATION                      GWAVE1A.140   
+                                                                           GWAVE1A.141   
+      REAL                                                                 GWAVE1A.146   
+     * STRESS_UD_LAND(LAND_POINTS_UD,LEVELS+1) !U STRESS DIAGNOSTIC        DR251093.55    
+     *,STRESS_VD_LAND(LAND_POINTS_VD,LEVELS+1) !V STRESS DIAGNOSTIC        DR251093.56    
+                                                                           WI200893.18    
+                                                                           GWAVE1A.151   
+C*---------------------------------------------------------------------    GWAVE1A.152   
+C*L EXTERNAL SUBROUTINES CALLED---------------------------------------     GWAVE1A.153   
+      EXTERNAL GW_SURF,GW_LIN_P,GW_RICH                                    AJC1F405.277   
+*IF -DEF,SCMA                                                              AJC1F405.278   
+     &,P_TO_UV,UV_TO_P                                                     AJC1F405.279   
+*ENDIF                                                                     AJC1F405.280   
+C*------------------------------------------------------------------       GWAVE1A.159   
+CL  MAXIMUM VECTOR LENGTH ASSUMED IS (ROWS_P+1) * ROWLENGTH                GWAVE1A.160   
+CL---------------------------------------------------------------------    GWAVE1A.161   
+C----------------------------------------------------------------------    GWAVE1A.162   
+C    DEFINE LOCAL VARIABLES                                                GWAVE1A.163   
+      INTEGER                                                              GWAVE1A.164   
+     *  P_POINTS      !     NUMBER OF P POINTS NEEDED                      GWAVE1A.165   
+     *, U_POINTS_1    !     No. U points used to interpolate to P-grid     GWAVE1A.166   
+     *, U_POINTS      !     NUMBER OF U POINTS UPDATED                     GWAVE1A.167   
+     *, START_U       !     Start position of U points updated             GWAVE1A.168   
+     *, START_U1      !     Start position of diagnostics updated          ASW1F405.3     
+C                                                                          GWAVE1A.169   
+      INTEGER   I,IW,K,     ! LOOP COUNTERS IN ROUTINE                     GWAVE1A.170   
+     *          KOUT_U,KOUT_V                                              GWAVE1A.171   
+                                                                           GWAVE1A.175   
+C-------------------------------------------------------------------       GWAVE1A.176   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       GWAVE1A.177   
+CL    1.     INITIALISATION                                                GWAVE1A.178   
+C--------------------------                                                GWAVE1A.179   
+                                                                           GWAVE1A.180   
+C------------------------------------------------------------------        GWAVE1A.181   
+CL    1.1  SET UP DIMENSIONS                                               GWAVE1A.182   
+C------------------------------------------------------------------        GWAVE1A.183   
+                                                                           GWAVE1A.184   
+        U_POINTS_1    = (ROWS_P+1)*ROW_LENGTH                              GWAVE1A.185   
+        U_POINTS      = (ROWS_P-1)*ROW_LENGTH                              GWAVE1A.186   
+        P_POINTS      =  ROWS_P*ROW_LENGTH                                 GWAVE1A.187   
+        START_U       =  ROW_LENGTH                                        GWAVE1A.188   
+C                                                                          ASW1F405.4     
+C  Three separate cases for START_U1. These arise because of different     ASW1F405.5     
+C  row offsets in the call to uv_to_p  (GWAVE3A.253,256)                   ASW1F405.6     
+C                                                                          ASW1F405.7     
+*IF DEF,MPP                                                                ASW1F405.8     
+        IF ( at_top_of_lpg ) THEN                                          ASW1F405.9     
+          START_U1       = 2*ROW_LENGTH                                    ASW1F405.10    
+        ELSE                                                               ASW1F405.11    
+          START_U1       = 0                                               ASW1F405.12    
+        ENDIF                                                              ASW1F405.13    
+*ELSE                                                                      ASW1F405.14    
+          START_U1       = ROW_LENGTH                                      ASW1F405.15    
+*ENDIF                                                                     ASW1F405.16    
+                                                                           GWAVE1A.189   
+C------------------------------------------------------------------        GWAVE1A.190   
+CL    1.2 INTERPOLATE WINDS TO P/THETA-GRID                                GWAVE1A.191   
+C------------------------------------------------------------------        GWAVE1A.192   
+      DO K=1,LEVELS                                                        GWAVE1A.193   
+                                                                           GWAVE1A.194   
+*IF DEF,SCMA                                                               AJC1F405.281   
+      DO I=1,LAND_POINTS                                                   AJC1F405.282   
+        UP_LAND(I,K) =U(LAND_INDEX(I),K)                                   AJC1F405.283   
+        VP_LAND(I,K) =V(LAND_INDEX(I),K)                                   AJC1F405.284   
+      ENDDO                                                                AJC1F405.285   
+*ELSE                                                                      GWAVE1A.202   
+                                                                           GWAVE1A.203   
+        CALL UV_TO_P(U(1,K),WORK(1,1),U_POINTS_1,P_POINTS,                 GWAVE1A.205   
+     *   ROW_LENGTH,ROWS_P+1)                                              GWAVE1A.206   
+        CALL UV_TO_P(V(1,K),WORK(1,2),U_POINTS_1,P_POINTS,                 GWAVE1A.207   
+     *   ROW_LENGTH,ROWS_P+1)                                              GWAVE1A.208   
+                                                                           GWAVE1A.209   
+*IF DEF,MPP                                                                APBEF401.32    
+! Correct halos of interpolated U/V                                        APBEF401.33    
+!        CALL SWAPBOUNDS(WORK(1,1),LOCAL_ROW_LENGTH,ROWS_P+1,              APBEF401.34    
+!     &                  EW_Halo,NS_Halo,1) ! U field                      APBEF401.35    
+!        CALL SWAPBOUNDS(WORK(1,2),LOCAL_ROW_LENGTH,ROWS_P+1,              APBEF401.36    
+!     &                  EW_Halo,NS_Halo,1) ! V field                      APBEF401.37    
+*ENDIF                                                                     APBEF401.38    
+                                                                           APBEF401.39    
+C------------------------------------------------------------------        GWAVE1A.210   
+CL    1.3  GATHER WINDS AT LAND POINTS                                     GWAVE1A.211   
+C------------------------------------------------------------------        GWAVE1A.212   
+                                                                           GWAVE1A.213   
+        DO I=1,LAND_POINTS                                                 GWAVE1A.214   
+         UP_LAND(I,K) =WORK(LAND_INDEX(I),1)                               GWAVE1A.215   
+         VP_LAND(I,K) =WORK(LAND_INDEX(I),2)                               GWAVE1A.216   
+        END DO                                                             GWAVE1A.217   
+                                                                           WI200893.20    
+*ENDIF                                                                     WI200893.21    
+                                                                           WI200893.22    
+      END DO                                                               GWAVE1A.218   
+                                                                           GWAVE1A.221   
+C------------------------------------------------------------------        GWAVE1A.222   
+CL    1.4  GATHER PSTAR,PEXNER,THETA,SD_OROG AT LAND POINTS                GWAVE1A.223   
+C------------------------------------------------------------------        GWAVE1A.224   
+                                                                           GWAVE1A.225   
+      DO I=1,LAND_POINTS                                                   GWAVE1A.226   
+        PSTAR_LAND(I) = PSTAR(LAND_INDEX(I))                               GWAVE1A.227   
+      END DO                                                               GWAVE1A.228   
+                                                                           GWAVE1A.229   
+CL *** Following loop labelled to workaround fmp mistranslation            GWAVE1A.230   
+                                                                           GWAVE1A.231   
+CFPP$ SELECT(CONCUR)                                                       GWAVE1A.232   
+      DO 140 K=1,LEVELS                                                    GWAVE1A.233   
+        DO I=1,LAND_POINTS                                                 GWAVE1A.234   
+          PEXNER_LAND(I,K) = PEXNER(LAND_INDEX(I),K)                       GWAVE1A.235   
+          THETA_LAND(I,K) = THETA(LAND_INDEX(I),K)                         GWAVE1A.236   
+        END DO                                                             GWAVE1A.237   
+ 140  CONTINUE                                                             GWAVE1A.238   
+                                                                           GWAVE1A.239   
+      DO I=1,LAND_POINTS                                                   GWAVE1A.240   
+        PEXNER_LAND(I,LEVELS+1) =PEXNER(LAND_INDEX(I),LEVELS+1)            GWAVE1A.241   
+      END DO                                                               GWAVE1A.242   
+                                                                           GWAVE1A.243   
+C------------------------------------------------------------------        GWAVE1A.244   
+CL    2. CALCULATE 'SURFACE' STRESS,CALL GW_SURF                           GWAVE1A.245   
+C------------------------------------------------------------------        GWAVE1A.246   
+                                                                           GWAVE1A.247   
+      CALL GW_SURF(PSTAR_LAND,PEXNER_LAND,THETA_LAND,UP_LAND,VP_LAND,      GWAVE1A.248   
+     *             SD_OROG_LAND,S_STRESS,LEVELS,LAND_POINTS,               GWAVE1A.249   
+     *             AK,BK,AKH,BKH,KAY,SIN_A,COS_A,LFROUDE)                  GSS1F304.61    
+                                                                           GWAVE1A.251   
+C------------------------------------------------------------------        GWAVE1A.252   
+CL    3. CALCULATE STRESS PROFILE AND ACCELERATIONS,                       GWAVE1A.253   
+CL       CALL GW_RICH  OR GW_LIN_P                                         GSS1F304.62    
+C------------------------------------------------------------------        GWAVE1A.255   
+                                                                           GWAVE1A.256   
+      IF (LGWLINP) THEN                                                    GSS1F304.63    
+      CALL GW_LIN_P(PSTAR_LAND,PEXNER_LAND,THETA_LAND,UP_LAND,VP_LAND,     GWAVE1A.258   
+     1             S_STRESS,START_LEVEL,LEVELS,LAND_POINTS,                GWAVE1A.259   
+     2             AKH,BKH,DELTA_AK,DELTA_BK,SIN_A,COS_A,                  GWAVE1A.260   
+     3             DU_DT,DV_DT,                                            GSS1F304.64    
+     4             STRESS_UD_LAND,LAND_POINTS_UD,STRESS_UD_ON,             GSS1F304.65    
+     5             STRESS_VD_LAND,LAND_POINTS_VD,STRESS_VD_ON)             GSS1F304.66    
+      ELSE                                                                 GSS1F304.67    
+      CALL GW_RICH(PSTAR_LAND,PEXNER_LAND,THETA_LAND,UP_LAND,VP_LAND,      GWAVE1A.262   
+     1             S_STRESS,START_LEVEL,LEVELS,LAND_POINTS,                GWAVE1A.263   
+     2             AKH,BKH,DELTA_AK,DELTA_BK,KAY,SIN_A,COS_A,              GWAVE1A.264   
+     3             DU_DT,DV_DT,                                            DR251093.57    
+     4             STRESS_UD_LAND,LAND_POINTS_UD,STRESS_UD_ON,             DR251093.58    
+     5             STRESS_VD_LAND,LAND_POINTS_VD,STRESS_VD_ON)             DR251093.59    
+      END IF                                                               GSS1F304.68    
+                                                                           GWAVE1A.276   
+C------------------------------------------------------------------        GWAVE1A.277   
+CL    4. SCATTER ACCELERATIONS TO FULL AREA, INTERPOLATE TO UV-GRID        GWAVE1A.278   
+CL       AND UPDATE WINDS                                                  GWAVE1A.279   
+C------------------------------------------------------------------        GWAVE1A.280   
+                                                                           GWAVE1A.281   
+      DO I=1,P_FIELD                                                       GWAVE1A.282   
+       DO IW=1,4                                                           GWAVE1A.283   
+        WORK(I,IW) = 0.0                                                   GWAVE1A.284   
+       END DO                                                              GWAVE1A.285   
+      END DO                                                               GWAVE1A.286   
+                                                                           GWAVE1A.287   
+      DO K=1,LEVELS                                                        GWAVE1A.288   
+                                                                           GWAVE1A.289   
+! Fujitsu vectorization directive                                          GRB0F405.317   
+!OCL NOVREC                                                                GRB0F405.318   
+CDIR$ IVDEP                                                                GWAVE1A.290   
+*IF -DEF,SCMA                                                              AJC1F405.286   
+        DO I=1,LAND_POINTS                                                 GWAVE1A.291   
+          WORK(LAND_INDEX(I),1)= DU_DT(I,K)                                GWAVE1A.292   
+          WORK(LAND_INDEX(I),2)= DV_DT(I,K)                                GWAVE1A.293   
+        END DO                                                             GWAVE1A.294   
+                                                                           GWAVE1A.295   
+        CALL P_TO_UV(WORK(1,1),WORK(1,3),P_POINTS,U_POINTS,                GWAVE1A.296   
+     *               ROW_LENGTH,ROWS_P)                                    GWAVE1A.297   
+        CALL P_TO_UV(WORK(1,2),WORK(1,4),P_POINTS,U_POINTS,                GWAVE1A.298   
+     *               ROW_LENGTH,ROWS_P)                                    GWAVE1A.299   
+                                                                           GWAVE1A.300   
+        DO I=1,U_POINTS                                                    GWAVE1A.301   
+          U(START_U+I,K) = U(START_U+I,K) + TIMESTEP*WORK(I,3)             GWAVE1A.302   
+          V(START_U+I,K) = V(START_U+I,K) + TIMESTEP*WORK(I,4)             GWAVE1A.303   
+        END DO                                                             GWAVE1A.304   
+                                                                           GWAVE1A.305   
+*ELSE                                                                      AJC1F405.287   
+        DO I=1,U_POINTS                                                    AJC1F405.288   
+          U(START_U+I,K) = U(START_U+I,K) + TIMESTEP*DU_DT(I,K)            AJC1F405.289   
+          V(START_U+I,K) = V(START_U+I,K) + TIMESTEP*DV_DT(I,K)            AJC1F405.290   
+        END DO                                                             AJC1F405.291   
+*ENDIF                                                                     AJC1F405.292   
+      END DO                                                               GWAVE1A.306   
+                                                                           GWAVE1A.307   
+      IF (STRESS_UD_ON .OR. STRESS_VD_ON) THEN                             DR251093.60    
+                                                                           GWAVE1A.309   
+        KOUT_U=0                                                           DR251093.61    
+        KOUT_V=0                                                           DR251093.62    
+                                                                           GWAVE1A.313   
+        DO K=START_LEVEL,LEVELS+1                                          DR251093.63    
+                                                                           DR251093.64    
+           IF (STRESS_UD_ON) THEN                                          DR251093.65    
+             IF (U_LIST(K)) THEN                                           DR251093.66    
+               KOUT_U=KOUT_U+1                                             DR251093.67    
+! Fujitsu vectorization directive                                          GRB0F405.319   
+!OCL NOVREC                                                                GRB0F405.320   
+CDIR$ IVDEP                                                                GWAVE1A.317   
+*IF -DEF,SCMA                                                              AJC1F405.293   
+               DO I=1,LAND_POINTS                                          DR251093.68    
+                 WORK(LAND_INDEX(I),1)=STRESS_UD_LAND(I,K)                 DR251093.69    
+               END DO                                                      DR251093.70    
+               CALL P_TO_UV (WORK(1,1),STRESS_UD(START_U1+1,KOUT_U),       ASW1F405.17    
+     *                       P_POINTS,U_POINTS,ROW_LENGTH,ROWS_P)          DR251093.72    
+*ELSE                                                                      AJC1F405.294   
+               DO I=1,LAND_POINTS                                          AJC1F405.295   
+                 STRESS_UD(START_U+LAND_INDEX(I),KOUT_U)=                  AJC1F405.296   
+     &             STRESS_UD_LAND(I,K)                                     AJC1F405.297   
+               END DO                                                      AJC1F405.298   
+*ENDIF                                                                     AJC1F405.299   
+             ENDIF                                                         DR251093.73    
+           ENDIF                                                           DR251093.74    
+                                                                           DR251093.75    
+           IF (STRESS_VD_ON) THEN                                          DR251093.76    
+             IF (V_LIST(K)) THEN                                           DR251093.77    
+               KOUT_V=KOUT_V+1                                             DR251093.78    
+! Fujitsu vectorization directive                                          GRB0F405.321   
+!OCL NOVREC                                                                GRB0F405.322   
+CDIR$ IVDEP                                                                GWAVE1A.328   
+*IF -DEF,SCMA                                                              AJC1F405.300   
+               DO I=1,LAND_POINTS                                          DR251093.79    
+                 WORK(LAND_INDEX(I),2)=STRESS_VD_LAND(I,K)                 DR251093.80    
+               END DO                                                      DR251093.81    
+               CALL P_TO_UV (WORK(1,2),STRESS_VD(START_U1+1,KOUT_V),       ASW1F405.18    
+     *                       P_POINTS,U_POINTS,ROW_LENGTH,ROWS_P)          DR251093.83    
+*ELSE                                                                      AJC1F405.301   
+               DO I=1,LAND_POINTS                                          AJC1F405.302   
+                 STRESS_VD(START_U+LAND_INDEX(I),KOUT_V)=                  AJC1F405.303   
+     &             STRESS_VD_LAND(I,K)                                     AJC1F405.304   
+               END DO                                                      AJC1F405.305   
+*ENDIF                                                                     AJC1F405.306   
+             ENDIF                                                         DR251093.84    
+           ENDIF                                                           DR251093.85    
+                                                                           GWAVE1A.337   
+        ENDDO                                                              DR251093.86    
+                                                                           DR251093.87    
+      ENDIF                                                                DR251093.88    
+                                                                           GWAVE1A.339   
+      IRET=0                                                               GWAVE1A.340   
+                                                                           GWAVE1A.341   
+      RETURN                                                               GWAVE1A.342   
+      END                                                                  GWAVE1A.343   
+                                                                           GWAVE1A.344   
+*ENDIF                                                                     GWAVE1A.345   

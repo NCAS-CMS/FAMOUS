@@ -1,0 +1,154 @@
+#!/bin/sh
+#set -x
+#**
+#**NAME
+#**      umsubmit - submit processed UMUI vn4.0+ job to the t3e
+#**
+#**SYNOPSIS
+#**      umsubmit [-h host] [-u remote user id] 
+#**                   [-l local user id] job_name
+#**
+#**DESCRIPTION
+#**      This command carries out the procedure for submitting UM jobs
+#**      to batch without needing to enter the umui. By default,
+#**      remote host is the t3e and user id on that host is obtained
+#**      using the ibmproxy command.
+#**
+#**      It is normally assumed that the files are held in
+#**      ~/umui_jobs/job_name as they would be after being processed
+#**      in the UMUI. However, the -l option can be used to submit a
+#**      job processed under another userid. Eg. if user hadsm has
+#**      been asked by hadro to submit a job owned by hadro while she
+#**      is away, hadsm can run:
+#**
+#**      umsubmit -u t20ro -l hadro abcde
+#**
+#**      which will submit job library ~hadro/umui_jobs/abcde to batch
+#**      under userid t20ro. Userid hadsm needs to be listed in the 
+#**      .rhosts file for t20ro to allow this.
+#**
+#**OPTIONS
+#**
+#**      -h host      Name of remote host machine.
+#**
+#**      -u userid    User id on remote host machine. Default is the
+#**                   user id returned by the ibmproxy command.
+#**
+#**      -l local uid User id of person who owns the processed job 
+#**                   library.
+#**
+#**AUTHOR
+#**      S.D.Mullerworth 23.1.96
+#**      -l option added 1.3.00
+#**
+
+me=$(basename $0)
+
+set -- `getopt h:u:l: $*`
+returnCode=$?
+if test $returnCode -ne 0; then
+    echo "Usage: $me [-u remote uid] [-l local uid] runid"
+    exit
+fi  
+
+# Default options
+host=$HOSTNAME
+#remote_shell_command=rsh
+uid=`whoami`
+localuid=`whoami`
+
+while [ "$1" != -- ]
+do
+  if test $# = 1; then
+    echo "Usage: $me [-u remote uid] [-l local uid] runid"
+    exit 1
+  fi
+  case $1 in
+    -h) host="$2";;
+    -u) uid="$2";;
+    -l) localuid="$2";;
+  esac; shift; shift
+done;shift
+exp_id=$1
+
+if [ $# != 1 ]; then
+  echo "Usage: $me [-u remote uid] [-l local uid] runid"
+  exit 1
+fi
+
+#if test -z "$host"; then
+#  echo Specify machine name to run on
+#  echo "Usage: $me -h host [-u remote uid] [-l local uid] runid"
+#  exit 1
+#fi
+
+#homeDir=`cd ~$localuid;pwd`
+homeDir=`cd ;pwd`
+if test $? != 0; then
+  echo Unable to find ~$localuid - check that $localuid is a valid user
+  exit 1
+fi
+
+
+# Obtain unique id by using date and time
+submitid=`date +%j%H%M%S`
+# Directory on this machine which holds processed files
+processedDir=$homeDir/umui_jobs/$exp_id
+# Directory on host to which files will be copied
+rundir=$homeDir/umui_runs/$exp_id-$submitid
+# File name of executable script
+runfile=SUBMIT
+
+mkdir -p $processedDir
+
+scp $uid@puma.nerc.ac.uk:umui_jobs/$exp_id/* $processedDir
+if [ $? -ne 0 ]
+then
+   echo "Unable to copy job files for $exp_id from user $uid on puma."
+   exit 1
+fi
+
+
+if ! test -d $processedDir; then
+  echo Job library directory $processedDir could not be found
+  exit 1
+fi
+
+# This checks whether or not the job is from UMUI 4.1 or later
+# If it is a different submission method is required.
+test=`grep ":::submitid:::" $processedDir/$runfile`
+if [ -z "$test" ]; then
+  # Command which will be executed on host machine
+  # UMUI Versions < 4.1
+  run_cmd="SUBMITID=$submitid ; export SUBMITID ; . $rundir/$runfile"
+else
+  # Command which will be executed on host machine
+  # UMUI Versions 4.1 and above
+  run_cmd="$rundir/$runfile"
+fi
+
+# echo "Creating directory..."
+mkdir -p $homeDir/umui_runs
+CC=$?
+if test $CC -eq 0; then 
+  # echo "Initialising $runfile..."
+  cat $processedDir/$runfile |\
+    sed s/:::submitid:::/$submitid/g >\
+    /tmp/$runfile.$exp_id.$submitid
+
+  # echo "Copying files..."
+  cp -r $processedDir $rundir 
+  cp /tmp/$runfile.$exp_id.$submitid $rundir/$runfile
+  rm /tmp/$runfile.$exp_id.$submitid
+
+  # echo "Changing $runfile permissions..."
+  chmod 755 $rundir/$runfile
+
+  # Submit to host machine batch queue. Unique name of directory (i.e. that
+  # containing the submitid string) is passed to shell within the run_cmd
+  # string because $submitid was immediately substituted by its value
+  # echo "Submitting..."
+  $run_cmd
+
+fi
+

@@ -1,0 +1,406 @@
+# ----------------------------- COPYRIGHT ---------------------------- #   COPYRIGHT.110   
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #   COPYRIGHT.111   
+#                                                                      #   COPYRIGHT.112   
+# Use, duplication or disclosure of this code is subject to the        #   COPYRIGHT.113   
+# restrictions as set forth in the contract. If no contract has been   #   COPYRIGHT.114   
+# raised with this copy of the code, use, duplication or disclosure    #   COPYRIGHT.115   
+# of it is strictly prohibited. Permission to do so must be obtained   #   COPYRIGHT.116   
+# in writing from the Head of Numerical Modelling at The Met. Office.  #   COPYRIGHT.117   
+# ----------------------------- COPYRIGHT ---------------------------- #   COPYRIGHT.118   
+#LL---------------------------------------------------------------------   autopp_tidyup.3     
+#LL  Script: autopp_tidyup                                                 autopp_tidyup.4     
+#LL---------------------------------------------------------------------   autopp_tidyup.5     
+#LL  Purpose: Tidy up archiving after system or archive server failure     GLW1U401.69    
+#LL           for previous run.                                            GLW1U401.70    
+#LL           Transfer remaining trigger files on Cray in user's           autopp_tidyup.8     
+#LL           experiment directory to front-end in order to archive        autopp_tidyup.9     
+#LL           data files on disk from previous crashed run.                autopp_tidyup.10    
+#LL           Input contents of .failure file (archive requests from       autopp_tidyup.11    
+#LL           failed run) into qsserver in order to process unarchived     autopp_tidyup.12    
+#LL           data files.                                                  autopp_tidyup.13    
+#LL           Warning: If any old trigger files for this runid remain      autopp_tidyup.14    
+#LL           for any reason, then they will be copied to front-end.       autopp_tidyup.15    
+#LL           Note: The storage class on the HDS and a number of other     GLW1U401.71    
+#LL           HDS file attributes are hardwired in this script since       GLW1U401.72    
+#LL           they are set in the PPCNTL file or hdstransfer for the       GLW1U401.73    
+#LL           main server process.                                         GLW1U401.74    
+#LL                                                                        autopp_tidyup.20    
+#LL  Author: Chris Perks                  Date: March 1995                 autopp_tidyup.21    
+#LL                                                                        autopp_tidyup.22    
+#LL  Code version no: 4.0                                                  autopp_tidyup.23    
+#LL                                                                        GLW1U401.75    
+#LL  Modification History:                                                 autopp_tidyup.24    
+#LL  Date     Vn   Name      Change                                        autopp_tidyup.25    
+#LL  22/03/95 4.0  C D Perks Original version                              autopp_tidyup.26    
+#LL  01/04/96 4.1  L C Wiles Remove old trigger files and .failure         GLW1U401.76    
+#LL                          files on an NRUN.  Add in portable            GLW1U401.77    
+#LL                          alternative to putibm to copy data.           GLW1U401.78    
+#LL  09/04/96 4.1  L Wiles   Remove *IF DEF METOCRAY and *ENDIF            GLW1U401.79    
+#LL  06/06/96 4.1  L Wiles   Change block/record length for possible       GLW1U401.80    
+#LL                          wide trigger files in CRACER system.          GLW1U401.81    
+#LL  01/08/96 4.1  L.Wiles   Changes for restartability.                   GLW1U401.82    
+#LL  17/02/97 4.2  L.Wiles   Various corrections to code for no            GLW3U403.1     
+#LL                          archiving and crash recovery.                 GLW3U403.2     
+#LL  27/10/97 4.4  L.Wiles   Correction to CRACERCHECK test                GLW1U404.2     
+#LL  4/03/98 4.5   I Edmond  If partial archiving omit the copy of the     GIE1U405.8     
+#LL                            trigger file to /u/m20/cprod/cracercheck.   GIE1U405.9     
+#LL                                                                        autopp_tidyup.27    
+#LL  Programming Standard: UM Tech Doc Paper                               autopp_tidyup.28    
+#LL                        Automated Post Processing System                autopp_tidyup.29    
+#LL---------------------------------------------------------------------   autopp_tidyup.30    
+#LL  Called by: top level script                                           autopp_tidyup.31    
+#LL  Calls    : qsserver, getarchdate, ppcntl                              GLW1U401.83    
+#LL---------------------------------------------------------------------   autopp_tidyup.33    
+#LL  Return code:  AUTOPPCODE used as return code in top level script      autopp_tidyup.34    
+#LL---------------------------------------------------------------------   autopp_tidyup.35    
+#LL  Variables:                                                            autopp_tidyup.36    
+#LL                                                                        autopp_tidyup.37    
+#LL  Imports:                                                              autopp_tidyup.38    
+#LL  DATAM                   # Experiment directory on Cray                autopp_tidyup.39    
+#LL  TEMP                    # Run-time experiment directory on Cray       autopp_tidyup.40    
+#LL  JOBID                   # Experiment job name                         autopp_tidyup.41    
+#LL  RUNID                   # Experiment name (4 characters)              autopp_tidyup.42    
+#LL  FAILPROC                # .failure file on Cray containing            autopp_tidyup.43    
+#LL                          # archive requests to be processed            autopp_tidyup.44    
+#LL  ERRFLAG                 # Error file written to if server failure     autopp_tidyup.45    
+#LL  PPCNTL                                                                GLW1U401.84    
+#LL  DATE_FORMAT             # Type of date required for archiving.        GLW1U401.85    
+#LL                            1=absolute, 2=relative,3=mgmtcls            GLW1U401.86    
+#LL  AC                      # Job accounting code                         GLW1U401.87    
+#LL  F_END_DSN_PREFIX        # IBM dataset high level qualifier            GLW1U401.88    
+#LL  F_END_JOB_PROGID        # IBM user id letters                         GLW1U401.89    
+#LL  BKUP_DUMP               # Duplex backup requested for dump files      GLW1U401.90    
+#LL  BKUP_PP                 # Duplex backup requested for PP files        GLW1U401.91    
+#LL  BKUP_MPP                # Duplex backup requested for MPP files       GLW1U401.92    
+#LL  BKUP_BNDY               # Duplex backup requested for boundary        GLW1U401.93    
+#LL                             files                                      GLW1U401.94    
+#LL  STREAM_OPTION           # Archive tape indicator                      GLW1U401.95    
+#LL  IBM_ARCHNAME            # IBM archive name:CRACER:UABRF:OTHER         GLW1U401.96    
+#LL  SCRATCH                 # Flag for                                    GLW1U401.97    
+#LL  MAIL                    # Flag for automatic mailing of archive       GLW1U401.98    
+#LL                            errors (M/N)                                GLW1U401.99    
+#LL  MAIL_ID                 # Mail address for archiving error messages   GLW1U401.100   
+#LL                                                                        GLW1U401.101   
+#LL                                                                        autopp_tidyup.46    
+#LL  Local variables:                                                      autopp_tidyup.47    
+#LL                                                                        autopp_tidyup.48    
+#LL  CC                      # Completion code                             autopp_tidyup.49    
+#LL  LOCKFILE                # The existence of this file indicates        GLW1U401.102   
+#LL                            whether the model is still executing        GLW1U401.103   
+#LL  AUTOPPCODE              # Trap for failed trigger file transfer       autopp_tidyup.52    
+#LL                            =0 - all TF's transferred successfully      GLW1U401.104   
+#LL                            =1 - one or more TF's failed to transfer.   GLW1U401.105   
+#LL                            =2 - qsserver failed itself or it failed    GLW1U401.106   
+#LL                                 to archive any remaining files.        GLW1U401.107   
+#LL  RCSERVER                # Error return code in $ERRFLAG               autopp_tidyup.57    
+#LL  TRIGGER_FILES           # List of TF's in $DATAM                      autopp_tidyup.58    
+#LL  JOBTF                   # JOBID in TF                                 autopp_tidyup.59    
+#LL  LINECOUNT               # Number of lines in a trigger file           GLW1U401.108   
+#LL  req_type                # Type of request:DELETE,ARCHIVE,REL          GLW1U401.109   
+#LL  last_request            # Last request sent down pipe in the          GLW1U401.110   
+#LL                            $RUNID.requests file                        GLW1U401.111   
+#LL  last_file               # File name contained in last request         GLW1U401.112   
+#LL  last_file_name          # last_file in upper case                     GLW1U401.113   
+#LL  runid_up             # $RUNID in upper case                           GLW3U403.3     
+#LL  DATASET                 # IBM dataset name for last file              GLW1U401.114   
+#LL  intrigger               # Flag to indicate if last file already       GLW1U401.115   
+#LL                            written to a trigger file                   GLW1U401.116   
+#LL  format                  # Flag for long or short date format          GLW1U401.117   
+#LL  file_type1              # File type indicator letter                  GLW1U401.118   
+#LL                            d=DUMP,p=PP,(u-x)=BNDY                      GLW1U401.119   
+#LL  file_type2              # PP type indicator letter                    GLW1U401.120   
+#LL                            (a-j)=PP,MPP otherwise                      GLW1U401.121   
+#LL  TRIGGER_FILE            # Trigger file name for last data file        GLW1U401.122   
+#LL  BACKUP                  # Backup request indicator                    GLW1U401.123   
+#LL                                                                        GLW1U401.124   
+#LL                                                                        autopp_tidyup.60    
+set -$SETOPT                                                               GLW2U404.76    
+echo "*****************************************************************"   autopp_tidyup.61    
+echo "     Autopp_tidyup in operation"                                     autopp_tidyup.62    
+echo "     Job started at : `date`"                                        autopp_tidyup.63    
+echo "*****************************************************************"   autopp_tidyup.64    
+                                                                           autopp_tidyup.65    
+cat > $ERRFLAG << EOF                                                      autopp_tidyup.66    
+F No request to stop model                                                 autopp_tidyup.67    
+EOF                                                                        autopp_tidyup.68    
+RCSERVER='F'                 # Initialise server process error code        GLW1U401.125   
+AUTOPPCODE=0                 # Initialise trap for trigger file transfer   GLW1U401.126   
+ERRCODE=0                                                                  GLW1U401.127   
+runid_up=`echo "$RUNID"|tr "[a-z]~" "[A-Z]~"`                              GLW3U403.4     
+if test $UMMACHINE = 'METOCRAY'                                            GLW1U401.128   
+then                                                                       GLW1U401.129   
+#L----------------------------------------------------------------------   autopp_tidyup.72    
+#L Step 1: Set jcl transfer text for remaining trigger files               autopp_tidyup.73    
+#L   Use SCDATPRK to avoid having to pass in a storage class variable      GLW1U401.130   
+#L----------------------------------------------------------------------   autopp_tidyup.75    
+                                                                           autopp_tidyup.76    
+  TEXT1='text="STORCLAS=SCDATPRK,mgmtclas=mcsnc4,'                         GLW1U401.131   
+  TEXT2='space=(trk,(1,1))'                                                GLW1U401.132   
+  TEXT3='dcb=(recfm=FB,blksize=27984'                                      GLW1U401.133   
+  TEXT4='lrecl=132,dsorg=ps)"'                                             GLW1U401.134   
+  TEXT="$TEXT1,$TEXT2,$TEXT3,$TEXT4"                                       GLW1U401.135   
+fi                                                                         GLW1U401.136   
+#L----------------------------------------------------------------------   GLW1U401.137   
+#L Step 2a: Check for inconsistancies between files and trigger files      GLW1U401.138   
+#L          for restarting after a crash.                                  GLW1U401.139   
+#L----------------------------------------------------------------------   GLW1U401.140   
+cd $DATAM                                                                  GLW1U401.141   
+. $PPCNTL                                                                  GLW1U404.3     
+if test -s "$RUNID.thist"                                                  GLW1U401.142   
+then                                                                       GLW1U401.143   
+  echo "autopp_tidyup: re-starting from a crash"                           GLW1U401.144   
+                                                                           GLW1U401.145   
+  if test -s "$RUNID.requests"                                             GLW1U401.146   
+  then                                                                     GLW1U401.147   
+    if test $ARCHSYS = 'false'                                             GLW3U403.5     
+    then                                                                   GLW3U403.6     
+      echo "************************************************"              GLW3U403.7     
+      echo "No archiving requested"                                        GLW3U403.8     
+      echo "************************************************"              GLW3U403.9     
+      return                                                               GLW1U404.1     
+    fi                                                                     GLW3U403.11    
+    AC=$F_END_JOB_TIC                                                      GLW1U401.149   
+    # get last non-blank line in .requests file                            GLW1U401.150   
+    last_request=`$UM_GREP %%% "$RUNID.requests" | tail -n -1`             PXUTILTY.13    
+                                                                           GLW1U401.152   
+    req_type=`echo "$last_request" |$UM_AWK '{print $3}'`                  PXUTILTY.14    
+                                                                           GLW1U401.154   
+    if test "$req_type" = 'ARCHIVE'   # Archive request                    GLW1U401.155   
+    then                                                                   GLW1U401.156   
+      last_file=`echo "$last_request" | $UM_AWK '{print $2}'`              PXUTILTY.15    
+      last_file_name=`echo "$last_file"|tr "[a-z]~" "[A-Z]~"`              GLW1U401.158   
+      DATASET=$F_END_DSN_PREFIX.$F_END_JOB_PROGID.$last_file_name          GLW1U401.159   
+      ibmls $DATASET                                                       GLW1U401.160   
+      CC=$?                                                                GLW1U401.161   
+                                                                           GLW1U401.162   
+      if test $CC -eq 0  # Data file is catalogued on IBM                  GLW1U401.163   
+      then                                                                 GLW1U401.164   
+        intrigger=`$UM_GREP $last_file "$TFPREFIX.$runid_up*"`             PXUTILTY.16    
+        if test -n "$intrigger"                                            GLW1U401.166   
+        then                                                               GLW1U401.167   
+          echo "autopp_tidyup: Last file already in trigger file"          GLW1U401.168   
+        else                                                               GLW1U401.169   
+          # last file must included in existing trigger file               GLW1U401.170   
+          # set up trigger file entry                                      GLW1U401.171   
+          if test $DATE_FORMAT -eq 2                                       GLW1U401.172   
+          then                                                             GLW1U401.173   
+            . getarchdate                                                  GLW1U401.174   
+          fi                                                               GLW1U401.175   
+                                                                           GLW1U401.176   
+          # test for Filename with long date format                        GLW1U401.177   
+          format=`echo "$last_file"|cut -c7`                               GLW1U401.178   
+          if test $last_file = "@"                                         GLW1U401.179   
+          then                                                             GLW1U401.180   
+            #   Filename has long date format                              GLW1U401.181   
+            file_type1=`echo "$last_file" | cut -c 9-9`                    GLW1U401.182   
+            file_type2=`echo "$last_file" | cut -c 10-10`                  GLW1U401.183   
+          else                                                             GLW1U401.184   
+            #   Filename has standard date format                          GLW1U401.185   
+            file_type1=`echo "$last_file" | cut -c 8-8`                    GLW1U401.186   
+            file_type2=`echo "$last_file" | cut -c 9-9`                    GLW1U401.187   
+          fi                                                               GLW1U401.188   
+                                                                           GLW1U401.189   
+          # Find which trigger file type                                   GLW1U401.190   
+            BACKUP='N'                                                     GLW1U401.191   
+            case $file_type1 in                                            GLW1U401.192   
+              d) if $BKUP_DUMP = 'Y'                                       GLW1U401.193   
+                 then                                                      GLW1U401.194   
+                   BACKUP='D'                                              GLW1U401.195   
+                 fi                                                        GLW1U401.196   
+                case $STREAM_OPTION in                                     GLW1U401.197   
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.17    
+                                 $UM_GREP X00`                             PXUTILTY.18    
+                    ;;                                                     GLW1U401.199   
+               1|4) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.19    
+                                 $UM_GREP D00`                             PXUTILTY.20    
+                    ;;                                                     GLW1U401.201   
+               3|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.21    
+                                 $UM_GREP C00`                             PXUTILTY.22    
+                    ;;                                                     GLW1U401.203   
+                esac                                                       GLW1U401.204   
+                 ;;                                                        GLW1U401.205   
+                                                                           GLW1U401.206   
+              p) case $file_type2 in                                       GLW1U401.207   
+                 [a-j])                                                    GLW1U401.208   
+                  if $BKUP_PP = 'Y'                                        GLW1U401.209   
+                  then                                                     GLW1U401.210   
+                    BACKUP='D'                                             GLW1U401.211   
+                  fi                                                       GLW1U401.212   
+                   case $STREAM_OPTION in                                  GLW1U401.213   
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.23    
+                                 $UM_GREP X00`                             PXUTILTY.24    
+                       ;;                                                  GLW1U401.215   
+               1|3) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.25    
+                                 $UM_GREP P00`                             PXUTILTY.26    
+                      ;;                                                   GLW1U401.217   
+               4|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.27    
+                                 $UM_GREP C00`                             PXUTILTY.28    
+                      ;;                                                   GLW1U401.219   
+                   esac                                                    GLW1U401.220   
+                     ;;                                                    GLW1U401.221   
+               *)                                                          GLW1U401.222   
+                  if $BKUP_MEANPP = 'Y'                                    GLW1U401.223   
+                  then                                                     GLW1U401.224   
+                    BACKUP='D'                                             GLW1U401.225   
+                  fi                                                       GLW1U401.226   
+                 case $STREAM_OPTION in                                    GLW1U401.227   
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.29    
+                                 $UM_GREP X00`                             PXUTILTY.30    
+                     ;;                                                    GLW1U401.229   
+               1|3) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.31    
+                                 $UM_GREP M00`                             PXUTILTY.32    
+                    ;;                                                     GLW1U401.231   
+               4|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.33    
+                                 $UM_GREP C00`                             PXUTILTY.34    
+                    ;;                                                     GLW1U401.233   
+                 esac                                                      GLW1U401.234   
+                  ;;                                                       GLW1U401.235   
+               esac                                                        GLW1U401.236   
+                ;;                                                         GLW1U401.237   
+                                                                           GLW1U401.238   
+          [u-x]) if $BKUP_BNDY = 'Y'                                       GLW1U401.239   
+                  then                                                     GLW1U401.240   
+                    BACKUP='D'                                             GLW1U401.241   
+                  fi                                                       GLW1U401.242   
+                  case $STREAM_OPTION in                                   GLW1U401.243   
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.35    
+                                 $UM_GREP X00`                             PXUTILTY.36    
+                     ;;                                                    GLW1U401.245   
+               1|4) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.37    
+                                 $UM_GREP B00`                             PXUTILTY.38    
+                    ;;                                                     GLW1U401.247   
+               3|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \            PXUTILTY.39    
+                                 $UM_GREP C00`                             PXUTILTY.40    
+                    ;;                                                     GLW1U401.249   
+                 esac                                                      GLW1U401.250   
+                  ;;                                                       GLW1U401.251   
+           *) echo "autopp_tidyup: unknown file type"                      GLW1U401.252   
+              ERRCODE=1                                                    GLW1U401.253   
+          esac                                                             GLW1U401.254   
+                                                                           GLW1U401.255   
+          # Check which archiving system to send to                        GLW1U401.256   
+          # and write entry for file in trigger file                       GLW1U401.257   
+          if test $ERRCODE -eq 0                                           GLW1U401.258   
+          then                                                             GLW1U401.259   
+            if test $IBM_ARCHNAME = 'CRACER'                               GLW1U401.260   
+            then                                                           GLW1U401.261   
+              echo $DATASET 'FOREVER' $DM_DATE \                           GLW1U403.33    
+                   $SCRATCH$MAIL$BACKUP'C'$TAPE \                          GLW1U403.34    
+                   $AC $MAIL_ID >> $TRIGGER_FILE                           GLW1U403.35    
+            elif test $IBM_ARCHNAME = 'UABRF'                              GLW1U401.264   
+            then                                                           GLW1U401.265   
+              echo $DATASET $DM_DATE 'NONE' \                              GLW1U403.36    
+               $SCRATCH$MAIL$BACKUP'U'$TAPE \                              GLW1U403.37    
+               $AC $MAIL_ID >> $TRIGGER_FILE                               GLW1U401.267   
+            fi                                                             GLW1U401.268   
+          fi                                                               GLW1U401.269   
+        fi                                                                 GLW1U401.270   
+      fi                                                                   GLW1U401.271   
+    else  # Delete or release request - add to .failure file               GLW1U401.272   
+      echo $last_request >> $FAILPROC                                      GLW1U401.273   
+    fi                                                                     GLW1U401.274   
+  fi                                                                       GLW1U401.275   
+fi                                                                         GLW1U401.276   
+#L----------------------------------------------------------------------   autopp_tidyup.80    
+#L Step 2b: Scan experiment directory for remaining trigger files          GLW1U401.277   
+#L          and transfer to front end                                      autopp_tidyup.82    
+#L----------------------------------------------------------------------   autopp_tidyup.83    
+                                                                           autopp_tidyup.84    
+cd $DATAM                                                                  GLW1U401.278   
+TRIGGER_FILES=`ls|$UM_GREP $TFPREFIX`         # List trigger files         PXUTILTY.41    
+                                                                           autopp_tidyup.87    
+for file in $TRIGGER_FILES                                                 GLW1U401.280   
+do                                                                         GLW1U401.281   
+  JOBTF=`echo "$file"|cut -f2 -d. |cut -c5|tr "[A-Z]" "[a-z]"`             GLW1U401.282   
+  if test $JOBID = "$JOBTF" # Test that the TF belongs to current job      GLW1U401.283   
+  then                                                                     GLW1U401.284   
+    if test $TYPE = 'CRUN'                                                 GLW1U401.285   
+    then                                                                   autopp_tidyup.92    
+      if test $ARCHTAPE = 'true'                                           autopp_tidyup.93    
+      then                                                                 autopp_tidyup.94    
+        if test $UMMACHINE = 'METOCRAY'                                    GLW1U401.286   
+        then                                                               GLW1U401.287   
+          #test for empty trigger file                                     GLW1U401.288   
+          LINECOUNT=`wc -l $file | $UM_AWK '{print $1}'`                   PXUTILTY.42    
+          if test $LINECOUNT -gt 1                                         GLW1U401.290   
+          then                                                             GLW1U401.291   
+            putibm $file $file df=ud $TEXT    # Transfer TF                GLW1U401.292   
+          fi                                                               GLW1U401.293   
+        else                                                               GLW1U401.294   
+          # Set DEST_SYS_DIR to hold name of destination system            GLW1U401.295   
+          # and directory on that system                                   GLW1U401.296   
+          DEST_SYS_DIR=$HOME                                               GLW1U401.297   
+          cp $file $DEST_SYS_DIR/$file                                     GLW1U401.298   
+        fi                                                                 GLW1U401.299   
+      CC=$?                                                                autopp_tidyup.99    
+      if test $CC -eq 0                                                    autopp_tidyup.100   
+      then                                                                 autopp_tidyup.101   
+        if test $LINECOUNT -gt 1                                           GLW1U401.300   
+        then                                                               GLW1U401.301   
+          echo "Transferred file $file to front-end"                       GLW1U401.302   
+        else                                                               GLW1U401.303   
+          echo "Empty trigger files have been deleted"                     GLW1U401.304   
+        fi                                                                 GLW1U403.38    
+        cp $file $CRACERCHECK                                              GLW1U403.39    
+        if test $? -ne 0                                                   GLW1U403.40    
+        then                                                               GLW1U403.41    
+           echo "Autopp_tidyup: Trigger file not copied to \               GLW1U403.42    
+           $CRACERCHECK "                                                  GLW1U403.43    
+        fi                                                                 GLW1U401.305   
+        echo "Trigger file contents:"                                      autopp_tidyup.103   
+        cat $file                                                          autopp_tidyup.104   
+        rm $file                                                           autopp_tidyup.105   
+      else                                                                 autopp_tidyup.106   
+        echo "Unable to transfer $file to front-end"                       autopp_tidyup.107   
+        echo "Trigger file contents:"                                      autopp_tidyup.108   
+        cat $file                                                          autopp_tidyup.109   
+        AUTOPPCODE=1                                                       autopp_tidyup.110   
+        RCSERVER='T'                                                       autopp_tidyup.111   
+      fi                                                                   autopp_tidyup.112   
+      else  # Partial archiving                                            GIE1U405.10    
+        echo "Trigger file contents:"                                      GIE1U405.11    
+        cat $file                                                          GIE1U405.12    
+        echo "Partial archiving: Trigger file removed"                     GIE1U405.13    
+        echo "                   and is not transferred to front-end"      GIE1U405.14    
+        rm $file                                                           GIE1U405.15    
+      fi                                                                   GIE1U405.16    
+    else                        # Remove old trigger files on NRUN         GLW1U401.306   
+      echo "Trigger file $file left from previous run deleted"             GLW1U401.307   
+      echo "This is a NRUN, no further tidy up necessary"                  GLW1U401.308   
+      rm $file                                                             GLW1U401.309   
+    fi                                                                     autopp_tidyup.113   
+  fi                                                                       GLW1U401.310   
+done                                                                       GLW1U401.311   
+                                                                           autopp_tidyup.115   
+#L----------------------------------------------------------------------   autopp_tidyup.116   
+#L Step 3: If remaining trigger files successfully transferred then        autopp_tidyup.117   
+#L         test for a failure file from previous run. If one exists        autopp_tidyup.118   
+#L         then pipe contents into server. The return code from the        autopp_tidyup.119   
+#L         server is required to indicate whether the model can then       autopp_tidyup.120   
+#L         be run after failure file read.                                 autopp_tidyup.121   
+#L         If the server fails for any reason it writes a message          autopp_tidyup.122   
+#L         starting with 'T' to the ERRFLAG file. Otherwise ERRFLAG        autopp_tidyup.123   
+#L         starts with 'F'. This letter is picked up and used as a         autopp_tidyup.124   
+#L         return code.                                                    autopp_tidyup.125   
+#L----------------------------------------------------------------------   autopp_tidyup.126   
+if test $AUTOPPCODE -eq 0                                                  autopp_tidyup.127   
+then                                                                       autopp_tidyup.128   
+  if test -f $FAILPROC                                                     autopp_tidyup.129   
+  then                                                                     autopp_tidyup.130   
+    if test $TYPE = 'CRUN'                                                 GLW1U401.312   
+    then                                                                   autopp_tidyup.136   
+      LOCKFILE=$TEMP/$RUNID.lock        # Required by server               GLW1U401.313   
+      cat $FAILPROC|qsserver                                               GLW1U401.314   
+      CC=$?                                                                GLW1U401.315   
+      RCSERVER=`cat $ERRFLAG|cut -c 1`  # Return code from server          GLW1U401.316   
+      if test $CC -eq 0 -a $RCSERVER = 'F'                                 GLW1U401.317   
+      then                                                                 GLW1U401.318   
+        rm $FAILPROC                                                       GLW1U401.319   
+      else                                                                 GLW1U401.320   
+        AUTOPPCODE=2                                                       GLW1U401.321   
+      fi                                                                   GLW1U401.322   
+    else                                                                   GLW1U401.323   
+      rm $FAILPROC                                                         autopp_tidyup.137   
+    fi                                                                     autopp_tidyup.140   
+  fi                                                                       autopp_tidyup.141   
+fi                                                                         GLW3U403.25    

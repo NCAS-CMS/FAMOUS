@@ -1,0 +1,241 @@
+*IF DEF,A02_1C                                                             LWRAD1C.2     
+C ******************************COPYRIGHT******************************    GTS2F400.5707  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.5708  
+C                                                                          GTS2F400.5709  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.5710  
+C restrictions as set forth in the contract.                               GTS2F400.5711  
+C                                                                          GTS2F400.5712  
+C                Meteorological Office                                     GTS2F400.5713  
+C                London Road                                               GTS2F400.5714  
+C                BRACKNELL                                                 GTS2F400.5715  
+C                Berkshire UK                                              GTS2F400.5716  
+C                RG12 2SZ                                                  GTS2F400.5717  
+C                                                                          GTS2F400.5718  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.5719  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.5720  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.5721  
+C Modelling at the above address.                                          GTS2F400.5722  
+C ******************************COPYRIGHT******************************    GTS2F400.5723  
+C                                                                          GTS2F400.5724  
+CLL  ROUTINE AND DECK LWRAD.                                               LWRAD1C.3     
+CLL  BEFORE LWRAD IS CALLED, LWLKIN (IN DECK LWTRAN) MUST BE CALLED TO     LWRAD1C.4     
+CLL  INITIALIZE LUT.                                                       LWRAD1C.5     
+CLL  IF UPDATE *DEF CRAY IS OFF, THE CODE IS STANDARD FORTRAN 77           LWRAD1C.6     
+CLL  EXCEPT FOR THE ADDITION OF ! COMMENTS (AND THEN SETS THE "VECTOR      LWRAD1C.7     
+CLL  LENGTH" TO 1) BUT IF NOT IT INCLUDES CRAY AUTOMATIC ARRAYS ALSO.      LWRAD1C.8     
+CLL               AUTHOR: STEPHANIE WOODWARD 19-10-94                      LWRAD1C.9     
+CLL               (BASED ON UM CODE WRITTEN BY WILLIAM INGRAM 14.12.90)    LWRAD1C.10    
+CLL               REVIEWER: WILLIAM INGRAM 19-10-94                        LWRAD1C.11    
+CLL                                                                        LWRAD1C.12    
+CLL  IT CALLS LWMAST TO PRODUCE LONGWAVE FLUXES (AFTER SETTING             LWRAD1C.13    
+CLL  CONVECTIVE CLOUD BASE AND TOP TO SAFE VALUES) AND THEN DIFFERENCES    LWRAD1C.14    
+CLL  THESE FLUXES AND RETURNS TIMESTEP-BY-TIMESTEP INCREMENTS.             LWRAD1C.15    
+CLL  IT WILL DIAGNOSE OUTGOING LONGWAVE RADIATION (OLR)                    LWRAD1C.16    
+C                                                                          GSS2F402.42    
+C    Version                                                               GSS2F402.43    
+CLL   4.2    Sept.96  T3E migration: *DEF CRAY removed;                    GSS2F402.44    
+CLL                   *DEF T3E used for T3E library functions;             GSS2F402.45    
+CLL                   dynamic allocation no longer *DEF controlled;        GSS2F402.46    
+CLL                   cray HF functions replaced by T3E lib functions.     GSS2F402.47    
+CLL                       S.J.Swarbrick                                    GSS2F402.48    
+!     4.4  01/07/97  Argument L_CLOUD_WATER_PARTITION passed into          AYY1F404.321   
+!                    cloud calculation code. A Bushell                     AYY1F404.322   
+CLL                                                                        LWRAD1C.17    
+CLL  OFFLINE DOCUMENTATION (WHERE APPROPRIATE) IS IN UMDP 23.              LWRAD1C.18    
+C*L                                                                        LWRAD1C.19    
+      SUBROUTINE LWRAD (H2O, CO2, O3,                                      LWRAD1C.20    
+     &     N2OMMR, CH4MMR, C11MMR, C12MMR,                                 LWRAD1C.21    
+     &     TAC, PEXNER, TSTAR, PSTAR, AB,                                  LWRAD1C.22    
+     &     BB, AC, BC, AICE, LCA, LCCWC1, LCCWC2, CCA, CCCWP, CCB, CCT,    LWRAD1C.23    
+     &     LAND, PTS, LUT,                                                 LWRAD1C.24    
+     &     TCADIA, TCAON, CSOLRD, CSOLON, SFDN, SFDNON, cssfdn, cssdon,    LWRAD1C.25    
+     &     L_CLOUD_WATER_PARTITION,                                        AYY1F404.323   
+     &     L2, NLEVS, NCLDS,                                               GSS2F402.49    
+     &     NWET, NOZONE, L1,                     OLR,  LWSEA,  LWOUT)      LWRAD1C.29    
+C                                                                          LWRAD1C.30    
+CL   EXTERNAL ROUTINES CALLED                                              LWRAD1C.31    
+      EXTERNAL LWMAST                ! TOP-LEVEL OF THE LW PHYSICS         LWRAD1C.32    
+     &     , LWDCSF                  ! DIAGNOSES CLEAR-SKY FRACTION        LWRAD1C.33    
+C     !  DIMENSIONS:                                                       LWRAD1C.34    
+*CALL LWNLKUPS                                                             LWRAD1C.35    
+*CALL LWNBANDS                                                             LWRAD1C.36    
+*CALL LWNTRANS                                                             LWRAD1C.37    
+*CALL LWNGASES                                                             LWRAD1C.38    
+C     !  ARRAY DIMENSIONS MUST BE CONSTANTS IN FORTRAN                     LWRAD1C.40    
+      INTEGER!, INTENT(IN) ::                                              LWRAD1C.45    
+     &     L2                        ! NUMBER OF POINTS TO BE TREATED      LWRAD1C.47    
+     &     ,NLEVS                    ! NUMBER OF LEVELS                    LWRAD1C.48    
+     &     ,NCLDS,                   ! NUMBER OF POSSIBLY CLOUDY LEVELS    LWRAD1C.49    
+     &     L1,                       ! FULL FIELD DIMENSION                LWRAD1C.51    
+     &     NWET,                     ! NUMBER OF LEVELS WITH MOISTURE      LWRAD1C.52    
+     &     NOZONE                    ! NUMBER OF LEVELS WITH OZONE         LWRAD1C.53    
+      REAL!, INTENT(IN) ::                                                 LWRAD1C.54    
+     &     PSTAR(L1),                ! SURFACE PRESSURE                    LWRAD1C.55    
+     &     AB(NLEVS+1), BB(NLEVS+1), ! AS AND BS AT LAYER BOUNDARIES       LWRAD1C.56    
+     &     AC(NLEVS), BC(NLEVS),     ! AS AND BS AT LAYER CENTRES          LWRAD1C.57    
+     &     H2O(L1,NWET), CO2,        ! MIXING RATIOS OF THE                LWRAD1C.58    
+     &     O3(L1,NOZONE),            ! ABSORBING GASES                     LWRAD1C.59    
+     &     N2OMMR,                   ! m m r's of n2o                      LWRAD1C.60    
+     &     CH4MMR,                   !            ch4                      LWRAD1C.61    
+     &     C11MMR,                   !            cfc11                    LWRAD1C.62    
+     &     C12MMR,                   !            cfc12                    LWRAD1C.63    
+     &     TAC(L1,NLEVS),            ! TEMPERATURE AT LAYER CENTRES        LWRAD1C.64    
+     &     PEXNER(L1,NLEVS+1),       ! EXNER FUNCTION @ LAYER BOUNDARIES   LWRAD1C.65    
+     &     TSTAR(L1),                ! SURFACE TEMPERATURE                 LWRAD1C.66    
+     &     LUT(IT,NTRANS,nscgmx,2),  ! LOOK-UP TABLES FOR LWTRAN           LWRAD1C.67    
+     &     AICE(L1),                 ! SEA-ICE FRACTION                    LWRAD1C.68    
+     &     LCCWC1(L1,1/(NCLDS+1)+NCLDS), LCCWC2(L1,1/(NCLDS+1)+NCLDS),     LWRAD1C.69    
+C     ! LAYER CLOUD CONDENSED WATER CONTENTS (SPECIFIC CONTENTS, MASS      LWRAD1C.70    
+C     ! PER UNIT MASS).  ONLY THE SUM OF THESE TWO FIELDS IS USED.         LWRAD1C.71    
+     &     LCA(L1,1/(NCLDS+1)+NCLDS),! LAYER CLOUD FRACTIONAL COVER        LWRAD1C.72    
+     &     CCCWP(L1),                ! CONVECTIVE CLOUD FRACTIONAL COVER   LWRAD1C.73    
+     &     CCA(L1),                  !          AND CONDENSED WATER PATH   LWRAD1C.74    
+     &     PTS                       ! TIME INTERVAL THAT INCREMENTS TO    LWRAD1C.75    
+C     ! BE RETURNED ARE TO BE ADDED IN AT ("PHYSICS TIMESTEP").  THE       LWRAD1C.76    
+C     ! INTERVAL OVER WHICH THEY ARE USED ("LONGWAVE TIMESTEP") HAS NO     LWRAD1C.77    
+C     ! EFFECT ON THE LONGWAVE CODE: IT JUST SETS HOW OFTEN IT IS CALLED   LWRAD1C.78    
+      INTEGER!, INTENT(IN) ::                                              LWRAD1C.79    
+     &     CCB(L1), CCT(L1)          ! CONVECTIVE CLOUD BASE & TOP         LWRAD1C.80    
+      LOGICAL!, INTENT(IN) ::                                              LWRAD1C.81    
+     &     LAND(L1)                  ! LAND/SEA MASK (.TRUE. FOR LAND)     LWRAD1C.82    
+     &     ,CSOLON                   !  IS CSOLRD WANTED ?                 LWRAD1C.83    
+     &     ,TCAON                    !                   & IS TCADIA ?     LWRAD1C.84    
+     &     ,SFDNON                   !                     & IS SFDN ?     LWRAD1C.85    
+     &     ,CSSDON                   !                     & is cssfdn?    LWRAD1C.86    
+     &     ,L_CLOUD_WATER_PARTITION                                        AYY1F404.324   
+      REAL!,INTENT(OUT) ::                                                 LWRAD1C.87    
+     &     LWOUT(L1,NLEVS+1),        !THIS IS FILLED BY LWMAST WITH THE    LWRAD1C.88    
+C     !  NET DOWNWARD LONGWAVE FLUX AT ALL LAYER BOUNDARIES.  LWRAD        LWRAD1C.89    
+C     !  CONVERTS THESE TO ATMOSPHERIC HEATING RATES, LEAVING ONLY THE     LWRAD1C.90    
+C     !  SURFACE FLUXES IN THE FIRST LEVEL.                                LWRAD1C.91    
+     &     LWSEA(L1)                 ! THEN IT USES NUMBERS LWPLAN HAS     LWRAD1C.92    
+C     !  PUT INTO LWSEA TO SEPARATE OUT THE TOTAL SURFACE FLUX OVER THE    LWRAD1C.93    
+C     !  GRID-BOX INTO THE OPEN-OCEAN AND SOLID-SURFACE (SEA-ICE OR        LWRAD1C.94    
+C     !  LAND) CONTRIBUTIONS AND RETURNS THESE IN LWSEA AND THE FIRST      LWRAD1C.95    
+C     !  LEVEL OF LWOUT RESPECTIVELY.                                      LWRAD1C.96    
+     &     ,OLR(L1)                  !  OUTGOING LONGWAVE RADIATION        LWRAD1C.97    
+     &     ,CSOLRD(L1)               ! AND ITS CLEAR-SKY EQUIVALENT        LWRAD1C.98    
+     &     ,TCADIA(L2)               ! TOTAL CLOUD AMOUNT DIAGNOSTIC       LWRAD1C.99    
+     &     ,SFDN(L2)                 ! SURFACE FLUX DOWN DIAGNOSTIC        LWRAD1C.100   
+     &     ,CSSFDN(L1)               ! and its clearsky equivalent         LWRAD1C.101   
+     &     ,N2O(NLEVS)               !  mixing ratios of n20 on levs       LWRAD1C.102   
+     &     ,CH4(NLEVS)               !                   ch4               LWRAD1C.103   
+     &     ,CFC11(NLEVS)             !                   cfc11             LWRAD1C.104   
+     &     ,CFC12(NLEVS)             !                   cfc12             LWRAD1C.105   
+C*                                                                         LWRAD1C.106   
+*CALL C_G                                                                  LWRAD1C.107   
+*CALL C_R_CP                                                               LWRAD1C.108   
+      REAL CPBYG                                                           LWRAD1C.109   
+      PARAMETER ( CPBYG = CP / G )                                         LWRAD1C.110   
+      REAL DACON, DBCON              ! CONVERSION FACTORS FOR TURNING      LWRAD1C.111   
+C     ! FLUXES INTO INCREMENTS - DIFFERENCE OF AS AND BS ACROSS THE        LWRAD1C.112   
+C     ! CURRENT LAYER, TIMES CPBYG AND DIVIDED BY THE TIMESTEP.            LWRAD1C.113   
+      INTEGER LEVEL, J               ! LOOPERS OVER LEVEL AND POINT        LWRAD1C.114   
+      LOGICAL SFDNCA                 ! is SFDN to be calculated by         LWRAD1C.115   
+C     ! LWMAST? - set if either SFDNON or CSSDON is, because SFDN is       LWRAD1C.116   
+C     ! needed to find CSSSDN even if not wanted for its own sake.         LWRAD1C.117   
+C     ! Space for SFDN is assigned by the "implied diagnostic"             LWRAD1C.118   
+C     ! arrangements in that case, but its flag is only set if it is       LWRAD1C.119   
+C     ! wanted for its own sake.                                           LWRAD1C.120   
+C                                                                          LWRAD1C.121   
+CL    SECTION 1 - CORRECT INPUT DATA WHERE NECESSARY                       LWRAD1C.122   
+CL    ---------                                                            LWRAD1C.123   
+C                                                                          LWRAD1C.124   
+C...Set up mixing ratios of minor gases on levels, from vals set in UI     LWRAD1C.125   
+C                                                                          LWRAD1C.126   
+C                                                                          AJC0F405.214   
+*IF DEF,SCMA                                                               AJC0F405.215   
+      IF (N2OMMR .LT. 1.E-20) N2OMMR=1.E-20                                AJC0F405.216   
+      IF (CH4MMR .LT. 1.E-20) CH4MMR=1.E-20                                AJC0F405.217   
+      IF (C11MMR .LT. 1.E-20) C11MMR=1.E-20                                AJC0F405.218   
+      IF (C12MMR .LT. 1.E-20) C12MMR=1.E-20                                AJC0F405.219   
+*ENDIF                                                                     AJC0F405.220   
+C                                                                          AJC0F405.221   
+      DO 900 LEVEL = 1,NLEVS                                               LWRAD1C.127   
+         N2O(LEVEL) = N2OMMR                                               LWRAD1C.128   
+         CH4(LEVEL) = CH4MMR                                               LWRAD1C.129   
+         CFC11(LEVEL) = C11MMR                                             LWRAD1C.130   
+         CFC12(LEVEL) = C12MMR                                             LWRAD1C.131   
+ 900  CONTINUE                                                             LWRAD1C.132   
+C                                                                          LWRAD1C.133   
+CL    ! RESTRICT CONVECTIVE CLOUD BASE AND TOP TO THEIR PHYSICAL RANGE.    LWRAD1C.134   
+C                                                                          LWRAD1C.135   
+      DO 10 J=1, L2                                                        LWRAD1C.136   
+       IF ( CCB(J) .GT. NCLDS .OR. CCB(J) .LT. 1 ) CCB(J) = 1              LWRAD1C.137   
+       IF ( CCT(J) .GT. (NCLDS+1) .OR. CCT(J) .LT. 2 ) CCT(J) = NCLDS+1    LWRAD1C.138   
+   10 CONTINUE                                                             LWRAD1C.139   
+C                                                                          LWRAD1C.140   
+      SFDNCA = SFDNON .OR. CSSDON                                          LWRAD1C.141   
+C                                                                          LWRAD1C.142   
+CL    SECTION 2 - CALL LWMAST                                              LWRAD1C.143   
+CL    ---------                                                            LWRAD1C.144   
+C                                                                          LWRAD1C.145   
+      CALL LWMAST (H2O, CO2, O3, N2O, CH4, CFC11, CFC12,                   LWRAD1C.146   
+     &     TAC, PEXNER, TSTAR, PSTAR, AB, BB,                              LWRAD1C.147   
+     &     AC, BC, AICE, LCA, LCCWC1, LCCWC2, CCA, CCCWP, CCB, CCT, LUT,   LWRAD1C.148   
+     &     CSOLRD, CSOLON, SFDN, SFDNCA, CSSFDN, CSSDON,                   LWRAD1C.149   
+     &     L_CLOUD_WATER_PARTITION,                                        AYY1F404.325   
+     &     L2, NLEVS, NCLDS,                                               GSS2F402.50    
+     &     NWET, NOZONE, L1,                           LWSEA,   LWOUT)     LWRAD1C.153   
+C                                                                          LWRAD1C.154   
+CL    SECTION 3 - CONVERT FLUXES TO INCREMENTS                             LWRAD1C.155   
+CL    ---------                                                            LWRAD1C.156   
+C                                                                          LWRAD1C.157   
+CL    !  BUT FIRST COPY THE TOP LAYER INTO OLR:                            LWRAD1C.158   
+C                                                                          LWRAD1C.159   
+      DO J=1, L2                                                           LWRAD1C.160   
+        OLR(J) = - LWOUT(J,NLEVS+1)                                        LWRAD1C.161   
+      ENDDO                                                                LWRAD1C.162   
+C                                                                          LWRAD1C.163   
+CL    !  CONVERT FLUXES TO INCREMENTS (EQ 1.1) WITHIN THE ATMOSPHERE,      LWRAD1C.164   
+CL    !  LEAVING THE SURFACE NET DOWNWARD FLUX AT THE BEGINNING OF LWOUT   LWRAD1C.165   
+C                                                                          LWRAD1C.166   
+      DO 30 LEVEL=NLEVS, 1, -1                                             LWRAD1C.167   
+       DACON = ( AB(LEVEL) - AB(LEVEL+1) ) * CPBYG / PTS                   LWRAD1C.168   
+       DBCON = ( BB(LEVEL) - BB(LEVEL+1) ) * CPBYG / PTS                   LWRAD1C.169   
+       DO 33 J=1, L2                                                       LWRAD1C.170   
+        LWOUT(J,LEVEL+1) = ( LWOUT(J,LEVEL+1) - LWOUT(J,LEVEL) )           LWRAD1C.171   
+     &                             / ( DACON + PSTAR(J) * DBCON )          LWRAD1C.172   
+   33  CONTINUE                                                            LWRAD1C.173   
+   30 CONTINUE                                                             LWRAD1C.174   
+C                                                                          LWRAD1C.175   
+CL    ! SEPARATE THE CONTRIBUTIONS FOR A SOLID SURFACE (LAND OR SEA-ICE)   LWRAD1C.176   
+CL    ! TO BE ADDED IN BY THE MODEL'S SURFACE SCHEME, FROM THOSE FOR       LWRAD1C.177   
+CL    ! OPEN SEA, TO BE USED IN THE OCEAN MODEL.  INITIALLY LWOUT          LWRAD1C.178   
+CL    ! HAS THE ACTUAL BOX-MEAN FLUX AND LWSEA HAS THE DIFFERENCE          LWRAD1C.179   
+CL    ! BETWEEN UPWARD SURFACE FLUXES FOR OPEN-SEA AND SEA-ICE.            LWRAD1C.180   
+CL    ! THE VALUES THAT WILL NEVER BE USED (OPEN-SEA VALUE AT LAND         LWRAD1C.181   
+CL    ! POINTS AND SOLID-SURFACE VALUES AT ICE-FREE SEA POINTS) ARE        LWRAD1C.182   
+CL    ! ZEROED SO THAT THE 2 FIELDS WILL SUM TO THE ACTUAL BOX-MEAN FLUX   LWRAD1C.183   
+      DO 35 J=1, L2                                                        LWRAD1C.184   
+       IF (LAND(J)) THEN                                                   LWRAD1C.185   
+          LWSEA(J) = 0.                                                    LWRAD1C.186   
+        ELSE IF ( AICE(J) .EQ. 0. ) THEN                                   LWRAD1C.187   
+          LWSEA(J) = LWOUT(J,1)                                            LWRAD1C.188   
+          LWOUT(J,1) = 0.                                                  LWRAD1C.189   
+        ELSE                                                               LWRAD1C.190   
+C         ! OVERALL, LWOUT(,1) = AICE * ( LWOUT(,1) + (1.-AICE)*LWSEA )    LWRAD1C.191   
+          LWSEA(J) = (1.-AICE(J)) * ( LWOUT(J,1) - AICE(J)*LWSEA(J) )      LWRAD1C.192   
+          LWOUT(J,1) = LWOUT(J,1) - LWSEA(J)                               LWRAD1C.193   
+       ENDIF                                                               LWRAD1C.194   
+   35 CONTINUE                                                             LWRAD1C.195   
+C                                                                          LWRAD1C.196   
+CL    SECTION 5 - CALL LWDCSF TO CALCULATE CLEAR-SKY FRACTION              LWRAD1C.197   
+CL    ---------             AND PUT AWAY TOTAL CLOUD AMOUNT IF REQUESTED   LWRAD1C.198   
+C                                                                          LWRAD1C.199   
+      IF ( TCAON ) THEN                                                    LWRAD1C.200   
+        IF ( NCLDS .GT. 0 ) THEN                                           LWRAD1C.201   
+           CALL LWDCSF (LCA, CCA, CCB, CCT, NCLDS, L1, L2, TCADIA)         LWRAD1C.202   
+           DO J=1, L2                                                      LWRAD1C.203   
+             TCADIA(J) = 1. - TCADIA(J)                                    LWRAD1C.204   
+           ENDDO                                                           LWRAD1C.205   
+         ELSE                                                              LWRAD1C.206   
+           DO J=1, L2                                                      LWRAD1C.207   
+             TCADIA(J) = 0.                                                LWRAD1C.208   
+           ENDDO                                                           LWRAD1C.209   
+        ENDIF                                                              LWRAD1C.210   
+      ENDIF                                                                LWRAD1C.211   
+C                                                                          LWRAD1C.212   
+      RETURN                                                               LWRAD1C.213   
+      END                                                                  LWRAD1C.214   
+*ENDIF                                                                     LWRAD1C.215   

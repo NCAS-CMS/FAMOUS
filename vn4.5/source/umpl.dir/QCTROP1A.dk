@@ -1,0 +1,398 @@
+*IF DEF,A16_1A                                                             QCTROP1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.7867  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.7868  
+C                                                                          GTS2F400.7869  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.7870  
+C restrictions as set forth in the contract.                               GTS2F400.7871  
+C                                                                          GTS2F400.7872  
+C                Meteorological Office                                     GTS2F400.7873  
+C                London Road                                               GTS2F400.7874  
+C                BRACKNELL                                                 GTS2F400.7875  
+C                Berkshire UK                                              GTS2F400.7876  
+C                RG12 2SZ                                                  GTS2F400.7877  
+C                                                                          GTS2F400.7878  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.7879  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.7880  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.7881  
+C Modelling at the above address.                                          GTS2F400.7882  
+C ******************************COPYRIGHT******************************    GTS2F400.7883  
+C                                                                          GTS2F400.7884  
+CLL  SUBROUTINE QCTROP--------------------------------------------------   QCTROP1A.3     
+CLL                                                                        QCTROP1A.4     
+CLL   Purpose: Calculates tropopause temperature and pressure.             QCTROP1A.5     
+CLL            (This version uses approximation that z is linear with      QCTROP1A.6     
+CLL            Exner function within a layer)                              QCTROP1A.7     
+CLL            Quality control checks output and substitutes new           QCTROP1A.8     
+CLL            values where necessary                                      QCTROP1A.9     
+CLL                                                                        QCTROP1A.10    
+CLL  Model            Modification history from model version 3.0:         QCTROP1A.11    
+CLL version  Date                                                          QCTROP1A.12    
+CLL   3.2  19/04/93  Code for new real missing data indicator (TCJ).       TJ050593.115   
+CLL   4.2    Oct. 96  T3E migration: *DEF CRAY code removed - was used     GSS4F402.42    
+CLL                    to switch on HF functions.                          GSS4F402.43    
+CLL                                   S.J.Swarbrick                        GSS4F402.44    
+CLL   4.4  13/08/97  Limit thickness value to prevent LOG of               GDR2F404.18    
+CLL                  negative numbers. D. Robinson.                        GDR2F404.19    
+!LL   4.5  20/04/98  Implement START,END args so that duplicate            GSM1F405.514   
+!LL                  calculations in the NS halos can be avoided.          GSM1F405.515   
+!LL                  S.D.Mullerworth                                       GSM1F405.516   
+CLL                                                                        QCTROP1A.13    
+CLL Programming standard :                                                 QCTROP1A.14    
+CLL                                                                        QCTROP1A.15    
+CLL Logical components covered : D442                                      QCTROP1A.16    
+CLL                                                                        QCTROP1A.17    
+CLL Project task :                                                         QCTROP1A.18    
+CLL                                                                        QCTROP1A.19    
+CLL  Documentation: The interpolation formulae are described in            QCTROP1A.20    
+CLL                 unified model on-line documentation paper S1.          QCTROP1A.21    
+CLL                 Quality control documentation not yet published        QCTROP1A.22    
+CLL                                                                        QCTROP1A.23    
+CLLEND----------------------------------------------------------------     QCTROP1A.24    
+C                                                                          QCTROP1A.25    
+C*L  Arguments:-------------------------------------------------------     QCTROP1A.26    
+      SUBROUTINE QCTROP                                                    QCTROP1A.27    
+     &  (THETA,P_HALF,P_EXNER_HALF,ZH,TT,PT,ZT,POINTS,P_LEVELS             GSM1F405.517   
+     &  ,P_Z,P_T,PSTAR,Q,Q_LEVELS,Z_REF,T_REF                              GSM1F405.518   
+     &  ,MIN_TROP_LEVEL,BOTTOM_QC_LEVEL,TOP_QC_LEVEL,AKH,BKH               GSM1F405.519   
+     &  ,START,END)                                                        GSM1F405.520   
+                                                                           QCTROP1A.31    
+      IMPLICIT NONE                                                        QCTROP1A.32    
+                                                                           QCTROP1A.33    
+      INTEGER                                                              QCTROP1A.34    
+     * POINTS    !IN Number of points to be processed                      QCTROP1A.35    
+     *,P_LEVELS  !IN Number of model levels                                QCTROP1A.36    
+     *,Q_LEVELS  !IN Number of wet levels                                  QCTROP1A.37    
+     *,Z_REF     !IN Reference level for height interpolation              QCTROP1A.38    
+     *,T_REF     !IN Reference level for temperature interpolation         QCTROP1A.39    
+     *,MIN_TROP_LEVEL  !IN Level no. for lowest possible tropopause.       QCTROP1A.40    
+     *                 !   Set to first level above boundary layer         QCTROP1A.41    
+     *,BOTTOM_QC_LEVEL  !IN Lower level no. for quality control scheme     QCTROP1A.42    
+     *,TOP_QC_LEVEL   !IN Upper level no. for quality control scheme       QCTROP1A.43    
+     &,START,END !IN Range of points to calculate                          GSM1F405.521   
+                                                                           QCTROP1A.44    
+      REAL                                                                 QCTROP1A.45    
+     * THETA(POINTS,P_LEVELS) !IN Potential temperature at full levels     QCTROP1A.46    
+     *,P_HALF(POINTS,P_LEVELS+1) !IN                                       QCTROP1A.47    
+     *,P_EXNER_HALF(POINTS,P_LEVELS+1) !IN Exner pressure at model         QCTROP1A.48    
+     *                                 !   half levels                     QCTROP1A.49    
+     *,ZH(POINTS,P_LEVELS+1)  !IN Height of model half levels              QCTROP1A.50    
+     *,P_Z(POINTS)      !IN Pressure at reference level Z_REF              QCTROP1A.51    
+     *,P_T(POINTS)      !IN Pressure at reference level T_REF              QCTROP1A.52    
+     *,PSTAR(POINTS)   !IN Surface pressure                                QCTROP1A.53    
+     *,Q(POINTS,Q_LEVELS)     !IN Specific humidity at full levels         QCTROP1A.54    
+     *,AKH(P_LEVELS+1)        !IN Hybrid Coords. A values on half levels   QCTROP1A.55    
+     *,BKH(P_LEVELS+1)        !IN Hybrid Coords. B values on half levels   QCTROP1A.56    
+     *,TT(POINTS)             !OUT Temperature of tropopause               QCTROP1A.57    
+     *,PT(POINTS)             !OUT Pressure of tropopause                  QCTROP1A.58    
+     *,ZT(POINTS)             !OUT Height of tropopause                    QCTROP1A.59    
+                                                                           QCTROP1A.60    
+C Workspace usage:-----------------------------------------------------    QCTROP1A.61    
+       REAL LAPSE_RATE(POINTS,MIN_TROP_LEVEL:P_LEVELS)                     QCTROP1A.62    
+       LOGICAL LTROP(POINTS)                                               QCTROP1A.63    
+C Workspace used for quality control:----------------------------------    QCTROP1A.64    
+      INTEGER INDEX(1:TOP_QC_LEVEL-BOTTOM_QC_LEVEL+1)                      QCTROP1A.65    
+      REAL WEIGHT_REF(POINTS),PT_QC(POINTS),WEIGHT_LR(POINTS,2)            QCTROP1A.66    
+     *,WEIGHT_LR_INT(POINTS),PT_TT(POINTS),WEIGHT_TT_INT(POINTS)           QCTROP1A.67    
+     *,WEIGHT_TOT_INT(POINTS),P_UPPER(POINTS),P_LOWER(POINTS),SD(POINTS)   QCTROP1A.68    
+     *,PZ(POINTS,2),THICK(POINTS),ZZ(POINTS,2),TT_QC(POINTS),PZS(2)        QCTROP1A.69    
+     *,TH_REF(8),A_REF(8),G_REF(8),SD_REF(8)                               QCTROP1A.70    
+C External subroutines called:-----------------------------------------    QCTROP1A.71    
+      EXTERNAL V_INT_Z, V_INT_T                                            QCTROP1A.73    
+C*---------------------------------------------------------------------    QCTROP1A.74    
+C Define local variables:----------------------------------------------    QCTROP1A.75    
+      INTEGER I,J,K,JP1                                                    QCTROP1A.76    
+      REAL PJP1,PJ,PJM1  !  Pressures at half levels J+1/J/J-1             QCTROP1A.77    
+      REAL P_EXNER_FULL_J,P_EXNER_FULL_JM1                                 QCTROP1A.78    
+     *,DEL_EXNER_J,DEL_EXNER_JM1,TERM1,TERM2                               QCTROP1A.79    
+     *,ZDT,P_EXNER_T                                                       QCTROP1A.80    
+     *,ZDJM1,ZDJ                                                           GSS4F402.45    
+                                                                           GSS4F402.46    
+C*---------------------------------------------------------------------    QCTROP1A.82    
+C Define local variables for quality control:--------------------------    QCTROP1A.83    
+      INTEGER LOOP,JINT,LOOP_INDEX                                         QCTROP1A.84    
+      REAL FUNC_LR,RIP,P_FACTOR,PSIGWT,TUNER_LR,TUNER_TT                   QCTROP1A.85    
+     *,SILLY,SDLIM,TRP_MAX,REAL_INCR                                       QCTROP1A.86    
+     *,LO_WT                                                               QCTROP1A.87    
+C*---------------------------------------------------------------------    QCTROP1A.88    
+C Define data for quality control:-------------------------------------    QCTROP1A.89    
+      DATA PZS/100000.,50000./                                             QCTROP1A.90    
+      DATA TH_REF/4380.,4740.,4920.,5100.,5280.,5460.,5640.,5820./         QCTROP1A.91    
+      DATA A_REF/1852.7,1483.7,1457.7,821.62                               QCTROP1A.92    
+     &          ,1995.7,2758.5,568.56,1852.7/                              QCTROP1A.93    
+      DATA G_REF/-3.0325,-2.4334,-2.2868,-1.0497                           QCTROP1A.94    
+     &          ,-3.2610,-4.6646,-0.7939,-3.0325/                          QCTROP1A.95    
+      DATA SD_REF/74.728,46.730,38.964,33.777                              QCTROP1A.96    
+     &           ,33.252,39.477,8.0700,74.728/                             QCTROP1A.97    
+C----------------------------------------------------------------------    QCTROP1A.98    
+C Constants from comdecks:---------------------------------------------    QCTROP1A.99    
+*CALL C_MDI                                                                TJ050593.116   
+*CALL C_G                                                                  QCTROP1A.100   
+*CALL C_R_CP                                                               QCTROP1A.101   
+*CALL C_LAPSE                                                              QCTROP1A.102   
+C----------------------------------------------------------------------    QCTROP1A.103   
+      REAL CP_OVER_G,ONE_OVER_KAPPA,P_EXNER_500,P_EXNER_50                 QCTROP1A.104   
+      PARAMETER(CP_OVER_G=CP/G)                                            QCTROP1A.105   
+      PARAMETER(ONE_OVER_KAPPA=1./KAPPA)                                   QCTROP1A.106   
+                                                                           QCTROP1A.107   
+*CALL P_EXNERC                                                             QCTROP1A.108   
+                                                                           QCTROP1A.109   
+CL 1. Set up local constants and initialise arrays                         QCTROP1A.110   
+                                                                           QCTROP1A.111   
+      P_EXNER_500=(500./1000.)**KAPPA                                      QCTROP1A.112   
+      P_EXNER_50=(50./1000.)**KAPPA                                        QCTROP1A.113   
+                                                                           QCTROP1A.114   
+      DO I=START,END                                                       GSM1F405.522   
+                                                                           QCTROP1A.116   
+C Initialise logical string which indicates whether tropopause found       QCTROP1A.117   
+C at a lower level: LTROP=T is not found; LTROP=F is found.                QCTROP1A.118   
+                                                                           QCTROP1A.119   
+      LTROP(I)=.TRUE.                                                      QCTROP1A.120   
+                                                                           QCTROP1A.121   
+C Initialise tropopause height and pressure to missing data                QCTROP1A.122   
+                                                                           QCTROP1A.123   
+      PT(I)=RMDI                                                           TJ050593.117   
+      TT(I)=RMDI                                                           TJ050593.118   
+      ZT(I)=RMDI                                                           TJ050593.119   
+                                                                           QCTROP1A.127   
+      ENDDO ! DO I=START,END                                               GSM1F405.523   
+                                                                           QCTROP1A.129   
+CL 2. Compute lapse rate between full levels: equation (3.16)              QCTROP1A.130   
+                                                                           QCTROP1A.131   
+                                                                           QCTROP1A.132   
+      DO 200 J=MIN_TROP_LEVEL,P_LEVELS                                     QCTROP1A.133   
+      DO 210 I=START,END                                                   GSM1F405.524   
+                                                                           QCTROP1A.135   
+C Exner pressure at full levels                                            QCTROP1A.136   
+      PJP1 = AKH(J+1) + BKH(J+1)*PSTAR(I)                                  QCTROP1A.137   
+      PJ   = AKH(J)   + BKH(J)  *PSTAR(I)                                  QCTROP1A.138   
+      PJM1 = AKH(J-1) + BKH(J-1)*PSTAR(I)                                  QCTROP1A.139   
+      P_EXNER_FULL_J = P_EXNER_C                                           QCTROP1A.140   
+     +(P_EXNER_HALF(I,J+1),P_EXNER_HALF(I,J),PJP1,PJ,KAPPA)                QCTROP1A.141   
+      P_EXNER_FULL_JM1 = P_EXNER_C                                         QCTROP1A.142   
+     +(P_EXNER_HALF(I,J),P_EXNER_HALF(I,J-1),PJ,PJM1,KAPPA)                QCTROP1A.143   
+                                                                           QCTROP1A.144   
+C Exner pressure difference across half layers                             QCTROP1A.145   
+      DEL_EXNER_J=P_EXNER_HALF(I,J)-P_EXNER_FULL_J                         QCTROP1A.146   
+      DEL_EXNER_JM1=P_EXNER_FULL_JM1-P_EXNER_HALF(I,J)                     QCTROP1A.147   
+                                                                           QCTROP1A.148   
+C Denominator                                                              QCTROP1A.149   
+      TERM2=CP_OVER_G*(THETA(I,J-1)*DEL_EXNER_JM1                          QCTROP1A.150   
+     *       +THETA(I,J)*DEL_EXNER_J)                                      QCTROP1A.151   
+                                                                           QCTROP1A.152   
+C Numerator                                                                QCTROP1A.153   
+      TERM1=THETA(I,J-1)*P_EXNER_FULL_JM1-THETA(I,J)*P_EXNER_FULL_J        QCTROP1A.154   
+                                                                           QCTROP1A.155   
+C Lapse rate between level j-1 and j                                       QCTROP1A.156   
+      LAPSE_RATE(I,J)=TERM1/TERM2                                          QCTROP1A.157   
+210   CONTINUE                                                             QCTROP1A.158   
+200   CONTINUE                                                             QCTROP1A.159   
+                                                                           QCTROP1A.160   
+CL 2.1. Quality control set up                                             QCTROP1A.161   
+                                                                           QCTROP1A.162   
+C Set up constants                                                         QCTROP1A.163   
+      TUNER_LR=1.0                                                         QCTROP1A.164   
+      TUNER_TT=0.5                                                         QCTROP1A.165   
+      SILLY=101320.0                                                       QCTROP1A.166   
+      LOOP_INDEX=9                                                         QCTROP1A.167   
+                                                                           QCTROP1A.168   
+C Evaluate 1000-500 HPa thickness in metres                                QCTROP1A.169   
+      DO 777 K=1,2                                                         QCTROP1A.170   
+        DO 778 I=START,END                                                 GSM1F405.525   
+          PZ(I,K)=PZS(K)                                                   QCTROP1A.172   
+  778   CONTINUE                                                           QCTROP1A.173   
+        CALL V_INT_Z(PZ(1,K),P_Z,PSTAR,P_EXNER_HALF,                       QCTROP1A.174   
+     &               THETA,Q,ZH,ZZ(1,K),POINTS,P_LEVELS,Q_LEVELS,          QCTROP1A.175   
+     &               Z_REF,AKH,BKH,START,END)                              GSM1F405.526   
+  777 CONTINUE                                                             QCTROP1A.177   
+      DO 779 I=START,END                                                   GSM1F405.527   
+        THICK(I)=ZZ(I,2)-ZZ(I,1)                                           QCTROP1A.179   
+        IF (THICK(I).GT.6100.0) THEN                                       GDR2F404.20    
+          write(6,*) 'QCTROP : Thickness = ',THICK(I),' Reset to 6100.'    GDR2F404.21    
+          THICK(I)=6100.0                                                  GDR2F404.22    
+        ENDIF                                                              GDR2F404.23    
+  779 CONTINUE                                                             QCTROP1A.180   
+                                                                           QCTROP1A.181   
+C Pick up relevant constants from arrays                                   QCTROP1A.182   
+      LOOP=1                                                               QCTROP1A.183   
+      DO 211 I=START,END                                                   GSM1F405.528   
+        SD(I)=SD_REF(LOOP)*100.0                                           QCTROP1A.185   
+        PT_TT(I)=(A_REF(LOOP)*100.0)+G_REF(LOOP)*10.0*THICK(I)             QCTROP1A.186   
+  211 CONTINUE                                                             QCTROP1A.187   
+                                                                           QCTROP1A.188   
+      DO 212 LOOP=2,8                                                      QCTROP1A.189   
+      DO 213 I=START,END                                                   GSM1F405.529   
+        IF(THICK(I).GE.TH_REF(LOOP))THEN                                   QCTROP1A.191   
+          SD(I)=SD_REF(LOOP)*100.0                                         QCTROP1A.192   
+          PT_TT(I)=(A_REF(LOOP)*100.0)+G_REF(LOOP)*10.0*THICK(I)           QCTROP1A.193   
+        ENDIF                                                              QCTROP1A.194   
+  213 CONTINUE                                                             QCTROP1A.195   
+  212 CONTINUE                                                             QCTROP1A.196   
+                                                                           QCTROP1A.197   
+C Set up an array of alternative values using weighting functions          QCTROP1A.198   
+      DO 220 I=START,END                                                   GSM1F405.530   
+        FUNC_LR=(LAPSE_RATE(I,BOTTOM_QC_LEVEL)-LAPSE_TROP)*1000.0          QCTROP1A.200   
+        IF(FUNC_LR.LT.0.0)THEN                                             QCTROP1A.201   
+          WEIGHT_LR(I,1)=1.0                                               QCTROP1A.202   
+        ELSE                                                               QCTROP1A.203   
+          WEIGHT_LR(I,1)=2.0/(EXP(FUNC_LR)+EXP(-FUNC_LR))                  QCTROP1A.207   
+        ENDIF                                                              QCTROP1A.209   
+  220 CONTINUE                                                             QCTROP1A.210   
+                                                                           QCTROP1A.211   
+C Set up default value for weighting function and trop pressure            QCTROP1A.212   
+      DO 230 I=START,END                                                   GSM1F405.531   
+        WEIGHT_REF(I)=WEIGHT_LR(I,1)          ! Must be set                QCTROP1A.214   
+        PT_QC(I)=SILLY               ! May not need to be set              QCTROP1A.215   
+  230 CONTINUE                                                             QCTROP1A.216   
+                                                                           QCTROP1A.217   
+C Evaluate weighting functions                                             QCTROP1A.218   
+      DO 240 J=BOTTOM_QC_LEVEL,TOP_QC_LEVEL                                QCTROP1A.219   
+        IF(J.GT.BOTTOM_QC_LEVEL)THEN                                       QCTROP1A.220   
+          DO 250 I=START,END                                               GSM1F405.532   
+            WEIGHT_LR(I,1)=WEIGHT_LR(I,2)                                  QCTROP1A.222   
+  250     CONTINUE                                                         QCTROP1A.223   
+        ENDIF                                                              QCTROP1A.224   
+        DO 260 I=START,END                                                 GSM1F405.533   
+          FUNC_LR=(LAPSE_RATE(I,J+1)-LAPSE_TROP)*1000.0                    QCTROP1A.226   
+          IF(FUNC_LR.LT.0.0)THEN                                           QCTROP1A.227   
+            WEIGHT_LR(I,2)=1.0                                             QCTROP1A.228   
+          ELSE                                                             QCTROP1A.229   
+            WEIGHT_LR(I,2)=2.0/(EXP(FUNC_LR)+EXP(-FUNC_LR))                QCTROP1A.233   
+          ENDIF                                                            QCTROP1A.235   
+  260   CONTINUE                                                           QCTROP1A.236   
+                                                                           QCTROP1A.237   
+        DO 270 JINT=1,LOOP_INDEX                                           QCTROP1A.238   
+C Contribution from lapse rate weighting function                          QCTROP1A.239   
+          DO 280 I=START,END                                               GSM1F405.534   
+            REAL_INCR=(P_HALF(I,J)-P_HALF(I,J+1))/9.0 ! FLOAT(LOOP_INDEX   QCTROP1A.241   
+            P_FACTOR=(REAL_INCR*(JINT-1))/(P_HALF(I,J+1)-P_HALF(I,J))      QCTROP1A.242   
+            WEIGHT_LR_INT(I)=WEIGHT_LR(I,1)+                               QCTROP1A.243   
+     &                      (WEIGHT_LR(I,1)-WEIGHT_LR(I,2))*P_FACTOR       QCTROP1A.244   
+            IF(WEIGHT_LR_INT(I).GT.1.0)THEN                                QCTROP1A.245   
+              WEIGHT_LR_INT(I)=1.0                                         QCTROP1A.246   
+            ELSEIF(WEIGHT_LR_INT(I).LT.0.0)THEN                            QCTROP1A.247   
+              WEIGHT_LR_INT(I)=0.0                                         QCTROP1A.248   
+            ENDIF                                                          QCTROP1A.249   
+C Contribution from pseudo-sigma weighting                                 QCTROP1A.250   
+            PSIGWT=(P_HALF(I,J)-REAL_INCR*(JINT-1))*0.00001                QCTROP1A.251   
+            WEIGHT_LR_INT(I)=(WEIGHT_LR_INT(I)+PSIGWT)*TUNER_LR            QCTROP1A.252   
+C Contribution from thickness weighting function                           QCTROP1A.253   
+            RIP=P_HALF(I,J)-REAL_INCR*(JINT-1)                             QCTROP1A.254   
+            TERM1=-((RIP-PT_TT(I))*(RIP-PT_TT(I)))                         QCTROP1A.255   
+     &            /(2.0*SD(I)*SD(I))                                       QCTROP1A.256   
+            WEIGHT_TT_INT(I)=EXP(TERM1)*TUNER_TT                           QCTROP1A.260   
+            WEIGHT_TOT_INT(I)=WEIGHT_LR_INT(I)+WEIGHT_TT_INT(I)            QCTROP1A.262   
+C Update trop pressure where total weighting function is a maximum         QCTROP1A.263   
+            IF(WEIGHT_REF(I).LT.WEIGHT_TOT_INT(I))THEN                     QCTROP1A.264   
+              WEIGHT_REF(I)=WEIGHT_TOT_INT(I)                              QCTROP1A.265   
+              PT_QC(I)=RIP                                                 QCTROP1A.266   
+            ENDIF                                                          QCTROP1A.267   
+  280     CONTINUE                                                         QCTROP1A.268   
+  270   CONTINUE                                                           QCTROP1A.269   
+  240 CONTINUE                                                             QCTROP1A.270   
+C Set a silly value if total weighting function is less than 1.0           QCTROP1A.271   
+C (This will nullify any attempt to provide a substitute value)            QCTROP1A.272   
+      DO 290 I=START,END                                                   GSM1F405.535   
+        IF(WEIGHT_REF(I).LT.1.0)THEN                                       QCTROP1A.274   
+          PT_QC(I)=SILLY                                                   QCTROP1A.275   
+        ENDIF                                                              QCTROP1A.276   
+  290 CONTINUE                                                             QCTROP1A.277   
+                                                                           QCTROP1A.278   
+C Obtain corresponding temperatures for alternative tropopause pressures   QCTROP1A.279   
+      CALL V_INT_T(TT_QC,PT_QC,P_T,PSTAR,P_EXNER_HALF                      QCTROP1A.280   
+     &  ,THETA,POINTS,P_LEVELS,T_REF,AKH,BKH                               GSM1F405.536   
+     &  ,START,END)                                                        GSM1F405.537   
+C Estimate range of trop pressures allowed by quality control scheme       QCTROP1A.282   
+      SDLIM=3.0                                                            QCTROP1A.283   
+      DO 2110 I=START,END                                                  GSM1F405.538   
+        P_UPPER(I)=PT_TT(I)+SDLIM*SD(I)                                    QCTROP1A.285   
+        P_LOWER(I)=EXP(2.0*ALOG(PT_TT(I))-ALOG(P_UPPER(I)))                QCTROP1A.289   
+ 2110 CONTINUE                                                             QCTROP1A.291   
+                                                                           QCTROP1A.292   
+CL 3. Calculate tropopause temperature, height  and pressure               QCTROP1A.293   
+                                                                           QCTROP1A.294   
+      LO_WT=0.5                                                            QCTROP1A.295   
+                                                                           QCTROP1A.296   
+      DO 300 J=MIN_TROP_LEVEL+1,P_LEVELS                                   QCTROP1A.297   
+      JP1=MIN(J+1,P_LEVELS)                                                QCTROP1A.298   
+      DO 310 I=START,END                                                   GSM1F405.539   
+                                                                           QCTROP1A.300   
+C Exner pressure at full levels                                            QCTROP1A.301   
+      PJP1 = AKH(J+1) + BKH(J+1)*PSTAR(I)                                  QCTROP1A.302   
+      PJ   = AKH(J)   + BKH(J)  *PSTAR(I)                                  QCTROP1A.303   
+      PJM1 = AKH(J-1) + BKH(J-1)*PSTAR(I)                                  QCTROP1A.304   
+      P_EXNER_FULL_J = P_EXNER_C                                           QCTROP1A.305   
+     +(P_EXNER_HALF(I,J+1),P_EXNER_HALF(I,J),PJP1,PJ,KAPPA)                QCTROP1A.306   
+      P_EXNER_FULL_JM1 = P_EXNER_C                                         QCTROP1A.307   
+     +(P_EXNER_HALF(I,J),P_EXNER_HALF(I,J-1),PJ,PJM1,KAPPA)                QCTROP1A.308   
+                                                                           QCTROP1A.309   
+C Criteria for layer containing tropopause                                 QCTROP1A.310   
+C (where 'layer' is interval between level j and level j-1)                QCTROP1A.311   
+      IF(P_EXNER_FULL_J.LT.P_EXNER_500.AND.                                QCTROP1A.312   
+     * P_EXNER_FULL_JM1.GT.P_EXNER_50.AND.                                 QCTROP1A.313   
+     * ((LAPSE_RATE(I,J)*LO_WT)+(LAPSE_RATE(I,JP1)*(1.0-LO_WT))).LT.       QCTROP1A.314   
+     * LAPSE_TROP.AND.LTROP(I))THEN                                        QCTROP1A.315   
+                                                                           QCTROP1A.316   
+C Reset logical string to say tropause now found                           QCTROP1A.317   
+      LTROP(I)=.FALSE.                                                     QCTROP1A.318   
+                                                                           QCTROP1A.319   
+C Z(j-1)-Z(j-1/2); Z(j)-Z(j-1/2)                                           QCTROP1A.320   
+      ZDJM1=CP_OVER_G*THETA(I,J-1)*(P_EXNER_HALF(I,J)-P_EXNER_FULL_JM1)    QCTROP1A.321   
+      ZDJ=CP_OVER_G*THETA(I,J)*(P_EXNER_HALF(I,J)-P_EXNER_FULL_J)          QCTROP1A.322   
+                                                                           QCTROP1A.323   
+C Z(tropopause) - Z(j-1/2): equation (3.19)                                QCTROP1A.324   
+      ZDT=(THETA(I,J-1)*P_EXNER_FULL_JM1-THETA(I,J)*P_EXNER_FULL_J         QCTROP1A.325   
+     *+LAPSE_RATE(I,J-1)*ZDJM1                                             QCTROP1A.326   
+     *-LAPSE_RATE(I,JP1)*ZDJ)                                              QCTROP1A.327   
+     */MAX(1.E-6,(LAPSE_RATE(I,J-1)-LAPSE_RATE(I,JP1)))                    QCTROP1A.328   
+                                                                           QCTROP1A.329   
+C Ensure trop level doesn't undershoot Z(j-1) (cannot overshoot Z(j) )     QCTROP1A.330   
+      ZDT=MAX(ZDT,ZDJM1)                                                   QCTROP1A.331   
+                                                                           QCTROP1A.332   
+C Tropopause Height                                                        QCTROP1A.333   
+      ZT(I)=ZDT+ZH(I,J)                                                    QCTROP1A.334   
+      ZDT=MIN(ZDT,ZDJ)                                                     QCTROP1A.335   
+                                                                           QCTROP1A.336   
+C Tropopause temperature : equation (3.20)                                 QCTROP1A.337   
+      TT(I)=THETA(I,J)*P_EXNER_FULL_J                                      QCTROP1A.338   
+     *     -LAPSE_RATE(I,JP1)*(ZDT-ZDJ)                                    QCTROP1A.339   
+                                                                           QCTROP1A.340   
+C Exner pressure of tropopause: equation (3.22)                            QCTROP1A.341   
+      IF(ZDT.GT.0.0)THEN                                                   QCTROP1A.342   
+        P_EXNER_T=P_EXNER_HALF(I,J)-G*ZDT/(CP*THETA(I,J))                  QCTROP1A.343   
+      ELSE                                                                 QCTROP1A.344   
+        P_EXNER_T=P_EXNER_HALF(I,J)-G*ZDT/(CP*THETA(I,J-1))                QCTROP1A.345   
+      ENDIF                                                                QCTROP1A.346   
+                                                                           QCTROP1A.347   
+C Pressure of tropopause: equation (3.21)                                  QCTROP1A.348   
+      PT(I)=PREF*(P_EXNER_T)**ONE_OVER_KAPPA                               QCTROP1A.352   
+                                                                           QCTROP1A.354   
+      ENDIF                                                                QCTROP1A.355   
+                                                                           QCTROP1A.356   
+310   CONTINUE                                                             QCTROP1A.357   
+300   CONTINUE                                                             QCTROP1A.358   
+                                                                           QCTROP1A.359   
+CL 4. Apply quality control to results                                     QCTROP1A.360   
+                                                                           QCTROP1A.361   
+      DO 400 I=START,END                                                   GSM1F405.540   
+        IF(PT(I).LT.P_LOWER(I).AND.PT_QC(I).LT.P_UPPER(I).AND.             QCTROP1A.363   
+     &     PT(I).LT.PT_QC(I))THEN                                          QCTROP1A.364   
+          PT(I)=PT_QC(I)                                                   QCTROP1A.365   
+          TT(I)=TT_QC(I)                                                   QCTROP1A.366   
+        ENDIF                                                              QCTROP1A.367   
+  400 CONTINUE                                                             QCTROP1A.368   
+                                                                           QCTROP1A.369   
+C-----------------------------------------------------------------------   QCTROP1A.370   
+C Set arbitrary max tropopause                                             QCTROP1A.371   
+C-----------------------------------------------------------------------   QCTROP1A.372   
+      TRP_MAX=10100.0                                                      QCTROP1A.373   
+      DO I=START,END                                                       GSM1F405.541   
+        IF(PT(I).LT.TRP_MAX)THEN                                           QCTROP1A.375   
+          PT(I)=TRP_MAX                                                    QCTROP1A.376   
+          TT(I)=199                                                        QCTROP1A.377   
+          ZT(I)=16180                                                      QCTROP1A.378   
+        ENDIF                                                              QCTROP1A.379   
+      ENDDO                                                                QCTROP1A.380   
+                                                                           QCTROP1A.381   
+      RETURN                                                               QCTROP1A.382   
+      END                                                                  QCTROP1A.383   
+*ENDIF                                                                     QCTROP1A.384   

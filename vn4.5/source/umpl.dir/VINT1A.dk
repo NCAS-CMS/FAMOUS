@@ -1,0 +1,236 @@
+*IF DEF,C92_1A,OR,DEF,BCRECONF,OR,DEF,MAKEBC                               UIE3F404.64    
+C ******************************COPYRIGHT******************************    GTS2F400.11629 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.11630 
+C                                                                          GTS2F400.11631 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.11632 
+C restrictions as set forth in the contract.                               GTS2F400.11633 
+C                                                                          GTS2F400.11634 
+C                Meteorological Office                                     GTS2F400.11635 
+C                London Road                                               GTS2F400.11636 
+C                BRACKNELL                                                 GTS2F400.11637 
+C                Berkshire UK                                              GTS2F400.11638 
+C                RG12 2SZ                                                  GTS2F400.11639 
+C                                                                          GTS2F400.11640 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.11641 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.11642 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.11643 
+C Modelling at the above address.                                          GTS2F400.11644 
+C ******************************COPYRIGHT******************************    GTS2F400.11645 
+C                                                                          GTS2F400.11646 
+CLL  SUBROUTINE V_INT-------------------------------------------------     VINT1A.3     
+CLL                                                                        VINT1A.4     
+CLL  Purpose:  Performs vertical interpolation from one arbitrary set      VINT1A.5     
+CLL            of pressure levels to another. The technique used is        VINT1A.6     
+CLL            linear interpolation in log(p). When interpolating          VINT1A.7     
+CLL            wind components there is an option (controlled by           VINT1A.8     
+CLL            MAX_WIND) for including data from max wind modelling.       VINT1A.9     
+CLL                                                                        VINT1A.10    
+CLL  Written by A. Dickinson                                               VINT1A.11    
+CLL                                                                        VINT1A.12    
+CLL  Model            Modification history from model version 3.0:         VINT1A.13    
+CLL version  date                                                          VINT1A.14    
+CLL   3.1  23/02/93    DO ALL directive inserted before loop 240           AD230293.1     
+CLL                    Author: A. Dickinson    Reviewer: F. Rawlins        AD230293.2     
+CLL                                                                        AD230293.3     
+CLL   4.2  01/07/96    Revised for CRAY T3E. Vector gather replaced        GSS5F402.55    
+CLL                    by algorithm in which each term in the              GSS5F402.56    
+CLL                    interpolation formula is first collected into       GSS5F402.57    
+CLL                    a separate array and the interpolation              GSS5F402.58    
+CLL                    calculation carried out after the loop over level   GSS5F402.59    
+CLL                    New arguments START and END introduced to           GSS5F402.60    
+CLL                    facilitate the removal of duplicate calculations    GSS5F402.61    
+CLL                    when using domain decomposition in MPP mode.        GSS5F402.62    
+CLL                    Author: A. Dickinson    Reviewer: F. Rawlins        GSS5F402.63    
+!LL   4.5  14/04/98    Use assumption that neighbouring points are         GSM1F405.1     
+!LL                    likely to be on or near same level. Jump out        GSM1F405.2     
+!LL                    of loop-over-levels once level found. Results       GSM1F405.3     
+!LL                    in a 40 percent speedup on 19 levels for            GSM1F405.4     
+!LL                    non-vector machines. S.D.Mullerworth                GSM1F405.5     
+CLL                                                                        VINT1A.15    
+CLL                                                                        GSS5F402.64    
+CLL Programming standard :                                                 VINT1A.16    
+CLL                                                                        VINT1A.17    
+CLL Logical components covered : S111                                      VINT1A.18    
+CLL                                                                        VINT1A.19    
+CLL Project task :                                                         VINT1A.20    
+CLL                                                                        VINT1A.21    
+CLL  Documentation: The interpolation formulae are described in            VINT1A.22    
+CLL                 unified model on-line documentation paper S1.          VINT1A.23    
+CLL                                                                        VINT1A.24    
+CLLEND -----------------------------------------------------------------   VINT1A.25    
+C                                                                          VINT1A.26    
+C*L  ARGUMENTS:-------------------------------------------------------     VINT1A.27    
+      SUBROUTINE V_INT(P_IN,P_OUT,DATA_IN,DATA_OUT,POINTS,LEVELS           VINT1A.28    
+     *               ,DATA_MAXW,P_MAXW,MAX_WIND                            GSM1F405.6     
+     &               ,START,END)                                           GSM1F405.7     
+                                                                           VINT1A.30    
+      IMPLICIT NONE                                                        VINT1A.31    
+                                                                           VINT1A.32    
+      INTEGER                                                              VINT1A.33    
+     * POINTS ! Number of points to be processed.                          VINT1A.34    
+     *,LEVELS ! Number of levels in source data.                           VINT1A.35    
+     *,START  ! Start position at each level                               GSS5F402.67    
+     *,END    ! Last point to be processed at each level                   GSS5F402.68    
+                                                                           VINT1A.36    
+      REAL                                                                 VINT1A.37    
+     * P_IN(POINTS,LEVELS)   !IN 3-D field of pressures at which           VINT1A.38    
+     *                       ! source data is stored.                      VINT1A.39    
+     *,P_OUT(POINTS)         !IN Array of pressure values to be            VINT1A.40    
+     *                       ! interpolated to.                            VINT1A.41    
+     *,DATA_IN(POINTS,LEVELS)!IN Source data as 3-D field.                 VINT1A.42    
+     *,DATA_OUT(POINTS)      !OUT Result of interpolation.                 VINT1A.43    
+     *,DATA_MAXW(POINTS)     !IN Max wind data.                            VINT1A.44    
+     *,P_MAXW(POINTS)        !IN Pressure of max wind data.                VINT1A.45    
+                                                                           VINT1A.46    
+      LOGICAL                                                              VINT1A.47    
+     * MAX_WIND !IN Switch to include max winds if required.               VINT1A.48    
+                                                                           VINT1A.49    
+C Workspace usage:-----------------------------------------------------    VINT1A.50    
+      REAL                                                                 GSS5F402.69    
+     * P1(POINTS)            ! Upper input pressure \                      GSS5F402.70    
+     *,P2(POINTS)            ! Lower input pressure  \ Used in interp-     GSS5F402.71    
+     *,D1(POINTS)            ! Upper input data      / olation formula     GSS5F402.72    
+     *,D2(POINTS)            ! Lower input data     /                      GSS5F402.73    
+C External subroutines called:-----------------------------------------    VINT1A.53    
+C None                                                                     GSS5F402.74    
+C*---------------------------------------------------------------------    VINT1A.56    
+C Define local variables:----------------------------------------------    VINT1A.57    
+      INTEGER I,J                                                          GSM1F405.8     
+     &  ,LAST                   ! Stores level of preceding point          GSM1F405.9     
+      REAL ALPHA                                                           VINT1A.59    
+C----------------------------------------------------------------------    VINT1A.63    
+                                                                           GSS5F402.76    
+! Initialise LAST to any value between 1 and LEVELS                        GSM1F405.10    
+      LAST=2                                                               GSM1F405.11    
+      DO I=START,END                                                       GSM1F405.12    
+                                                                           GSS5F402.79    
+! Start from same level as last point. First check whether this point      GSM1F405.13    
+! is above or below, then continue search in appropriate direction         GSM1F405.14    
+        IF(P_OUT(I).GE.P_IN(I,LAST))THEN                                   GSM1F405.15    
+                                                                           GSS5F402.84    
+! These next two loops exit immediately once level found.                  GSM1F405.16    
+! GOTO cuts out needless looping once level is found, reducing the         GSM1F405.17    
+! cost of the routine by about 40 percent for 19 level runs.               GSM1F405.18    
+          DO J=LAST,2,-1                                                   GSM1F405.19    
+            IF(P_OUT(I).LT.P_IN(I,J-1))THEN                                GSM1F405.20    
+              GOTO 240                                                     GSM1F405.21    
+            ENDIF                                                          GSM1F405.22    
+          ENDDO                                                            GSM1F405.23    
+        ELSE                                                               GSM1F405.24    
+          DO J=LAST+1,LEVELS                                               GSM1F405.25    
+            IF(P_OUT(I).GE.P_IN(I,J))THEN                                  GSM1F405.26    
+              GOTO 240                                                     GSM1F405.27    
+            ENDIF                                                          GSM1F405.28    
+          ENDDO                                                            GSM1F405.29    
+        ENDIF                                                              GSM1F405.30    
+ 240    CONTINUE                                                           GSM1F405.31    
+                                                                           VINT1A.64    
+! At this point, J is:                                                     GSM1F405.32    
+!    1         for below bottom level.                                     GSM1F405.33    
+!    LEVELS+1  for above top level                                         GSM1F405.34    
+!    Otherwise J is the level just above the point                         GSM1F405.35    
+                                                                           VINT1A.66    
+        IF (J.GT.1.AND.J.LE.LEVELS)THEN                                    GSM1F405.36    
+! Between top and bottom level                                             GSM1F405.37    
+          P1(I)=P_IN(I,J)                                                  GSS5F402.103   
+          P2(I)=P_IN(I,J-1)                                                GSS5F402.104   
+          D1(I)=DATA_IN(I,J)                                               GSS5F402.105   
+          D2(I)=DATA_IN(I,J-1)                                             GSS5F402.106   
+          LAST=J                                                           GSM1F405.38    
+        ELSE                                                               GSM1F405.39    
+! Special case; above top or below bottom.                                 GSM1F405.40    
+! Set output field to top/bottom-most input field                          GSM1F405.41    
+          IF(J.EQ.LEVELS+1)J=LEVELS                                        GSM1F405.42    
+          P1(I)=P_OUT(I)                                                   GSM1F405.43    
+          P2(I)=1.0                                                        GSM1F405.44    
+          D1(I)=DATA_IN(I,J)                                               GSM1F405.45    
+          D2(I)=0.0                                                        GSM1F405.46    
+          LAST=J                                                           GSM1F405.47    
+        ENDIF                                                              GSM1F405.48    
+      ENDDO ! DO I=START,END                                               GSM1F405.49    
+                                                                           VINT1A.104   
+! If there is an extra level of winds from max wind modelling, include     GSM1F405.50    
+! these in the interpolation. Repeat the level-finding logic because       GSM1F405.51    
+! there are no calls with MAX_WIND=.TRUE. in UM so do not want to slow     GSM1F405.52    
+! down the above loop by including the MAX_WIND test in the above.         GSM1F405.53    
+                                                                           VINT1A.108   
+      IF (MAX_WIND)THEN                                                    GSM1F405.54    
+        DO I=START,END                                                     GSM1F405.55    
+                                                                           VINT1A.110   
+! If max wind level between current levels, redo interpolation             GSM1F405.56    
+! incorporating max wind info.                                             GSM1F405.57    
+                                                                           VINT1A.112   
+! Start from same level as last point. First check whether this point      GSM1F405.58    
+! is above or below, then check all levels above/below in turn             GSM1F405.59    
+          IF(P_OUT(I).GE.P_IN(I,LAST))THEN                                 GSM1F405.60    
+! Below LAST level.                                                        GSM1F405.61    
+! These loops exit immediately once level found.                           GSM1F405.62    
+! GOTO cuts out needless looping once level is found, reducing the         GSM1F405.63    
+! cost of the routine by about 40 percent for 19 level runs.               GSM1F405.64    
+            DO J=LAST,2,-1                                                 GSM1F405.65    
+              IF(P_OUT(I).LT.P_IN(I,J-1))THEN                              GSM1F405.66    
+                GOTO 340                                                   GSM1F405.67    
+              ENDIF                                                        GSM1F405.68    
+            ENDDO                                                          GSM1F405.69    
+          ELSE                                                             GSM1F405.70    
+            DO J=LAST+1,LEVELS                                             GSM1F405.71    
+              IF(P_OUT(I).GE.P_IN(I,J))THEN                                GSM1F405.72    
+                GOTO 340                                                   GSM1F405.73    
+              ENDIF                                                        GSM1F405.74    
+            ENDDO                                                          GSM1F405.75    
+          ENDIF                                                            GSM1F405.76    
+ 340      CONTINUE                                                         GSM1F405.77    
+                                                                           VINT1A.123   
+          IF(J.GT.1.AND.J.LE.LEVELS)THEN                                   GSM1F405.78    
+            IF(P_MAXW(I).LT.P_IN(I,J-1).AND.P_MAXW(I).GE.P_IN(I,J))THEN    GSM1F405.79    
+                                                                           VINT1A.125   
+              IF(P_OUT(I).LT.P_MAXW(I))THEN                                GSM1F405.80    
+                                                                           VINT1A.127   
+! (i)  p(maxwind) > p(out) >= p(j)                                         GSM1F405.81    
+                                                                           VINT1A.138   
+                P2(I)=P_MAXW(I)                                            GSM1F405.82    
+                D2(I)=DATA_MAXW(I)                                         GSM1F405.83    
+                                                                           GSM1F405.84    
+              ELSE                                                         GSM1F405.85    
+                                                                           GSM1F405.86    
+! (ii) p(j-1) > p(out) >= p(maxwind)                                       GSM1F405.87    
+                                                                           GSM1F405.88    
+                P1(I)=P_MAXW(I)                                            GSM1F405.89    
+                D1(I)=DATA_MAXW(I)                                         GSM1F405.90    
+                                                                           GSM1F405.91    
+              ENDIF                                                        GSM1F405.92    
+            ENDIF                                                          VINT1A.139   
+          ENDIF                                                            VINT1A.141   
+                                                                           VINT1A.142   
+        ENDDO                   ! DO I=START,END                           GSM1F405.93    
+                                                                           VINT1A.175   
+      ENDIF                                                                VINT1A.176   
+                                                                           GSS5F402.124   
+CL 3. Compute equation (3.3)                                               GSS5F402.125   
+                                                                           GSS5F402.126   
+*IF DEF,VECTLIB                                                            PXVECTLB.152   
+      CALL ONEOVER_V(END-START+1,P2(START),P2(START))                      GSS5F402.128   
+      DO I=START,END                                                       GSS5F402.129   
+        P1(I)=P1(I)*P2(I)                                                  GSS5F402.130   
+        P2(I)=P_OUT(I)*P2(I)                                               GSS5F402.131   
+      ENDDO                                                                GSS5F402.132   
+      CALL ALOG_V(END-START+1,P1(START),P1(START))                         GSS5F402.133   
+      CALL ONEOVER_V(END-START+1,P1(START),P1(START))                      GSS5F402.134   
+      CALL ALOG_V(END-START+1,P2(START),P2(START))                         GSS5F402.135   
+      DO I=START,END                                                       GSS5F402.136   
+        ALPHA=P1(I)*P2(I)                                                  GSS5F402.137   
+        DATA_OUT(I)=ALPHA*D1(I)+(1.-ALPHA)*D2(I)                           GSS5F402.138   
+      ENDDO                                                                GSS5F402.139   
+*ELSE                                                                      GSS5F402.140   
+C Compute alpha, the interpolation weight given by equation (3.4)          GSS5F402.141   
+      DO I=START,END                                                       GSS5F402.142   
+          ALPHA=ALOG(P_OUT(I)/P2(I))                                       GSS5F402.143   
+     *         /ALOG(P1(I)/P2(I))                                          GSS5F402.144   
+C Then apply equation (3.3)                                                GSS5F402.145   
+          DATA_OUT(I)=ALPHA*D1(I)+(1.-ALPHA)*D2(I)                         GSS5F402.146   
+      ENDDO                                                                GSS5F402.147   
+*ENDIF                                                                     GSS5F402.148   
+                                                                           VINT1A.179   
+      RETURN                                                               VINT1A.180   
+      END                                                                  VINT1A.181   
+*ENDIF                                                                     VINT1A.182   

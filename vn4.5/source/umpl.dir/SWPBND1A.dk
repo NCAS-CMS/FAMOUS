@@ -1,0 +1,413 @@
+*IF DEF,C96_1A,AND,DEF,MPP                                                 GPB0F401.576   
+C ******************************COPYRIGHT******************************    GTS2F400.12888 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.12889 
+C                                                                          GTS2F400.12890 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.12891 
+C restrictions as set forth in the contract.                               GTS2F400.12892 
+C                                                                          GTS2F400.12893 
+C                Meteorological Office                                     GTS2F400.12894 
+C                London Road                                               GTS2F400.12895 
+C                BRACKNELL                                                 GTS2F400.12896 
+C                Berkshire UK                                              GTS2F400.12897 
+C                RG12 2SZ                                                  GTS2F400.12898 
+C                                                                          GTS2F400.12899 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.12900 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.12901 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.12902 
+C Modelling at the above address.                                          GTS2F400.12903 
+C                                                                          GTS2F400.12904 
+!+ Parallel UM: Updates halo areas                                         SWPBND1A.3     
+!                                                                          SWPBND1A.4     
+! Subroutine interface:                                                    SWPBND1A.5     
+      SUBROUTINE SWAPBOUNDS(FIELD,X_SIZE,Y_SIZE,X_OFF,Y_OFF,N_LEVELS)      SWPBND1A.6     
+                                                                           SWPBND1A.7     
+      IMPLICIT NONE                                                        SWPBND1A.8     
+!                                                                          SWPBND1A.9     
+! Description:                                                             SWPBND1A.10    
+! This routine fills the halo areas (of size X_OFF in the x dimension      SWPBND1A.11    
+! and Y_OFF in the y dimension) of the first N_LEVELS of the array         SWPBND1A.12    
+! FIELD with the appropriate data from adjacent processors.                SWPBND1A.13    
+! If *DEF,GLOBAL is set, a east-west wrap around of data will              SWPBND1A.14    
+! occur.                                                                   SWPBND1A.15    
+!                                                                          SWPBND1A.16    
+! Method:                                                                  SWPBND1A.17    
+! Data to be sent to adjacent processors is packed into a sending          SWPBND1A.18    
+! array (which is on a COMMON block for T3D shmem useage), and             SWPBND1A.19    
+! sent to the relevant processors using GC_RSEND. The data is              SWPBND1A.20    
+! received by GC_RRECV, and then unpacked into the relevant halo           SWPBND1A.21    
+! area.                                                                    SWPBND1A.22    
+!                                                                          SWPBND1A.23    
+! Current Code Owner: Paul Burton                                          SWPBND1A.24    
+!                                                                          SWPBND1A.25    
+! History:                                                                 SWPBND1A.26    
+!  Model    Date     Modification history from model version 3.5           SWPBND1A.27    
+!  version                                                                 SWPBND1A.28    
+!    3.5    9/1/95   New DECK created for the Parallel Unified             SWPBND1A.29    
+!                    Model. P.Burton + R.Skaalin                           SWPBND1A.30    
+!    4.1    18/3/96  Changed message ids to avoid clashes.                 GPB0F401.577   
+!                    Buffer logic revised. Removed timer   P.Burton        GPB0F401.578   
+!    4.2    28/11/96 Added comdeck AMAXSIZE - reqd for BUFFERS             GPB3F402.107   
+!    4.2    17/10/96  Use SETOPT to force shmem comms type.  P.Burton      GPB2F402.361   
+!    4.3    24/02/97  Replace EW comms with single send/receive pairs      GPB3F403.296   
+!                     if less than 3 PEs in the EW direction.              GPB3F403.297   
+!                                                            P.Burton      GPB3F403.298   
+!    4.3    18/03/97  Update N & S superpolar rows with polar values,      ARB0F403.1     
+!                     to stop drift to large -ve temps in these rows.      ARB0F403.2     
+!                                                       R.T.H.Barnes.      ARB0F403.3     
+!                                                                          SWPBND1A.31    
+! Subroutine Arguments:                                                    SWPBND1A.32    
+                                                                           SWPBND1A.33    
+      INTEGER                                                              SWPBND1A.34    
+     &   X_SIZE       ! IN  : X dimension of field (inc. halos)            SWPBND1A.35    
+     &,  Y_SIZE       ! IN  : Y dimension of field (inc. halos)            SWPBND1A.36    
+     &,  X_OFF        ! IN  : X halo size                                  SWPBND1A.37    
+     &,  Y_OFF        ! IN  : Y halo size                                  SWPBND1A.38    
+     & , N_LEVELS     ! IN  : Number of levels to be swapped               SWPBND1A.39    
+                                                                           SWPBND1A.40    
+      REAL FIELD(X_SIZE*Y_SIZE,N_LEVELS)                                   SWPBND1A.41    
+!                     ! IN/OUT : Field to take place in                    SWPBND1A.42    
+!                     !          boundary data exchange.                   SWPBND1A.43    
+                                                                           SWPBND1A.44    
+! Parameters and Common blocks                                             SWPBND1A.45    
+                                                                           SWPBND1A.46    
+*CALL PARVARS                                                              SWPBND1A.47    
+*CALL GCCOM                                                                GPB2F402.362   
+*CALL AMAXSIZE                                                             GPB3F402.108   
+*CALL BUFFERS                                                              SWPBND1A.51    
+                                                                           SWPBND1A.52    
+! Local variables                                                          SWPBND1A.53    
+                                                                           SWPBND1A.54    
+      INTEGER i,j,k, ioff, isize, jsize, info                              SWPBND1A.55    
+                                                                           SWPBND1A.56    
+! ------------------------------------------------------------------       SWPBND1A.57    
+      CALL GC_SSYNC(nproc,info)                                            GPB0F401.579   
+                                                                           GPB0F401.580   
+      IF (Y_OFF .GT. 0) THEN                                               GPB0F401.581   
+!       Do North/South communication                                       GPB0F401.582   
+                                                                           GPB0F401.583   
+!       Send to Northen neighbour                                          GPB0F401.584   
+                                                                           GPB0F401.585   
+                                                                           GPB2F402.363   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.364   
+                                                                           GPB2F402.365   
+        IF (neighbour(PNorth) .NE. NoDomain) THEN                          GPB0F401.586   
+          ioff = X_SIZE*Y_OFF+X_OFF                                        GPB0F401.587   
+          isize = (X_SIZE-(2*X_OFF))*N_LEVELS                              GPB0F401.588   
+          DO j = 1, Y_OFF                                                  GPB0F401.589   
+            DO k = 1, N_LEVELS                                             GPB0F401.590   
+              DO i = 1, (X_SIZE-(2*X_OFF))                                 GPB0F401.591   
+                buf1((j-1)*isize+(k-1)*(X_SIZE-(2*X_OFF))+i)               GPB0F401.592   
+     &             = FIELD(ioff+i,k)                                       GPB0F401.593   
+              ENDDO                                                        GPB0F401.594   
+            ENDDO                                                          GPB0F401.595   
+            ioff = ioff + X_SIZE                                           GPB0F401.596   
+          ENDDO                                                            GPB0F401.597   
+          info=GC_NONE                                                     GPB2F402.366   
+          CALL GC_RSEND(1001, isize*Y_OFF, neighbour(PNorth),              GPB0F401.598   
+     &                  info, buf3, buf1)                                  GPB0F401.599   
+        ELSE                                                               ARB0F403.4     
+! Copy values to Northmost row (outside domain)                            ARB0F403.5     
+          DO k = 1,N_LEVELS                                                ARB0F403.6     
+            DO j = 1,Y_OFF                                                 ARB0F403.7     
+              DO i = 1,X_SIZE                                              ARB0F403.8     
+                FIELD((j-1)*x_size+i,k) = FIELD(y_off*x_size+i,k)          ARB0F403.9     
+              END DO                                                       ARB0F403.10    
+            END DO                                                         ARB0F403.11    
+          END DO                                                           ARB0F403.12    
+        ENDIF                                                              GPB0F401.600   
+                                                                           GPB0F401.601   
+!       Send to Southern neighbour                                         GPB0F401.602   
+                                                                           GPB0F401.603   
+                                                                           GPB2F402.367   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.368   
+                                                                           GPB2F402.369   
+        IF (neighbour(PSouth) .NE. NoDomain) THEN                          GPB0F401.604   
+          ioff = X_SIZE*Y_SIZE-2*Y_OFF*X_SIZE+X_OFF                        GPB0F401.605   
+          isize = (X_SIZE-(2*X_OFF))*N_LEVELS                              GPB0F401.606   
+          DO j = 1, Y_OFF                                                  GPB0F401.607   
+            DO k = 1, N_LEVELS                                             GPB0F401.608   
+              DO i = 1, (X_SIZE-(2*X_OFF))                                 GPB0F401.609   
+                buf2((j-1)*isize+(k-1)*(X_SIZE-(2*X_OFF))+i) =             GPB0F401.610   
+     &            FIELD(ioff+i,k)                                          GPB0F401.611   
+              ENDDO                                                        GPB0F401.612   
+            ENDDO                                                          GPB0F401.613   
+            ioff = ioff + X_SIZE                                           GPB0F401.614   
+          ENDDO                                                            GPB0F401.615   
+          info=GC_NONE                                                     GPB2F402.370   
+          CALL GC_RSEND(2002, isize*Y_OFF, neighbour(PSouth),              GPB0F401.616   
+     &                  info, buf4, buf2)                                  GPB0F401.617   
+        ELSE                                                               ARB0F403.13    
+! Copy values to Southmost row (outside domain)                            ARB0F403.14    
+          DO k = 1,N_LEVELS                                                ARB0F403.15    
+            DO j = 1,Y_OFF                                                 ARB0F403.16    
+              DO i = 1,X_SIZE                                              ARB0F403.17    
+                FIELD((y_size-j)*x_size+i,k) =                             ARB0F403.18    
+     &            FIELD((y_size-y_off-1)*x_size+i,k)                       ARB0F403.19    
+              END DO                                                       ARB0F403.20    
+            END DO                                                         ARB0F403.21    
+          END DO                                                           ARB0F403.22    
+        ENDIF                                                              GPB0F401.618   
+                                                                           GPB0F401.619   
+!       Synchronize before receiving                                       GPB0F401.620   
+                                                                           GPB0F401.621   
+        CALL GC_SSYNC(nproc,info)                                          GPB0F401.622   
+                                                                           GPB0F401.623   
+!       Receive from Southern neighbour                                    GPB0F401.624   
+                                                                           GPB0F401.625   
+                                                                           GPB2F402.371   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.372   
+                                                                           GPB2F402.373   
+        IF (neighbour(PSouth) .NE. NoDomain) THEN                          GPB0F401.626   
+          ioff = X_SIZE*(Y_SIZE-Y_OFF)+X_OFF                               GPB0F401.627   
+          isize = (X_SIZE-(2*X_OFF))*N_LEVELS                              GPB0F401.628   
+          info=GC_NONE                                                     GPB2F402.374   
+          CALL GC_RRECV(1001, isize*Y_OFF, neighbour(PSouth),              GPB0F401.629   
+     &                  info, buf3, buf1)                                  GPB0F401.630   
+          DO j = 1, Y_OFF                                                  GPB0F401.631   
+            DO k = 1, N_LEVELS                                             GPB0F401.632   
+              DO i = 1, (X_SIZE-(2*X_OFF))                                 GPB0F401.633   
+                FIELD(ioff+i,k) =                                          GPB0F401.634   
+     &            buf3((j-1)*isize+(k-1)*(X_SIZE-(2*X_OFF))+i)             GPB0F401.635   
+              ENDDO                                                        GPB0F401.636   
+            ENDDO                                                          GPB0F401.637   
+            ioff = ioff + X_SIZE                                           GPB0F401.638   
+          ENDDO                                                            GPB0F401.639   
+        ENDIF                                                              GPB0F401.640   
+                                                                           GPB0F401.641   
+!       Receive from Northen neighbour                                     GPB0F401.642   
+                                                                           GPB0F401.643   
+                                                                           GPB2F402.375   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.376   
+                                                                           GPB2F402.377   
+        IF (neighbour(PNorth) .NE. NoDomain) THEN                          GPB0F401.644   
+          ioff = X_OFF                                                     GPB0F401.645   
+          isize = (X_SIZE-(2*X_OFF))*N_LEVELS                              GPB0F401.646   
+          info=GC_NONE                                                     GPB2F402.378   
+          CALL GC_RRECV(2002, isize*Y_OFF, neighbour(PNorth),              GPB0F401.647   
+     &                  info, buf4, buf2)                                  GPB0F401.648   
+          DO j = 1, Y_OFF                                                  GPB0F401.649   
+            DO k = 1, N_LEVELS                                             GPB0F401.650   
+              DO i = 1, (X_SIZE-(2*X_OFF))                                 GPB0F401.651   
+                FIELD(ioff+i,k) =                                          GPB0F401.652   
+     &            buf4((j-1)*isize+(k-1)*(X_SIZE-(2*X_OFF))+i)             GPB0F401.653   
+              ENDDO                                                        GPB0F401.654   
+            ENDDO                                                          GPB0F401.655   
+            ioff = ioff + X_SIZE                                           GPB0F401.656   
+          ENDDO                                                            GPB0F401.657   
+        ENDIF                                                              GPB0F401.658   
+                                                                           GPB0F401.659   
+      ENDIF  ! should we do north/south communication?                     GPB0F401.660   
+                                                                           GPB0F401.661   
+      IF (X_OFF .GT. 0) THEN                                               GPB0F401.662   
+                                                                           GPB0F401.663   
+!       Do East/West communication                                         GPB0F401.664   
+                                                                           GPB0F401.665   
+!       Send to Western neighbour                                          GPB0F401.666   
+        IF (gridsize(1) .GT. 2) THEN                                       GPB3F403.299   
+!         If there are more than two processors in the EW direction        GPB3F403.300   
+!         it is safe to do two sends (E+W) before we receive our           GPB3F403.301   
+!         halos - as the two processors we are sending to must             GPB3F403.302   
+!         be different. (SHMEM_NAM only allows one outstanding             GPB3F403.303   
+!         send to each processor).                                         GPB3F403.304   
+                                                                           GPB3F403.305   
+!       A full column (Y_SIZE) is sent, so corner points are included      GPB0F401.667   
+                                                                           GPB0F401.668   
+                                                                           GPB2F402.379   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.380   
+                                                                           GPB2F402.381   
+        IF (neighbour(PWest) .NE. NoDomain) THEN                           GPB0F401.669   
+          ioff = X_OFF                                                     GPB0F401.670   
+          jsize = Y_SIZE*N_LEVELS                                          GPB0F401.671   
+          DO i = 1, X_OFF                                                  GPB0F401.672   
+            DO k = 1, N_LEVELS                                             GPB0F401.673   
+              DO j = 1, Y_SIZE                                             GPB0F401.674   
+                buf3((i-1)*jsize+(k-1)*Y_SIZE+j) =                         GPB0F401.675   
+     &            FIELD((j-1)*X_SIZE+ioff+1,k)                             GPB0F401.676   
+              ENDDO                                                        GPB0F401.677   
+            ENDDO                                                          GPB0F401.678   
+            ioff = ioff + 1                                                GPB0F401.679   
+          ENDDO                                                            GPB0F401.680   
+          info=GC_NONE                                                     GPB2F402.382   
+          CALL GC_RSEND(3003, jsize*X_OFF, neighbour(PWest),               GPB0F401.681   
+     &                  info, buf1, buf3)                                  GPB0F401.682   
+        ENDIF                                                              GPB0F401.683   
+                                                                           GPB0F401.684   
+!       Send to Eastern neighbour.                                         GPB0F401.685   
+!       A full column (Y_SIZE) is sent, so corner points are included      GPB0F401.686   
+                                                                           GPB0F401.687   
+                                                                           GPB2F402.383   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.384   
+                                                                           GPB2F402.385   
+        IF (neighbour(PEast) .NE. NoDomain) THEN                           GPB0F401.688   
+          ioff = X_SIZE - 2*X_OFF                                          GPB0F401.689   
+          jsize = Y_SIZE*N_LEVELS                                          GPB0F401.690   
+          DO i = 1, X_OFF                                                  GPB0F401.691   
+            DO k = 1, N_LEVELS                                             GPB0F401.692   
+              DO j = 1, Y_SIZE                                             GPB0F401.693   
+                buf4((i-1)*jsize+(k-1)*Y_SIZE+j) =                         GPB0F401.694   
+     &            FIELD((j-1)*X_SIZE+ioff+1,k)                             GPB0F401.695   
+              ENDDO                                                        GPB0F401.696   
+            ENDDO                                                          GPB0F401.697   
+            ioff = ioff + 1                                                GPB0F401.698   
+          ENDDO                                                            GPB0F401.699   
+          info=GC_NONE                                                     GPB2F402.386   
+          CALL GC_RSEND(4004, jsize*X_OFF, neighbour(PEast),               GPB0F401.700   
+     &                  info, buf2, buf4)                                  GPB0F401.701   
+        ENDIF                                                              GPB0F401.702   
+                                                                           GPB0F401.703   
+!       Synchronize before receiving                                       GPB0F401.704   
+                                                                           GPB0F401.705   
+        CALL GC_SSYNC(NPROC,INFO)                                          GPB0F401.706   
+                                                                           GPB0F401.707   
+!       Receive from Eastern neighbour                                     GPB0F401.708   
+                                                                           GPB0F401.709   
+                                                                           GPB2F402.387   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.388   
+                                                                           GPB2F402.389   
+        IF (neighbour(PEast) .NE. NoDomain) THEN                           GPB0F401.710   
+          ioff = X_SIZE - X_OFF                                            GPB0F401.711   
+          jsize = Y_SIZE*N_LEVELS                                          GPB0F401.712   
+          info=GC_NONE                                                     GPB2F402.390   
+          CALL GC_RRECV(3003, jsize*X_OFF, neighbour(PEast),               GPB0F401.713   
+     &                  info, buf1, buf3)                                  GPB0F401.714   
+          DO i = 1, X_OFF                                                  GPB0F401.715   
+            DO k = 1, N_LEVELS                                             GPB0F401.716   
+              DO j = 1, Y_SIZE                                             GPB0F401.717   
+                FIELD((j-1)*X_SIZE+ioff+1,k) =                             GPB0F401.718   
+     &            buf1((i-1)*jsize+(k-1)*Y_SIZE+j)                         GPB0F401.719   
+              ENDDO                                                        GPB0F401.720   
+            ENDDO                                                          GPB0F401.721   
+            ioff = ioff + 1                                                GPB0F401.722   
+          ENDDO                                                            GPB0F401.723   
+        ENDIF                                                              GPB0F401.724   
+                                                                           GPB0F401.725   
+!       Receive from Western neighbour                                     GPB0F401.726   
+                                                                           GPB0F401.727   
+                                                                           GPB2F402.391   
+          CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put      GPB2F402.392   
+                                                                           GPB2F402.393   
+        IF (neighbour(PWest) .NE. NoDomain) THEN                           GPB0F401.728   
+          ioff = 0                                                         GPB0F401.729   
+          jsize = Y_SIZE*N_LEVELS                                          GPB0F401.730   
+          info=GC_NONE                                                     GPB2F402.394   
+          CALL GC_RRECV(4004, jsize*X_OFF, neighbour(PWest),               GPB0F401.731   
+     &    info, buf2, buf4)                                                GPB0F401.732   
+          DO i = 1, X_OFF                                                  GPB0F401.733   
+            DO k = 1, N_LEVELS                                             GPB0F401.734   
+              DO j = 1, Y_SIZE                                             GPB0F401.735   
+                FIELD((j-1)*X_SIZE+ioff+1,k) =                             GPB0F401.736   
+     &            buf2((i-1)*jsize+(k-1)*Y_SIZE+j)                         GPB0F401.737   
+              ENDDO                                                        GPB0F401.738   
+            ENDDO                                                          GPB0F401.739   
+            ioff = ioff + 1                                                GPB0F401.740   
+          ENDDO                                                            GPB0F401.741   
+        ENDIF                                                              GPB0F401.742   
+        ELSE  ! One or two processors in EW direction                      GPB3F403.306   
+!         Do the same communication as before - but as two                 GPB3F403.307   
+!         seperate send/receive phases                                     GPB3F403.308   
+                                                                           GPB3F403.309   
+!       Send to Western neighbour                                          GPB3F403.310   
+!       A full column (Y_SIZE) is sent, so corner points are included      GPB3F403.311   
+                                                                           GPB3F403.312   
+                                                                           GPB3F403.313   
+        CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put        GPB3F403.314   
+                                                                           GPB3F403.315   
+        IF (neighbour(PWest) .NE. NoDomain) THEN                           GPB3F403.316   
+          ioff = X_OFF                                                     GPB3F403.317   
+          jsize = Y_SIZE*N_LEVELS                                          GPB3F403.318   
+          DO i = 1, X_OFF                                                  GPB3F403.319   
+            DO k = 1, N_LEVELS                                             GPB3F403.320   
+              DO j = 1, Y_SIZE                                             GPB3F403.321   
+                buf3((i-1)*jsize+(k-1)*Y_SIZE+j) =                         GPB3F403.322   
+     &            FIELD((j-1)*X_SIZE+ioff+1,k)                             GPB3F403.323   
+              ENDDO                                                        GPB3F403.324   
+            ENDDO                                                          GPB3F403.325   
+            ioff = ioff + 1                                                GPB3F403.326   
+          ENDDO                                                            GPB3F403.327   
+          info=GC_NONE                                                     GPB3F403.328   
+          CALL GC_RSEND(3003, jsize*X_OFF, neighbour(PWest),               GPB3F403.329   
+     &                  info, buf1, buf3)                                  GPB3F403.330   
+        ENDIF                                                              GPB3F403.331   
+                                                                           GPB3F403.332   
+!       Synchronize before receiving                                       GPB3F403.333   
+                                                                           GPB3F403.334   
+        CALL GC_SSYNC(NPROC,INFO)                                          GPB3F403.335   
+                                                                           GPB3F403.336   
+!       Receive from Eastern neighbour                                     GPB3F403.337   
+                                                                           GPB3F403.338   
+                                                                           GPB3F403.339   
+        CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put        GPB3F403.340   
+                                                                           GPB3F403.341   
+        IF (neighbour(PEast) .NE. NoDomain) THEN                           GPB3F403.342   
+          ioff = X_SIZE - X_OFF                                            GPB3F403.343   
+          jsize = Y_SIZE*N_LEVELS                                          GPB3F403.344   
+          info=GC_NONE                                                     GPB3F403.345   
+          CALL GC_RRECV(3003, jsize*X_OFF, neighbour(PEast),               GPB3F403.346   
+     &                  info, buf1, buf3)                                  GPB3F403.347   
+          DO i = 1, X_OFF                                                  GPB3F403.348   
+            DO k = 1, N_LEVELS                                             GPB3F403.349   
+              DO j = 1, Y_SIZE                                             GPB3F403.350   
+                FIELD((j-1)*X_SIZE+ioff+1,k) =                             GPB3F403.351   
+     &            buf1((i-1)*jsize+(k-1)*Y_SIZE+j)                         GPB3F403.352   
+              ENDDO                                                        GPB3F403.353   
+            ENDDO                                                          GPB3F403.354   
+            ioff = ioff + 1                                                GPB3F403.355   
+          ENDDO                                                            GPB3F403.356   
+        ENDIF                                                              GPB3F403.357   
+                                                                           GPB3F403.358   
+!       Send to Eastern neighbour.                                         GPB3F403.359   
+!       A full column (Y_SIZE) is sent, so corner points are included      GPB3F403.360   
+                                                                           GPB3F403.361   
+                                                                           GPB3F403.362   
+        CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put        GPB3F403.363   
+                                                                           GPB3F403.364   
+        IF (neighbour(PEast) .NE. NoDomain) THEN                           GPB3F403.365   
+          ioff = X_SIZE - 2*X_OFF                                          GPB3F403.366   
+          jsize = Y_SIZE*N_LEVELS                                          GPB3F403.367   
+          DO i = 1, X_OFF                                                  GPB3F403.368   
+            DO k = 1, N_LEVELS                                             GPB3F403.369   
+              DO j = 1, Y_SIZE                                             GPB3F403.370   
+                buf4((i-1)*jsize+(k-1)*Y_SIZE+j) =                         GPB3F403.371   
+     &            FIELD((j-1)*X_SIZE+ioff+1,k)                             GPB3F403.372   
+              ENDDO                                                        GPB3F403.373   
+            ENDDO                                                          GPB3F403.374   
+            ioff = ioff + 1                                                GPB3F403.375   
+          ENDDO                                                            GPB3F403.376   
+          info=GC_NONE                                                     GPB3F403.377   
+          CALL GC_RSEND(4004, jsize*X_OFF, neighbour(PEast),               GPB3F403.378   
+     &                  info, buf2, buf4)                                  GPB3F403.379   
+        ENDIF                                                              GPB3F403.380   
+                                                                           GPB3F403.381   
+!       Synchronize before receiving                                       GPB3F403.382   
+                                                                           GPB3F403.383   
+        CALL GC_SSYNC(NPROC,INFO)                                          GPB3F403.384   
+                                                                           GPB3F403.385   
+!       Receive from Western neighbour                                     GPB3F403.386   
+                                                                           GPB3F403.387   
+        CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! use shmem_put        GPB3F403.388   
+                                                                           GPB3F403.389   
+        IF (neighbour(PWest) .NE. NoDomain) THEN                           GPB3F403.390   
+          ioff = 0                                                         GPB3F403.391   
+          jsize = Y_SIZE*N_LEVELS                                          GPB3F403.392   
+          info=GC_NONE                                                     GPB3F403.393   
+          CALL GC_RRECV(4004, jsize*X_OFF, neighbour(PWest),               GPB3F403.394   
+     &    info, buf2, buf4)                                                GPB3F403.395   
+          DO i = 1, X_OFF                                                  GPB3F403.396   
+            DO k = 1, N_LEVELS                                             GPB3F403.397   
+              DO j = 1, Y_SIZE                                             GPB3F403.398   
+                FIELD((j-1)*X_SIZE+ioff+1,k) =                             GPB3F403.399   
+     &            buf2((i-1)*jsize+(k-1)*Y_SIZE+j)                         GPB3F403.400   
+              ENDDO                                                        GPB3F403.401   
+            ENDDO                                                          GPB3F403.402   
+            ioff = ioff + 1                                                GPB3F403.403   
+          ENDDO                                                            GPB3F403.404   
+        ENDIF                                                              GPB3F403.405   
+                                                                           GPB3F403.406   
+        ENDIF ! check for number of PEs in EW direction                    GPB3F403.407   
+                                                                           GPB0F401.743   
+      ENDIF  ! should we be doing east/west communications ?               GPB0F401.744   
+                                                                           GPB0F401.745   
+!     CALL GC_SSYNC(nproc,info)                                            GPB0F401.746   
+      RETURN                                                               GPB0F401.747   
+      END                                                                  GPB0F401.748   
+*ENDIF                                                                     SWPBND1A.245   

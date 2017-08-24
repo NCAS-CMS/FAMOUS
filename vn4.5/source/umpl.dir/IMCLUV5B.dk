@@ -1,0 +1,309 @@
+*IF DEF,A03_7A,OR,DEF,A03_6A                                               ACB1F405.6     
+C *****************************COPYRIGHT******************************     IMCLUV5B.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    IMCLUV5B.4     
+C                                                                          IMCLUV5B.5     
+C Use, duplication or disclosure of this code is subject to the            IMCLUV5B.6     
+C restrictions as set forth in the contract.                               IMCLUV5B.7     
+C                                                                          IMCLUV5B.8     
+C                Meteorological Office                                     IMCLUV5B.9     
+C                London Road                                               IMCLUV5B.10    
+C                BRACKNELL                                                 IMCLUV5B.11    
+C                Berkshire UK                                              IMCLUV5B.12    
+C                RG12 2SZ                                                  IMCLUV5B.13    
+C                                                                          IMCLUV5B.14    
+C If no contract has been raised with this copy of the code, the use,      IMCLUV5B.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      IMCLUV5B.16    
+C to do so must first be obtained in writing from the Head of Numerical    IMCLUV5B.17    
+C Modelling at the above address.                                          IMCLUV5B.18    
+C ******************************COPYRIGHT******************************    IMCLUV5B.19    
+!!!  SUBROUTINE IM_CAL_UV ---------------------------------------------    IMCLUV5B.20    
+!!!                                                                        IMCLUV5B.21    
+!!!  Purpose: Calculate increments for U or V in the boundary layer,       IMCLUV5B.22    
+!!!           using an implicit numerical scheme.  The tridiagonal         IMCLUV5B.23    
+!!!           matrices are inverted using simple Gaussian elimination.     IMCLUV5B.24    
+!!!                                                                        IMCLUV5B.25    
+!!!                                                                        IMCLUV5B.27    
+!!!  Model           Modification history                                  IMCLUV5B.28    
+!!! version  Date                                                          IMCLUV5B.29    
+CLL  4.5    Jul. 98  Kill the IBM specific lines (JCThil)                  AJC1F405.182   
+!!!                                                                        IMCLUV5B.30    
+!!!                                                                        IMCLUV5B.31    
+!!! JJ - Programmers of some or all of previous code or changes            IMCLUV5B.32    
+!!!                                                                        IMCLUV5B.33    
+!!!                                                                        IMCLUV5B.34    
+!!!  Programming standard: UM Documentation Paper No 4, Version 2,         IMCLUV5B.35    
+!!!                        dated 18/1/90                                   IMCLUV5B.36    
+!!!                                                                        IMCLUV5B.37    
+!!!  System component covered: P244                                        IMCLUV5B.38    
+!!!                                                                        IMCLUV5B.39    
+!!!  Project task: P24                                                     IMCLUV5B.40    
+!!!                                                                        IMCLUV5B.41    
+!!!  Documentation: UM Documentation Paper No 24.                          IMCLUV5B.42    
+!!!                                                                        IMCLUV5B.43    
+!!!---------------------------------------------------------------------   IMCLUV5B.44    
+                                                                           IMCLUV5B.45    
+!  Arguments :-                                                            IMCLUV5B.46    
+      SUBROUTINE IM_CAL_UV (                                               IMCLUV5B.47    
+     & U_V_FIELD,U1_V1                                                     IMCLUV5B.48    
+     &,U_V_POINTS,BL_LEVELS,ROW_LENGTH                                     IMCLUV5B.49    
+     &,GAMMA                                                               IMCLUV5B.50    
+     &,RHOKM_U_V                                                           IMCLUV5B.51    
+     &,U_V,U0_V0,TIMESTEP                                                  IMCLUV5B.52    
+     &,RHOKM_1_U_V,DU_NT_DV_NT,DU_DV                                       IMCLUV5B.53    
+     &,DTRDZ_U_V,RDZ_U_V,TAU_X_Y                                           IMCLUV5B.54    
+     &,LTIMER                                                              IMCLUV5B.55    
+     &)                                                                    IMCLUV5B.56    
+                                                                           IMCLUV5B.57    
+      IMPLICIT NONE                                                        IMCLUV5B.58    
+      LOGICAL LTIMER                                                       IMCLUV5B.59    
+                                                                           IMCLUV5B.60    
+      INTEGER                                                              IMCLUV5B.61    
+     & U_V_FIELD                   ! IN No. of points in U_V-grid.         IMCLUV5B.62    
+     &,U1_V1                       ! IN First point to be processed in     IMCLUV5B.63    
+!                                       U_V-grid.                          IMCLUV5B.64    
+     &,U_V_POINTS                  ! IN Number of U_V-grid points.         IMCLUV5B.65    
+     &,BL_LEVELS                   ! IN No. of atmospheric levels for      IMCLUV5B.69    
+!                                       which boundary layer fluxes are    IMCLUV5B.70    
+!                                       calculated.                        IMCLUV5B.71    
+     &,ROW_LENGTH                  ! IN No. of points in latitude row.     IMCLUV5B.72    
+                                                                           IMCLUV5B.76    
+      REAL                                                                 IMCLUV5B.77    
+     & DTRDZ_U_V(U_V_FIELD,BL_LEVELS)                                      IMCLUV5B.78    
+!                                    IN -g.dt/dp for model wind layers     IMCLUV5B.79    
+     &,DU_NT_DV_NT(U_V_FIELD,BL_LEVELS)                                    IMCLUV5B.80    
+!                                    IN u_v non-turbulent increments.      IMCLUV5B.81    
+     &,GAMMA(BL_LEVELS)            ! IN Implicit weighting coef.           IMCLUV5B.82    
+     &,RDZ_U_V(U_V_FIELD,2:BL_LEVELS)                                      IMCLUV5B.83    
+!                                    IN Reciprocal of the vertical         IMCLUV5B.84    
+!                                       distance from level K-1 to         IMCLUV5B.85    
+!                                       level K. (K > 1) on wind levels    IMCLUV5B.86    
+     &,RHOKM_1_U_V(U_V_FIELD)      ! IN Level 1 exchange coefficient for   IMCLUV5B.87    
+!                                       momentum                           IMCLUV5B.88    
+     &,RHOKM_U_V(U_V_FIELD,2:BL_LEVELS)                                    IMCLUV5B.89    
+!                                    IN Exchange coefficients for          IMCLUV5B.90    
+!                                       momentum, on UV-grid with          IMCLUV5B.91    
+!                                       first and last rows ignored.       IMCLUV5B.92    
+!                                       for K>=2 (from KMKH).              IMCLUV5B.93    
+     &,U0_V0(U_V_FIELD)            ! IN Westerly_Southerly component of    IMCLUV5B.94    
+!                                       surface current                    IMCLUV5B.95    
+!                                       (m/s; 0 over land) UVG.            IMCLUV5B.96    
+     &,U_V(U_V_FIELD,BL_LEVELS)    ! IN Westerly_Southerly component of    IMCLUV5B.97    
+!                                       wind.                              IMCLUV5B.98    
+     &,TIMESTEP                    ! IN Timestep in seconds.               IMCLUV5B.99    
+                                                                           IMCLUV5B.100   
+! INOUT                                                                    IMCLUV5B.101   
+      REAL                                                                 IMCLUV5B.102   
+     & TAU_X_Y(U_V_FIELD,BL_LEVELS)! INOUT x_y-component of turbulent      IMCLUV5B.103   
+!                                        stress at levels k-1/2;           IMCLUV5B.104   
+!                                        eg. TAUX(,1) is surface stress.   IMCLUV5B.105   
+!                                        UV-grid, 1st and last rows set    IMCLUV5B.106   
+!                                        to "missing data". (N/sq m)       IMCLUV5B.107   
+!                                        IN as "explicit" fluxes from      IMCLUV5B.108   
+!                                        ex_flux_uv, OUT as "implicit      IMCLUV5B.109   
+                                                                           IMCLUV5B.110   
+!OUT                                                                       IMCLUV5B.111   
+      REAL                                                                 IMCLUV5B.112   
+     & DU_DV(U_V_FIELD,BL_LEVELS)  ! OUT delta (U or V) elements of        IMCLUV5B.113   
+!                                        vector on RHS, then LHS, of       IMCLUV5B.114   
+!                                        eqn P244.80.                      IMCLUV5B.115   
+                                                                           IMCLUV5B.116   
+                                                                           IMCLUV5B.117   
+!  External references :-                                                  IMCLUV5B.118   
+      EXTERNAL TIMER                                                       IMCLUV5B.119   
+                                                                           IMCLUV5B.120   
+                                                                           IMCLUV5B.121   
+! Workspace :-                                                             IMCLUV5B.122   
+!   6*BL_LEVELS + 2 blocks of real workspace are required.                 IMCLUV5B.123   
+      REAL                                                                 IMCLUV5B.124   
+     & AQ_AM(U_V_FIELD,BL_LEVELS)  ! As AQ: "Q" elements of matrix in      IMCLUV5B.125   
+!                                    eqn P244.79 (modified during          IMCLUV5B.126   
+!                                    Gaussian elimination process).        IMCLUV5B.127   
+!                                    As AM: elements of matrix in eqn      IMCLUV5B.128   
+!                                    P244.80 (also get modified).          IMCLUV5B.129   
+                                                                           IMCLUV5B.130   
+!  Local scalars :-                                                        IMCLUV5B.131   
+      REAL                                                                 IMCLUV5B.132   
+     & CM       ! Matrix element in eqn P244.80.                           IMCLUV5B.133   
+     &,RBM      ! Reciprocal of BM(') (eqns P244.81, 85, 89).              IMCLUV5B.134   
+                                                                           IMCLUV5B.135   
+      INTEGER                                                              IMCLUV5B.136   
+     & BLM1     ! BL_LEVELS minus 1.                                       IMCLUV5B.137   
+     &,I        ! Loop counter (horizontal field index).                   IMCLUV5B.138   
+     &,K        ! Loop counter (vertical index).                           IMCLUV5B.139   
+                                                                           IMCLUV5B.140   
+!-----------------------------------------------------------------------   IMCLUV5B.141   
+!!  0.  Check that the scalars input to define the grid are consistent.    IMCLUV5B.142   
+!       See comments to routine SF_EXCH for details.                       IMCLUV5B.143   
+!-----------------------------------------------------------------------   IMCLUV5B.144   
+                                                                           IMCLUV5B.145   
+      IF (LTIMER) THEN                                                     IMCLUV5B.146   
+        CALL TIMER('IMCALUV ',3)                                           IMCLUV5B.147   
+      ENDIF                                                                IMCLUV5B.148   
+                                                                           IMCLUV5B.149   
+      BLM1 = BL_LEVELS-1                                                   IMCLUV5B.150   
+                                                                           IMCLUV5B.151   
+!-----------------------------------------------------------------------   IMCLUV5B.152   
+!! 1.  Solve matrix equation P244.80 for implicit increments to U or V.    IMCLUV5B.153   
+!-----------------------------------------------------------------------   IMCLUV5B.154   
+                                                                           IMCLUV5B.155   
+!-----------------------------------------------------------------------   IMCLUV5B.156   
+!! 1.1 Initial calculations and "upward sweep".                            IMCLUV5B.157   
+!! (a) "Surface" fluxes.                                                   IMCLUV5B.158   
+!-----------------------------------------------------------------------   IMCLUV5B.159   
+                                                                           IMCLUV5B.160   
+*IF -DEF,SCMA                                                              AJC1F405.183   
+        DO I=U1_V1+ROW_LENGTH,U1_V1+U_V_POINTS-ROW_LENGTH-1                IMCLUV5B.162   
+*ELSE                                                                      IMCLUV5B.163   
+        DO I=1,U_V_POINTS                                                  IMCLUV5B.164   
+*ENDIF                                                                     IMCLUV5B.165   
+                                                                           IMCLUV5B.166   
+!  "Explicit" increments to U(1) and V(1) when there is no rapidly         IMCLUV5B.167   
+!  mixing layer or it does not extend beyond the bottom model layer.       IMCLUV5B.168   
+                                                                           IMCLUV5B.169   
+        DU_DV(I,1) = DTRDZ_U_V(I,1) * ( TAU_X_Y(I,2) - TAU_X_Y(I,1) )      IMCLUV5B.170   
+!                                                            ... P244.67   IMCLUV5B.171   
+! cjj addition of non-turbulent increments                                 IMCLUV5B.172   
+        DU_DV(I,1) = DU_DV(I,1) + DU_NT_DV_NT(I,1)                         IMCLUV5B.173   
+                                                                           IMCLUV5B.174   
+                                                                           IMCLUV5B.175   
+        CM = -DTRDZ_U_V(I,1) * GAMMA(1)*RHOKM_1_U_V(I)         ! P244.66   IMCLUV5B.176   
+        AQ_AM(I,1) = -DTRDZ_U_V(I,1) * GAMMA(2)*RHOKM_U_V(I,2)             IMCLUV5B.177   
+     &               *RDZ_U_V(I,2)                             ! P244.64   IMCLUV5B.178   
+        RBM = 1.0 / ( 1.0 - AQ_AM(I,1) - CM )    ! Reciprocal of P244.81   IMCLUV5B.179   
+        DU_DV(I,1) = RBM * DU_DV(I,1)                          ! P244.82   IMCLUV5B.180   
+        AQ_AM(I,1) = RBM * AQ_AM(I,1)                          ! P244.84   IMCLUV5B.181   
+                                                                           IMCLUV5B.182   
+      ENDDO ! loop over U_V_POINTS                                         IMCLUV5B.183   
+                                                                           IMCLUV5B.184   
+!-----------------------------------------------------------------------   IMCLUV5B.185   
+!! (b) Fluxes at (or rows representing) layer interfaces above the         IMCLUV5B.186   
+!!     surface but below the top of the boundary layer.                    IMCLUV5B.187   
+!-----------------------------------------------------------------------   IMCLUV5B.188   
+                                                                           IMCLUV5B.189   
+      DO K=2,BLM1                                                          IMCLUV5B.190   
+                                                                           IMCLUV5B.191   
+*IF -DEF,SCMA                                                              AJC1F405.184   
+        DO I=U1_V1+ROW_LENGTH,U1_V1+U_V_POINTS-ROW_LENGTH-1                IMCLUV5B.193   
+*ELSE                                                                      IMCLUV5B.194   
+        DO I=1,U_V_POINTS                                                  IMCLUV5B.195   
+*ENDIF                                                                     IMCLUV5B.196   
+                                                                           IMCLUV5B.197   
+                                                                           IMCLUV5B.198   
+          DU_DV(I,K) = DTRDZ_U_V(I,K) *                                    IMCLUV5B.199   
+     &                   ( TAU_X_Y(I,K+1) - TAU_X_Y(I,K) )     ! P244.74   IMCLUV5B.200   
+! cjj addition of non-turbulent increments                                 IMCLUV5B.201   
+          DU_DV(I,K) = DU_DV(I,K) + DU_NT_DV_NT(I,K)                       IMCLUV5B.202   
+                                                                           IMCLUV5B.203   
+          AQ_AM(I,K) = -DTRDZ_U_V(I,K) * GAMMA(K+1)*RHOKM_U_V(I,K+1)*      IMCLUV5B.204   
+     &                    RDZ_U_V(I,K+1)                       ! P244.71   IMCLUV5B.205   
+          CM = -DTRDZ_U_V(I,K) * GAMMA(K)*RHOKM_U_V(I,K)*                  IMCLUV5B.206   
+     &          RDZ_U_V(I,K)                                   ! P244.72   IMCLUV5B.207   
+          RBM = 1.0 / ( 1.0 - AQ_AM(I,K) -CM*( 1.0 + AQ_AM(I,K-1) ) )      IMCLUV5B.208   
+!                     1                      2                    2 1      IMCLUV5B.209   
+!                                              ... Reciprocal of P244.85   IMCLUV5B.210   
+                                                                           IMCLUV5B.211   
+          DU_DV(I,K) = RBM * ( DU_DV(I,K) - CM*DU_DV(I,K-1) )              IMCLUV5B.212   
+!                                                            ... P244.86   IMCLUV5B.213   
+                                                                           IMCLUV5B.214   
+          AQ_AM(I,K) = RBM * AQ_AM(I,K)                        ! P244.88   IMCLUV5B.215   
+        ENDDO !loop over u_v_points                                        IMCLUV5B.216   
+      ENDDO ! loop over 2,BLM1                                             IMCLUV5B.217   
+                                                                           IMCLUV5B.218   
+                                                                           IMCLUV5B.219   
+!-----------------------------------------------------------------------   IMCLUV5B.220   
+!! (c) Top "boundary" layer; also increment U and V here, as implicit      IMCLUV5B.221   
+!!     flux for this layer is got from "upward sweep" alone.               IMCLUV5B.222   
+!-----------------------------------------------------------------------   IMCLUV5B.223   
+                                                                           IMCLUV5B.224   
+*IF -DEF,SCMA                                                              AJC1F405.185   
+        DO I=U1_V1+ROW_LENGTH,U1_V1+U_V_POINTS-ROW_LENGTH-1                IMCLUV5B.226   
+*ELSE                                                                      IMCLUV5B.227   
+        DO I=1,U_V_POINTS                                                  IMCLUV5B.228   
+*ENDIF                                                                     IMCLUV5B.229   
+                                                                           IMCLUV5B.230   
+                                                                           IMCLUV5B.231   
+        DU_DV(I,BL_LEVELS) = -DTRDZ_U_V(I,BL_LEVELS) *                     IMCLUV5B.232   
+     &  TAU_X_Y(I,BL_LEVELS)                                               IMCLUV5B.233   
+!                                                            ... P244.78   IMCLUV5B.234   
+! cjj addition of non-turbulent increments                                 IMCLUV5B.235   
+        DU_DV(I,BL_LEVELS) = DU_DV(I,BL_LEVELS)                            IMCLUV5B.236   
+     &                       + DU_NT_DV_NT(I,BL_LEVELS)                    IMCLUV5B.237   
+                                                                           IMCLUV5B.238   
+        CM = -DTRDZ_U_V(I,BL_LEVELS) * GAMMA(BL_LEVELS)*                   IMCLUV5B.239   
+     &        RHOKM_U_V(I,BL_LEVELS)*RDZ_U_V(I,BL_LEVELS)                  IMCLUV5B.240   
+!                                                            ... P244.76   IMCLUV5B.241   
+        RBM = 1.0 / ( 1.0 - CM*( 1.0 + AQ_AM(I,BLM1) ) )                   IMCLUV5B.242   
+                                                                           IMCLUV5B.243   
+!                                              ... Reciprocal of P244.89   IMCLUV5B.244   
+                                                                           IMCLUV5B.245   
+        DU_DV(I,BL_LEVELS) = RBM * ( DU_DV(I,BL_LEVELS)    ! P244.90       IMCLUV5B.246   
+     &                                    - CM*DU_DV(I,BLM1) )             IMCLUV5B.247   
+      ENDDO                                                                IMCLUV5B.248   
+                                                                           IMCLUV5B.249   
+!-----------------------------------------------------------------------   IMCLUV5B.250   
+!! 1.2 Complete solution of matrix equation by performing "downward        IMCLUV5B.251   
+!!     sweep", then update U and V.                                        IMCLUV5B.252   
+!-----------------------------------------------------------------------   IMCLUV5B.253   
+                                                                           IMCLUV5B.254   
+      DO K=BLM1,1,-1                                                       IMCLUV5B.255   
+                                                                           IMCLUV5B.256   
+*IF -DEF,SCMA                                                              AJC1F405.186   
+        DO I=U1_V1+ROW_LENGTH,U1_V1+U_V_POINTS-ROW_LENGTH-1                IMCLUV5B.258   
+*ELSE                                                                      IMCLUV5B.259   
+        DO I=1,U_V_POINTS                                                  IMCLUV5B.260   
+*ENDIF                                                                     IMCLUV5B.261   
+                                                                           IMCLUV5B.262   
+                                                                           IMCLUV5B.263   
+          DU_DV(I,K) = DU_DV(I,K) - AQ_AM(I,K)*DU_DV(I,K+1) ! P244.92      IMCLUV5B.264   
+        ENDDO                                                              IMCLUV5B.265   
+      ENDDO                                                                IMCLUV5B.266   
+                                                                           IMCLUV5B.267   
+!-----------------------------------------------------------------------   IMCLUV5B.268   
+!! 2.  Essentially diagnostic calculations, though some values (i.e. the   IMCLUV5B.269   
+!!     surface wind stresses) are required by the coupled version of the   IMCLUV5B.270   
+!!     model.                                                              IMCLUV5B.271   
+!-----------------------------------------------------------------------   IMCLUV5B.272   
+!! 2.1 Surface wind stress components.                                     IMCLUV5B.273   
+!!     Pass out the value of RHOKM(,1) in GAMMA(*)_RHOKM_1 to satisfy      IMCLUV5B.274   
+!!     STASH. GAMMA(*)_RHOKM_RDZ will contain precisely that on output.    IMCLUV5B.275   
+!-----------------------------------------------------------------------   IMCLUV5B.276   
+                                                                           IMCLUV5B.277   
+*IF -DEF,SCMA                                                              AJC1F405.187   
+        DO I=U1_V1+ROW_LENGTH,U1_V1+U_V_POINTS-ROW_LENGTH-1                IMCLUV5B.279   
+*ELSE                                                                      IMCLUV5B.280   
+        DO I=1,U_V_POINTS                                                  IMCLUV5B.281   
+*ENDIF                                                                     IMCLUV5B.282   
+                                                                           IMCLUV5B.283   
+                                                                           IMCLUV5B.284   
+        TAU_X_Y(I,1) = TAU_X_Y(I,1) +                                      IMCLUV5B.285   
+     &                 GAMMA(1)*RHOKM_1_U_V(I)*DU_DV(I,1)   !... P244.61   IMCLUV5B.286   
+                                                                           IMCLUV5B.287   
+      ENDDO  !u_v_points                                                   IMCLUV5B.288   
+                                                                           IMCLUV5B.289   
+!-----------------------------------------------------------------------   IMCLUV5B.290   
+!! 2.2 Wind stress components at layer interfaces above the surface.       IMCLUV5B.291   
+!-----------------------------------------------------------------------   IMCLUV5B.292   
+                                                                           IMCLUV5B.293   
+      DO K=2,BL_LEVELS                                                     IMCLUV5B.294   
+*IF -DEF,SCMA                                                              AJC1F405.188   
+        DO I=U1_V1+ROW_LENGTH,U1_V1+U_V_POINTS-ROW_LENGTH-1                IMCLUV5B.296   
+*ELSE                                                                      IMCLUV5B.297   
+        DO I=1,U_V_POINTS                                                  IMCLUV5B.298   
+*ENDIF                                                                     IMCLUV5B.299   
+                                                                           IMCLUV5B.300   
+                                                                           IMCLUV5B.301   
+          AQ_AM(I,K) = TAU_X_Y(I,K) +                                      IMCLUV5B.302   
+     &    GAMMA(K) * RHOKM_U_V(I,K) * RDZ_U_V(I,K)    ! P244.61            IMCLUV5B.303   
+     &                        *( DU_DV(I,K) - DU_DV(I,K-1) )               IMCLUV5B.304   
+          TAU_X_Y(I,K) = AQ_AM(I,K)                                        IMCLUV5B.305   
+                                                                           IMCLUV5B.306   
+        ENDDO !u_v_points                                                  IMCLUV5B.307   
+      ENDDO ! bl_levels                                                    IMCLUV5B.308   
+                                                                           IMCLUV5B.309   
+      IF (LTIMER) THEN                                                     IMCLUV5B.310   
+        CALL TIMER('IMCALUV ',4)                                           IMCLUV5B.311   
+      ENDIF                                                                IMCLUV5B.312   
+                                                                           IMCLUV5B.313   
+      RETURN                                                               IMCLUV5B.314   
+      END                                                                  IMCLUV5B.315   
+*ENDIF                                                                     IMCLUV5B.316   

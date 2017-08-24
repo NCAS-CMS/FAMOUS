@@ -1,0 +1,372 @@
+*IF DEF,S40_1A                                                             SJC0F305.5     
+C ******************************COPYRIGHT******************************    GTS2F400.9091  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9092  
+C                                                                          GTS2F400.9093  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9094  
+C restrictions as set forth in the contract.                               GTS2F400.9095  
+C                                                                          GTS2F400.9096  
+C                Meteorological Office                                     GTS2F400.9097  
+C                London Road                                               GTS2F400.9098  
+C                BRACKNELL                                                 GTS2F400.9099  
+C                Berkshire UK                                              GTS2F400.9100  
+C                RG12 2SZ                                                  GTS2F400.9101  
+C                                                                          GTS2F400.9102  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9103  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9104  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9105  
+C Modelling at the above address.                                          GTS2F400.9106  
+C ******************************COPYRIGHT******************************    GTS2F400.9107  
+C                                                                          GTS2F400.9108  
+!+ Slab routine controlling simple ice advection scheme                    SLBIDRIF.3     
+!                                                                          SLBIDRIF.4     
+! Subroutine Interface:                                                    SLBIDRIF.5     
+      SUBROUTINE slab_icedrift(                                            SLBIDRIF.6     
+*CALL ARGOINDX                                                             SDR1F404.3     
+     & l1,l2,icols,jrows,jrowsm1,landmask                                  SLBIDRIF.7     
+     &,lglobal,aicemin,amxnorth,amxsouth,ah                                SLBIDRIF.8     
+     &,delta_lat,delta_long,base_lat,timestep                              SLBIDRIF.9     
+     &,cos_u_latitude,cos_p_latitude                                       SLBIDRIF.10    
+     &,sec_p_latitude                                                      SLBIDRIF.11    
+     &,sin_u_latitude                                                      SLBIDRIF.12    
+     &,wsx,wsy                                                             SLBIDRIF.13    
+     &,ucurrent,vcurrent                                                   SLBIDRIF.14    
+     &,aice,hice,hsnow                                                     SLBIDRIF.15    
+     &,icy,newice                                                          SLBIDRIF.16    
+     &,hinc_diff,hinc_adv,hsinc_adv,areas                                  SJC1F400.231   
+     & )                                                                   SLBIDRIF.18    
+                                                                           SLBIDRIF.19    
+!                                                                          SLBIDRIF.20    
+! Description:                                                             SLBIDRIF.21    
+!   Sea ice dynamics subroutine for slab model, controls                   SLBIDRIF.22    
+!   simple advection scheme, calling slab_ice_advect to                    SLBIDRIF.23    
+!   advect the sea ice using surface currents, and slab_diff               SLBIDRIF.24    
+!   to diffuse the ice depth using del2 diffusion.                         SLBIDRIF.25    
+!                                                                          SLBIDRIF.26    
+! Method:                                                                  SLBIDRIF.27    
+! This routine first sets up landsea masks and work arrays                 SLBIDRIF.28    
+! for ice depth, ice fraction and snow depth with zeroes at                SLBIDRIF.29    
+! land points for use by the advection routine. U and v current            SLBIDRIF.30    
+! components are then interpolated from Arakawa B grid to a C              SLBIDRIF.31    
+! grid and zeroed where they would advect ice into a square with           SLBIDRIF.32    
+! depth >= 4 metres. This parameterises ice rheology crudely but           SLBIDRIF.33    
+! effectively. SLAB_ICE_ADVECT is called to perform upwind advection       SLBIDRIF.34    
+! of ice depth, fraction and snow depth on the C grid. The mask is         SLBIDRIF.35    
+! then extended so that although ice could advect beyond the previous      SLBIDRIF.36    
+! ice edge, it is not allowed to diffuse out from the ice edge.            SLBIDRIF.37    
+! Del squared diffusion (based on the horizontal diffusion in ocean        SLBIDRIF.38    
+! deck TRACER) is then applied to ice depth. Logical NEWICE is altered     SLBIDRIF.39    
+! to account for the extension of ice area by advection.                   SLBIDRIF.40    
+!                                                                          SLBIDRIF.41    
+! Current Code Owner: J.F.Thomson                                          SLBIDRIF.42    
+!                                                                          SLBIDRIF.43    
+! History:                                                                 SLBIDRIF.44    
+! Version   Date     Comment                                               SLBIDRIF.45    
+! -------   ----     -------                                               SLBIDRIF.46    
+! 3.4      24/3/94   Original code. J Thomson                              SLBIDRIF.47    
+! 4.0                Add extra diagnostics and alter criteria for          SJC1F400.232   
+!                    advection cut-off so it DOES check downstream         SJC1F400.233   
+!                    ice thickness. J.F.Crossley                           SJC1F400.234   
+!LL  4.4   04/08/97  Add missing ARGOINDX to various argument lists.       SDR1F404.1     
+!LL                  D. Robinson.                                          SDR1F404.2     
+!LL  4.5   03/09/98  Corrected a bug. ucurrent and vcurrent were           SCH0F405.1     
+!LL                  originally being updated by this subroutine. Now      SCH0F405.2     
+!LL                  use variables local to this subroutine.               SCH0F405.3     
+!LL                  C. D. Hewitt                                          SCH0F405.4     
+!                                                                          SLBIDRIF.48    
+! Code Description:                                                        SLBIDRIF.49    
+!   Language: FORTRAN 77 + common extensions.                              SLBIDRIF.50    
+!   This code is written to UMDP3 v6 programming standards.                SLBIDRIF.51    
+!                                                                          SLBIDRIF.52    
+! System component covered:                                                SLBIDRIF.53    
+! System Task:              P40                                            SLBIDRIF.54    
+!                                                                          SLBIDRIF.55    
+! Declarations:                                                            SLBIDRIF.56    
+!                                                                          SLBIDRIF.57    
+! Global variables (*CALLed COMDECKs etc...):                              SLBIDRIF.58    
+*CALL C_A                                                                  SLBIDRIF.59    
+*CALL C_DENSTY                                                             SLBIDRIF.60    
+*CALL C_MDI                                                                SLBIDRIF.61    
+*CALL C_OMEGA                                                              SLBIDRIF.62    
+*CALL C_PI                                                                 SLBIDRIF.63    
+*CALL C_SLAB                                                               SLBIDRIF.64    
+                                                                           SLBIDRIF.65    
+! Subroutine arguments                                                     SLBIDRIF.66    
+*CALL TYPOINDX                                                             SDR1F404.4     
+!   Scalar arguments with intent(in):                                      SLBIDRIF.67    
+      INTEGER l1             ! length of data                              SLBIDRIF.68    
+      INTEGER l2             ! length of data to be updated.               SLBIDRIF.69    
+      INTEGER icols          ! number of columns.                          SLBIDRIF.70    
+      INTEGER jrows          ! number of rows.                             SLBIDRIF.71    
+      INTEGER jrowsm1        ! number of rows minus 1.                     SLBIDRIF.72    
+      LOGICAL lglobal        ! true if model is global.                    SLBIDRIF.73    
+      REAL aicemin           ! minimum ice fraction.                       SLBIDRIF.74    
+      REAL amxnorth          ! maximum ice fraction (arctic).              SLBIDRIF.75    
+      REAL amxsouth          ! maximum ice fraction (antarctic).           SLBIDRIF.76    
+      REAL delta_lat         ! meridional grid spacing in degrees.         SLBIDRIF.77    
+      REAL delta_long        ! zonal grid spacing in degrees.              SLBIDRIF.78    
+      REAL base_lat          ! base latitude in degrees.                   SLBIDRIF.79    
+      REAL timestep          ! slab timestep in seconds.                   SLBIDRIF.80    
+      REAL ah                ! diffusion coeff for sea ice.                SLBIDRIF.81    
+                                                                           SLBIDRIF.82    
+!   Array  arguments with intent(in):                                      SLBIDRIF.83    
+      LOGICAL landmask(icols,jrows)     ! mask true at land points.        SLBIDRIF.84    
+      REAL cos_p_latitude(icols,jrows)  ! cos of latitude on p grid.       SLBIDRIF.85    
+      REAL cos_u_latitude(icols,jrowsm1)! cos of latitude on u grid.       SLBIDRIF.86    
+      REAL sec_p_latitude(icols,jrows)  ! sec of latitude on p grid.       SLBIDRIF.87    
+      REAL sin_u_latitude(icols,jrowsm1)! sin of latitude on u grid.       SLBIDRIF.88    
+      REAL wsx(icols,jrowsm1)           ! zonal wind stress.               SLBIDRIF.89    
+      REAL wsy(icols,jrowsm1)           ! meridional wind stress.          SLBIDRIF.90    
+      REAL ucurrent(icols,jrowsm1)      ! zonal surface current.           SLBIDRIF.91    
+      REAL vcurrent(icols,jrowsm1)      ! meridional surface current       SLBIDRIF.92    
+                                                                           SLBIDRIF.93    
+!   Scalar arguments with intent(InOut):                                   SLBIDRIF.94    
+                                                                           SLBIDRIF.95    
+!   Array  arguments with intent(InOut):                                   SLBIDRIF.96    
+      LOGICAL icy(icols,jrows)   ! true ocean points, aice>.001            SLBIDRIF.97    
+      LOGICAL newice(icols,jrows)! true points where ice forming.          SLBIDRIF.98    
+      REAL aice(icols,jrows)     ! fractional ice concentration.           SLBIDRIF.99    
+      REAL hice(icols,jrows)     ! ice depth avg over grid square (m)      SLBIDRIF.100   
+      REAL hsnow(icols,jrows)    ! snow depth over ice fract (m)           SLBIDRIF.101   
+                                                                           SLBIDRIF.102   
+!   Scalar arguments with intent(out):                                     SLBIDRIF.103   
+                                                                           SLBIDRIF.104   
+!   Array  arguments with intent(out):                                     SLBIDRIF.105   
+      REAL uice(icols,jrowsm1)   ! zonal current for advection.            SLBIDRIF.106   
+      REAL vice(icols,jrowsm1)   ! meridional current for advectn.         SLBIDRIF.107   
+      REAL hinc_diff(icols,jrows)! ice depth inc due to diffusion.         SLBIDRIF.108   
+      REAL hinc_adv(icols,jrows) ! ice depth inc due to advection.         SJC1F400.235   
+      REAL hsinc_adv(icols,jrows)! snow depth inc. * aice(advection).      SJC1F400.236   
+      REAL areas(icols,jrows)    ! area of grid squares.                   SJC1F400.237   
+                                                                           SLBIDRIF.109   
+! Local parameters:                                                        SLBIDRIF.110   
+                                                                           SLBIDRIF.111   
+! Local scalars:                                                           SLBIDRIF.112   
+      integer                                                              SLBIDRIF.113   
+     & i,j              ! loop counters                                    SLBIDRIF.114   
+     &,icolsm1          ! number of tracer columns minus 1                 SLBIDRIF.115   
+     &,jrowsby2,jby2p1                                                     SLBIDRIF.116   
+      real                                                                 SLBIDRIF.117   
+     &        zero      ! 0.0                                              SLBIDRIF.118   
+     &,       ahdt      ! ah*timestep                                      SLBIDRIF.119   
+     &,       uv        ! workspace scalar.                                SLBIDRIF.120   
+     &,       cu        ! workspace scalar.                                SLBIDRIF.121   
+     &,       cv        ! workspace scalar.                                SLBIDRIF.122   
+     &,       cumask    ! workspace scalar.                                SLBIDRIF.123   
+     &,       cvmask    ! workspace scalar.                                SLBIDRIF.124   
+     &,       dlat_rad  ! grid spacing in radians.                         SLBIDRIF.125   
+     &,       dlon_rad  ! grid spacing in radians.                         SLBIDRIF.126   
+                                                                           SLBIDRIF.127   
+! Local dynamic arrays:                                                    SLBIDRIF.128   
+      logical                                                              SLBIDRIF.129   
+     & ocean(icols,jrows) ! true for non-land points on p grid             SLBIDRIF.130   
+     &,dmask(icols,jrows) ! mask for diffusion.                            SLBIDRIF.131   
+      REAL    amx(jrows)  ! max ice fraction as function of rows.          SLBIDRIF.132   
+      real                                                                 SLBIDRIF.133   
+     & hmask(icols,jrows) ! 1.0 for land 0.0 for sea points.               SLBIDRIF.134   
+     &,umask(icols,jrowsm1) ! 1.0 for uv land 0.0 for sea.                 SLBIDRIF.135   
+      real                                                                 SLBIDRIF.136   
+     & ucurrent_c(icols,jrowsm1)! u current on C grid h pts                SLBIDRIF.137   
+     &,vcurrent_c(icols,jrowsm1)! v current on C grid h pts                SLBIDRIF.138   
+     &,ucurrent_l(icols,jrowsm1) ! local copy of u current on P grid       SCH0F405.5     
+     &,vcurrent_l(icols,jrowsm1) ! local copy of v current on P grid       SCH0F405.6     
+     &,aice_old(icols,jrows)    ! initial ice fraction                     SLBIDRIF.139   
+     &,aice_work(icols,jrows)   ! ice fraction (no mdi)                    SLBIDRIF.140   
+     &,hice_old(icols,jrows)    ! initial ice depth                        SLBIDRIF.141   
+     &,hice_work(icols,jrows)   ! ice depth (no mdi)                       SLBIDRIF.142   
+     &,hice_cu(icols,jrowsm1)   ! ice depth on c grid u points             SLBIDRIF.143   
+     &,hice_cv(icols,jrowsm1)   ! ice depth on c grid v points             SLBIDRIF.144   
+     &,hsnow_old(icols,jrows)   ! initial snow depth                       SLBIDRIF.145   
+     &,hsnow_work(icols,jrows)  ! snow depth (no mdi)                      SLBIDRIF.146   
+     &,diffus(icols,jrows)      ! ice depth increments due to diffusion    SLBIDRIF.147   
+                                                                           SLBIDRIF.148   
+! Function & Subroutine calls:                                             SLBIDRIF.149   
+      External uv_to_cu,uv_to_cv,slab_ice_advect,slabdiff                  SDR1F404.5     
+                                                                           SLBIDRIF.152   
+!- End of header                                                           SLBIDRIF.153   
+                                                                           SLBIDRIF.154   
+! initialise various constants.                                            SLBIDRIF.155   
+      icolsm1 = icols-1                                                    SLBIDRIF.156   
+      zero    = 0.000E+00                                                  SLBIDRIF.157   
+      ahdt    = ah * timestep                                              SLBIDRIF.158   
+      dlat_rad= delta_lat * pi_over_180                                    SLBIDRIF.159   
+      dlon_rad= delta_long * pi_over_180                                   SLBIDRIF.160   
+                                                                           SLBIDRIF.161   
+! First set up land sea and ice-free sea masks                             SLBIDRIF.162   
+      do j = 1,jrows                                                       SLBIDRIF.163   
+        do i = 1,icols                                                     SLBIDRIF.164   
+          ocean(i,j)    =  .not.landmask(i,j)                              SLBIDRIF.165   
+          dmask(i,j)    =  ocean(i,j)                                      SLBIDRIF.166   
+          hmask(i,j)    =  0.0                                             SLBIDRIF.167   
+          if (ocean(i,j)) hmask(i,j) = 1.0                                 SLBIDRIF.168   
+          aice_work(i,j) = aice(i,j)                                       SLBIDRIF.169   
+          if (aice_work(i,j).eq.rmdi) aice_work(i,j)=zero                  SLBIDRIF.170   
+          hice_work(i,j) = hice(i,j)                                       SLBIDRIF.171   
+          if (hice_work(i,j).eq.rmdi) hice_work(i,j)=zero                  SLBIDRIF.172   
+          hsnow_work(i,j) = hsnow(i,j)                                     SLBIDRIF.173   
+          if (hsnow_work(i,j).eq.rmdi) hsnow_work(i,j)=zero                SLBIDRIF.174   
+        end do                                                             SLBIDRIF.175   
+      end do                                                               SLBIDRIF.176   
+      jrowsby2=jrows/2                                                     SLBIDRIF.177   
+      jby2p1=jrowsby2+1                                                    SLBIDRIF.178   
+      do j=1,jrowsby2                                                      SLBIDRIF.179   
+        amx(j)=amxnorth                                                    SLBIDRIF.180   
+      end do                                                               SLBIDRIF.181   
+      do j=jby2p1,jrows                                                    SLBIDRIF.182   
+        amx(j)=amxsouth                                                    SLBIDRIF.183   
+      end do                                                               SLBIDRIF.184   
+                                                                           SLBIDRIF.185   
+! Calculate Arakawa B grid ice velocity mask.                              SLBIDRIF.186   
+      do j = 1,jrowsm1                                                     SLBIDRIF.187   
+        do i = 1,icolsm1                                                   SLBIDRIF.188   
+          umask(i,j)    =  1.0                                             SLBIDRIF.189   
+          uv = hmask(i,j)+hmask(i+1,j)+hmask(i,j+1)+hmask(i+1,j+1)         SLBIDRIF.190   
+          if (uv.lt.3.5)  umask(i,j)    =  0.0                             SLBIDRIF.191   
+        end do                                                             SLBIDRIF.192   
+        if (lglobal) then                                                  SLBIDRIF.193   
+          umask(icols,j)  =  1.0                                           SLBIDRIF.194   
+          uv = hmask(icols,j)+hmask(icols,j+1)+hmask(1,j)+hmask(1,j+1)     SLBIDRIF.195   
+          if (uv.lt.3.5)    umask(icols,j) = 0.0                           SLBIDRIF.196   
+        else                                                               SLBIDRIF.197   
+          umask(icols,j) = 0.0     ! what should i do here ?               SLBIDRIF.198   
+        endif                                                              SLBIDRIF.199   
+      end do                                                               SLBIDRIF.200   
+      do j=1,jrowsm1                                                       SLBIDRIF.201   
+        do i=1,icols                                                       SLBIDRIF.202   
+          ucurrent_l(i,j) = ucurrent(i,j)*umask(i,j)                       SCH0F405.7     
+          vcurrent_l(i,j) = vcurrent(i,j)*umask(i,j)                       SCH0F405.8     
+        end do                                                             SLBIDRIF.205   
+      end do                                                               SLBIDRIF.206   
+                                                                           SLBIDRIF.207   
+! Interpolate currents to C grid.                                          SLBIDRIF.208   
+      call uv_to_cu(                                                       SDR1F404.6     
+*CALL ARGOINDX                                                             SDR1F404.7     
+     &     ucurrent_l,ucurrent_c,jrowsm1,icols)                            SCH0F405.9     
+                                                                           SDR1F404.9     
+      call uv_to_cv(                                                       SDR1F404.10    
+*CALL ARGOINDX                                                             SDR1F404.11    
+     &     vcurrent_l,vcurrent_c,jrowsm1,icols)                            SCH0F405.10    
+                                                                           SLBIDRIF.211   
+! Copy initial ice depths and snow depths to workspace                     SLBIDRIF.212   
+      do j=1,jrows                                                         SLBIDRIF.213   
+        do i=1,icols                                                       SLBIDRIF.214   
+          aice_old(i,j) = aice(i,j)                                        SLBIDRIF.215   
+          hice_old(i,j) = hice(i,j)                                        SLBIDRIF.216   
+          hsnow_old(i,j) = hsnow(i,j)                                      SLBIDRIF.217   
+          diffus(i,j) = 0.0                                                SLBIDRIF.218   
+        end do                                                             SLBIDRIF.219   
+      end do                                                               SLBIDRIF.220   
+                                                                           SLBIDRIF.221   
+! Zero currents if ice depth >= 4 metres and ice flowing to thicker area   SLBIDRIF.222   
+      do j=1,jrowsm1                                                       SLBIDRIF.224   
+        do i=1,icolsm1                                                     SLBIDRIF.225   
+          if (ucurrent_c(i,j).gt.0.0                                       SJC1F400.238   
+     &    .and.hice(i+1,j+1).gt.4.0)                                       SJC1F400.239   
+     &    ucurrent_c(i,j)=0.0                                              SLBIDRIF.228   
+          if (ucurrent_c(i,j).le.0.0                                       SJC1F400.240   
+     &    .and.hice(i,j+1).gt.4.0)                                         SJC1F400.241   
+     &    ucurrent_c(i,j)=0.0                                              SJC1F400.242   
+          if (vcurrent_c(i,j).gt.0.0                                       SJC1F400.243   
+     &    .and.hice(i+1,j).gt.4.0)                                         SJC1F400.244   
+     &    vcurrent_c(i,j)=0.0                                              SJC1F400.245   
+          if (vcurrent_c(i,j).le.0.0                                       SJC1F400.246   
+     &    .and.hice(i+1,j+1).gt.4.0)                                       SJC1F400.247   
+     &    vcurrent_c(i,j)=0.0                                              SLBIDRIF.243   
+        end do                                                             SLBIDRIF.244   
+        if (lglobal) then                                                  SLBIDRIF.245   
+          if (ucurrent_c(icols,j) .gt. 0.0 .and.                           SJC1F400.248   
+     &    hice(1,j+1).gt.4.0)                                              SJC1F400.249   
+     &    ucurrent_c(icols,j)=0.0                                          SJC1F400.250   
+          if (ucurrent_c(icols,j) .lt. 0.0 .and.                           SJC1F400.251   
+     &    hice(icols,j+1).gt.4.0)                                          SJC1F400.252   
+     &    ucurrent_c(icols,j)=0.0                                          SJC1F400.253   
+          if (vcurrent_c(icols,j) .gt. 0.0 .and.                           SJC1F400.254   
+     &    hice(1,j).gt.4.0)                                                SJC1F400.255   
+     &    vcurrent_c(icols,j)=0.0                                          SJC1F400.256   
+          if (vcurrent_c(icols,j) .le. 0.0 .and.                           SJC1F400.257   
+     &    hice(1,j+1).gt.4.0)                                              SJC1F400.258   
+     &    vcurrent_c(icols,j)=0.0                                          SLBIDRIF.248   
+        else                                                               SLBIDRIF.249   
+          ucurrent_c(icols,j)=ucurrent_c(icolsm1,j)                        SJC1F400.259   
+          vcurrent_c(icols,j)=vcurrent_c(icolsm1,j)                        SJC1F400.260   
+        end if                                                             SLBIDRIF.251   
+      end do                                                               SJC1F400.261   
+      do i=1,icols                                                         SJC1F400.262   
+        vcurrent_c(i,1) = 0.0                                              SJC1F400.263   
+      end do                                                               SLBIDRIF.252   
+                                                                           SLBIDRIF.253   
+! Call ice_advect to advect ice thickness, compactness and snow depth.     SLBIDRIF.254   
+      call slab_ice_advect(                                                SLBIDRIF.255   
+     & icols,jrows,jrowsm1,lglobal,dlat_rad,dlon_rad,timestep,a            SLBIDRIF.256   
+     &,ucurrent_c,vcurrent_c,hmask,umask,icy,cos_p_latitude                SLBIDRIF.257   
+     &,cos_u_latitude,sin_u_latitude,aice_work,hice_work,hsnow_work        SLBIDRIF.258   
+     &,areas                                                               SJC1F400.264   
+     &          )                                                          SLBIDRIF.259   
+                                                                           SLBIDRIF.260   
+! Calculate diffusion increments using slabdiff (as used for slabtemp)     SLBIDRIF.261   
+! Extend dmask to be zero over all ice-free areas to prevent diffusion     SLBIDRIF.262   
+! out from ice edge and initialise increment array.                        SLBIDRIF.263   
+      do j=1,jrows                                                         SLBIDRIF.264   
+        do i=1,icols                                                       SLBIDRIF.265   
+         if (ocean(i,j)) then                                              SJC1F400.265   
+           if (aice_work(i,j).eq.zero) dmask(i,j)=.false.                  SJC1F400.266   
+           hinc_diff(i,j)=hice_work(i,j)                                   SJC1F400.267   
+           hinc_adv(i,j) =hice_work(i,j)-hice_old(i,j)                     SJC1F400.268   
+           hsinc_adv(i,j)=hsnow_work(i,j)*aice_work(i,j)-hsnow_old(i,j)    SJC1F400.269   
+     &                    *aice_old(i,j)                                   SJC1F400.270   
+          endif                                                            SJC1F400.271   
+        end do                                                             SLBIDRIF.268   
+      end do                                                               SLBIDRIF.269   
+                                                                           SLBIDRIF.270   
+! call diffusion subroutine                                                SLBIDRIF.271   
+      call slabdiff ( hice_work                                            SLBIDRIF.272   
+     &,dmask                                                               SLBIDRIF.273   
+     &,l1,l2                                                               SLBIDRIF.274   
+     &,jrows                                                               SLBIDRIF.275   
+     &,icols                                                               SLBIDRIF.276   
+     &,ahdt                                                                SLBIDRIF.277   
+     &,delta_long,delta_lat,base_lat                                       SLBIDRIF.278   
+     &,cos_p_latitude,cos_u_latitude,sec_p_latitude                        SLBIDRIF.279   
+     &                )                                                    SLBIDRIF.280   
+                                                                           SLBIDRIF.281   
+! Calculate increment in ice depth due to diffusion.                       SLBIDRIF.282   
+      do j=1,jrows                                                         SLBIDRIF.283   
+        do i=1,icols                                                       SLBIDRIF.284   
+         if (ocean(i,j)) hinc_diff(i,j)=hice_work(i,j)-hinc_diff(i,j)      SLBIDRIF.285   
+        end do                                                             SLBIDRIF.286   
+      end do                                                               SLBIDRIF.287   
+                                                                           SLBIDRIF.288   
+! Adjust ice fractions greater than the max, or less than the min.         SLBIDRIF.289   
+! Also adjust snow depth accordingly and reset icy and newice.             SLBIDRIF.290   
+      do j=1,jrows                                                         SLBIDRIF.291   
+        do i=1,icols                                                       SLBIDRIF.292   
+          if (aice_work(i,j).gt.amx(j)) then                               SLBIDRIF.293   
+            hsnow_work(i,j) = hsnow_work(i,j)*aice_work(i,j)/amx(j)        SLBIDRIF.294   
+            aice_work(i,j)  = amx(j)                                       SLBIDRIF.295   
+          elseif (aice_work(i,j).gt.zero.and.aice_work(i,j).lt.aicemin     SLBIDRIF.296   
+     &            .and. ocean(i,j) ) then                                  SLBIDRIF.297   
+            hsnow_work(i,j) = hsnow_work(i,j)*aice_work(i,j)/aicemin       SLBIDRIF.298   
+            aice_work(i,j)  = aicemin                                      SLBIDRIF.299   
+          endif                                                            SLBIDRIF.300   
+          icy(i,j) = (aice_work(i,j).gt.zero)                              SLBIDRIF.301   
+        end do                                                             SLBIDRIF.302   
+      end do                                                               SLBIDRIF.303   
+                                                                           SLBIDRIF.304   
+! Deal with boxes where ice has advected over open ocean.                  SLBIDRIF.305   
+      do j=1,jrows                                                         SLBIDRIF.306   
+        do i=1,icols                                                       SLBIDRIF.307   
+          if (icy(i,j)) newice(i,j)=.false.                                SLBIDRIF.308   
+        end do                                                             SLBIDRIF.309   
+      end do                                                               SLBIDRIF.310   
+                                                                           SLBIDRIF.311   
+! copy work variables to primary space                                     SLBIDRIF.312   
+      do j=1,jrows                                                         SLBIDRIF.313   
+        do i=1,icols                                                       SLBIDRIF.314   
+          if (aice_work(i,j).gt.zero) aice(i,j)=aice_work(i,j)             SLBIDRIF.315   
+          if (hice_work(i,j).gt.zero) hice(i,j)=hice_work(i,j)             SLBIDRIF.316   
+          if (hsnow_work(i,j).gt.zero) hsnow(i,j)=hsnow_work(i,j)          SLBIDRIF.317   
+        end do                                                             SLBIDRIF.318   
+      end do                                                               SLBIDRIF.319   
+                                                                           SLBIDRIF.320   
+      return                                                               SLBIDRIF.321   
+      end                                                                  SLBIDRIF.322   
+*ENDIF                                                                     SLBIDRIF.323   

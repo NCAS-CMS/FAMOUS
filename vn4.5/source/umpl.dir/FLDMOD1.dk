@@ -1,0 +1,1497 @@
+*IF DEF,FLDMOD                                                             FLDMOD1.2     
+C *****************************COPYRIGHT******************************     FLDMOD1.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    FLDMOD1.4     
+C                                                                          FLDMOD1.5     
+C Use, duplication or disclosure of this code is subject to the            FLDMOD1.6     
+C restrictions as set forth in the contract.                               FLDMOD1.7     
+C                                                                          FLDMOD1.8     
+C                Meteorological Office                                     FLDMOD1.9     
+C                London Road                                               FLDMOD1.10    
+C                BRACKNELL                                                 FLDMOD1.11    
+C                Berkshire UK                                              FLDMOD1.12    
+C                RG12 2SZ                                                  FLDMOD1.13    
+C                                                                          FLDMOD1.14    
+C If no contract has been raised with this copy of the code, the use,      FLDMOD1.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      FLDMOD1.16    
+C to do so must first be obtained in writing from the Head of Numerical    FLDMOD1.17    
+C Modelling at the above address.                                          FLDMOD1.18    
+C ******************************COPYRIGHT******************************    FLDMOD1.19    
+C                                                                          FLDMOD1.20    
+CLL  Routine: FLDMOD --------------------------------------------------    FLDMOD1.21    
+CLL                                                                        FLDMOD1.22    
+CLL  Purpose: To read a   direct access PP file  and convert it to a       FLDMOD1.23    
+CLL  sequential file read to be passed across to the IBM                   FLDMOD1.24    
+CLL                                                                        FLDMOD1.25    
+CLL  Modification History:                                                 FLDMOD1.26    
+CLL  Copy of FIELDMOD taken, named UMTHIN1 and code for thinning           FLDMOD1.27    
+CLL  fields added. I/O routines from portable model included so that       FLDMOD1.28    
+CLL  file names are passed through environmental variables instead         FLDMOD1.29    
+CLL  of assigns. Vic Blackman January-March 1995                           FLDMOD1.30    
+CLL                                                                        FLDMOD1.31    
+CLL  Calls to OPEN replaced by FILE_OPEN due to change in UM v3.5          FLDMOD1.32    
+CLL  4.2   29/11/96 (1)Corrections to code to enable qxumthin1 to          FLDMOD1.33    
+CLL         produce a bit comparable dump to that produced by qxfieldmod   FLDMOD1.34    
+CLL                 (as used in operational suite) using the namelist      FLDMOD1.35    
+CLL                 /u/opfc/op/perm/in/qifieldmod as input.                FLDMOD1.36    
+CLL                 (2)Renamed FLDMOD                                      FLDMOD1.37    
+CLL                 Author I.Edmond                                        FLDMOD1.38    
+CLL  4.3   15/4/97 Get the current sector size for disk I/O from           UIE1F403.18    
+CLL                environment variable UM_SECTOR_SIZE in calling          UIE1F403.19    
+CLL                script, otherwise, use UM_SECTOR_SIZE=512.              UIE1F403.20    
+CLL                Required by INITPP to make sure the data starts         UIE1F403.21    
+CLL                on a sector bndry. IEdmond                              UIE1F403.22    
+!    4.5   05/06/98 Prevent failure if lookup table starts on a            UDG1F405.1534  
+!                   sector boundary                                        UDG1F405.1535  
+!                   Author D.M. Goddard                                    UDG1F405.1536  
+CLL                                                                        FLDMOD1.39    
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FLDMOD1.40    
+CLL                                                                        FLDMOD1.41    
+CLL  Project task: ...                                                     FLDMOD1.42    
+CLL                                                                        FLDMOD1.43    
+CLL  External documentation: On-line UM document ??? - ??????????          FLDMOD1.44    
+CLL                                                                        FLDMOD1.45    
+CLL  -------------------------------------------------------------------   FLDMOD1.46    
+C*L  Interface and arguments: ------------------------------------------   FLDMOD1.47    
+C                                                                          FLDMOD1.48    
+      PROGRAM FLDMOD                                                       FLDMOD1.49    
+      IMPLICIT NONE                                                        FLDMOD1.50    
+      EXTERNAL DIMENS1                                                     FLDMOD1.51    
+      CHARACTER CMESSAGE*80                                                FLDMOD1.52    
+      CHARACTER DIAGFILE*80                                                FLDMOD1.53    
+      CHARACTER INFILE*80                                                  FLDMOD1.54    
+      CHARACTER*8 c_nproc            ! to get nproc_x and nproc_y from     UIE1F403.23    
+!                                    ! environment variables.              UIE1F403.24    
+C                         up to an EVEN no for conversion to IBM format    FLDMOD1.55    
+      INTEGER                                                              FLDMOD1.56    
+     &     LEN_FIXHD              !    Length of fixed length header       FLDMOD1.57    
+     &    ,LEN_INTHD                                                       FLDMOD1.58    
+     &    ,LEN_REALHD                                                      FLDMOD1.59    
+     &    ,LEN1_LEVDPC                                                     FLDMOD1.60    
+     &    ,LEN2_LEVDPC                                                     FLDMOD1.61    
+     &    ,LEN1_LOOKUP                                                     FLDMOD1.62    
+     &    ,LEN2_LOOKUP                                                     FLDMOD1.63    
+     &    ,PPUNIT1                !OUT unit no of required fieldsfile 1    FLDMOD1.64    
+     &    ,PPUNIT2                !OUT unit no of required fieldsfile 2    FLDMOD1.65    
+     &    ,DIAG_UNIT              !unit number for diagnostics             FLDMOD1.66    
+     &    ,ICODE                  !IN  return code                         FLDMOD1.67    
+     &    ,ERR                                                             UIE1F403.25    
+C    LOCAL VARIABLES                                                       FLDMOD1.68    
+      PARAMETER(LEN_FIXHD=256)                                             FLDMOD1.69    
+      INTEGER                                                              FLDMOD1.70    
+     &     I                      ! local counter                          FLDMOD1.71    
+     &    ,PP_FIXHD(LEN_FIXHD)    !IN  Fixed length header                 FLDMOD1.72    
+     &    ,IWA                    !                                        FLDMOD1.73    
+     &    ,IX                     !                                        FLDMOD1.74    
+     &    ,LEN_IO                 !                                        FLDMOD1.75    
+      REAL                                                                 FLDMOD1.76    
+     &     A_IO                   !                                        FLDMOD1.77    
+c                                                                          FLDMOD1.78    
+*CALL CNTL_IO                                                              UIE1F403.26    
+                                                                           UIE1F403.27    
+CL                                                                         UIE1F403.28    
+CL Get the current sector size for disk I/O                                UIE1F403.29    
+CL                                                                         UIE1F403.30    
+                                                                           UIE1F403.31    
+      CALL FORT_GET_ENV('UM_SECTOR_SIZE',14,c_nproc,8,err)                 UIE1F403.32    
+      IF (err .NE. 0) THEN                                                 UIE1F403.33    
+        WRITE(6,*) 'Warning: Environment variable UM_SECTOR_SIZE has ',    UIE1F403.34    
+     &             'not been set.'                                         UIE1F403.35    
+        WRITE(6,*) 'Setting um_sector_size to 512'                         UIE1F403.36    
+        um_sector_size=512                                                 UIE1F403.37    
+      ELSE                                                                 UIE1F403.38    
+        READ(c_nproc,'(I4)') um_sector_size                                UIE1F403.39    
+      ENDIF                                                                UIE1F403.40    
+C    OPEN DIAGNOSTIC FILE                                                  FLDMOD1.79    
+      DIAG_UNIT = 7                                                        FLDMOD1.80    
+      CALL GET_FILE(DIAG_UNIT,DIAGFILE,80,ICODE)                           FLDMOD1.81    
+      OPEN(UNIT=DIAG_UNIT,FILE=DIAGFILE)                                   FLDMOD1.82    
+                                                                           FLDMOD1.83    
+C*****************************************************************         FLDMOD1.84    
+C    REMEMBER THAT BUFFER OUT STARTS AT ADDRESS 0 THUS LOOKUP GOES         FLDMOD1.85    
+C    FROM 0 to 262143 ie THE NEXT ADDRESS SHOULD BE IWA=262144 to          FLDMOD1.86    
+C    IWA=325119 then IWA=325120 to 388095 then 388096 etc                  FLDMOD1.87    
+C                                                                          FLDMOD1.88    
+      icode = 0                                                            FLDMOD1.89    
+      cmessage= '                                         '                FLDMOD1.90    
+C                                                                          FLDMOD1.91    
+C     READ IN LOOKUP TABLE  IF FIRST TIME THRO                             FLDMOD1.92    
+C*****************************************************************         FLDMOD1.93    
+      PPUNIT1=10                                                           FLDMOD1.94    
+      PPUNIT2=11                                                           FLDMOD1.95    
+c     IX=UNIT(PPUNIT1)                                                     FLDMOD1.96    
+C*****************************************************************         FLDMOD1.97    
+C     Buffer in the Fixed Length Header and obtain lengths                 FLDMOD1.98    
+C*****************************************************************         FLDMOD1.99    
+      CALL GET_FILE(PPUNIT1,INFILE,80,ICODE)                               FLDMOD1.100   
+      CALL FILE_OPEN(PPUNIT1,INFILE,80,0,1,ICODE)                          FLDMOD1.101   
+c     call getpos(ppunit1,iwa)                                             FLDMOD1.102   
+c     WRITE(6,*)' fixhd iwa=',iwa                                          GIE0F403.199   
+      CALL BUFFIN(PPUNIT1,PP_FIXHD,LEN_FIXHD,LEN_IO,A_IO)                  FLDMOD1.104   
+        IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_FIXHD) THEN                       FLDMOD1.105   
+          CALL IOERROR('Buffer in fixed length header',A_IO,LEN_IO,        FLDMOD1.106   
+     &                  LEN_FIXHD)                                         FLDMOD1.107   
+          CMESSAGE='FFREAD : I/O error reading FIXED LENGTH HEADER'        FLDMOD1.108   
+          ICODE=2                                                          FLDMOD1.109   
+          WRITE(6,*)'umthin1 - I/O error reading FIXED LENGTH HEADER'      GIE0F403.200   
+          STOP                                                             FLDMOD1.111   
+        ENDIF                                                              FLDMOD1.112   
+c     WRITE(6,*)'fixed length header'                                      GIE0F403.201   
+c     WRITE(6,*)pp_fixhd                                                   GIE0F403.202   
+      LEN_INTHD=PP_FIXHD(101)                                              FLDMOD1.115   
+      LEN_REALHD=PP_FIXHD(106)                                             FLDMOD1.116   
+      LEN1_LEVDPC=PP_FIXHD(111)                                            FLDMOD1.117   
+      LEN2_LEVDPC=PP_FIXHD(112)                                            FLDMOD1.118   
+      LEN1_LOOKUP=PP_FIXHD(151)                                            FLDMOD1.119   
+      LEN2_LOOKUP=PP_FIXHD(152)                                            FLDMOD1.120   
+      CALL DIMENS1(LEN_INTHD,LEN_REALHD,LEN1_LEVDPC,LEN2_LEVDPC,           FLDMOD1.121   
+     &   LEN1_LOOKUP,LEN2_LOOKUP,LEN_FIXHD,PP_FIXHD,PPUNIT1,PPUNIT2,       FLDMOD1.122   
+     &   ICODE,CMESSAGE)                                                   FLDMOD1.123   
+      IF(ICODE.NE.0) THEN                                                  FLDMOD1.124   
+        WRITE(7,100) ICODE                                                 FLDMOD1.125   
+        WRITE(7,110) CMESSAGE                                              FLDMOD1.126   
+      ENDIF                                                                FLDMOD1.127   
+      STOP                                                                 FLDMOD1.128   
+ 100  FORMAT(' ICODE EQUAL TO ',I2)                                        FLDMOD1.129   
+ 110  FORMAT(A80)                                                          FLDMOD1.130   
+      STOP                                                                 FLDMOD1.131   
+      END                                                                  FLDMOD1.132   
+CLL  Routine: CONTROL----------------------------------------------        FLDMOD1.133   
+CLL                                                                        FLDMOD1.134   
+CLL  Purpose: To control the calculation of the derived diagnostics        FLDMOD1.135   
+CLL  and output of the new LOOKUP table (called LOOKNEW)                   FLDMOD1.136   
+CLL                                                                        FLDMOD1.137   
+CLL  Tested under compiler:   cft77                                        FLDMOD1.138   
+CLL  Tested under OS version: UNICOS 5.1                                   FLDMOD1.139   
+CLL                                                                        FLDMOD1.140   
+CLL  Modification History:                                                 FLDMOD1.141   
+CLL                                                                        FLDMOD1.142   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FLDMOD1.143   
+CLL                                                                        FLDMOD1.144   
+CLL  Project task: ...                                                     FLDMOD1.145   
+CLL                                                                        FLDMOD1.146   
+CLL  External documentation: On-line UM document ??? - ??????????          FLDMOD1.147   
+CLL                                                                        FLDMOD1.148   
+CLL  ---------                                                             FLDMOD1.149   
+C*L  Interface and arguments: ------------------------------------------   FLDMOD1.150   
+C                                                                          FLDMOD1.151   
+      SUBROUTINE CONTROL(PPUNIT1,PPUNIT2,LEN1_LOOKUP,LEN2_LOOKUP,          FLDMOD1.152   
+     &                   LOOKUP,PP_INTHD,LEN_INTHD,                        FLDMOD1.153   
+     &                   PP_FIXHD,LEN_FIXHD,ICODE,CMESSAGE,NENT)           FLDMOD1.154   
+      IMPLICIT NONE                                                        FLDMOD1.155   
+      INTEGER                                                              FLDMOD1.156   
+     &     LEN_FIXHD                                                       FLDMOD1.157   
+     &    ,LEN_INTHD                                                       FLDMOD1.158   
+     &    ,LEN_LOOKUP                                                      FLDMOD1.159   
+     &    ,LEN1_LOOKUP                                                     FLDMOD1.160   
+     &    ,LEN2_LOOKUP                                                     FLDMOD1.161   
+     &    ,LOOKUP(LEN1_LOOKUP,LEN2_LOOKUP)                                 FLDMOD1.162   
+     &    ,LOOKNEW(LEN1_LOOKUP,LEN2_LOOKUP)                                FLDMOD1.163   
+     &    ,PP_FIXHD(LEN_FIXHD)                                             FLDMOD1.164   
+     &    ,PP_INTHD(LEN_INTHD)                                             FLDMOD1.165   
+     &    ,LEN_IO                                                          FLDMOD1.166   
+     &    ,ICODE                                                           FLDMOD1.167   
+     &    ,PPUNIT1                                                         FLDMOD1.168   
+     &    ,PPUNIT2                                                         FLDMOD1.169   
+     &    ,NENT                                                            FLDMOD1.170   
+      INTEGER                                                              FLDMOD1.171   
+     &     ROW_LENGTH                                                      FLDMOD1.172   
+     &    ,P_ROWS                                                          FLDMOD1.173   
+     &    ,P_FIELD                                                         FLDMOD1.174   
+     &    ,LENBUF                                                          FLDMOD1.175   
+     &    ,I                                                               FLDMOD1.176   
+     &    ,J                                                               FLDMOD1.177   
+      REAL                                                                 FLDMOD1.178   
+     &     A_IO                                                            FLDMOD1.179   
+                                                                           FLDMOD1.180   
+      INTEGER                                                              FLDMOD1.181   
+     &    STIME_MOD                                                        FLDMOD1.182   
+     &,   ETIME_MOD                                                        FLDMOD1.183   
+     &,   NFIELDS_MOD                                                      FLDMOD1.184   
+     &,   MTYPE_MOD(500)                                                   FLDMOD1.185   
+     &,   MLEVS_MOD(500)                                                   FLDMOD1.186   
+     &,   STIME_SEL                                                        FLDMOD1.187   
+     &,   ETIME_SEL                                                        FLDMOD1.188   
+     &,   NFIELDS_SEL                                                      FLDMOD1.189   
+     &,   MTYPE_SEL(500)                                                   FLDMOD1.190   
+     &,   MLEVS_SEL(500)                                                   FLDMOD1.191   
+     &,   STIME_REJ                                                        FLDMOD1.192   
+     &,   ETIME_REJ                                                        FLDMOD1.193   
+     &,   NFIELDS_REJ                                                      FLDMOD1.194   
+     &,   MTYPE_REJ(500)                                                   FLDMOD1.195   
+     &,   MLEVS_REJ(500)                                                   FLDMOD1.196   
+     &,   PPUNIT_OROG                                                      FLDMOD1.197   
+     &,   STIME_THI                                                        FLDMOD1.198   
+     &,   ETIME_THI                                                        FLDMOD1.199   
+     &,   NFIELDS_THI                                                      FLDMOD1.200   
+     &,   MTYPE_THI(500)                                                   FLDMOD1.201   
+     &,   MLEVS_THI(500)                                                   FLDMOD1.202   
+     $,   IXXSTEP_THI(500)                                                 FLDMOD1.203   
+     $,   IYYSTEP_THI(500)                                                 FLDMOD1.204   
+                                                                           FLDMOD1.205   
+      CHARACTER                                                            FLDMOD1.206   
+     &    OUTPUT_PACK_TYPE*6                                               FLDMOD1.207   
+                                                                           FLDMOD1.208   
+      REAL                                                                 FLDMOD1.209   
+     &    AMULT(500)                                                       FLDMOD1.210   
+     &,   WIND_10M_OROG          !  LEVEL ABOVE WHICH 10M WIND FIXED       FLDMOD1.211   
+     &,   WIND_10M_SCALE         !  SCALE APPLIED TO LEVEL 1 WINDS         FLDMOD1.212   
+                                                                           FLDMOD1.213   
+      LOGICAL                                                              FLDMOD1.214   
+     &    MODIFY                                                           FLDMOD1.215   
+     &,   REJECT                                                           FLDMOD1.216   
+     &,   SELECT                                                           FLDMOD1.217   
+     &,   WIND_10M                                                         FLDMOD1.218   
+     &,   THIN                                                             FLDMOD1.219   
+                                                                           FLDMOD1.220   
+      NAMELIST /MODS/                                                      FLDMOD1.221   
+     &  MODIFY,STIME_MOD,ETIME_MOD,NFIELDS_MOD,                            FLDMOD1.222   
+     &                                      MTYPE_MOD,MLEVS_MOD,AMULT,     FLDMOD1.223   
+     &  SELECT,STIME_SEL,ETIME_SEL,NFIELDS_SEL,MTYPE_SEL,MLEVS_SEL,        FLDMOD1.224   
+     &  REJECT,STIME_REJ,ETIME_REJ,NFIELDS_REJ,MTYPE_REJ,MLEVS_REJ,        FLDMOD1.225   
+     &  WIND_10M,WIND_10M_SCALE,WIND_10M_OROG,PPUNIT_OROG,                 FLDMOD1.226   
+     &  THIN,STIME_THI,ETIME_THI,NFIELDS_THI,MTYPE_THI,MLEVS_THI,          FLDMOD1.227   
+     &                                        IXXSTEP_THI,IYYSTEP_THI,     FLDMOD1.228   
+     &  OUTPUT_PACK_TYPE                                                   FLDMOD1.229   
+                                                                           FLDMOD1.230   
+C-----------------------------------------------------------------------   FLDMOD1.231   
+      CHARACTER CMESSAGE*(*)                                               FLDMOD1.232   
+      EXTERNAL FIELDS                                                      FLDMOD1.233   
+C                                                                          FLDMOD1.234   
+CL---------------------------------------------------------------          FLDMOD1.235   
+CL     init namelist                                                       FLDMOD1.236   
+CL---------------------------------------------------------------          FLDMOD1.237   
+      MODIFY   = .FALSE.                                                   FLDMOD1.238   
+      REJECT   = .FALSE.                                                   FLDMOD1.239   
+      SELECT   = .FALSE.                                                   FLDMOD1.240   
+      WIND_10M = .FALSE.                                                   FLDMOD1.241   
+      THIN=.FALSE.                                                         FLDMOD1.242   
+      STIME_MOD = -99                                                      FLDMOD1.243   
+      ETIME_MOD = -99                                                      FLDMOD1.244   
+      NFIELDS_MOD=0                                                        FLDMOD1.245   
+      STIME_SEL = -99                                                      FLDMOD1.246   
+      ETIME_SEL = -99                                                      FLDMOD1.247   
+      NFIELDS_SEL=0                                                        FLDMOD1.248   
+      STIME_REJ = -99                                                      FLDMOD1.249   
+      ETIME_REJ = -99                                                      FLDMOD1.250   
+      NFIELDS_REJ=0                                                        FLDMOD1.251   
+      STIME_THI = -99                                                      FLDMOD1.252   
+      ETIME_THI = -99                                                      FLDMOD1.253   
+      NFIELDS_THI=0                                                        FLDMOD1.254   
+      DO I=1,500                                                           FLDMOD1.255   
+        MTYPE_MOD(I)=0                                                     FLDMOD1.256   
+        MLEVS_MOD(I)=0                                                     FLDMOD1.257   
+        AMULT(I)=1.0                                                       FLDMOD1.258   
+        MTYPE_SEL(I)=0                                                     FLDMOD1.259   
+        MLEVS_SEL(I)=0                                                     FLDMOD1.260   
+        MTYPE_REJ(I)=0                                                     FLDMOD1.261   
+        MLEVS_REJ(I)=0                                                     FLDMOD1.262   
+        MTYPE_THI(I)=0                                                     FLDMOD1.263   
+        MLEVS_THI(I)=0                                                     FLDMOD1.264   
+        IXXSTEP_THI(I)=2                                                   FLDMOD1.265   
+        IYYSTEP_THI(I)=2                                                   FLDMOD1.266   
+      ENDDO                                                                FLDMOD1.267   
+      WIND_10M_OROG  = -9999.                                              FLDMOD1.268   
+      WIND_10M_SCALE = .7                                                  FLDMOD1.269   
+      PPUNIT_OROG    = 12                                                  FLDMOD1.270   
+      OUTPUT_PACK_TYPE='WGDOS '                                            FLDMOD1.271   
+C                                                                          FLDMOD1.272   
+CL---------------------------------------------------------------          FLDMOD1.273   
+CL     read namelist                                                       FLDMOD1.274   
+CL---------------------------------------------------------------          FLDMOD1.275   
+      READ(5,MODS)                                                         FLDMOD1.276   
+      WRITE(7,MODS)                                                        FLDMOD1.277   
+                                                                           FLDMOD1.278   
+CL---------------------------------------------------------------          FLDMOD1.279   
+CL     Set up constants                                                    FLDMOD1.280   
+CL---------------------------------------------------------------          FLDMOD1.281   
+      ROW_LENGTH=PP_INTHD(6)                                               FLDMOD1.282   
+      P_ROWS=PP_INTHD(7)                                                   FLDMOD1.283   
+      P_FIELD=ROW_LENGTH*P_ROWS                                            FLDMOD1.284   
+      LENBUF=P_FIELD + 512                                                 FLDMOD1.285   
+                                                                           FLDMOD1.286   
+C     WRITE(6,*)'call fields'                                              GIE0F403.203   
+      CALL FIELDS(PP_FIXHD,LEN_FIXHD,LENBUF,P_FIELD,                       FLDMOD1.288   
+     &             LOOKUP,LOOKUP,LEN1_LOOKUP,LEN2_LOOKUP,NENT,             FLDMOD1.289   
+     &             STIME_MOD,ETIME_MOD,NFIELDS_MOD,                        FLDMOD1.290   
+     &                                       MTYPE_MOD,MLEVS_MOD,AMULT,    FLDMOD1.291   
+     &             STIME_SEL,ETIME_SEL,NFIELDS_SEL,MTYPE_SEL,MLEVS_SEL,    FLDMOD1.292   
+     &             STIME_REJ,ETIME_REJ,NFIELDS_REJ,MTYPE_REJ,MLEVS_REJ,    FLDMOD1.293   
+     &             STIME_THI,ETIME_THI,NFIELDS_THI,MTYPE_THI,MLEVS_THI,    FLDMOD1.294   
+     &                                         IXXSTEP_THI,IYYSTEP_THI,    FLDMOD1.295   
+     &             MODIFY,SELECT,REJECT,THIN,OUTPUT_PACK_TYPE,             FLDMOD1.296   
+     &             WIND_10M,WIND_10M_OROG,WIND_10M_SCALE,PPUNIT_OROG,      FLDMOD1.297   
+     &             PPUNIT1,PPUNIT2,ICODE,CMESSAGE)                         FLDMOD1.298   
+ 9999 CONTINUE                                                             FLDMOD1.299   
+      RETURN                                                               FLDMOD1.300   
+      END                                                                  FLDMOD1.301   
+                                                                           FLDMOD1.302   
+      SUBROUTINE CONV_PACK(ILABEL,RLABEL,PACK_CODE,                        FLDMOD1.303   
+     1                     INPUT_PACK_TYPE,OUTPUT_PACK_TYPE,               FLDMOD1.304   
+     2                     FIELD,IDIM,LEN_FIELD,                           FLDMOD1.305   
+     3                     PP_FIXHD,ICODE,CMESSAGE)                        FLDMOD1.306   
+                                                                           FLDMOD1.307   
+      INTEGER                                                              FLDMOD1.308   
+     &     ILABEL(50)                                                      FLDMOD1.309   
+     &    ,PACK_CODE                                                       FLDMOD1.310   
+     &    ,IDIM                                                            FLDMOD1.311   
+     &    ,PP_FIXHD(*)                                                     FLDMOD1.312   
+     &    ,LEN_FIELD                                                       FLDMOD1.313   
+     &    ,ICODE                                                           FLDMOD1.314   
+      REAL                                                                 FLDMOD1.315   
+     &     RLABEL(19)                                                      FLDMOD1.316   
+     &    ,FIELD(IDIM)                                                     FLDMOD1.317   
+      CHARACTER                                                            FLDMOD1.318   
+     &     INPUT_PACK_TYPE*6                                               FLDMOD1.319   
+     &    ,OUTPUT_PACK_TYPE*6                                              FLDMOD1.320   
+     &    ,CMESSAGE*(*)                                                    FLDMOD1.321   
+      REAL                                                                 FLDMOD1.322   
+     &     AMDI                                                            FLDMOD1.323   
+*CALL CLOOKADD                                                             FLDMOD1.324   
+                                                                           FLDMOD1.325   
+      AMDI=RLABEL(18)                                                      FLDMOD1.326   
+                                                                           FLDMOD1.327   
+c     WRITE(6,*)'len_field=',len_field                                     GIE0F403.204   
+      CALL UN_PACK(PACK_CODE,IDIM,FIELD,LEN_FIELD,                         FLDMOD1.329   
+     1             ILABEL,AMDI,PP_FIXHD,ICODE,CMESSAGE)                    FLDMOD1.330   
+                                                                           FLDMOD1.331   
+      LEN_FIELD = ILABEL(LBROW) * ILABEL(LBNPT)                            FLDMOD1.332   
+      WRITE(6,*) INPUT_PACK_TYPE,' NOW UNPACKED'                           GIE0F403.205   
+c     WRITE(6,*)'len_field=',len_field                                     GIE0F403.206   
+                                                                           FLDMOD1.335   
+      IF(OUTPUT_PACK_TYPE.EQ.'NONE  ') THEN                                FLDMOD1.336   
+        pack_code=0   ! no repacking needed                                FLDMOD1.337   
+      ELSEIF(OUTPUT_PACK_TYPE.EQ.'WGDOS ') THEN                            FLDMOD1.338   
+        pack_code=1   ! repack using coex                                  FLDMOD1.339   
+        CALL RE_PACK(PACK_CODE,IDIM,FIELD,LEN_FIELD,                       FLDMOD1.340   
+     1             ILABEL,RLABEL,PP_FIXHD,ICODE,CMESSAGE)                  FLDMOD1.341   
+      ELSEIF(OUTPUT_PACK_TYPE.EQ.'CRAY32') THEN                            FLDMOD1.342   
+        pack_code=3   ! repack using cray 32                               FLDMOD1.343   
+        WRITE(6,*) 'packing not supported'                                 GIE0F403.207   
+                                                                           FLDMOD1.345   
+      ELSEIF(OUTPUT_PACK_TYPE.EQ.'GRIB  ') THEN                            FLDMOD1.346   
+        pack_code=3   ! repack using grib                                  FLDMOD1.347   
+        CALL RE_PACK(PACK_CODE,IDIM,FIELD,LEN_FIELD,                       FLDMOD1.348   
+     1             ILABEL,RLABEL,PP_FIXHD,ICODE,CMESSAGE)                  FLDMOD1.349   
+      ENDIF                                                                FLDMOD1.350   
+                                                                           FLDMOD1.351   
+      ILABEL(LBLREC) = LEN_FIELD                                           FLDMOD1.352   
+                                                                           FLDMOD1.353   
+      WRITE(6,*) 'NOW PACKED INTO ',OUTPUT_PACK_TYPE                       GIE0F403.208   
+c     WRITE(6,*)'len_field=',len_field                                     GIE0F403.209   
+                                                                           FLDMOD1.356   
+      RETURN                                                               FLDMOD1.357   
+      END                                                                  FLDMOD1.358   
+CLL  Routine: DIMENS1--------------------------------------------          FLDMOD1.359   
+CLL                                                                        FLDMOD1.360   
+CLL  Purpose: To read a   direct access PP file  and convert it to a       FLDMOD1.361   
+CLL  sequential file read to be passed across to the IBM                   FLDMOD1.362   
+CLL                                                                        FLDMOD1.363   
+CLL  Modification History:                                                 FLDMOD1.364   
+CLL                                                                        FLDMOD1.365   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FLDMOD1.366   
+CLL                                                                        FLDMOD1.367   
+CLL  -------------------------------------------------------------------   FLDMOD1.368   
+C*L  Interface and arguments: ------------------------------------------   FLDMOD1.369   
+C                                                                          FLDMOD1.370   
+      SUBROUTINE DIMENS1(LEN_INTHD,LEN_REALHD,LEN1_LEVDPC,LEN2_LEVDPC,     FLDMOD1.371   
+     &   LEN1_LOOKUP,LEN2_LOOKUP,LEN_FIXHD,PP_FIXHD,PPUNIT1,PPUNIT2,       FLDMOD1.372   
+     &   ICODE,CMESSAGE)                                                   FLDMOD1.373   
+      IMPLICIT NONE                                                        FLDMOD1.374   
+      EXTERNAL READPP                                                      FLDMOD1.375   
+      CHARACTER CMESSAGE*(*)                                               FLDMOD1.376   
+      INTEGER                                                              FLDMOD1.377   
+     &     LEN_INTHD                                                       FLDMOD1.378   
+     &    ,LEN_FIXHD                                                       FLDMOD1.379   
+     &    ,LEN_REALHD                                                      FLDMOD1.380   
+     &    ,LEN1_LEVDPC                                                     FLDMOD1.381   
+     &    ,LEN2_LEVDPC                                                     FLDMOD1.382   
+     &    ,LEN1_LOOKUP                                                     FLDMOD1.383   
+     &    ,LEN2_LOOKUP                                                     FLDMOD1.384   
+     &    ,LOOKUP(LEN1_LOOKUP,LEN2_LOOKUP)                                 FLDMOD1.385   
+     &    ,PP_FIXHD(LEN_FIXHD)                                             FLDMOD1.386   
+     &    ,ICODE                                                           FLDMOD1.387   
+     &    ,PPUNIT1                                                         FLDMOD1.388   
+     &    ,PPUNIT2                                                         FLDMOD1.389   
+C                                                                          FLDMOD1.390   
+C    REMEMBER THAT BUFFER OUT STARTS AT ADDRESS 0 THUS LOOKUP GOES         FLDMOD1.391   
+C    FROM 0 to 262143 ie THE NEXT ADDRESS SHOULD BE IWA=262144 to          FLDMOD1.392   
+C    IWA=325119 then IWA=325120 to 388095 then 388096 etc                  FLDMOD1.393   
+C                                                                          FLDMOD1.394   
+C                                                                          FLDMOD1.395   
+cd    WRITE(6,*)' call readpp'                                             GIE0F403.210   
+      CALL READPP(LEN_INTHD,LEN_REALHD,LEN1_LEVDPC,LEN2_LEVDPC,            FLDMOD1.397   
+     &LEN1_LOOKUP,LEN2_LOOKUP,LEN_FIXHD,PP_FIXHD,LOOKUP,LOOKUP,PPUNIT1,    FLDMOD1.398   
+     &     PPUNIT2,ICODE,CMESSAGE)                                         FLDMOD1.399   
+ 9999 CONTINUE                                                             FLDMOD1.400   
+      IF(ICODE.NE.0) RETURN                                                FLDMOD1.401   
+      RETURN                                                               FLDMOD1.402   
+      END                                                                  FLDMOD1.403   
+                                                                           FLDMOD1.404   
+CLL  Routine: FIELDS ----------------------------------------------        FLDMOD1.405   
+CLL                                                                        FLDMOD1.406   
+CLL  Purpose: To calculate fields from the Fields File such as those       FLDMOD1.407   
+CLL  normaly derived in the Derived Printfile Program                      FLDMOD1.408   
+CLL                                                                        FLDMOD1.409   
+CLL  Tested under compiler:   cft77                                        FLDMOD1.410   
+CLL  Tested under OS version: UNICOS 5.190                                 FLDMOD1.411   
+CLL                                                                        FLDMOD1.412   
+CLL  Modification History:                                                 FLDMOD1.413   
+CLL                                                                        FLDMOD1.414   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FLDMOD1.415   
+CLL                                                                        FLDMOD1.416   
+CLL  Project task: ...                                                     FLDMOD1.417   
+CLL                                                                        FLDMOD1.418   
+CLL  External documentation: On-line UM document ??? - ??????????          FLDMOD1.419   
+CLL                                                                        FLDMOD1.420   
+CLL  -------------------------------------------------------------------   FLDMOD1.421   
+C*L  Interface and arguments: ------------------------------------------   FLDMOD1.422   
+C                                                                          FLDMOD1.423   
+      SUBROUTINE FIELDS(PP_FIXHD,LEN_FIXHD,LENBUF,LEN_FIELD,               FLDMOD1.424   
+     &                  LOOKUP,ROOKUP,LEN1_LOOKUP,LEN2_LOOKUP,NENT,        FLDMOD1.425   
+     &                  STIME_MOD,ETIME_MOD,NFIELDS_MOD,                   FLDMOD1.426   
+     &                                        MTYP_MOD,MLEVS_MOD,AMULT,    FLDMOD1.427   
+     &                  STIME_SEL,ETIME_SEL,NFIELDS_SEL,                   FLDMOD1.428   
+     &                                        MTYP_SEL,MLEVS_SEL,          FLDMOD1.429   
+     &                  STIME_REJ,ETIME_REJ,NFIELDS_REJ,                   FLDMOD1.430   
+     &                                        MTYP_REJ,MLEVS_REJ,          FLDMOD1.431   
+     &                  STIME_THI,ETIME_THI,NFIELDS_THI,                   FLDMOD1.432   
+     &                      MTYP_THI,MLEVS_THI,IXXSTEP_THI,IYYSTEP_THI,    FLDMOD1.433   
+     &                  MODIFY,SELECT,REJECT,THIN,OUTPUT_PACK_TYPE,        FLDMOD1.434   
+     &                  WIND_10M,WIND_10M_OROG,WIND_10M_SCALE,             FLDMOD1.435   
+     &                                                   PPUNIT_OROG,      FLDMOD1.436   
+     &                  PPUNIT1,PPUNIT2,ICODE,CMESSAGE)                    FLDMOD1.437   
+      IMPLICIT NONE                                                        FLDMOD1.438   
+      EXTERNAL FFREAD,IOERROR,SETPOS,FLDOUT,getpos                         FLDMOD1.439   
+CLL  Stash variables                                                       FLDMOD1.440   
+      INTEGER                                                              FLDMOD1.441   
+     &      LEN1_LOOKUP                                                    FLDMOD1.442   
+     &,     LEN2_LOOKUP                                                    FLDMOD1.443   
+     &,     LENBUF                                                         FLDMOD1.444   
+     &,     LEN_FIELD                                                      FLDMOD1.445   
+     &,     STIME_MOD                                                      FLDMOD1.446   
+     &,     ETIME_MOD                                                      FLDMOD1.447   
+     &,     NFIELDS_MOD                                                    FLDMOD1.448   
+     &,     MTYP_MOD(NFIELDS_mod)                                          FLDMOD1.449   
+     &,     MLEVS_MOD(NFIELDS_mod)                                         FLDMOD1.450   
+     &,     STIME_SEL                                                      FLDMOD1.451   
+     &,     ETIME_SEL                                                      FLDMOD1.452   
+     &,     NFIELDS_SEL                                                    FLDMOD1.453   
+     &,     MTYP_SEL(NFIELDS_sel)                                          FLDMOD1.454   
+     &,     MLEVS_SEL(NFIELDS_sel)                                         FLDMOD1.455   
+     &,     STIME_REJ                                                      FLDMOD1.456   
+     &,     ETIME_REJ                                                      FLDMOD1.457   
+     &,     NFIELDS_REJ                                                    FLDMOD1.458   
+     &,     MTYP_REJ(NFIELDS_rej)                                          FLDMOD1.459   
+     &,     MLEVS_REJ(NFIELDS_rej)                                         FLDMOD1.460   
+     &,     PPUNIT_OROG                                                    FLDMOD1.461   
+     &,     STIME_THI                                                      FLDMOD1.462   
+     &,     ETIME_THI                                                      FLDMOD1.463   
+     &,     NFIELDS_THI                                                    FLDMOD1.464   
+     &,     MTYP_THI(NFIELDS_THI)                                          FLDMOD1.465   
+     &,     MLEVS_THI(NFIELDS_THI)                                         FLDMOD1.466   
+     &,     IXXSTEP_THI(NFIELDS_THI)                                       FLDMOD1.467   
+     &,     IYYSTEP_THI(NFIELDS_THI)                                       FLDMOD1.468   
+                                                                           FLDMOD1.469   
+      REAL                                                                 FLDMOD1.470   
+     &      AMULT(NFIELDS_mod)                                             FLDMOD1.471   
+     &,     WIND_10M_OROG                                                  FLDMOD1.472   
+     &,     WIND_10M_SCALE                                                 FLDMOD1.473   
+                                                                           FLDMOD1.474   
+      INTEGER                                                              FLDMOD1.475   
+     &      LOOKUP(LEN1_LOOKUP,LEN2_LOOKUP),                               FLDMOD1.476   
+     &      LOOKNEW(LEN1_LOOKUP,LEN2_LOOKUP),                              FLDMOD1.477   
+     &      BUFOUT(LENBUF)                                                 FLDMOD1.478   
+                                                                           FLDMOD1.479   
+      CHARACTER CMESSAGE*(*)                                               FLDMOD1.480   
+      CHARACTER OROGFILE*80                                                FLDMOD1.481   
+      CHARACTER OUTPUT_PACK_TYPE*6                                         FLDMOD1.482   
+      LOGICAL LAST                !IN   indicates last record process      FLDMOD1.483   
+      LOGICAL                                                              FLDMOD1.484   
+     &      MODIFY                                                         FLDMOD1.485   
+     &,     REJECT                                                         FLDMOD1.486   
+     &,     SELECT                                                         FLDMOD1.487   
+     &,     WIND_10M                                                       FLDMOD1.488   
+     &,     THIN                                                           FLDMOD1.489   
+     &,     THIN_ALL                                                       FLDMOD1.490   
+                                                                           FLDMOD1.491   
+      INTEGER                                                              FLDMOD1.492   
+     &     LEN_FIXHD                                                       FLDMOD1.493   
+     &    ,PP_FIXHD(LEN_FIXHD)                                             FLDMOD1.494   
+     &    ,ICODE                                                           FLDMOD1.495   
+     &    ,PPUNIT1                                                         FLDMOD1.496   
+     &    ,PPUNIT2                                                         FLDMOD1.497   
+     &    ,DATA_ADDR              !    start address of data               FLDMOD1.498   
+     &    ,IEXTRA(10)             !IN  Used within FFREAD                  FLDMOD1.499   
+     &    ,IER                    !IN  error RETURN CODE from conversion   FLDMOD1.500   
+     &    ,ILABEL(45)             !IOUT  holds integet part of lookup      FLDMOD1.501   
+     &    ,NENT                   !IN  NO. ENTRIES IN OLD LOOKUP           FLDMOD1.502   
+     &    ,ILABEL_OROG(45)                                                 FLDMOD1.503   
+      REAL                                                                 FLDMOD1.504   
+     &     ROOKUP(LEN1_LOOKUP,LEN2_LOOKUP)                                 FLDMOD1.505   
+     &    ,ROOKNEW(LEN1_LOOKUP,LEN2_LOOKUP)                                FLDMOD1.506   
+     &    ,RLABEL(19)             !OUT holds real part of LOOKUP           FLDMOD1.507   
+     &    ,FIELD(LEN_FIELD)                                                FLDMOD1.508   
+     &    ,RLABEL_OROG(19)                                                 FLDMOD1.509   
+     &    ,MODEL_OROG(LENBUF)                                              FLDMOD1.510   
+C                                                                          FLDMOD1.511   
+                                                                           FLDMOD1.512   
+      LOGICAL                                                              FLDMOD1.513   
+     &    PACKING                                                          FLDMOD1.514   
+     &,   READ                                                             FLDMOD1.515   
+     &,   CONVERT                                                          FLDMOD1.516   
+                                                                           FLDMOD1.517   
+      INTEGER                                                              FLDMOD1.518   
+     &     I                      ! local counter                          FLDMOD1.519   
+     &    ,J                      ! local counter                          FLDMOD1.520   
+     &    ,K                      ! local counter                          FLDMOD1.521   
+     &    ,IX                     !                                        FLDMOD1.522   
+     &    ,IL                     !                                        FLDMOD1.523   
+     &    ,BL                     !                                        FLDMOD1.524   
+     &    ,TL                     !                                        FLDMOD1.525   
+     &    ,IWL                    !                                        FLDMOD1.526   
+     &    ,NLEV                   !                                        FLDMOD1.527   
+     &    ,IWA                    !                                        FLDMOD1.528   
+     &    ,IWB                    !                                        FLDMOD1.529   
+     &    ,IENT                   !                                        FLDMOD1.530   
+     &    ,IPROJ                  !                                        FLDMOD1.531   
+     &    ,FCT                    !                                        FLDMOD1.532   
+     &    ,ITYPE                  !                                        FLDMOD1.533   
+     &    ,LEVEL                  !                                        FLDMOD1.534   
+     &    ,IDIM                   !                                        FLDMOD1.535   
+     &    ,LEN_LOOKUP             !                                        FLDMOD1.536   
+     &    ,LEN_IO                 !                                        FLDMOD1.537   
+     &    ,LEN_BUF_WORDS          !                                        FLDMOD1.538   
+     &    ,NUM_WORDS              !                                        FLDMOD1.539   
+     &    ,PACK_CODE                                                       FLDMOD1.540   
+     &    ,IXX                    ! X dimension for THIN_FIELD             FLDMOD1.541   
+     &    ,IYY                    ! Y dimension for THIN_FIELD             FLDMOD1.542   
+     &    ,IERR                   ! Error return from SETPOS               FLDMOD1.543   
+      REAL                                                                 FLDMOD1.544   
+     &     A_IO                   !                                        FLDMOD1.545   
+                                                                           FLDMOD1.546   
+      CHARACTER                                                            FLDMOD1.547   
+     &     PACK_TYPE(5)*6                                                  FLDMOD1.548   
+     &    ,INPUT_PACK_TYPE*6                                               FLDMOD1.549   
+                                                                           FLDMOD1.550   
+*CALL CLOOKADD                                                             FLDMOD1.551   
+                                                                           FLDMOD1.552   
+      PACK_TYPE(1)='NONE  '                                                FLDMOD1.553   
+      PACK_TYPE(2)='WGDOS '                                                FLDMOD1.554   
+      PACK_TYPE(3)='CRAY32'                                                FLDMOD1.555   
+      PACK_TYPE(4)='GRIB  '                                                FLDMOD1.556   
+      PACK_TYPE(5)='      '                                                FLDMOD1.557   
+                                                                           FLDMOD1.558   
+C                                                                          FLDMOD1.559   
+C    REMEMBER THAT BUFFER OUT STARTS AT ADDRESS 0 THUS LOOKUP GOES         FLDMOD1.560   
+C    FROM 0 to 262143 ie THE NEXT ADDRESS SHOULD BE IWA=262144 to          FLDMOD1.561   
+C    IWA=325119 then IWA=325120 to 388095 then 388096 etc                  FLDMOD1.562   
+C                                                                          FLDMOD1.563   
+                                                                           FLDMOD1.564   
+      LEN_LOOKUP=LEN1_LOOKUP*LEN2_LOOKUP                                   FLDMOD1.565   
+                                                                           FLDMOD1.566   
+C----------------------- Section 4 ----------------------------------      FLDMOD1.567   
+C      Write to the PP file . First read in the  LOOKUP table.             FLDMOD1.568   
+C--------------------------------------------------------------------      FLDMOD1.569   
+                                                                           FLDMOD1.570   
+cx    IX=UNIT(PPUNIT2)                                                     FLDMOD1.571   
+      IWA=0                                                                FLDMOD1.572   
+      CALL SETPOS(PPUNIT2,IWA,IERR)                                        FLDMOD1.573   
+cd    CALL GETPOS(PPUNIT2,IWB)                                             FLDMOD1.574   
+cd    WRITE(6,*)' ppunit2 fixhd ',iwb                                      GIE0F403.211   
+      CALL BUFFIN(PPUNIT2,PP_FIXHD,LEN_FIXHD,LEN_IO,A_IO)                  FLDMOD1.576   
+      IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_FIXHD) THEN                         FLDMOD1.577   
+        CALL IOERROR('Buffer in fixed length header',A_IO,LEN_IO,          FLDMOD1.578   
+     &                                               LEN_FIXHD)            FLDMOD1.579   
+        ICODE=1                                                            FLDMOD1.580   
+        CMESSAGE='REPLACE: I/O error'                                      FLDMOD1.581   
+        RETURN                                                             FLDMOD1.582   
+      ENDIF                                                                FLDMOD1.583   
+      IWL=PP_FIXHD(150)-1                                                  FLDMOD1.584   
+      IWA=IWL                                                              FLDMOD1.585   
+      DATA_ADDR = PP_FIXHD(160)                                            FLDMOD1.586   
+                                                                           FLDMOD1.587   
+      CALL SETPOS(PPUNIT2,IWA,IERR)                                        FLDMOD1.588   
+cd    CALL GETPOS(PPUNIT2,IWB)                                             FLDMOD1.589   
+cd    WRITE(6,*)' ppunit2 looknew ',iwb                                    GIE0F403.212   
+      CALL BUFFIN(PPUNIT2,LOOKNEW,LEN_LOOKUP,LEN_IO,A_IO)                  FLDMOD1.591   
+      IF(A_IO.NE.-1.0.OR.LEN_IO.NE.(PP_FIXHD(152)*PP_FIXHD(151)))THEN      FLDMOD1.592   
+        CALL IOERROR('Buffer in Lookup table   ',A_IO,LEN_IO,              FLDMOD1.593   
+     &                                    PP_FIXHD(152)*PP_FIXHD(151))     FLDMOD1.594   
+        ICODE=1                                                            FLDMOD1.595   
+        CMESSAGE='Derived: I/O error in reading LOOKUP'                    FLDMOD1.596   
+        RETURN                                                             FLDMOD1.597   
+      ENDIF                                                                FLDMOD1.598   
+                                                                           FLDMOD1.599   
+      DO I=1,10                                                            FLDMOD1.600   
+        IEXTRA(I)=0                                                        FLDMOD1.601   
+      ENDDO                                                                FLDMOD1.602   
+                                                                           FLDMOD1.603   
+cd    WRITE(6,*)'start of looknew',iwl                                     GIE0F403.213   
+C     IF 10M WINDS TO BE FIXED GET MODEL OROGRAPHY FIELD FROM PP0          FLDMOD1.605   
+      IF(WIND_10M) THEN                                                    FLDMOD1.606   
+        write(6,*) 'open unit',ppunit_orog                                 FLDMOD1.607   
+        CALL GET_FILE(PPUNIT_OROG,OROGFILE,80,ICODE)                       FLDMOD1.608   
+        CALL FILE_OPEN(PPUNIT_OROG,OROGFILE,80,0,1,ICODE)                  FLDMOD1.609   
+        IEXTRA(1) = 0                                                      FLDMOD1.610   
+        IDIM  = LENBUF                                                     FLDMOD1.611   
+        FCT   = 0                                                          FLDMOD1.612   
+        IPROJ = LOOKUP(31,1)                                               FLDMOD1.613   
+        ITYPE = 73                                                         FLDMOD1.614   
+        LEVEL = 9999                                                       FLDMOD1.615   
+        write(6,*) ' read orography'                                       FLDMOD1.616   
+        CALL FFREAD(IPROJ,FCT,ITYPE,LEVEL,PPUNIT_OROG,MODEL_OROG,IDIM,     FLDMOD1.617   
+     1               ILABEL_OROG,RLABEL_OROG,IEXTRA,ICODE,CMESSAGE)        FLDMOD1.618   
+        write(6,*) 'close unit',ppunit_orog                                FLDMOD1.619   
+        CLOSE(PPUNIT_OROG)                                                 FLDMOD1.620   
+      ENDIF                                                                FLDMOD1.621   
+c                                                                          FLDMOD1.622   
+c     loop through lookup read/write all fields                            FLDMOD1.623   
+      IEXTRA(1) = 1      !DO NOT UNPACK                                    FLDMOD1.624   
+      DO IENT=1,NENT                                                       FLDMOD1.625   
+        READ=.TRUE.                                                        FLDMOD1.626   
+        CONVERT=.FALSE.                                                    FLDMOD1.627   
+        IDIM=LENBUF                                                        FLDMOD1.628   
+        FCT=LOOKUP(14,IENT)                                                FLDMOD1.629   
+        IPROJ=LOOKUP(31,IENT)                                              FLDMOD1.630   
+        ITYPE=LOOKUP(32,IENT)                                              FLDMOD1.631   
+        LEVEL=LOOKUP(33,IENT)                                              FLDMOD1.632   
+        PACK_CODE=MOD(LOOKUP(LBPACK,IENT),10)                              FLDMOD1.633   
+        INPUT_PACK_TYPE=PACK_TYPE(PACK_CODE+1)                             FLDMOD1.634   
+        IF(INPUT_PACK_TYPE.NE.OUTPUT_PACK_TYPE.AND.                        FLDMOD1.635   
+     +          PACK_CODE.GT.0) THEN ! leave unpacked data unpacked        FLDMOD1.636   
+          CONVERT=.TRUE.                                                   FLDMOD1.637   
+        ENDIF                                                              FLDMOD1.638   
+       WRITE(6,*)' pack code=',pack_code                                   GIE0F403.214   
+       WRITE(6,*)input_pack_type,output_pack_type,convert                  GIE0F403.215   
+        IF(SELECT) THEN                                                    FLDMOD1.641   
+          READ=.FALSE.                                                     FLDMOD1.642   
+          IF(FCT.GE.STIME_SEL.AND.FCT.LE.ETIME_SEL) THEN                   FLDMOD1.643   
+            DO J=1,NFIELDS_SEL                                             FLDMOD1.644   
+              IF(ITYPE.EQ.MTYP_SEL(J).AND.LEVEL.EQ.MLEVS_SEL(J)) THEN      FLDMOD1.645   
+                READ=.TRUE.                                                FLDMOD1.646   
+              ENDIF                                                        FLDMOD1.647   
+            ENDDO                                                          FLDMOD1.648   
+          ENDIF                                                            FLDMOD1.649   
+        ENDIF                                                              FLDMOD1.650   
+        IF(REJECT) THEN                                                    FLDMOD1.651   
+          READ=.TRUE.                                                      FLDMOD1.652   
+          IF(FCT.GE.STIME_REJ.AND.FCT.LE.ETIME_REJ) THEN                   FLDMOD1.653   
+            DO J=1,NFIELDS_REJ                                             FLDMOD1.654   
+              IF(ITYPE.EQ.MTYP_REJ(J).AND.LEVEL.EQ.MLEVS_REJ(J)) THEN      FLDMOD1.655   
+                READ=.FALSE.                                               FLDMOD1.656   
+              ENDIF                                                        FLDMOD1.657   
+            ENDDO                                                          FLDMOD1.658   
+          ENDIF                                                            FLDMOD1.659   
+        ENDIF                                                              FLDMOD1.660   
+                                                                           FLDMOD1.661   
+        WRITE(7,*) ' READ=',READ,IPROJ,FCT,ITYPE,LEVEL,PPUNIT1             FLDMOD1.662   
+        IF(READ) THEN                                                      FLDMOD1.663   
+          CALL FFREAD(IPROJ,FCT,ITYPE,LEVEL,PPUNIT1,BUFOUT,IDIM,           FLDMOD1.664   
+     1                ILABEL,RLABEL,IEXTRA,ICODE,CMESSAGE)                 FLDMOD1.665   
+          NUM_WORDS = ILABEL(15)                                           FLDMOD1.666   
+          LEN_BUF_WORDS = ILABEL(30)                                       FLDMOD1.667   
+                                                                           FLDMOD1.668   
+          IF(STIME_THI.EQ.-9999) THEN                                      FLDMOD1.669   
+            THIN_ALL=.TRUE.                                                FLDMOD1.670   
+          ELSE                                                             FLDMOD1.671   
+            THIN_ALL=.FALSE.                                               FLDMOD1.672   
+          ENDIF                                                            FLDMOD1.673   
+          IF(THIN.OR.THIN_ALL) THEN                                        FLDMOD1.674   
+            IF((FCT.GE.STIME_THI.AND.FCT.LE.ETIME_THI)                     FLDMOD1.675   
+     &          .OR.THIN_ALL) THEN                                         FLDMOD1.676   
+              DO J=1,NFIELDS_THI                                           FLDMOD1.677   
+                IF((ITYPE.EQ.MTYP_THI(J).AND.LEVEL.EQ.MLEVS_THI(J))        FLDMOD1.678   
+     &              .OR.THIN_ALL) THEN                                     FLDMOD1.679   
+                  IYY = ILABEL(18)                                         FLDMOD1.680   
+                  IXX = ILABEL(19)                                         FLDMOD1.681   
+                  WRITE(7,*) ' THINNING FIELD,',ITYPE,LEVEL,FCT,           FLDMOD1.682   
+     1                                     IXXSTEP_THI(J),IYYSTEP_THI(J)   FLDMOD1.683   
+                  WRITE(6,*) ' THINNING FIELD,',ITYPE,LEVEL,FCT,           FLDMOD1.684   
+     1                                     IXXSTEP_THI(J),IYYSTEP_THI(J)   FLDMOD1.685   
+                  CALL THIN_FIELD(BUFOUT,BUFOUT,NUM_WORDS,IXX,IYY,         FLDMOD1.686   
+     1                             IXXSTEP_THI(J),IYYSTEP_THI(J),          FLDMOD1.687   
+     2                             IDIM,PACK_CODE,RLABEL(18))              FLDMOD1.688   
+                  LEN_BUF_WORDS =((NUM_WORDS+511)/512)*512                 FLDMOD1.689   
+                  ILABEL(15) = NUM_WORDS                                   FLDMOD1.690   
+                  ILABEL(30) = LEN_BUF_WORDS                               FLDMOD1.691   
+                  ILABEL(18) = IYY                                         FLDMOD1.692   
+                  ILABEL(19) = IXX                                         FLDMOD1.693   
+                  rlabel(15) = rlabel(15) * IYYSTEP_THI(J)                 FLDMOD1.694   
+                  rlabel(17) = rlabel(17) * IXXSTEP_THI(J)                 FLDMOD1.695   
+                ENDIF                                                      FLDMOD1.696   
+              ENDDO                                                        FLDMOD1.697   
+            ENDIF                                                          FLDMOD1.698   
+          ENDIF                                                            FLDMOD1.699   
+                                                                           FLDMOD1.700   
+          IF(MODIFY) THEN                                                  FLDMOD1.701   
+            IF(FCT.GE.STIME_MOD.AND.FCT.LE.ETIME_MOD) THEN                 FLDMOD1.702   
+              DO J=1,NFIELDS_MOD                                           FLDMOD1.703   
+                IF(ITYPE.EQ.MTYP_MOD(J).AND.LEVEL.EQ.MLEVS_MOD(J)) THEN    FLDMOD1.704   
+                  WRITE(7,*) ' SCALING FIELD,',ITYPE,LEVEL,FCT,AMULT(J)    FLDMOD1.705   
+                  WRITE(6,*) ' SCALING FIELD,',ITYPE,LEVEL,FCT,AMULT(J)    FLDMOD1.706   
+                  CALL SCALE_FIELD(BUFOUT,BUFOUT,LEN_FIELD,AMULT(J),       FLDMOD1.707   
+     1                             IDIM,PACK_CODE,RLABEL(18))              FLDMOD1.708   
+                  NUM_WORDS = (IDIM+1)/2                                   FLDMOD1.709   
+                  LEN_BUF_WORDS =((NUM_WORDS+511)/512)*512                 FLDMOD1.710   
+                  ILABEL(15) = NUM_WORDS                                   FLDMOD1.711   
+                  ILABEL(30) = LEN_BUF_WORDS                               FLDMOD1.712   
+                ENDIF                                                      FLDMOD1.713   
+              ENDDO                                                        FLDMOD1.714   
+            ENDIF                                                          FLDMOD1.715   
+          ENDIF                                                            FLDMOD1.716   
+          IF(WIND_10M) THEN                                                FLDMOD1.717   
+            IF(ITYPE.EQ.75.OR.ITYPE.EQ.76) THEN                            FLDMOD1.718   
+              write(6,*) 'call wind fix'                                   FLDMOD1.719   
+              CALL WIND_10M_FIX(BUFOUT,BUFOUT,NUM_WORDS,                   FLDMOD1.720   
+     1                          FCT,ITYPE,LEVEL,IPROJ,PPUNIT1,             FLDMOD1.721   
+     2                          WIND_10M_SCALE,WIND_10M_OROG,              FLDMOD1.722   
+     3                          MODEL_OROG,ILABEL_OROG,RLABEL_OROG,        FLDMOD1.723   
+     4                          IDIM,PACK_CODE,RLABEL(18))                 FLDMOD1.724   
+              LEN_BUF_WORDS =((NUM_WORDS+511)/512)*512                     FLDMOD1.725   
+              ILABEL(15) = NUM_WORDS                                       FLDMOD1.726   
+              ILABEL(30) = LEN_BUF_WORDS                                   FLDMOD1.727   
+            ENDIF                                                          FLDMOD1.728   
+          ENDIF                                                            FLDMOD1.729   
+                                                                           FLDMOD1.730   
+          IF(CONVERT) THEN                                                 FLDMOD1.731   
+            CALL CONV_PACK(ILABEL,RLABEL,PACK_CODE,                        FLDMOD1.732   
+     1                     INPUT_PACK_TYPE,OUTPUT_PACK_TYPE,               FLDMOD1.733   
+     2                     BUFOUT,IDIM,NUM_WORDS,                          FLDMOD1.734   
+     3                     PP_FIXHD,ICODE,CMESSAGE)                        FLDMOD1.735   
+            LEN_BUF_WORDS =((NUM_WORDS+511)/512)*512                       FLDMOD1.736   
+            ILABEL(15) = NUM_WORDS                                         FLDMOD1.737   
+            ILABEL(30) = LEN_BUF_WORDS                                     FLDMOD1.738   
+          ENDIF                                                            FLDMOD1.739   
+                                                                           FLDMOD1.740   
+                                                                           FLDMOD1.741   
+c         WRITE(6,*)'fldout writing num_words',num_words,data_addr         GIE0F403.216   
+          CALL FLDOUT(ICODE,CMESSAGE,BUFOUT,LENBUF,                        FLDMOD1.743   
+     1      LEN_BUF_WORDS,NUM_WORDS,                                       FLDMOD1.744   
+     2      PPUNIT2,LEN1_LOOKUP,LEN2_LOOKUP,LOOKNEW,LOOKNEW,               FLDMOD1.745   
+     3      ILABEL,RLABEL,IWL,DATA_ADDR)                                   FLDMOD1.746   
+                                                                           FLDMOD1.747   
+C----------------------- Section 5 ----------------------------------      FLDMOD1.748   
+C          Output lookup table                                             FLDMOD1.749   
+C--------------------------------------------------------------------      FLDMOD1.750   
+                                                                           FLDMOD1.751   
+          IX=UNIT(PPUNIT2)                                                 FLDMOD1.752   
+          IWA=IWL                                                          FLDMOD1.753   
+cd        WRITE(6,*)' write looknew to ',iwa                               GIE0F403.217   
+          CALL SETPOS(PPUNIT2,IWA,IERR)                                    FLDMOD1.755   
+cd    CALL GETPOS(PPUNIT2,IWB)                                             FLDMOD1.756   
+cd    WRITE(6,*)' ppunit2 looknew ',iwb                                    GIE0F403.218   
+          CALL BUFFOUT(PPUNIT2,LOOKNEW,LEN_LOOKUP,LEN_IO,A_IO)             FLDMOD1.758   
+cx        BUFFER OUT (PPUNIT2,1)(LOOKNEW(1,1),LOOKNEW(LEN1_LOOKUP,         FLDMOD1.759   
+cx   *    LEN2_LOOKUP))                                                    FLDMOD1.760   
+cx        A_IO=UNIT(PPUNIT2)                                               FLDMOD1.761   
+cx        LEN_IO=LENGTH(PPUNIT2)                                           FLDMOD1.762   
+C                                                                          FLDMOD1.763   
+          IF(A_IO.NE.-1.0.OR.LEN_IO.NE.                                    FLDMOD1.764   
+     *                              (PP_FIXHD(152)*PP_FIXHD(151)))THEN     FLDMOD1.765   
+            CALL IOERROR('Buffer in fixed length header',A_IO,LEN_IO,      FLDMOD1.766   
+     &                    PP_FIXHD(151)*PP_FIXHD(152))                     FLDMOD1.767   
+            ICODE=1                                                        FLDMOD1.768   
+            CMESSAGE='Derived: I/O error in writing LOOKUP'                FLDMOD1.769   
+            RETURN                                                         FLDMOD1.770   
+          ENDIF                                                            FLDMOD1.771   
+        ENDIF                                                              FLDMOD1.772   
+      ENDDO                                                                FLDMOD1.773   
+                                                                           FLDMOD1.774   
+c     DO I=1,NENT+1                                                        FLDMOD1.775   
+c     ENDDO                                                                FLDMOD1.776   
+                                                                           FLDMOD1.777   
+ 9999 CONTINUE                                                             FLDMOD1.778   
+      RETURN                                                               FLDMOD1.779   
+      END                                                                  FLDMOD1.780   
+                                                                           FLDMOD1.781   
+      SUBROUTINE THIN_FIELD(PDATA,RDATA,PDATA_LEN,IXX,IYY,                 FLDMOD1.782   
+     &                      IXXSTEP,IYYSTEP,IDIM,PACK_CODE,AMDI)           FLDMOD1.783   
+!                                                                          FLDMOD1.784   
+!    Subroutine to unpack a field, thin, then repack data.                 FLDMOD1.785   
+!                                                                          FLDMOD1.786   
+!    Author V Blackman      Date; 12 JAN 95                                FLDMOD1.787   
+!                                                                          FLDMOD1.788   
+!                                                                          FLDMOD1.789   
+      IMPLICIT NONE                                                        FLDMOD1.790   
+      INTEGER IDIM,PDATA_LEN,PACK_CODE,IXXSTEP,IYYSTEP                     FLDMOD1.791   
+      INTEGER PDATA(IDIM),IXX,IYY,ISC,LWORD                                FLDMOD1.792   
+      INTEGER i,j,k,kk,ix1,iy1                                             FLDMOD1.793   
+      integer countx,county                                                FLDMOD1.794   
+      REAL RDATA(IDIM),FIELD(IDIM),AMDI                                    FLDMOD1.795   
+      LOGICAL OPACK                                                        FLDMOD1.796   
+      DATA LWORD/64/                                                       FLDMOD1.797   
+                                                                           FLDMOD1.798   
+      IF(PACK_CODE.EQ.1) THEN                                              FLDMOD1.799   
+        OPACK=.FALSE.                                                      FLDMOD1.800   
+        CALL COEX(FIELD,IDIM,PDATA,IDIM,IXX,IYY,PDATA_LEN,                 FLDMOD1.801   
+     &            ISC,OPACK,AMDI,LWORD)                                    FLDMOD1.802   
+                                                                           FLDMOD1.803   
+! If IXX and IYY are not decreased by 1 then GRDSET ( a PP routine)        FLDMOD1.804   
+! will fail and give the message 'BAD GRID DEFINITION'.                    FLDMOD1.805   
+! Unfortunately the same failure occurs if IXX and IYY are decreased       FLDMOD1.806   
+! when a step size of 1 is specified so IXX and IYY will only be           FLDMOD1.807   
+! decreased for step sizes > 1 (in case anyone uses a step size of 1       FLDMOD1.808   
+! instead of using SELECT in the namelist)                                 FLDMOD1.809   
+                                                                           FLDMOD1.810   
+        if(ixxstep.gt.1) then                                              FLDMOD1.811   
+          IX1 = IXX - 1                                                    FLDMOD1.812   
+        else                                                               FLDMOD1.813   
+          IX1 = IXX                                                        FLDMOD1.814   
+        endif                                                              FLDMOD1.815   
+        if(iyystep.gt.1) then                                              FLDMOD1.816   
+          IY1 = IYY - 1                                                    FLDMOD1.817   
+        else                                                               FLDMOD1.818   
+          IY1 = IYY                                                        FLDMOD1.819   
+        endif                                                              FLDMOD1.820   
+                                                                           FLDMOD1.821   
+        county = 0                                                         FLDMOD1.822   
+                                                                           FLDMOD1.823   
+        K = 1                                                              FLDMOD1.824   
+        DO J=1,IY1,IYYSTEP                                                 FLDMOD1.825   
+          countx = 0                                                       FLDMOD1.826   
+          DO I=1,IX1,IXXSTEP                                               FLDMOD1.827   
+            kk = (j-1) * ixx + i                                           FLDMOD1.828   
+            FIELD(K) = FIELD(KK)                                           FLDMOD1.829   
+            K = K + 1                                                      FLDMOD1.830   
+            countx = countx + 1                                            FLDMOD1.831   
+          END DO                                                           FLDMOD1.832   
+          county = county + 1                                              FLDMOD1.833   
+        END DO                                                             FLDMOD1.834   
+                                                                           FLDMOD1.835   
+        IXX = (IX1 + IXXSTEP - 1) / IXXSTEP                                FLDMOD1.836   
+        IYY = (IY1 + IYYSTEP - 1) / IYYSTEP                                FLDMOD1.837   
+                                                                           FLDMOD1.838   
+        OPACK=.TRUE.                                                       FLDMOD1.839   
+        CALL COEX(FIELD,IDIM,PDATA,IDIM,IXX,IYY,PDATA_LEN,                 FLDMOD1.840   
+     &            ISC,OPACK,AMDI,LWORD)                                    FLDMOD1.841   
+                                                                           FLDMOD1.842   
+      ELSE IF(PACK_CODE.EQ.0) THEN                                         FLDMOD1.843   
+                                                                           FLDMOD1.844   
+        if(ixxstep.gt.1) then                                              FLDMOD1.845   
+          IX1 = IXX - 1                                                    FLDMOD1.846   
+        else                                                               FLDMOD1.847   
+          IX1 = IXX                                                        FLDMOD1.848   
+        endif                                                              FLDMOD1.849   
+        if(iyystep.gt.1) then                                              FLDMOD1.850   
+          IY1 = IYY - 1                                                    FLDMOD1.851   
+        else                                                               FLDMOD1.852   
+          IY1 = IYY                                                        FLDMOD1.853   
+        endif                                                              FLDMOD1.854   
+                                                                           FLDMOD1.855   
+        county = 0                                                         FLDMOD1.856   
+                                                                           FLDMOD1.857   
+        K = 1                                                              FLDMOD1.858   
+        DO J=1,IY1,IYYSTEP                                                 FLDMOD1.859   
+          countx = 0                                                       FLDMOD1.860   
+          DO I=1,IX1,IXXSTEP                                               FLDMOD1.861   
+            kk = (j-1) * ixx + i                                           FLDMOD1.862   
+            RDATA(K) = RDATA(kk)                                           FLDMOD1.863   
+            K = K + 1                                                      FLDMOD1.864   
+            countx = countx + 1                                            FLDMOD1.865   
+          END DO                                                           FLDMOD1.866   
+          county = county + 1                                              FLDMOD1.867   
+        END DO                                                             FLDMOD1.868   
+                                                                           FLDMOD1.869   
+        IXX = (IX1 + IXXSTEP - 1) / IXXSTEP                                FLDMOD1.870   
+        IYY = (IY1 + IYYSTEP - 1) / IYYSTEP                                FLDMOD1.871   
+        PDATA_LEN = IXX * IYY                                              FLDMOD1.872   
+                                                                           FLDMOD1.873   
+      ELSE                                                                 FLDMOD1.874   
+        WRITE(6,*)pack_code,' not yet coded'                               GIE0F403.219   
+      END IF                                                               FLDMOD1.876   
+                                                                           FLDMOD1.877   
+      RETURN                                                               FLDMOD1.878   
+      END                                                                  FLDMOD1.879   
+                                                                           FLDMOD1.880   
+CLL  SUBROUTINE FLDOUT-------------------------------------------          FLDMOD1.881   
+CLL                                                                        FLDMOD1.882   
+CLL  REPLACES THE OUTPUT FROM STASH EITHER ON TO A PP FILE OR              FLDMOD1.883   
+CLL  BACK TO THE MAIN ARRAY D1                                             FLDMOD1.884   
+CLL                                                                        FLDMOD1.885   
+CLL  PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,        FLDMOD1.886   
+CLL  VERSION 1, DATED 12/09/89                                             FLDMOD1.887   
+CLL                                                                        FLDMOD1.888   
+CLL  SYSTEM TASK: CONTROL PART OF C4                                       FLDMOD1.889   
+CLL                                                                        FLDMOD1.890   
+CLL  PURPOSE:   TO PROCESS DIAGNOSTICS CONTROLLED BY STASH                 FLDMOD1.891   
+CLL  DOCUMENTATION:        ???                                             FLDMOD1.892   
+CLL                                                                        FLDMOD1.893   
+CLL                                                                        FLDMOD1.894   
+CLLEND-------------------------------------------------------------        FLDMOD1.895   
+                                                                           FLDMOD1.896   
+C                                                                          FLDMOD1.897   
+C*L  ARGUMENTS:---------------------------------------------------         FLDMOD1.898   
+      SUBROUTINE FLDOUT                                                    FLDMOD1.899   
+     *          (ICODE,CMESSAGE,BUFOUT,LENBUF,LEN_BUF_WORDS,NUM_WORDS,     FLDMOD1.900   
+     1           UNITPP,LEN1_LOOKUP,PP_LEN2_LOOKUP,IPPLOOK,RPPLOOK,        FLDMOD1.901   
+     2           ILABEL,RLABEL,IWL,DATA_ADDR)                              FLDMOD1.902   
+      IMPLICIT NONE                                                        FLDMOD1.903   
+                                                                           FLDMOD1.904   
+      CHARACTER*(*) CMESSAGE !OUT OUT MESSAGE FROM ROUTINE                 FLDMOD1.905   
+C                                                                          FLDMOD1.906   
+                                                                           FLDMOD1.907   
+      INTEGER                                                              FLDMOD1.908   
+     *  ICODE              !IN    RETURN CODE FROM ROUTINE                 FLDMOD1.909   
+     *, LEN1_LOOKUP        !IN    FIRST DIMENSION OF LOOKUP TABLE          FLDMOD1.910   
+     *, PP_LEN2_LOOKUP     !IN    SECND DIMENSION OF LOOKUP TABLE          FLDMOD1.911   
+     *, LENBUF             !IN     LENGTH OFF PP BUFFER                    FLDMOD1.912   
+     *, UNITPP             !IN     OUTPUT PP UNIT NUMBER                   FLDMOD1.913   
+     *, LEN_BUF_WORDS      !IN                                             FLDMOD1.914   
+     *, NUM_WORDS          !IN                                             FLDMOD1.915   
+C                                                                          FLDMOD1.916   
+      INTEGER                                                              FLDMOD1.917   
+     *  JJ            !IN    ITEM NUMBER                                   FLDMOD1.918   
+      INTEGER                                                              FLDMOD1.919   
+     *  IPPLOOK(LEN1_LOOKUP,PP_LEN2_LOOKUP) !IN INTEGER LOOKUP TABLE       FLDMOD1.920   
+     *, ILABEL(45)    ! INTEGER PART OF LOOKUP                             FLDMOD1.921   
+     *, IWL           !IN    Address of the PP LOOKUP Table                FLDMOD1.922   
+     *, DATA_ADDR     !IN    Address of start of data                      FLDMOD1.923   
+C                                                                          FLDMOD1.924   
+      REAL                                                                 FLDMOD1.925   
+     *  BUFOUT(LENBUF)         !OUTPUT PP BUFFER (ROUNDED UP)              FLDMOD1.926   
+     *, RPPLOOK(LEN1_LOOKUP,PP_LEN2_LOOKUP) !IN REAL LOOKUP TABLE          FLDMOD1.927   
+     *, RLABEL(19)    ! REAL PART OF LOOKUP                                FLDMOD1.928   
+                                                                           FLDMOD1.929   
+C*---------------------------------------------------------------------    FLDMOD1.930   
+                                                                           FLDMOD1.931   
+C*L  WORKSPACE USAGE:-------------------------------------------------     FLDMOD1.932   
+C   DEFINE LOCAL WORKSPACE ARRAYS: 1 REAL ARRAY                            FLDMOD1.933   
+C   AT FULL FIELD LENGTH                                                   FLDMOD1.934   
+C                                                                          FLDMOD1.935   
+C*---------------------------------------------------------------------    FLDMOD1.936   
+C     EQUIVALENCE(IPPLOOK,RPPLOOK)                                         FLDMOD1.937   
+C                                                                          FLDMOD1.938   
+C*L EXTERNAL SUBROUTINES CALLED---------------------------------------     FLDMOD1.939   
+      EXTERNAL SETPOS                                                      FLDMOD1.940   
+C*------------------------------------------------------------------       FLDMOD1.941   
+CL  MAXIMUM VECTOR LENGTH ASSUMED IS (ROWS-1) * ROWLENGTH                  FLDMOD1.942   
+CL---------------------------------------------------------------------    FLDMOD1.943   
+C----------------------------------------------------------------------    FLDMOD1.944   
+C    DEFINE LOCAL VARIABLES                                                FLDMOD1.945   
+      INTEGER                                                              FLDMOD1.946   
+     *  ADDR          !                                                    FLDMOD1.947   
+     *, IWA           !     RECORD NUMBER                                  FLDMOD1.948   
+     *, IX            !     RETURN VALUE FROM UNIT COMMAND                 FLDMOD1.949   
+     &, LEN_IO        !                                                    FLDMOD1.950   
+     *, II            !     COUNTER                                        FLDMOD1.951   
+     *, I             !     COUNTER                                        FLDMOD1.952   
+     &,IERR           ! Error return from SETPOS                           FLDMOD1.953   
+                                                                           FLDMOD1.954   
+      real                                                                 FLDMOD1.955   
+     &  A_IO          !                                                    FLDMOD1.956   
+                                                                           FLDMOD1.957   
+      INTEGER                                                              FLDMOD1.958   
+     *  LRESID        !                                                    FLDMOD1.959   
+     *, ICURRLL       !                                                    FLDMOD1.960   
+     *, IPAST         !                                                    FLDMOD1.961   
+     *, IPROJ         !     M08 PROJECTION NUMBER                          FLDMOD1.962   
+                                                                           FLDMOD1.963   
+      LOGICAL                                                              FLDMOD1.964   
+     *  FIRST              !                                               FLDMOD1.965   
+      DATA FIRST/.TRUE./                                                   FLDMOD1.966   
+C                                                                          FLDMOD1.967   
+C                                                                          FLDMOD1.968   
+C    REMEMBER THAT BUFFER OUT STARTS AT ADDRESS 0 THUS IPPLOOK GOES        FLDMOD1.969   
+C    FROM 0 to 262143 ie THE NEXT ADDRESS SHOULD BE IWA=262144 to          FLDMOD1.970   
+C    IWA=325119 then IWA=325120 to 388095 then 388096 etc                  FLDMOD1.971   
+C                                                                          FLDMOD1.972   
+      FIRST=.TRUE.                                                         FLDMOD1.973   
+                                                                           FLDMOD1.974   
+C     WRITE(6,103)  (BUFOUT(II),II=9999,10100)                             FLDMOD1.975   
+  103 FORMAT(//,32X,' ARRAY FROM START OF PPOUT  ',//,32(10F8.0/))         FLDMOD1.976   
+      LRESID=LEN_BUF_WORDS-NUM_WORDS                                       FLDMOD1.977   
+c     WRITE(6,104)  LRESID                                                 FLDMOD1.978   
+c 104 FORMAT(' IN PPOUT      LRESID=',I8)                                  FLDMOD1.979   
+      DO 2 JJ=NUM_WORDS+1,LRESID                                           FLDMOD1.980   
+      BUFOUT(JJ)= 0.0                                                      FLDMOD1.981   
+    2 CONTINUE                                                             FLDMOD1.982   
+C                                                                          FLDMOD1.983   
+      IF(FIRST) THEN                                                       FLDMOD1.984   
+        DO 3 JJ=1,PP_LEN2_LOOKUP                                           FLDMOD1.985   
+           IF(IPPLOOK(1,JJ).LT.0) THEN  ! Search for last entry            FLDMOD1.986   
+             ICURRLL=JJ                                                    FLDMOD1.987   
+               IF(JJ.EQ.1) THEN                                            FLDMOD1.988   
+                 IWA=((IWL+511)/512)*512+PP_LEN2_LOOKUP*LEN1_LOOKUP        FLDMOD1.989   
+                 write(6,*) 'Start data',iwa,data_addr,iwa-1               FLDMOD1.990   
+                 IWA=DATA_ADDR                                             FLDMOD1.991   
+                 IWA=IWA-1                                                 FLDMOD1.992   
+               ELSE                                                        FLDMOD1.993   
+C               IWA= IPPLOOK(29,JJ-1)*512+IPPLOOK(30,JJ-1) !ADDR+LGTH      FLDMOD1.994   
+                IWA= IPPLOOK(29,JJ-1)+IPPLOOK(30,JJ-1) !ADDR+LGTH          FLDMOD1.995   
+               ENDIF                                                       FLDMOD1.996   
+             GOTO 4                                                        FLDMOD1.997   
+           ENDIF                                                           FLDMOD1.998   
+    3   CONTINUE                                                           FLDMOD1.999   
+          ICODE=1                                                          FLDMOD1.1000  
+          CMESSAGE="FROM PPOUT CANNOT FIND SUITABLE ENTRY IN LOOKUP"       FLDMOD1.1001  
+          GOTO 999                                                         FLDMOD1.1002  
+    4     CONTINUE                                                         FLDMOD1.1003  
+      ELSE                                                                 FLDMOD1.1004  
+          IPAST=ICURRLL-1                                                  FLDMOD1.1005  
+        WRITE(7,105) IPAST                                                 FLDMOD1.1006  
+ 105    FORMAT('  FROM PPOUT AND FIRST IS FALSE IPAST=',I8)                FLDMOD1.1007  
+C         IWA=IPPLOOK(29,IPAST)*512 + IPPLOOK(30,IPAST) ! ADDR + LENGTH    FLDMOD1.1008  
+          IWA=IPPLOOK(29,IPAST) + IPPLOOK(30,IPAST) ! ADDR + LENGTH        FLDMOD1.1009  
+        WRITE(7,106) IWA                                                   FLDMOD1.1010  
+ 106    FORMAT('  FROM PPOUT AND FIRST IS FALSE IWA=',I8)                  FLDMOD1.1011  
+      ENDIF                                                                FLDMOD1.1012  
+C                                                                          FLDMOD1.1013  
+C     update lookup for this field                                         FLDMOD1.1014  
+      DO I=1,45                                                            FLDMOD1.1015  
+        IPPLOOK(I,ICURRLL) = ILABEL(I)                                     FLDMOD1.1016  
+      ENDDO                                                                FLDMOD1.1017  
+      DO I=1,19                                                            FLDMOD1.1018  
+        RPPLOOK(I+45,ICURRLL) = RLABEL(I)                                  FLDMOD1.1019  
+      ENDDO                                                                FLDMOD1.1020  
+      IPPLOOK(29,ICURRLL)=IWA                                              FLDMOD1.1021  
+      IPPLOOK(30,ICURRLL)=LEN_BUF_WORDS                                    FLDMOD1.1022  
+      IPPLOOK(40,ICURRLL)=IWA                                              FLDMOD1.1023  
+C                                                                          FLDMOD1.1024  
+c     WRITE(6,*)'fldout... len_buf_words,iwa',len_buf_words,iwa            GIE0F403.220   
+                                                                           FLDMOD1.1026  
+      IX=UNIT(UNITPP)                                                      FLDMOD1.1027  
+      CALL SETPOS(UNITPP,IWA,IERR)                                         FLDMOD1.1028  
+      CALL BUFFOUT(unitpp,bufout,LEN_buf_words,LEN_IO,A_IO)                FLDMOD1.1029  
+cx    BUFFER OUT (UNITPP,1) (BUFOUT(1),BUFOUT(LEN_BUF_WORDS))              FLDMOD1.1030  
+      IX=UNIT(UNITPP)                                                      FLDMOD1.1031  
+C     WRITE(6,100)  (BUFOUT(II),II=9999,10100)                             FLDMOD1.1032  
+C     WRITE(6,101) ((IPPLOOK(II,JJ),II=20,35),JJ=1,50)                     FLDMOD1.1033  
+C   3 CONTINUE                                                             FLDMOD1.1034  
+  100 FORMAT(//,32X,'   ARRAY BUFOUT AT END OF PPOUT ',//,32(10F8.0/))     FLDMOD1.1035  
+  101 FORMAT(//,32X,'   IPPLOOK AT END OF  PPOUT   ',//,32(16I5/))         FLDMOD1.1036  
+  102 FORMAT('     IWA  LEN_BUF_WORDS ',2I12)                              FLDMOD1.1037  
+  999 CONTINUE                                                             FLDMOD1.1038  
+      RETURN                                                               FLDMOD1.1039  
+      END                                                                  FLDMOD1.1040  
+CLL  Routine: READPP--------------------------------------------           FLDMOD1.1041  
+CLL                                                                        FLDMOD1.1042  
+CLL  Purpose: To read a   direct access PP file  and convert it to a       FLDMOD1.1043  
+CLL  sequential file read to be passed across to the IBM                   FLDMOD1.1044  
+CLL                                                                        FLDMOD1.1045  
+CLL  Modification History:                                                 FLDMOD1.1046  
+CLL                                                                        FLDMOD1.1047  
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FLDMOD1.1048  
+CLL                                                                        FLDMOD1.1049  
+CLL  -------------------------------------------------------------------   FLDMOD1.1050  
+C*L  Interface and arguments: ------------------------------------------   FLDMOD1.1051  
+C                                                                          FLDMOD1.1052  
+      SUBROUTINE READPP(LEN_INTHD,LEN_REALHD,LEN1_LEVDPC,LEN2_LEVDPC,      FLDMOD1.1053  
+     &   LEN1_LOOKUP,LEN2_LOOKUP,LEN_FIXHD,PP_FIXHD,LOOKUP,ROOKUP,         FLDMOD1.1054  
+     &   PPUNIT1,PPUNIT2,ICODE,CMESSAGE)                                   FLDMOD1.1055  
+      IMPLICIT NONE                                                        FLDMOD1.1056  
+      EXTERNAL READPP,POSERROR,IOERROR,GETPOS,SETPOS                       UDG1F405.1538  
+      INTEGER                                                              FLDMOD1.1058  
+     &     LEN_FIXHD                                                       FLDMOD1.1059  
+     &    ,LEN_INTHD                                                       FLDMOD1.1060  
+     &    ,LEN_REALHD                                                      FLDMOD1.1061  
+     &    ,LEN_LEVDPC                                                      FLDMOD1.1062  
+     &    ,LEN1_LEVDPC                                                     FLDMOD1.1063  
+     &    ,LEN2_LEVDPC                                                     FLDMOD1.1064  
+     &    ,LEN_LOOKUP                                                      FLDMOD1.1065  
+     &    ,LEN1_LOOKUP                                                     FLDMOD1.1066  
+     &    ,LEN2_LOOKUP                                                     FLDMOD1.1067  
+     &    ,LEN1_LOOKNEW                                                    FLDMOD1.1068  
+     &    ,LEN2_LOOKNEW                                                    FLDMOD1.1069  
+     &    ,LOOKUP(LEN1_LOOKUP,LEN2_LOOKUP)                                 FLDMOD1.1070  
+     &    ,PP_INTHD(LEN_INTHD)                                             FLDMOD1.1071  
+     &    ,PP_FIXHD(LEN_FIXHD)                                             FLDMOD1.1072  
+     &    ,LEN_IO                                                          FLDMOD1.1073  
+     &    ,ICODE                                                           FLDMOD1.1074  
+     &    ,PPUNIT1                                                         FLDMOD1.1075  
+     &    ,PPUNIT2                                                         FLDMOD1.1076  
+      REAL                                                                 FLDMOD1.1077  
+     &     ROOKUP(LEN1_LOOKUP,LEN2_LOOKUP)                                 FLDMOD1.1078  
+     &    ,PP_REALHD(LEN_REALHD)                                           FLDMOD1.1079  
+     &    ,PP_LEVDPC(LEN1_LEVDPC*LEN2_LEVDPC+1)                            FLDMOD1.1080  
+     &    ,A_IO                                                            FLDMOD1.1081  
+      CHARACTER CMESSAGE*(*)                                               FLDMOD1.1082  
+      CHARACTER OUTFILE*80                                                 FLDMOD1.1083  
+C Local variables                                                          FLDMOD1.1084  
+      INTEGER                                                              FLDMOD1.1085  
+     &     START_BLOCK                                                     FLDMOD1.1086  
+     &    ,NENT                                                            FLDMOD1.1087  
+     &    ,K                                                               FLDMOD1.1088  
+     &    ,Kk                                                              FLDMOD1.1089  
+     &    ,iwa                                                             FLDMOD1.1090  
+     &    ,RECL                                                            FLDMOD1.1091  
+     &    ,IERR                                                            UDG1F405.1537  
+C---------------------------------------------------------------------     FLDMOD1.1092  
+      LEN_LEVDPC=LEN1_LEVDPC*LEN2_LEVDPC                                   FLDMOD1.1093  
+      LEN_LOOKUP=LEN1_LOOKUP*LEN2_LOOKUP                                   FLDMOD1.1094  
+C The calculation of LEN_LEVDPC has PLUS 1 which is only true              FLDMOD1.1095  
+C for PP headers and not model headers, hopefully the PLUS one will        FLDMOD1.1096  
+C be removed as it is inconsistent)                                        FLDMOD1.1097  
+      START_BLOCK=LEN_FIXHD+1                                              FLDMOD1.1098  
+CL---------------------------------------------------------------          FLDMOD1.1099  
+CL  Read in the integer constants                                          FLDMOD1.1100  
+CL---------------------------------------------------------------          FLDMOD1.1101  
+      IF(LEN_INTHD.GT.0) THEN  ! Integer constants to be read in           FLDMOD1.1102  
+        IF(PP_FIXHD(100).NE.START_BLOCK) THEN   ! Address incorrect        FLDMOD1.1103  
+          CALL POSERROR('integer constants',START_BLOCK,100,               FLDMOD1.1104  
+     &    PP_FIXHD(100))                                                   FLDMOD1.1105  
+          CMESSAGE=' READPP :  Adressing Conflict'                         FLDMOD1.1106  
+          ICODE=2                                                          FLDMOD1.1107  
+          RETURN                                                           FLDMOD1.1108  
+        ENDIF                                                              FLDMOD1.1109  
+cd      WRITE(6,*)' inthd from ',start_block                               GIE0F403.221   
+cd      call getpos(ppunit1,iwa)                                           FLDMOD1.1111  
+cd      WRITE(6,*)'  inthd iwa=',iwa                                       GIE0F403.222   
+        CALL BUFFIN(PPUNIT1,PP_INTHD,LEN_INTHD,LEN_IO,A_IO)                FLDMOD1.1113  
+      WRITE(6,*)pp_inthd                                                   UDG1F405.1549  
+cx      BUFFER IN (PPUNIT1,1) (PP_INTHD(1),PP_INTHD(LEN_INTHD))            FLDMOD1.1115  
+cx      A_IO=UNIT(PPUNIT1)                                                 FLDMOD1.1116  
+cx      LEN_IO=LENGTH(PPUNIT1)                                             FLDMOD1.1117  
+        IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_INTHD) THEN                       FLDMOD1.1118  
+          CALL IOERROR(' Buffer in of Integer constants',A_IO,LEN_IO       FLDMOD1.1119  
+     &  ,  LEN_INTHD)                                                      FLDMOD1.1120  
+          CMESSAGE='READPP : I/O error'                                    FLDMOD1.1121  
+          ICODE=3                                                          FLDMOD1.1122  
+          RETURN                                                           FLDMOD1.1123  
+        ENDIF                                                              FLDMOD1.1124  
+        START_BLOCK=START_BLOCK+LEN_INTHD                                  FLDMOD1.1125  
+      ENDIF                                                                FLDMOD1.1126  
+CL---------------------------------------------------------------          FLDMOD1.1127  
+CL  Read in the real constants                                             FLDMOD1.1128  
+CL---------------------------------------------------------------          FLDMOD1.1129  
+      IF(LEN_REALHD.GT.0) THEN  ! Real constants to be read in             FLDMOD1.1130  
+        IF(PP_FIXHD(105).NE.START_BLOCK) THEN   ! Address incorrect        FLDMOD1.1131  
+          CALL POSERROR('Real constants',START_BLOCK,100,                  FLDMOD1.1132  
+     &    PP_FIXHD(105))                                                   FLDMOD1.1133  
+          CMESSAGE=' READPP :  Adressing Conflict'                         FLDMOD1.1134  
+          ICODE=4                                                          FLDMOD1.1135  
+          RETURN                                                           FLDMOD1.1136  
+        ENDIF                                                              FLDMOD1.1137  
+cd      WRITE(6,*)'realhd from ',start_block                               GIE0F403.224   
+cd      call getpos(ppunit1,iwa                                            FLDMOD1.1139  
+cd      WRITE(6,*)' realhd iwa=',iwa                                       GIE0F403.225   
+        CALL BUFFIN(PPUNIT1,PP_REALHD,LEN_REALHD,LEN_IO,A_IO)              FLDMOD1.1141  
+cd      WRITE(6,*)pp_realhd                                                GIE0F403.226   
+cx      BUFFER IN (PPUNIT1,1) (PP_REALHD(1),PP_REALHD(LEN_REALHD))         FLDMOD1.1143  
+cx      A_IO=UNIT(PPUNIT1)                                                 FLDMOD1.1144  
+cx      LEN_IO=LENGTH(PPUNIT1)                                             FLDMOD1.1145  
+        IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_REALHD) THEN                      FLDMOD1.1146  
+          CALL IOERROR(' Buffer in of Real constants',A_IO,LEN_IO          FLDMOD1.1147  
+     &    ,LEN_REALHD)                                                     FLDMOD1.1148  
+          CMESSAGE='READPP : I/O error'                                    FLDMOD1.1149  
+          ICODE=5                                                          FLDMOD1.1150  
+          RETURN                                                           FLDMOD1.1151  
+        ENDIF                                                              FLDMOD1.1152  
+        START_BLOCK=START_BLOCK+LEN_REALHD                                 FLDMOD1.1153  
+      ENDIF                                                                FLDMOD1.1154  
+CL---------------------------------------------------------------          FLDMOD1.1155  
+CL  Read in the level dependant constants                                  FLDMOD1.1156  
+CL---------------------------------------------------------------          FLDMOD1.1157  
+      IF(LEN_LEVDPC.GT.0) THEN  ! Level dep constants to be read in        FLDMOD1.1158  
+        IF(PP_FIXHD(110).NE.START_BLOCK) THEN   ! Address incorrect        FLDMOD1.1159  
+          CALL POSERROR('Level depndt constants',START_BLOCK,100,          FLDMOD1.1160  
+     &    PP_FIXHD(110))                                                   FLDMOD1.1161  
+          CMESSAGE=' READPP :  Adressing Conflict'                         FLDMOD1.1162  
+          ICODE=6                                                          FLDMOD1.1163  
+          RETURN                                                           FLDMOD1.1164  
+        ENDIF                                                              FLDMOD1.1165  
+cd      WRITE(6,*)'levdep from ',start_block                               GIE0F403.227   
+cd      call getpos(ppunit1,iwa)                                           FLDMOD1.1167  
+cd      WRITE(6,*)' levdep iwa=',iwa                                       GIE0F403.228   
+        CALL BUFFIN(PPUNIT1,PP_LEVDPC,LEN_LEVDPC,LEN_IO,A_IO)              FLDMOD1.1169  
+cd      WRITE(6,*)pp_levdpc                                                GIE0F403.229   
+cx      BUFFER IN (PPUNIT1,1) (PP_LEVDPC(1),PP_LEVDPC(LEN_LEVDPC))         FLDMOD1.1171  
+cx      A_IO=UNIT(PPUNIT1)                                                 FLDMOD1.1172  
+cx      LEN_IO=LENGTH(PPUNIT1)                                             FLDMOD1.1173  
+        IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_LEVDPC) THEN                      FLDMOD1.1174  
+          CALL IOERROR(' Buffer in of Level constants',A_IO,LEN_IO         FLDMOD1.1175  
+     &    ,LEN_LEVDPC)                                                     FLDMOD1.1176  
+          CMESSAGE='READPP : I/O error'                                    FLDMOD1.1177  
+          ICODE=7                                                          FLDMOD1.1178  
+          RETURN                                                           FLDMOD1.1179  
+        ENDIF                                                              FLDMOD1.1180  
+        START_BLOCK=START_BLOCK+LEN_LEVDPC                                 FLDMOD1.1181  
+      ENDIF                                                                FLDMOD1.1182  
+CL---------------------------------------------------------------          FLDMOD1.1183  
+CL  Read in the LOOKUP TABLE                                               FLDMOD1.1184  
+CL---------------------------------------------------------------          FLDMOD1.1185  
+      IF(LEN_LOOKUP.GT.0) THEN  ! Lookup Table to be read in               FLDMOD1.1186  
+cd      WRITE(6,*) 'startblock,pp_fixhd(150)',start_block,pp_fixhd(150)    GIE0F403.230   
+        IF(PP_FIXHD(150).NE.START_BLOCK) THEN   ! Address incorrect        UDG1F405.1539  
+          WRITE(6,*) 'READPP : WARNING'                                    UDG1F405.1540  
+          WRITE(6,*) 'Conflict between start position of Lookup table'     UDG1F405.1541  
+          WRITE(6,*) 'block and pointer in fixed length header: ',         UDG1F405.1542  
+     &               'FIXHD(150) = ',PP_FIXHD(150)                         UDG1F405.1543  
+          WRITE(6,*) 'Current position in file = ',START_BLOCK,            UDG1F405.1544  
+     &               ' words in'                                           UDG1F405.1545  
+          WRITE(6,*) 'Pointer moved to ',PP_FIXHD(150),' words in'         UDG1F405.1546  
+          CALL SETPOS(PPUNIT1,PP_FIXHD(150)-1,IERR)                        UDG1F405.1547  
+        END IF                                                             UDG1F405.1548  
+cd      WRITE(6,*)'lookup from ',start_block                               GIE0F403.231   
+cd      call getpos(ppunit1,iwa)                                           FLDMOD1.1196  
+cd      WRITE(6,*)' lookup iwa=',iwa                                       GIE0F403.232   
+        CALL BUFFIN(PPUNIT1,LOOKUP,LEN_LOOKUP,LEN_IO,A_IO)                 FLDMOD1.1198  
+cx      WRITE(6,*)lookup                                                   GIE0F403.233   
+cx      BUFFER IN (PPUNIT1,1)                                              FLDMOD1.1200  
+cx   &  (LOOKUP(1,1),LOOKUP(LEN1_LOOKUP,LEN2_LOOKUP))                      FLDMOD1.1201  
+cx      A_IO=UNIT(PPUNIT1)                                                 FLDMOD1.1202  
+cx      LEN_IO=LENGTH(PPUNIT1)                                             FLDMOD1.1203  
+        IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_LOOKUP) THEN                      FLDMOD1.1204  
+          CALL IOERROR(' Buffer in of Lookup table   ',A_IO,LEN_IO         FLDMOD1.1205  
+     &    ,LEN_LOOKUP)                                                     FLDMOD1.1206  
+          CMESSAGE='READPP : I/O error'                                    FLDMOD1.1207  
+          ICODE=9                                                          FLDMOD1.1208  
+          RETURN                                                           FLDMOD1.1209  
+        ENDIF                                                              FLDMOD1.1210  
+        START_BLOCK=START_BLOCK+LEN_LOOKUP                                 FLDMOD1.1211  
+      ENDIF                                                                FLDMOD1.1212  
+      WRITE(6,*)' ARRIVED HERE  ',START_BLOCK                              GIE0F403.234   
+      NENT=0                                                               FLDMOD1.1214  
+      DO 1 K=1,LEN2_LOOKUP                                                 FLDMOD1.1215  
+        IF(LOOKUP(1,K).GT.0) THEN                                          FLDMOD1.1216  
+          NENT=NENT+1                                                      FLDMOD1.1217  
+        ELSE                                                               FLDMOD1.1218  
+          GOTO 2                                                           FLDMOD1.1219  
+        ENDIF                                                              FLDMOD1.1220  
+    1 CONTINUE                                                             FLDMOD1.1221  
+    2 CONTINUE                                                             FLDMOD1.1222  
+      WRITE(6,*)' VALUE OF NENT   ',NENT                                   GIE0F403.235   
+      do k=nent-2,nent+1                                                   FLDMOD1.1224  
+        WRITE(6,*)'k=',k                                                   GIE0F403.236   
+        WRITE(6,*) (lookup(kk,k),kk=1,44)                                  GIE0F403.237   
+      enddo                                                                FLDMOD1.1227  
+c     DO 3 K=1,NENT+1                                                      FLDMOD1.1228  
+c   3 CONTINUE                                                             FLDMOD1.1229  
+C-----------------------------------------------------------------         FLDMOD1.1230  
+C    OPEN NEW TARGET FIELDSFILE INITIALISING BY CALLING INITPP             FLDMOD1.1231  
+C-----------------------------------------------------------------         FLDMOD1.1232  
+CL                                                                         FLDMOD1.1233  
+CL        Open named file on unit 60                                       FLDMOD1.1234  
+CL                                                                         FLDMOD1.1235  
+        WRITE(6,*)"*** Opening new file on unit ",pPUNIT2                  GIE0F403.238   
+        CALL GET_FILE(PPUNIT2,OUTFILE,80,ICODE)                            FLDMOD1.1237  
+        CALL FILE_OPEN(PPUNIT2,OUTFILE,80,1,1,ICODE)                       FLDMOD1.1238  
+C                                                                          FLDMOD1.1239  
+C      WRITE(6,*)'call init_pp '                                           GIE0F403.239   
+      CALL INIT_PP(PPUNIT2,'p',LEN1_LOOKUP,LEN2_LOOKUP,PP_FIXHD,           FLDMOD1.1241  
+     *             PP_INTHD,PP_REALHD,PP_LEVDPC,LEN_FIXHD,LEN_INTHD,       FLDMOD1.1242  
+     *             LEN_REALHD,LEN1_LEVDPC,LEN2_LEVDPC,                     FLDMOD1.1243  
+     *             ICODE,CMESSAGE)                                         FLDMOD1.1244  
+                                                                           FLDMOD1.1245  
+      IF(ICODE.NE.0) THEN                                                  FLDMOD1.1246  
+        WRITE(7,100) ICODE                                                 FLDMOD1.1247  
+        WRITE(7,110) CMESSAGE                                              FLDMOD1.1248  
+        RETURN                                                             FLDMOD1.1249  
+ 100  FORMAT(' ICODE EQUAL TO ',I2)                                        FLDMOD1.1250  
+ 110  FORMAT(A80)                                                          FLDMOD1.1251  
+      ENDIF                                                                FLDMOD1.1252  
+      LEN1_LOOKNEW=LEN1_LOOKUP                                             FLDMOD1.1253  
+      LEN2_LOOKNEW=LEN2_LOOKUP                                             FLDMOD1.1254  
+C     WRITE(6,*) 'call control'                                            GIE0F403.240   
+      CALL CONTROL(PPUNIT1,PPUNIT2,LEN1_LOOKNEW,LEN2_LOOKNEW,              FLDMOD1.1256  
+     &             LOOKUP,PP_INTHD,LEN_INTHD,                              FLDMOD1.1257  
+     &             PP_FIXHD,LEN_FIXHD,ICODE,CMESSAGE,NENT)                 FLDMOD1.1258  
+      IF(ICODE.NE.0) THEN                                                  FLDMOD1.1259  
+        WRITE(7,120) ICODE                                                 FLDMOD1.1260  
+        WRITE(7,130) CMESSAGE                                              FLDMOD1.1261  
+        RETURN                                                             FLDMOD1.1262  
+ 120  FORMAT(' ICODE EQUAL TO ',I2)                                        FLDMOD1.1263  
+ 130  FORMAT(A80)                                                          FLDMOD1.1264  
+      ENDIF                                                                FLDMOD1.1265  
+      GOTO 901                                                             FLDMOD1.1266  
+  900 CONTINUE                                                             FLDMOD1.1267  
+      WRITE(6,*)' ERROR IN READPP OPENING THE PPUNIT2 FIELDS FILE'         GIE0F403.241   
+  901 CONTINUE                                                             FLDMOD1.1269  
+ 9999 CONTINUE                                                             FLDMOD1.1270  
+      RETURN                                                               FLDMOD1.1271  
+      END                                                                  FLDMOD1.1272  
+      SUBROUTINE SCALE_FIELD(PDATA,RDATA,NPOINTS,SCALE_FACTOR,             FLDMOD1.1273  
+     &                       PDATA_LEN,PACK_CODE,AMDI)                     FLDMOD1.1274  
+CLL                                                                        FLDMOD1.1275  
+CLL    subroutine to unpack a field, multiply by a scale factor,           FLDMOD1.1276  
+CLL    then repack data.                                                   FLDMOD1.1277  
+CLL                                                                        FLDMOD1.1278  
+CLL    Author P J Smith      Date; 21 FEB 92                               FLDMOD1.1279  
+CLL                                                                        FLDMOD1.1280  
+CLL                                                                        FLDMOD1.1281  
+      INTEGER NPOINTS,PDATA_LEN,PACK_CODE                                  FLDMOD1.1282  
+      REAL FIELD(NPOINTS),RDATA(NPOINTS),SCALE_FACTOR,AMDI                 FLDMOD1.1283  
+      INTEGER PDATA(NPOINTS),NROW,NCOL,ISC,LWORD                           FLDMOD1.1284  
+      LOGICAL OPACK                                                        FLDMOD1.1285  
+      DATA LWORD/64/                                                       FLDMOD1.1286  
+                                                                           FLDMOD1.1287  
+      IF(PACK_CODE.EQ.1) THEN                                              FLDMOD1.1288  
+        OPACK=.FALSE.                                                      FLDMOD1.1289  
+        CALL COEX(FIELD,NPOINTS,PDATA,NPOINTS,NROW,NCOL,PDATA_LEN,         FLDMOD1.1290  
+     -            ISC,OPACK,AMDI,LWORD)                                    FLDMOD1.1291  
+                                                                           FLDMOD1.1292  
+        DO I=1,NCOL*NROW                                                   FLDMOD1.1293  
+          IF(FIELD(I).NE.AMDI) THEN                                        FLDMOD1.1294  
+            FIELD(I) = FIELD(I) * SCALE_FACTOR                             FLDMOD1.1295  
+          ENDIF                                                            FLDMOD1.1296  
+        ENDDO                                                              FLDMOD1.1297  
+                                                                           FLDMOD1.1298  
+        OPACK=.TRUE.                                                       FLDMOD1.1299  
+        CALL COEX(FIELD,NPOINTS,PDATA,NPOINTS,NROW,NCOL,PDATA_LEN,         FLDMOD1.1300  
+     -            ISC,OPACK,AMDI,LWORD)                                    FLDMOD1.1301  
+                                                                           FLDMOD1.1302  
+      ELSEIF(PACK_CODE.EQ.0) THEN                                          FLDMOD1.1303  
+        DO I=1,PDATA_LEN                                                   FLDMOD1.1304  
+          IF(RDATA(I).NE.AMDI) THEN                                        FLDMOD1.1305  
+            RDATA(I) = RDATA(I) * SCALE_FACTOR                             FLDMOD1.1306  
+          ENDIF                                                            FLDMOD1.1307  
+        ENDDO                                                              FLDMOD1.1308  
+      ELSE                                                                 FLDMOD1.1309  
+        WRITE(6,*)pack_code,' not yet coded'                               GIE0F403.242   
+      ENDIF                                                                FLDMOD1.1311  
+                                                                           FLDMOD1.1312  
+      RETURN                                                               FLDMOD1.1313  
+      END                                                                  FLDMOD1.1314  
+      SUBROUTINE WIND_10M_FIX(PDATA,RDATA,PDATA_LEN,                       FLDMOD1.1315  
+     1                        FCT,ITYPE,LEVEL,IPROJ,PPUNIT1,               FLDMOD1.1316  
+     2                        WIND_10M_SCALE,WIND_10M_OROG,                FLDMOD1.1317  
+     3                        MODEL_OROG,ILABEL_OROG,RLABEL_OROG,          FLDMOD1.1318  
+     4                        IDIM,PACK_CODE,AMDI)                         FLDMOD1.1319  
+CLL                                                                        FLDMOD1.1320  
+CLL    subroutine to unpack a 10m winds and replace if posible by          FLDMOD1.1321  
+CLL    the level 1 wind scaled using wind_10m_scale                        FLDMOD1.1322  
+CLL                                                                        FLDMOD1.1323  
+CLL    Author P J Smith      Date; 06 jan 95                               FLDMOD1.1324  
+CLL                                                                        FLDMOD1.1325  
+CLL                                                                        FLDMOD1.1326  
+      INTEGER IDIM,PDATA_LEN,PACK_CODE                                     FLDMOD1.1327  
+      REAL RDATA(IDIM),FIELD(IDIM),FIELD1(IDIM),AMDI                       FLDMOD1.1328  
+      REAL MODEL_OROG(IDIM),RLABEL_OROG(19),RLABEL(19)                     FLDMOD1.1329  
+      REAL WIND_10M_OROG,WIND_10M_SCALE                                    FLDMOD1.1330  
+      INTEGER PDATA(IDIM),NROW,NCOL,ISC,LWORD                              FLDMOD1.1331  
+      INTEGER ILABEL_OROG(45),ILABEL(45)                                   FLDMOD1.1332  
+      INTEGER FCT,ITYPE,ITYPE1,LEVEL,LEVEL1,IPROJ,PPUNIT1                  FLDMOD1.1333  
+      INTEGER IEXTRA(10)                                                   FLDMOD1.1334  
+      LOGICAL OPACK                                                        FLDMOD1.1335  
+      DATA LWORD/64/                                                       FLDMOD1.1336  
+                                                                           FLDMOD1.1337  
+      DO I=1,10                                                            FLDMOD1.1338  
+        IEXTRA(I)=0                                                        FLDMOD1.1339  
+      ENDDO                                                                FLDMOD1.1340  
+                                                                           FLDMOD1.1341  
+      write(6,*) ' read level1 winds'                                      FLDMOD1.1342  
+      ITYPE1 = 6                                                           FLDMOD1.1343  
+      IF(ITYPE.EQ.75) ITYPE1 = 5                                           FLDMOD1.1344  
+      LEVEL1 = 1                                                           FLDMOD1.1345  
+      CALL FFREAD(IPROJ,FCT,ITYPE1,LEVEL1,PPUNIT1,FIELD1,IDIM,             FLDMOD1.1346  
+     1                ILABEL,RLABEL,IEXTRA,ICODE,CMESSAGE)                 FLDMOD1.1347  
+                                                                           FLDMOD1.1348  
+      write(6,*) 'icode=',icode                                            FLDMOD1.1349  
+      IF(ICODE.EQ.0) THEN                                                  FLDMOD1.1350  
+        IF(PACK_CODE.EQ.1) THEN                                            FLDMOD1.1351  
+          OPACK=.FALSE.                                                    FLDMOD1.1352  
+          WRITE(6,*)'call coex'                                            GIE0F403.243   
+          CALL COEX(FIELD,IDIM,PDATA,IDIM,NROW,NCOL,PDATA_LEN,             FLDMOD1.1354  
+     1              ISC,OPACK,AMDI,LWORD)                                  FLDMOD1.1355  
+                                                                           FLDMOD1.1356  
+          WRITE(6,*)'loop field'                                           GIE0F403.244   
+          DO I=1,NCOL*NROW                                                 FLDMOD1.1358  
+            IF(FIELD(I).NE.AMDI) THEN                                      FLDMOD1.1359  
+              IF(MODEL_OROG(I).GE.WIND_10M_OROG) THEN                      FLDMOD1.1360  
+           WRITE(6,*)i,model_orog(i),field(i),field1(i),field1(i)*.8       GIE0F403.245   
+                FIELD(I) = FIELD1(I) * WIND_10M_SCALE                      FLDMOD1.1362  
+              ENDIF                                                        FLDMOD1.1363  
+            ENDIF                                                          FLDMOD1.1364  
+          ENDDO                                                            FLDMOD1.1365  
+                                                                           FLDMOD1.1366  
+          OPACK=.TRUE.                                                     FLDMOD1.1367  
+          CALL COEX(FIELD,IDIM,PDATA,IDIM,NROW,NCOL,PDATA_LEN,             FLDMOD1.1368  
+     1              ISC,OPACK,AMDI,LWORD)                                  FLDMOD1.1369  
+        ELSEIF(PACK_CODE.EQ.0) THEN                                        FLDMOD1.1370  
+          DO I=1,PDATA_LEN                                                 FLDMOD1.1371  
+            IF(RDATA(I).NE.AMDI) THEN                                      FLDMOD1.1372  
+              IF(MODEL_OROG(I).GE.WIND_10M_OROG) THEN                      FLDMOD1.1373  
+                RDATA(I) = FIELD1(I) * WIND_10M_SCALE                      FLDMOD1.1374  
+              ENDIF                                                        FLDMOD1.1375  
+            ENDIF                                                          FLDMOD1.1376  
+          ENDDO                                                            FLDMOD1.1377  
+        ELSE                                                               FLDMOD1.1378  
+          WRITE(6,*)pack_code,' not yet coded'                             GIE0F403.246   
+        ENDIF                                                              FLDMOD1.1380  
+      ENDIF                                                                FLDMOD1.1381  
+                                                                           FLDMOD1.1382  
+      RETURN                                                               FLDMOD1.1383  
+      END                                                                  FLDMOD1.1384  
+CLL  Routine: RE_PACK  -------------------------------------------------   FLDMOD1.1385  
+CLL                                                                        FLDMOD1.1386  
+CLL  Purpose: To repack data from the input array FIELD and return         FLDMOD1.1387  
+CLL                                                                        FLDMOD1.1388  
+CLL  Model            Modification history:                                FLDMOD1.1389  
+CLL version  Date                                                          FLDMOD1.1390  
+CLL                                                                        FLDMOD1.1391  
+CLL                                                                        FLDMOD1.1392  
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FLDMOD1.1393  
+CLL                                                                        FLDMOD1.1394  
+CLL  External documentation:                                               FLDMOD1.1395  
+CLL                                                                        FLDMOD1.1396  
+CLL  -------------------------------------------------------------------   FLDMOD1.1397  
+C*L  Interface and arguments: ------------------------------------------   FLDMOD1.1398  
+      SUBROUTINE RE_PACK(PACK_TYPE,IDIM,FIELD,NUM_CRAY_WORDS,              FLDMOD1.1399  
+     &                   ILABEL,RLABEL,PP_FIXHD,ICODE,CMESSAGE)            FLDMOD1.1400  
+      INTEGER                                                              FLDMOD1.1401  
+     &     PACK_TYPE            !IN  The type of packing used              FLDMOD1.1402  
+     &    ,IDIM                 !IN  The full unpacked size of a field     FLDMOD1.1403  
+     &    ,ILABEL(45)           !OUT holds integer part of LOOKUP          FLDMOD1.1404  
+     &    ,ICODE                !OUT Non zero for any error                FLDMOD1.1405  
+     &    ,PP_FIXHD(*)          !IN  PPfile fixed length header            FLDMOD1.1406  
+      REAL                                                                 FLDMOD1.1407  
+     &     FIELD(IDIM)          !INOUT On Input contains data.On output    FLDMOD1.1408  
+     &    ,RLABEL(19)           !    holds real part of LOOKUP             FLDMOD1.1409  
+      CHARACTER CMESSAGE*(*)    !OUT Will contain any error mesages.       FLDMOD1.1410  
+C*                                                                         FLDMOD1.1411  
+C EXTERNAL SUBROUTINES CALLED                                              FLDMOD1.1412  
+C                                                                          FLDMOD1.1413  
+      EXTERNAL COEX,P21BITS                                                FLDMOD1.1414  
+      INTEGER  P21BITS                                                     FLDMOD1.1415  
+C                                                                          FLDMOD1.1416  
+C     LOCAL  VARIABLES                                                     FLDMOD1.1417  
+      REAL                                                                 FLDMOD1.1418  
+     &     WORK_ARRAY(IDIM)       ! WORK array used for packing            FLDMOD1.1419  
+     &    ,AMDI                   ! Missing data indicator.                FLDMOD1.1420  
+      INTEGER                                                              FLDMOD1.1421  
+     &     LEN_FULL_WORD          ! The length of a FULL_WORD              FLDMOD1.1422  
+     &    ,IXX                    ! X dimension for COEX                   FLDMOD1.1423  
+     &    ,IYY                    ! Y dimension for COEX                   FLDMOD1.1424  
+     &    ,ISC                    ! Accuracy required for COEX             FLDMOD1.1425  
+     &    ,IDUM                   ! Dummy variable                         FLDMOD1.1426  
+     &    ,NUM_CRAY_WORDS         ! IN no of values in an input field      FLDMOD1.1427  
+     &    ,NUM_UNPACK_VALUES      ! Number of numbers originally packed    FLDMOD1.1428  
+     &    ,GRIB_PACKING           ! OUT - profile for packing              FLDMOD1.1429  
+C                                                                          FLDMOD1.1430  
+*CALL CLOOKADD                                                             FLDMOD1.1431  
+C                                                                          FLDMOD1.1432  
+      DATA LEN_FULL_WORD/64/                                               FLDMOD1.1433  
+C                                                                          FLDMOD1.1434  
+      AMDI=RLABEL(18)                                                      FLDMOD1.1435  
+                                                                           FLDMOD1.1436  
+      IF(PACK_TYPE.EQ.1) THEN     ! WGDOS packing                          FLDMOD1.1437  
+        IXX=ILABEL(LBNPT)                                                  FLDMOD1.1438  
+        IYY=ILABEL(LBROW)                                                  FLDMOD1.1439  
+        ISC=NINT(RLABEL(6))                                                FLDMOD1.1440  
+        CALL COEX(FIELD,IDIM,WORK_ARRAY,IDIM,IXX,IYY,                      FLDMOD1.1441  
+     &  NUM_CRAY_WORDS,ISC,.TRUE.,AMDI,LEN_FULL_WORD)                      FLDMOD1.1442  
+      ELSEIF(PACK_TYPE.EQ.2) THEN !  32 Bit CRAY packing                   FLDMOD1.1443  
+                                                                           FLDMOD1.1444  
+      ELSEIF(PACK_TYPE.EQ.3) THEN !  GRIB PACKING                          FLDMOD1.1445  
+        GRIB_PACKING=1                                                     FLDMOD1.1446  
+!  RLABEL is returned from FFREAD and contains LOOKUP elements 45-64.      FLDMOD1.1447  
+!  PP2GRIB requires this array to contain elements 46-64 from LOOKUP.      FLDMOD1.1448  
+!  As a temporary measure the call to PP2GRIB has been amended to pass     FLDMOD1.1449  
+!  the values from RLABEL(2). FFREAD will probably be altered at UM4.1     FLDMOD1.1450  
+!  to return the correct values in RLABEL.                                 FLDMOD1.1451  
+!       CALL PP2GRIB(FIELD,WORK_ARRAY,IDIM,NUM_CRAY_WORDS,GRIB_PACKING,    FLDMOD1.1452  
+!    &               ILABEL,RLABEL,ICODE,CMESSAGE)                         FLDMOD1.1453  
+        CALL PP2GRIB(FIELD,WORK_ARRAY,IDIM,NUM_CRAY_WORDS,GRIB_PACKING,    FLDMOD1.1454  
+     &               ILABEL,RLABEL(1),ICODE,CMESSAGE)                      FLDMOD1.1455  
+                                                                           FLDMOD1.1456  
+      ELSE                                                                 FLDMOD1.1457  
+        ICODE=6                                                            FLDMOD1.1458  
+        CMESSAGE=' UNPACK - packing type not yet supported'                FLDMOD1.1459  
+      ENDIF                                                                FLDMOD1.1460  
+      DO 8 I=1,NUM_cray_words                                              FLDMOD1.1461  
+      FIELD(I)=WORK_ARRAY(I)                                               FLDMOD1.1462  
+   8  CONTINUE                                                             FLDMOD1.1463  
+      ILABEL(DATA_TYPE)=1  ! The data type must now be real                FLDMOD1.1464  
+      ILABEL(LBPACK)=ILABEL(LBPACK)+PACK_TYPE ! data now packed            FLDMOD1.1465  
+      RETURN                                                               FLDMOD1.1466  
+      END                                                                  FLDMOD1.1467  
+*ENDIF                                                                     FLDMOD1.1468  

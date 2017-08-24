@@ -1,0 +1,343 @@
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#---------------------------------------------------------------------
+#  Script: pptoanc
+#---------------------------------------------------------------------
+#
+# Purpose: Script to run PPTOANC utility to create ancilliary files
+#          from pp files on T3E .
+#
+#  Current Owner: Ian Edmond
+#  Reviewer: Dave Robinson               Date of review: 20/1/98
+#
+#  Tested under OS version: UNICOS <UNICOS version number>
+#  UM   version no: <UM version>  Date of test:  <date of test>
+#
+#  History:
+#   Model
+#  version  Date     Modification history:
+# vn4.4   2/6/97   Original version Ian Edmond
+#  4.5  01/09/98  Removed UMVERSION. K Rogers
+#
+# vn4.5 25/08/98   Use VN in directory for executable.
+#                  Initialise UM_SECTOR_SIZE. D. Robinson.
+#
+#  Programming standard: UMDP 3, version <UMDP 3 version number>
+#
+#  Project task: <project task code>
+#
+#  Logical components covered: <logical component code>
+#
+#  External documentation:
+#    <UMDP number & name of external documentation>
+#
+#   Interface and arguments:
+#
+#   pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist [-o]       \
+#           [-l levels_file] pp_file1 [[pp_file2][pp_file3]...]  \
+#           ancilliary_file
+#
+#   3 or more arguments as follows:
+#        $1 (optional) -cf    :specifies that the pp files
+#                             :contain Cray block control words.
+#                             :e.g
+#                             :(1) pp files that were
+#                             :VBS formatted on the IBM and
+#                             :transfered onto the T3E using
+#                             :getibm /df=tb where the IBM BCW's are
+#                             :are replaced with Cray BCW's.
+#                             :(2) pp files that were created
+#                             :using FORTRAN WRITE statement.
+#
+#                      -hpf   :specifies that the pp files were
+#                             :directly copied from HP using e.g
+#                             :ftp,rcp and that these are 32bit
+#                             :datafiles with HP BCWs.
+#
+#                             :if the -cf option is NOT used the
+#                             :pp files are assumed not to
+#                             :contain BCW's.
+#                             :e.g files which are transfered
+#                             :from IBM to T3E using getibm /df=tr
+#
+#        $2 (optional) -lcf   :
+#                             :As above but refers to the optional
+#                             :levels data file.
+#                      -lhpf  :
+#
+#        $3 -n <namelist>     :pathname of file containing namelist
+#                             :specifing details of ancilliary file
+#
+#        $4 (optional) -l levels_file :pathname of levels file
+#                                     :used to create ocean dump
+#
+#        $5 (optional) -o     :overwrite already existing ancilliary
+#                             :file
+#
+#        $6  pp_file1         :pathname of input pp file used in
+#                             :the ancilliary file
+#        $7 -> $n-1  pp_file  :pathname of input pp files used in
+#                             :addition to pp_file1 to make the
+#                             :ancilliary file
+#
+#        $n (last argument in list)   :pathname of ancilliary file
+#   -------------------------------------------------------------------
+#
+#   Calls    : pptoanc
+#
+#   Imports:
+#     VN - Version number of the program library to be used.
+#     VN        - Script version number.
+#     TMPDIR    - Directory in which output redirected to.
+#
+#   Local variables:
+#     PPF1 - used to created link to pp file with fort.??
+#
+# End of header -------------------------------------------------------
+#! /bin/ksh
+
+if [ $# -lt 4 ]
+  then
+    echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+
+    exit 1
+fi
+
+# Step 0 - Set up environment variables
+#
+
+VN=4.5
+UMDIR=${UMDIR:-/u/um1}
+
+# Directory for intermediate files
+TMPDIR=${TMPDIR:-/tmp}
+
+# Directory containing executable
+EXEC=$UMDIR/vn$VN/exec
+
+# UM Sector Size
+UM_SECTOR_SIZE=${UM_SECTOR_SIZE:-2048}
+export UM_SECTOR_SIZE
+
+export UNIT22=$UMDIR/vn$VN/ctldata/STASHmaster
+
+# Step 1 -  Read filenames specified in argument list and check syntax.
+#
+filenum=19
+namelist_set=false
+pplev_cray_fmt=false
+pplev_hp_fmt=false
+pp_cray_fmt=false
+pp_hp_fmt=false
+overwrite=false
+
+while [ $# -gt 0 ]               # Loop over all command line arguments
+
+do
+ case "$1" in
+
+ -cf)
+    pp_cray_fmt=true
+    if [ $pp_hp_fmt = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    if [ $namelist_set = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    ;;
+ -hpf)
+    pp_hp_fmt=true
+    if [ $pp_cray_fmt = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    if [ $namelist_set = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    ;;
+ -lcf)
+    pplev_cray_fmt=true
+    if [ $pplev_hp_fmt = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    if [ $namelist_set = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    ;;
+ -lhpf)
+    pplev_hp_fmt=true
+    if [ $pplev_cray_fmt = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    if [ $namelist_set = true ]
+      then
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+        exit 1
+    fi
+    ;;
+ -n)
+    if [ ! -f  $2 ]            # Check input files exist.
+    then
+
+      echo "namelist $2 does not exist"
+      exit 1
+
+    fi
+
+    export UNIT05=$2
+    namelist_set=true
+    shift
+    ;;
+ -l)
+    if [ ! -f  $2 ]            # Check input files exist.
+    then
+
+      echo "levels file $2 does not exist"
+      exit 1
+
+    fi
+
+    if [ $pplev_cray_fmt = true ]
+      then
+       ln -s $2 fort.11
+    elif [ $pplev_hp_fmt = true ]
+      then
+       assign -a $2 -N ieee_32 -F f77 fort.11
+    else
+       assign -a $2  -su fort.11
+    fi
+    shift
+    ;;
+ -o)
+    overwrite=true
+    ;;
+ *)
+    if [ $namelist_set = true ]
+      then
+
+        if [ $# -gt 1 ]
+          then
+            filenum=`expr $filenum + 1`
+
+            if [ ! -f  $1 ]            # Check input files exist.
+              then
+
+                echo "pp file $1 does not exist"
+                rm fort.*
+                exit 1
+
+            fi
+            export PPF1=$1
+            if [ $pp_cray_fmt = true ]
+              then
+               ln -s $PPF1 fort.$filenum
+            elif [ $pp_hp_fmt = true ]
+              then
+               assign -a $PPF1 -N ieee_32 -F f77 fort.$filenum
+            else
+               assign -a $PPF1  -su fort.$filenum
+            fi
+        elif [ $# -eq 1 ]
+          then
+            if [ ! -f  $1 ]
+              then
+
+                export UNIT10=$1
+            else
+
+                if [ $overwrite = true ] # overwrite existing ancilliary
+                  then                   # file (for operational use)
+
+                   echo "Overwriting file $1"
+                   export UNIT10=$1
+                else
+
+                   echo "WARNING: file $1 already exists"
+                   echo "Do you want to overwrite this file (y or n)?"
+                   read option
+
+                   case "$option" in
+
+                   y)
+                     export UNIT10=$1
+                     ;;
+                   n)
+                     rm fort.*
+                     exit 0
+                     ;;
+                   *)
+                     echo "Invalid answer"
+                     rm fort.*
+                     exit 1
+                     ;;
+                   esac
+
+                fi
+
+            fi
+        else
+        echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+          rm fort.*
+          exit 1
+        fi
+
+
+    else
+      echo "Usage: pptoanc [[-cf][-hpf]] [[-lcf][-lhpf]] -n namelist \
+[-o] [-l levels_file] pp_file1 [[pp_file2][pp_file3]..] ancilliary_file"
+       exit 1
+    fi
+    ;;
+    esac
+    shift
+    done
+
+# Step 2 - Execute utility & print out messages.
+#
+$EXEC/pptoanc 1> $TMPDIR/pptoanc.out 2>&1
+
+CC=$?
+if test $CC != 0
+then
+
+cat $TMPDIR/pptoanc.out
+echo PPTOANC failed
+
+fi
+
+echo 'PPTOANC output in:' $TMPDIR/pptoanc.out
+
+# Step 3 - Delete temporary files and exit
+#
+rm fort.*
+exit 0

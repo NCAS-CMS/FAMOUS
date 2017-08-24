@@ -1,0 +1,668 @@
+*IF DEF,C84_1A,OR,DEF,FLDOP,OR,DEF,FLDMOD                                  UIE3F404.39    
+C ******************************COPYRIGHT******************************    GTS2F400.7399  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.7400  
+C                                                                          GTS2F400.7401  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.7402  
+C restrictions as set forth in the contract.                               GTS2F400.7403  
+C                                                                          GTS2F400.7404  
+C                Meteorological Office                                     GTS2F400.7405  
+C                London Road                                               GTS2F400.7406  
+C                BRACKNELL                                                 GTS2F400.7407  
+C                Berkshire UK                                              GTS2F400.7408  
+C                RG12 2SZ                                                  GTS2F400.7409  
+C                                                                          GTS2F400.7410  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.7411  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.7412  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.7413  
+C Modelling at the above address.                                          GTS2F400.7414  
+C ******************************COPYRIGHT******************************    GTS2F400.7415  
+C                                                                          GTS2F400.7416  
+CLL  SUBROUTINE PP2GRIB------------------------------------------------    PP2GRIBA.3     
+CLL                                                                        PP2GRIBA.4     
+CLL  Purpose:                                                              PP2GRIBA.5     
+CLL   to code pp_header and un-packed data into grib                       PP2GRIBA.6     
+CLL                                                                        PP2GRIBA.7     
+CLL  Written by G.Ross/ P.Smith                                            PP2GRIBA.8     
+CLL                                                                        PP2GRIBA.9     
+CLL  Model            Modification history from model version 3.3:         PP2GRIBA.10    
+CLL version  Date                                                          PP2GRIBA.11    
+CLL   3.4   6/10/94 : Correct so that able to encode data other            GRS3F304.1     
+CLL                   than just CF (m08) fields ie climate data.           GRS3F304.2     
+CLL                   Also return error code and message.                  GRS3F304.3     
+CLL   3.4   2/12/94 : Extra argument introduced in subroutine              GDG6F304.1     
+CLL                   CODER. MSG_LVL set to 2 ie Errors only               GDG6F304.2     
+!     4.0  20/01/95 : Further changes to improve encoding of climate       GRS3F400.1     
+!                     fields in grib & correct errors. (R. A. Stratton)    GRS3F400.2     
+!     4.0  23/03/95 : Allow alternative packing method to be used for      GRS3F400.3     
+!                     ppxref profile 6. (R.A.Stratton)                     GRS3F400.4     
+!     4.5  20/03/98   Correction for year 2K.                              GDG0F405.4     
+!                     Author D.M. Goddard                                  GDG0F405.5     
+CLL                                                                        PP2GRIBA.12    
+CLL  Programming standard: Unified Model Documentation Paper No 3          PP2GRIBA.13    
+CLL                                                                        PP2GRIBA.14    
+CLL  System component:                                                     PP2GRIBA.15    
+CLL                                                                        PP2GRIBA.16    
+CLL  System task:                                                          PP2GRIBA.17    
+CLL                                                                        PP2GRIBA.18    
+CLL  Documentation:                                                        PP2GRIBA.19    
+CLL                                                                        PP2GRIBA.20    
+CLLEND---------------------------------------------------------            PP2GRIBA.21    
+C*L Arguments:-------------------------------------------------            PP2GRIBA.22    
+      SUBROUTINE PP2GRIB(FIELD,WORK_ARRAY,MAXDIM,NUM_CRAY_WORDS,           PP2GRIBA.23    
+     &                   GRIB_PACKING,ILABEL,RLABEL,                       GRS3F400.5     
+     &                   ICODE,CMESSAGE)                                   GRS3F400.6     
+      INTEGER                                                              PP2GRIBA.25    
+     &     MAXDIM                                                          PP2GRIBA.26    
+     &    ,NUM_CRAY_WORDS                                                  PP2GRIBA.27    
+     &    ,ILABEL(45)                                                      PP2GRIBA.28    
+     &    ,WORK_ARRAY(MAXDIM)                                              PP2GRIBA.29    
+     &    ,GRIB_PACKING          ! IN - profile for packing                GRS3F400.7     
+     &    ,ICODE                 ! out - error code                        GRS3F304.5     
+      REAL                                                                 PP2GRIBA.30    
+     &     FIELD(MAXDIM)                                                   PP2GRIBA.31    
+     &    ,RLABEL(19)                                                      PP2GRIBA.32    
+      CHARACTER*80                                                         GRS3F304.6     
+     &     CMESSAGE              ! out - error message                     GRS3F304.7     
+                                                                           PP2GRIBA.33    
+      EXTERNAL CODER,STASH_GRIB,GRIB_TIME_INT                              GRS3F400.8     
+                                                                           PP2GRIBA.35    
+c     LOCAL VARIABLES                                                      PP2GRIBA.36    
+      INTEGER IDIM                                                         PP2GRIBA.37    
+     ;       ,BLOCK0(4)                                                    PP2GRIBA.38    
+     ;       ,BLOCK1(21)                                                   PP2GRIBA.39    
+     ;       ,BLOCK2(30)                                                   PP2GRIBA.40    
+     ;       ,BLOCK3(2)                                                    PP2GRIBA.41    
+     ;       ,BLOCK4(2)                                                    PP2GRIBA.42    
+     ;       ,BITMAP(MAXDIM)                                               PP2GRIBA.43    
+     ;       ,WORK1(288)                                                   PP2GRIBA.44    
+     ;       ,WORK2(500)                                                   PP2GRIBA.45    
+     ;       ,ERROR                                                        PP2GRIBA.46    
+     ;       ,ERROR_UNIT                                                   PP2GRIBA.47    
+     ;       ,QUASI(1)                                                     PP2GRIBA.48    
+     ;       ,LENVRT                                                       PP2GRIBA.49    
+     ;       ,WIDTH                                                        PP2GRIBA.50    
+     ;       ,WORDSZ                                                       PP2GRIBA.52    
+     ;       ,LENQ                                                         PP2GRIBA.53    
+     ;       ,LENGRB                                                       PP2GRIBA.54    
+      INTEGER                                                              GRS3F400.9     
+     ;        STASH_SECT_NO                                                GRS3F400.10    
+     ;       ,STASH_ITEM_NO                                                PP2GRIBA.58    
+     ;       ,TABLE2_VERSION                                               PP2GRIBA.59    
+     ;       ,TABLE2_ENTRY                                                 PP2GRIBA.60    
+     &       ,IB ,IC, BBB, ICENTURY                                        GRS3F400.11    
+     &       ,D_TIME, T_UNITS                                              GRS3F304.10    
+     &       ,MSG_LVL                                                      GDG6F304.4     
+     &       ,IFLAG_MAX, IFLAG_MIN, IFLAG_VERTM   ! flags for processing   GRS3F400.12    
+     &       ,IFLAG_MEAN ,IFLAG_ZONAL             ! code                   GRS3F400.13    
+     &       ,IREM                                                         GRS3F400.14    
+      LOGICAL OROW                                                         PP2GRIBA.61    
+     ;       ,OBITMAP                                                      PP2GRIBA.62    
+      REAL VERTCO(4)                                                       GRS3F400.15    
+     ;    ,WORKR(288)                                                      PP2GRIBA.64    
+     ;    ,BLOCKR(20)                                                      PP2GRIBA.65    
+     ;    ,STORE(MAXDIM)                                                   PP2GRIBA.66    
+     &    ,FMAX ,FMIN, RANGE                                               GRS3F304.11    
+     &    ,DLONZ                                                           GRS3F400.16    
+      PARAMETER(MSG_LVL=2)  ! Errors only                                  GDG6F304.5     
+                                                                           GRS3F400.17    
+! --------------------------------------------------------------------     GRS3F400.18    
+! initialise variables for call to coder                                   GRS3F400.19    
+                                                                           GRS3F400.20    
+      ICODE=0                                                              GRS3F400.21    
+      ERROR=0                                                              PP2GRIBA.68    
+      ERROR_UNIT=6                                                         PP2GRIBA.69    
+      LENQ   = 1                                                           GRS3F400.22    
+      WORDSZ = 64                                                          GRS3F400.23    
+      LENGRB = MAXDIM                                                      GRS3F400.24    
+                                                                           GRS3F400.25    
+      IDIM   = ILABEL(18)*ILABEL(19)      ! length of field                GRS3F304.12    
+                                                                           GRS3F400.26    
+! --------------------------------------------------------------------     GRS3F400.27    
+! Method of grib packing                                                   GRS3F400.28    
+! -----------------------                                                  GRS3F400.29    
+! PPXREF profiles 1-5 - use binary accuracy method (requires less space)   GRS3F400.30    
+!                  6  - use width method, with simple packing to be        GRS3F400.31    
+!                       the similar to the ECMWF MARS archive.             GRS3F400.32    
+!                                                                          GRS3F400.33    
+! Note in the case of -99 in a binary accuracy profile ie no packing,      GRS3F400.34    
+!  use width =30, the maximum value which can safely be used with 32       GRS3F400.35    
+!  bit numbers.                                                            GRS3F400.36    
+!                                                                          GRS3F400.37    
+      IF (GRIB_PACKING.eq.6) THEN  ! Width method                          GRS3F400.38    
+                                                                           GRS3F400.39    
+        OROW = .FALSE.             ! Simple packing                        GRS3F400.40    
+        OBITMAP = .FALSE.          ! Do not use bitmap.                    GRS3F400.41    
+        BLOCK0(4)=0                                                        GRS3F400.42    
+        WIDTH = NINT(RLABEL(6))    ! required width                        GRS3F400.43    
+        IF (WIDTH.GT.30.or.WIDTH.LE.0) THEN  ! check sensible value        GRS3F400.44    
+          WIDTH=30                                                         GRS3F400.45    
+        ENDIF                                                              GRS3F400.46    
+      ELSE                         ! binary accuracy method                GRS3F400.47    
+                                                                           GRS3F400.48    
+       OROW = .TRUE.               ! Row by row packing                    GRS3F400.49    
+       OBITMAP = .TRUE.            ! use bitmap for fields with            GRS3F400.50    
+                                   ! missing data.                         GRS3F400.51    
+       BLOCK0(4)  = NINT(RLABEL(6)) ! Binary accuracy - power of 2         GRS3F400.52    
+       WIDTH=0                                                             GRS3F400.53    
+       IF (BLOCK0(4).eq.-99) THEN  ! use maximum number of bits            GRS3F400.54    
+          WIDTH = 30                                                       GRS3F400.55    
+       ENDIF                                                               GRS3F400.56    
+      ENDIF                                                                GRS3F400.57    
+                                                                           GRS3F400.58    
+! --------------------------------------------------------------------     GRS3F400.59    
+!     SET UP VARIABLES FOR GRIB CODING ROUTINE                             GRS3F400.60    
+!                                                                          GRS3F400.61    
+!  Section 0                                                               GRS3F400.62    
+! -------------                                                            GRS3F400.63    
+!                                                                          GRS3F400.64    
+      BLOCK0(1)  = 1               ! GRIB Edition number                   PP2GRIBA.84    
+      STASH_SECT_NO = ILABEL(42)/1000                                      PP2GRIBA.85    
+      STASH_ITEM_NO = MOD(ILABEL(42),1000)                                 PP2GRIBA.86    
+      CALL STASH_GRIB(STASH_SECT_NO,STASH_ITEM_NO,                         PP2GRIBA.87    
+     *                TABLE2_VERSION,TABLE2_ENTRY,ERROR)                   PP2GRIBA.88    
+      BLOCK0(2)  = TABLE2_VERSION  ! table 2 version number                PP2GRIBA.89    
+      BLOCK0(3)  = 0               !length of message (OUTPUT ONLY)        PP2GRIBA.90    
+!     BLOCK0(4)   set above                                                GRS3F400.65    
+                                                                           PP2GRIBA.92    
+!  Section 1                                                               GRS3F400.66    
+! ------------                                                             GRS3F400.67    
+                                                                           PP2GRIBA.114   
+      BLOCK1(1)  = 74              ! ORIGINATING CENTRE                    PP2GRIBA.115   
+      BLOCK1(2)  = 45              ! MODEL IDENT NUMBER                    PP2GRIBA.116   
+      BLOCK1(3)  = 42              ! Grid ident number                     PP2GRIBA.117   
+                                                                           GRS3F400.68    
+! Bit map                                                                  GRS3F400.69    
+                                                                           GRS3F400.70    
+      IF (OBITMAP) THEN                                                    PP2GRIBA.118   
+        ICNT=0                                                             PP2GRIBA.119   
+!       WRITE(6,*)' @@ MISSING DATA BIT-MAPPING  rmdi ',RLABEL(18)         GIE0F403.477   
+        DO II=1,IDIM                                                       PP2GRIBA.121   
+          IF (FIELD(II) .NE. RLABEL(18)) THEN                              GRS3F304.15    
+            ICNT=ICNT+1                                                    PP2GRIBA.123   
+            STORE(ICNT)=FIELD(II)                                          PP2GRIBA.124   
+            BITMAP(II)=1                                                   PP2GRIBA.125   
+          ELSE                                                             PP2GRIBA.126   
+            BITMAP(II)=0                                                   PP2GRIBA.127   
+          END IF                                                           PP2GRIBA.128   
+        ENDDO                                                              PP2GRIBA.129   
+        LEN_BITMAP  = IDIM                                                 PP2GRIBA.130   
+        IDIM        = ICNT                                                 PP2GRIBA.131   
+        IF (IDIM .NE. LEN_BITMAP) then   ! bitmap required                 GRS3F400.71    
+          BLOCK1(4)   = 192           ! Block ident flags                  PP2GRIBA.134   
+        ELSE                             ! no bitmap required              GRS3F400.72    
+          LEN_BITMAP  = 1                                                  PP2GRIBA.137   
+          BLOCK1(4)   = 128           ! Block ident flags                  PP2GRIBA.138   
+        ENDIF                                                              PP2GRIBA.139   
+      ELSE                                                                 PP2GRIBA.140   
+!                                                                          GRS3F400.73    
+! Profile 6 - attempt to resemble grib in MARS archive                     GRS3F400.74    
+! replace missing data values by 0.0 - not an ideal solution               GRS3F400.75    
+! but loose all accuaracy if keep UM missing data indicator.               GRS3F400.76    
+!                                                                          GRS3F400.77    
+        DO IJ=1,IDIM                                                       PP2GRIBA.141   
+          STORE(IJ)=FIELD(IJ)                                              PP2GRIBA.142   
+          IF (field(ij).eq.RLABEL(18)) store(IJ)=0.0                       GRS3F400.78    
+        ENDDO                                                              PP2GRIBA.143   
+        LEN_BITMAP  = 1                                                    PP2GRIBA.144   
+        BLOCK1(4)   = 128           ! Block ident flags                    PP2GRIBA.145   
+      END IF                                                               PP2GRIBA.146   
+                                                                           GRS3F400.79    
+      BLOCK1(5)  = TABLE2_ENTRY      !parameter identification             PP2GRIBA.147   
+! ------------------------------------------------------------------       GRS3F400.80    
+!  Make use of LBPROC information  ILABEL(25)                              GRS3F400.81    
+!                                                                          GRS3F400.82    
+!  Note not worked out a way of storing max and min information in         GRS3F400.83    
+!  grib header                                                             GRS3F400.84    
+                                                                           GRS3F304.21    
+      IFLAG_MAX=0                                                          GRS3F400.85    
+      IFLAG_MIN=0                                                          GRS3F400.86    
+      IFLAG_VERTM=0                                                        GRS3F400.87    
+      IFLAG_MEAN=0                                                         GRS3F400.88    
+      IFLAG_ZONAL=0                                                        GRS3F400.89    
+      IREM=ILABEL(25)                                                      GRS3F400.90    
+      IF(IREM.GE.8192) THEN     ! maximum value                            GRS3F400.91    
+        IFLAG_MAX=1                                                        GRS3F400.92    
+        IREM=IREM-8192                                                     GRS3F400.93    
+      ENDIF                                                                GRS3F304.51    
+      IF(IREM.GE.4096) THEN     ! minimum value                            GRS3F400.94    
+        IFLAG_MIN=1                                                        GRS3F400.95    
+        IREM=IREM-4096                                                     GRS3F400.96    
+      ENDIF                                                                GRS3F400.97    
+      IF(IREM.GE.2048) THEN     !  vertical mean                           GRS3F400.98    
+        IFLAG_VERTM=1                                                      GRS3F400.99    
+        IREM=IREM-2048                                                     GRS3F400.100   
+      ENDIF                                                                GRS3F400.101   
+! 1024 - difference between fields at 2 levels (not used in UM)            GRS3F400.102   
+! 512 - Square root of field ( not used in UM)                             GRS3F400.103   
+! 256 - product of fields not used in UM output                            GRS3F400.104   
+      IF(IREM.GE.128) THEN     ! time mean                                 GRS3F400.105   
+        IFLAG_MEAN=1                                                       GRS3F400.106   
+        IREM=IREM-128                                                      GRS3F400.107   
+      ENDIF                                                                GRS3F400.108   
+      IF(IREM.GE.64) THEN     ! Zonal mean                                 GRS3F400.109   
+        IFLAG_ZONAL=1                                                      GRS3F400.110   
+      ENDIF                                                                GRS3F400.111   
+! 32, 16, 8, 4, 2 & 1 not used in UM output                                GRS3F400.112   
+! ------------------------------------------------------------------       GRS3F304.53    
+!                                                                          GRS3F304.54    
+! Level type information                                                   GRS3F304.55    
+                                                                           GRS3F304.56    
+      IF (ILABEL(26) .EQ. 9) THEN                                          PP2GRIBA.149   
+        IF (IFLAG_VERTM.EQ.1) THEN                                         GRS3F400.113   
+          BLOCK1(6) = 110       ! vertical mean hybrid coordinates         GRS3F400.114   
+                                ! Using code for layer information         GRS3F400.115   
+        ELSE                                                               GRS3F400.116   
+          BLOCK1(6) = 109            ! Hybrid coordinates                  GRS3F400.117   
+        ENDIF                                                              GRS3F400.118   
+      ELSE IF (ILABEL(26) .EQ. 8) THEN                                     GRS3F304.58    
+        IF (IFLAG_VERTM.EQ.1) THEN                                         GRS3F400.119   
+          BLOCK1(6) = 121       ! vertical mean pressure coordinates       GRS3F400.120   
+                                ! Using code for layer information         GRS3F400.121   
+        ELSE                                                               GRS3F400.122   
+          BLOCK1(6) = 100              ! pressure coordinates              GRS3F400.123   
+        ENDIF                                                              GRS3F400.124   
+      ELSE IF (ILABEL(26) .EQ. 1) THEN                                     GRS3F304.60    
+        BLOCK1(6) = 105              ! Height coordinates                  GRS3F304.61    
+      ELSE IF (ILABEL(26) .EQ. 128) THEN                                   GRS3F304.62    
+        BLOCK1(6) = 102              ! Mean sea level pressure             GRS3F304.63    
+      ELSE IF (ILABEL(26) .EQ. 129) THEN                                   GRS3F304.64    
+        BLOCK1(6) = 1                ! surface                             GRS3F304.65    
+      ELSE IF (ILABEL(26) .EQ. 130) THEN                                   GRS3F304.66    
+        BLOCK1(6) = 7                ! tropopause level                    GRS3F304.67    
+      ELSE IF (ILABEL(26) .EQ. 131) THEN                                   GRS3F304.68    
+        BLOCK1(6) = 6                ! Max wind                            GRS3F304.69    
+      ELSE IF (ILABEL(26) .EQ. 132) THEN                                   GRS3F304.70    
+        BLOCK1(6) = 4                ! Freezing level ?                    GRS3F304.71    
+      ELSE IF (ILABEL(26) .EQ. 10) THEN                                    GRS3F304.72    
+        BLOCK1(6) = 107              ! Sigma coordinates                   GRS3F304.73    
+      ELSE IF (ILABEL(26) .EQ. 6) THEN                                     GRS3F400.125   
+        BLOCK1(6) = 111              ! depth below land surface            GRS3F400.126   
+                                     ! used for soil levels                GRS3F400.127   
+      ELSE IF (ILABEL(26) .EQ. 133) THEN ! top of atmosphere               GRS3F400.128   
+        BLOCK1(6) = 8                ! nominal top of atmosphere           GRS3F400.129   
+      ELSE IF (ILABEL(26) .EQ. 275) THEN ! canopy height                   GRS3F400.130   
+        BLOCK1(6) = 1                ! At present redefine as surface      GRS3F400.131   
+      ELSE IF (ILABEL(26) .EQ. 0) THEN                                     GRS3F400.132   
+        BLOCK1(6) = 0                ! Unspecified                         GRS3F400.133   
+      ELSE                                                                 PP2GRIBA.164   
+        CMESSAGE='PP2GRIB : unrecognised level coordinate'                 GRS3F304.77    
+      END IF                                                               PP2GRIBA.166   
+                                                                           GRS3F304.78    
+! Additional level information                                             GRS3F400.134   
+                                                                           GRS3F400.135   
+      IF (IFLAG_VERTM.EQ.1) THEN                                           GRS3F400.136   
+        IF (ILABEL(26).eq.9) THEN                                          GRS3F400.137   
+! Note pp headers may not contain top level info as they should            GRS3F400.138   
+          BLOCK1(7) = 19             ! fixed at present                    GRS3F400.139   
+          BLOCK1(8) =ILABEL(33)      ! bottom level number                 GRS3F400.140   
+        ELSE IF (ILABEL(26).eq.8) THEN                                     GRS3F400.141   
+          BLOCK1(7) = NINT(1100. - RLABEL(8)) ! Top pressure               GRS3F400.142   
+          BLOCK1(8) = NINT(1100. - RLABEL(7)) ! bottom pressure            GRS3F400.143   
+        ENDIF                                                              GRS3F400.144   
+      ELSE                                                                 PP2GRIBA.176   
+        IF (ILABEL(26).eq.9) THEN                                          GRS3F400.145   
+          BLOCK1(7) =ILABEL(33)      ! model level number                  GRS3F400.146   
+          BLOCK1(8) =0                                                     GRS3F400.147   
+        ELSEIF (ILABEL(26).eq.8) THEN                                      GRS3F400.148   
+          BLOCK1(7) =ILABEL(33)      ! Pressure in hPa                     GRS3F400.149   
+          BLOCK1(8) =0                                                     GRS3F400.150   
+        ELSE                                                               GRS3F400.151   
+          BLOCK1(7)   = 0             ! Level descriptor                   GRS3F400.152   
+          BLOCK1(8)   = 0             !   "       "     (overflow)         GRS3F400.153   
+        ENDIF                                                              GRS3F400.154   
+      ENDIF                                                                GRS3F400.155   
+                                                                           GRS3F304.79    
+! ------------------------------------------------------------------       GRS3F304.80    
+! Time and date information                                                GRS3F304.81    
+!                                                                          GRS3F304.82    
+!  First use LBTIM to determine how to work out time date                  GRS3F304.83    
+                                                                           GRS3F304.84    
+      BBB=MOD(ILABEL(13),100)                                              GRS3F304.85    
+      IC=MOD(ILABEL(13),10)                                                GRS3F304.86    
+      IB=(BBB-IC)/10                                                       GRS3F304.87    
+                                                                           GDG0F405.6     
+! work out century using ilabel(7)                                         GDG0F405.7     
+      ICENTURY=(ILABEL(7)-1)/100 + 1                                       GDG0F405.8     
+                                                                           GRS3F400.160   
+! 1. Model time no year and month                                          GRS3F400.161   
+! ---------------------------------                                        GRS3F400.162   
+      IF (IC.EQ.0) THEN                                                    GRS3F400.163   
+         CMESSAGE='PP2GRIB : cannot code date/time '                       GRS3F304.89    
+         ICODE=1                                                           GRS3F304.90    
+         WRITE(6,*)'PP2GRIB: not able to code at present'                  GIE0F403.478   
+                                                                           GRS3F304.92    
+! 2. Normal 365 day calendar                                               GRS3F400.164   
+! --------------------------                                               GRS3F400.165   
+! At present assumes all fields are forecasts not means                    GRS3F400.166   
+                                                                           GRS3F304.94    
+      ELSE IF(IC.EQ.1) THEN                                                GRS3F400.167   
+                                                                           GRS3F304.97    
+! a) normal forecasts less than 10 days                                    GRS3F400.168   
+                                                                           GRS3F400.169   
+        IF (ILABEL(14).lt.256) THEN                                        GRS3F400.170   
+          BLOCK1(17) = 0               ! Time range indicator              GRS3F400.171   
+                                                                           GRS3F400.172   
+! b) Copes with periods up to 65535 hours (2730 days or 7 years)           GRS3F400.173   
+                                                                           GRS3F400.174   
+        ELSE IF (ILABEL(14).ge.256.and.ILABEL(14).lt.65535) THEN           GRS3F400.175   
+          BLOCK1(17) = 10              ! uses two octets for P1            GRS3F400.176   
+                                                                           GRS3F400.177   
+! c) Periods longer than 7 years                                           GRS3F400.178   
+        ELSE                                                               GRS3F400.179   
+         CMESSAGE='PP2GRIB : cannot code forecast period '                 GRS3F400.180   
+         ICODE=1                                                           GRS3F400.181   
+         WRITE(6,*)'PP2GRIB: cannot code forecast period ',ilabel(14)      GIE0F403.479   
+        ENDIF                                                              GRS3F400.183   
+                                                                           GRS3F400.184   
+          BLOCK1(9)  = ILABEL(7)-(ICENTURY-1)*100     ! year               GRS3F400.185   
+          BLOCK1(10) = ILABEL(8)       ! Month                             GRS3F304.99    
+          BLOCK1(11) = ILABEL(9)       ! Day                               GRS3F304.100   
+          BLOCK1(12) = ILABEL(10)      ! hour                              GRS3F304.101   
+          BLOCK1(13) = 0               ! minute                            GRS3F304.102   
+          BLOCK1(14) = 1               ! time unit                         GRS3F304.103   
+          BLOCK1(15) = ILABEL(14)      ! P1 (F/C period in hours)          GRS3F304.104   
+          BLOCK1(16) = 0               ! P2                                GRS3F304.105   
+          BLOCK1(18) = 0               ! number of averages                GRS3F400.186   
+          BLOCK1(19) = ICENTURY        ! Century of reference time         GRS3F400.187   
+                                                                           GRS3F304.109   
+! 3. 360 day year - normal climate run calendar                            GRS3F400.188   
+! ---------------------------------------------                            GRS3F400.189   
+                                                                           GRS3F304.111   
+      ELSE IF (IC.EQ.2) THEN                                               GRS3F400.190   
+                                                                           GRS3F304.114   
+        IF (ib.eq.1) THEN     ! forecast fields                            GRS3F304.115   
+! As many climate runs exceed 7 years all forecast periods are             GRS3F400.191   
+! recoded as analyses.                                                     GRS3F400.192   
+                                                                           GRS3F400.193   
+           BLOCK1(17) = 0               ! Time range indicator             GRS3F304.116   
+!                                                                          GRS3F400.194   
+           BLOCK1(9)  = ILABEL(1)-(ICENTURY-1)*100  ! Year in ref cent     GRS3F400.195   
+           BLOCK1(10) = ILABEL(2)       ! Month                            GRS3F400.196   
+           BLOCK1(11) = ILABEL(3)       ! Day                              GRS3F400.197   
+           BLOCK1(12) = ILABEL(4)       ! hour                             GRS3F400.198   
+           BLOCK1(13) = ILABEL(5)       ! minute                           GRS3F400.199   
+           BLOCK1(14) = 1               ! time unit                        GRS3F304.117   
+           BLOCK1(15) = 0               ! P1                               GRS3F400.200   
+           BLOCK1(16) = 0               ! P2                               GRS3F400.201   
+           BLOCK1(18) = 0               ! number of averages               GRS3F304.118   
+           BLOCK1(19) = ICENTURY        ! Century of reference time        GRS3F400.202   
+                                                                           GRS3F304.139   
+        ELSE IF (ib.eq. 2) THEN       ! Time average                       GRS3F304.140   
+                                                                           GRS3F304.141   
+           BLOCK1(17) = 3               ! Time range indicator             GRS3F304.142   
+           BLOCK1(9)  = ILABEL(1)-(ICENTURY-1)*100    ! year               GRS3F400.203   
+           BLOCK1(10) = ILABEL(2)       ! Month                            GRS3F304.144   
+           BLOCK1(11) = ILABEL(3)       ! Day                              GRS3F304.145   
+           BLOCK1(12) = ILABEL(4)       ! hour                             GRS3F304.146   
+           BLOCK1(13) = ILABEL(5)       ! minute                           GRS3F304.147   
+! Work out p2 and appropriate units for p2                                 GRS3F400.204   
+           CALL GRIB_TIME_INT(ILABEL(1),ILABEL(2),ILABEL(3),ILABEL(4),     GRS3F304.148   
+     &              ILABEL(5),ILABEL(7),ILABEL(8),ILABEL(9),ILABEL(10),    GRS3F304.149   
+     &              ILABEL(11),.TRUE.,D_TIME,T_UNITS)                      GRS3F304.150   
+                                                                           GRS3F400.205   
+           BLOCK1(14) = T_UNITS         ! time units                       GRS3F304.151   
+           BLOCK1(16) = D_TIME          ! P2                               GRS3F304.152   
+           BLOCK1(15) = 0               ! P1                               GRS3F304.153   
+           BLOCK1(18) = 1               ! number of averages               GRS3F304.154   
+           BLOCK1(19) = ICENTURY        ! Century of reference time        GRS3F400.206   
+                                                                           GRS3F304.156   
+         else    ! cannot code                                             GRS3F304.157   
+           WRITE(6,*)'Not able to code for date type ib =',ib              GIE0F403.480   
+           CMESSAGE='PP2GRIB: error for date time'                         GRS3F304.159   
+           ICODE=1                                                         GRS3F304.160   
+         ENDIF                                                             GRS3F304.161   
+      ELSE                                                                 GRS3F304.162   
+          WRITE(6,*)'Not able to code for date type ic =',ic               GIE0F403.481   
+          CMESSAGE='PP2GRIB: error for date time'                          GRS3F304.164   
+          ICODE=1                                                          GRS3F304.165   
+      ENDIF                                                                GRS3F304.166   
+                                                                           GRS3F304.167   
+      BLOCK1(20) = 0               ! Decimal scale factor                  PP2GRIBA.191   
+      BLOCK1(21) = 21              ! Length of BLOCK1                      GRS3F400.207   
+                                                                           PP2GRIBA.193   
+! --------------------------------------------------------------------     GRS3F400.208   
+! Section 2 information                                                    GRS3F400.209   
+! ----------------------                                                   GRS3F400.210   
+      IF (BLOCK1(6) .EQ. 109) THEN                                         PP2GRIBA.194   
+        BLOCK2(1) = 2                ! Number of vert coord parms          PP2GRIBA.195   
+        BLOCK2(2) = 53               ! PV, PL or 255                       PP2GRIBA.196   
+        LENVRT   = 2                                                       PP2GRIBA.197   
+        VERTCO(1) = RLABEL(9)       ! A COORDINATE                         PP2GRIBA.198   
+        VERTCO(2) = RLABEL(7)        ! B COORDINATE                        PP2GRIBA.199   
+!  Can be uncommented when values for rlabel(1) & rlabel(2) are coded      GRS3F400.211   
+!     ELSE IF (BLOCK1(6) .EQ. 110) THEN                                    GRS3F400.212   
+!       BLOCK2(1) = 4                ! Number of vert coord parms          GRS3F400.213   
+!       BLOCK2(2) = 53               ! PV, PL or 255                       GRS3F400.214   
+!       LENVRT   = 4                                                       GRS3F400.215   
+!       VERTCO(1) = RLABEL(10)      ! A COORDINATE top                     GRS3F400.216   
+!       VERTCO(2) = RLABEL(8)       ! B COORDINATE  top                    GRS3F400.217   
+!       VERTCO(3) = RLABEL(1)       ! A COORDINATE bottom (not coded)      GRS3F400.218   
+!       VERTCO(4) = RLABEL(2)       ! B COORDINATE bottom (not coded)      GRS3F400.219   
+      ELSE                                                                 PP2GRIBA.200   
+        BLOCK2(1) = 0                ! Number of vert coord parms          PP2GRIBA.201   
+        BLOCK2(2) = 255              ! PV, PL or 255                       PP2GRIBA.202   
+        LENVRT   = 1                                                       GRS3F400.220   
+        VERTCO(1) = 0.               ! A COORDINATE                        PP2GRIBA.204   
+        VERTCO(2) = 0.               ! B COORDINATE                        PP2GRIBA.205   
+      END IF                                                               PP2GRIBA.206   
+                                                                           GRS3F400.221   
+      BLOCK2(3) = 0                ! representation type ie lat longrid    GRS3F400.222   
+      BLOCK2(4) = ILABEL(19)       ! Number of cols                        PP2GRIBA.208   
+      BLOCK2(5) = ILABEL(18)       ! Number of rows                        PP2GRIBA.209   
+      BLOCK2(6) = NINT((RLABEL(14)+RLABEL(15))*1000) ! Lat 1st pt.         PP2GRIBA.210   
+      IF (BLOCK2(6).GT.180000.0) THEN                                      PP2GRIBA.211   
+        BLOCK2(6) = BLOCK2(6)-180000.0                                     PP2GRIBA.212   
+      END IF                                                               PP2GRIBA.213   
+      IF (IFLAG_ZONAL.EQ.1) THEN        ! zonal means                      GRS3F400.223   
+        BLOCK2(7) = NINT(RLABEL(16)*1000)              ! Lon 1st pt.       GRS3F400.224   
+        BLOCK2(10) = NINT(RLABEL(17)*1000)             ! lon last pt.      GRS3F400.225   
+        BLOCK2(11) = ABS(NINT((RLABEL(17)-RLABEL(16))*1000)) ! dlon        GRS3F400.226   
+      ELSE                                                                 GRS3F400.227   
+        BLOCK2(7) = NINT((RLABEL(16)+RLABEL(17))*1000) ! Lon 1st pt.       GRS3F400.228   
+        BLOCK2(10) = NINT((RLABEL(16)+(ILABEL(19)*RLABEL(17)))*1000)       GRS3F400.229   
+!                          ! Lon of extreme point                          GRS3F400.230   
+        BLOCK2(11) = ABS(NINT(RLABEL(17)*1000))                            GRS3F400.231   
+!                             ! Horizontal dirn increment                  GRS3F400.232   
+      ENDIF                                                                GRS3F400.233   
+      IF (BLOCK2(7).GT.360000.0) THEN                                      PP2GRIBA.215   
+        BLOCK2(7) = BLOCK2(7)-360000.0                                     PP2GRIBA.216   
+      END IF                                                               PP2GRIBA.217   
+      IF (BLOCK2(10).GT.360000.0) THEN                                     GRS3F400.234   
+        BLOCK2(10) = BLOCK2(10)-360000.0                                   GRS3F400.235   
+      END IF                                                               GRS3F400.236   
+      BLOCK2(8) = 128        ! resolution and component flags              PP2GRIBA.218   
+      BLOCK2(9) = NINT((RLABEL(14)+(ILABEL(18)*RLABEL(15)))*1000)          PP2GRIBA.219   
+!                                  Lat of extreme point                    GRS3F400.237   
+      IF (BLOCK2(9).GT.180000.0) THEN                                      PP2GRIBA.221   
+        BLOCK2(9) = BLOCK2(9)-180000.0                                     PP2GRIBA.222   
+      END IF                                                               PP2GRIBA.223   
+      BLOCK2(12) = ABS(NINT(RLABEL(15)*1000))                              PP2GRIBA.231   
+!                          ! Vertical dirn increment                       GRS3F400.238   
+! Scanning mode flags                                                      GRS3F400.239   
+!  west to east is positive                                                GRS3F400.240   
+!   If grid scans from west to east bit 1 is 0                             GRS3F400.241   
+!   if grid scans from east to west bit 1 is 1  ie add 128                 GRS3F400.242   
+!  south to north is positive                                              GRS3F400.243   
+!   if grid scans from north to south bit 2 is 0                           GRS3F400.244   
+!   if grid scans from south to north bit 2 is 1 ie add 64                 GRS3F400.245   
+                                                                           GRS3F400.246   
+      BLOCK2(13) = 0                     ! Scanning mode flags             PP2GRIBA.233   
+      IF (IFLAG_ZONAL.EQ.1) THEN                                           GRS3F400.247   
+        DLONZ=RLABEL(17)-RLABEL(16)                                        GRS3F400.248   
+        IF (DLONZ .LT. 0.0) BLOCK2(13) = BLOCK2(13) +128                   GRS3F400.249   
+      ELSE                                                                 GRS3F400.250   
+        IF (RLABEL(17) .LT. 0.0) BLOCK2(13) = BLOCK2(13) + 128             GRS3F400.251   
+      ENDIF                                                                GRS3F400.252   
+      IF (RLABEL(15) .GT. 0.0) BLOCK2(13) = BLOCK2(13) + 64                GRS3F400.253   
+                                                                           GRS3F400.254   
+      BLOCK2(14) = -NINT(RLABEL(11)*1000) ! Lat S Pole                     PP2GRIBA.236   
+      BLOCK2(15) = -NINT(RLABEL(12)*1000) ! Lon S Pole                     PP2GRIBA.237   
+      BLOCK2(16) = 0                                                       PP2GRIBA.238   
+      BLOCK2(17) = 0                                                       PP2GRIBA.239   
+      BLOCK2(18) = 0                                                       PP2GRIBA.240   
+      BLOCK2(19) = 0                                                       PP2GRIBA.241   
+      BLOCK2(20) = 0                                                       PP2GRIBA.242   
+                                                                           PP2GRIBA.243   
+! Section 3                                                                GRS3F400.255   
+! ----------                                                               GRS3F400.256   
+                                                                           GRS3F400.257   
+      BLOCK3(1)=0                                                          GRS3F400.258   
+      BLOCK3(2)=0                                                          GRS3F400.259   
+                                                                           GRS3F400.260   
+! Section 4                                                                GRS3F400.261   
+! ----------                                                               GRS3F400.262   
+                                                                           GRS3F400.263   
+      IF (OROW) THEN                                                       PP2GRIBA.244   
+        BLOCK4(1)  = 80  ! row by row packing                              PP2GRIBA.246   
+      ELSE                                                                 PP2GRIBA.247   
+        BLOCK4(1)  = 0   ! simple packing                                  PP2GRIBA.249   
+      END IF                                                               PP2GRIBA.250   
+      BLOCK4(2)  = 0                                                       PP2GRIBA.251   
+                                                                           PP2GRIBA.252   
+! -------------------------------------------------------------------      GRS3F400.264   
+                                                                           GRS3F304.169   
+! Call grib encoder                                                        GRS3F304.170   
+                                                                           GRS3F304.171   
+      IF (ICODE.EQ.0) THEN                                                 GRS3F304.172   
+       CALL CODER(STORE,IDIM,VERTCO,LENVRT,BITMAP,LEN_BITMAP,QUASI,LENQ,   GRS3F304.173   
+     *           WIDTH,WORDSZ,BLOCK0,BLOCK1,BLOCK2,BLOCK3,BLOCK4,          PP2GRIBA.261   
+     *           BLOCKR,WORK_ARRAY,LENGRB,NUM_CRAY_WORDS,                  PP2GRIBA.262   
+     *           ERROR,WORK1,WORK2,WORKR,ERROR_UNIT,MSG_LVL)               GDG6F304.6     
+                                                                           GRS3F400.265   
+                                                                           GRS3F400.266   
+        IF (WIDTH.gt.30) then                                              GRS3F400.267   
+          CMESSAGE='PP2GRIB: trying to use more than 30 bits for grib'     GRS3F400.268   
+          ICODE=0             ! don't enforce failure at the moment        GRS3F304.176   
+      WRITE(6,*)'WARNING: grib requires more than 30 bits for accuracy',   GIE0F403.482   
+     &            WIDTH,' stash code ',ILABEL(42)                          GRS3F400.270   
+        ENDIF                                                              GRS3F304.179   
+      ELSE                                                                 GRS3F304.180   
+        WRITE(6,*)'PP2GRIB: CODER not called for field ',ilabel(42)        GIE0F403.483   
+        WRITE(6,*)CMESSAGE                                                 GIE0F403.484   
+      ENDIF                                                                GRS3F304.182   
+                                                                           GRS3F400.273   
+! set output length in header                                              GRS3F400.274   
+                                                                           GRS3F304.183   
+      ILABEL(15) = NUM_CRAY_WORDS                                          PP2GRIBA.265   
+                                                                           PP2GRIBA.266   
+      RETURN                                                               PP2GRIBA.267   
+      END                                                                  PP2GRIBA.268   
+CLL  SUBROUTINE GRIB_STASH---------------------------------------------    PP2GRIBA.269   
+CLL                                                                        PP2GRIBA.270   
+CLL  Purpose:                                                              PP2GRIBA.271   
+CLL   GRIB_STASH is a subroutine to indentify the stash parameter          PP2GRIBA.272   
+CLL   value and section number from the grib header codes                  PP2GRIBA.273   
+CLL                                                                        PP2GRIBA.274   
+CLL   octet 4 of the grib product definition section is the version        PP2GRIBA.275   
+CLL   number of the table 2 (parameter code description)                   PP2GRIBA.276   
+CLL   values from 128 to 254 are available for local use, and we           PP2GRIBA.277   
+CLL   use them to describe the stash section number of the field. for      PP2GRIBA.278   
+CLL   each stash section number there are two octet 4 values. the first    PP2GRIBA.279   
+CLL   is for stash parameter values from 0 to 255, the second for values   PP2GRIBA.280   
+CLL   256 to 511.                                                          PP2GRIBA.281   
+CLL   octet 9 is the code value in table 2, ie stash parameter value, or   PP2GRIBA.282   
+CLL   stash parameter value -256 if it is more than 255.                   PP2GRIBA.283   
+CLL                                                                        PP2GRIBA.284   
+CLL  Written by G.Ross/ P.Smith                                            PP2GRIBA.285   
+CLL                                                                        PP2GRIBA.286   
+CLL  Model            Modification history from model version 3.3:         PP2GRIBA.287   
+CLL version  Date                                                          PP2GRIBA.288   
+CLL                                                                        PP2GRIBA.289   
+CLL  Programming standard: Unified Model Documentation Paper No 3          PP2GRIBA.290   
+CLL                                                                        PP2GRIBA.291   
+CLL  System component:                                                     PP2GRIBA.292   
+CLL                                                                        PP2GRIBA.293   
+CLL  System task:                                                          PP2GRIBA.294   
+CLL                                                                        PP2GRIBA.295   
+CLL  Documentation:                                                        PP2GRIBA.296   
+CLL                                                                        PP2GRIBA.297   
+CLLEND---------------------------------------------------------            PP2GRIBA.298   
+C*L Arguments:-------------------------------------------------            PP2GRIBA.299   
+      SUBROUTINE GRIB_STASH(GRIB_BLOCK1_OCTET4,GRIB_BLOCK1_OCTET9,         PP2GRIBA.300   
+     *                      STASH_SECTION_NUMBER,STASH_ITEM_NUMBER,        PP2GRIBA.301   
+     *                      ERROR)                                         PP2GRIBA.302   
+      INTEGER                                                              PP2GRIBA.303   
+     *   GRIB_BLOCK1_OCTET4   ! OCTET 4 FROM GRIB PDB        INPUT         PP2GRIBA.304   
+     *  ,GRIB_BLOCK1_OCTET9   ! OCTET 9 FROM GRIB PDB        INPUT         PP2GRIBA.305   
+     *  ,STASH_SECTION_NUMBER ! STASH SECTION NUMBER         OUTPUT        PP2GRIBA.306   
+     *  ,STASH_ITEM_NUMBER    ! STASH PARAMETER VALUE        OUTPUT        PP2GRIBA.307   
+     *  ,ERROR                ! ERROR OUTPUT CODE            OUTPUT        PP2GRIBA.308   
+C     LOCAL VARIABLES                                                      PP2GRIBA.309   
+      INTEGER                                                              PP2GRIBA.310   
+     *   CARRY   ! CARRY VALUE FROM ODD VALUES OF GRIB_BLOCK1_OCTET4       PP2GRIBA.311   
+C****                                                                      PP2GRIBA.312   
+      IF(GRIB_BLOCK1_OCTET4.LT.128.OR.GRIB_BLOCK1_OCTET4.GT.253) THEN      PP2GRIBA.313   
+        ERROR = 99                                                         PP2GRIBA.314   
+        RETURN                                                             PP2GRIBA.315   
+      ENDIF                                                                PP2GRIBA.316   
+      CARRY = MOD(GRIB_BLOCK1_OCTET4,2)                                    PP2GRIBA.317   
+      STASH_SECTION_NUMBER = INT((GRIB_BLOCK1_OCTET4 - 128)/2)             PP2GRIBA.318   
+      STASH_ITEM_NUMBER = GRIB_BLOCK1_OCTET9 + CARRY*256                   PP2GRIBA.319   
+      RETURN                                                               PP2GRIBA.320   
+C****                                                                      PP2GRIBA.321   
+      END                                                                  PP2GRIBA.322   
+CLL  SUBROUTINE STASH_GRIB---------------------------------------------    PP2GRIBA.323   
+CLL                                                                        PP2GRIBA.324   
+CLL  Purpose:                                                              PP2GRIBA.325   
+CLL   STASH_GRIB is a subroutine to code the stash section number and      PP2GRIBA.326   
+CLL   parameter value in elements of the grib header.                      PP2GRIBA.327   
+CLL                                                                        PP2GRIBA.328   
+CLL   octet 4 of the grib product definition section is the version        PP2GRIBA.329   
+CLL   number of the table 2 (parameter code description)                   PP2GRIBA.330   
+CLL   values from 128 to 254 areavailable for local use, and we            PP2GRIBA.331   
+CLL   use them to describe the stash section number of the field. for      PP2GRIBA.332   
+CLL   each stash section number there are two octet 4 values. the first    PP2GRIBA.333   
+CLL   is for stash parameter values from 0 to 255, the second for values   PP2GRIBA.334   
+CLL   256 to 511.                                                          PP2GRIBA.335   
+CLL   octet 9 is the code value in table 2, ie stash parameter value, or   PP2GRIBA.336   
+CLL   stash parameter value -256 if it is more than 255.                   PP2GRIBA.337   
+CLL                                                                        PP2GRIBA.338   
+CLL                                                                        PP2GRIBA.339   
+CLL  Written by G.Ross/ P.Smith                                            PP2GRIBA.340   
+CLL                                                                        PP2GRIBA.341   
+CLL  Model            Modification history from model version 3.3:         PP2GRIBA.342   
+CLL version  Date                                                          PP2GRIBA.343   
+CLL                                                                        PP2GRIBA.344   
+CLL  Programming standard: Unified Model Documentation Paper No 3          PP2GRIBA.345   
+CLL                                                                        PP2GRIBA.346   
+CLL  System component:                                                     PP2GRIBA.347   
+CLL                                                                        PP2GRIBA.348   
+CLL  System task:                                                          PP2GRIBA.349   
+CLL                                                                        PP2GRIBA.350   
+CLL  Documentation:                                                        PP2GRIBA.351   
+CLL                                                                        PP2GRIBA.352   
+CLLEND---------------------------------------------------------            PP2GRIBA.353   
+C*L Arguments:-------------------------------------------------            PP2GRIBA.354   
+      SUBROUTINE STASH_GRIB(STASH_SECTION_NUMBER,STASH_ITEM_NUMBER,        PP2GRIBA.355   
+     *                      GRIB_BLOCK1_OCTET4,GRIB_BLOCK1_OCTET9,         PP2GRIBA.356   
+     *                      ERROR)                                         PP2GRIBA.357   
+      INTEGER                                                              PP2GRIBA.358   
+     *   STASH_SECTION_NUMBER ! STASH SECTION NUMBER         INPUT         PP2GRIBA.359   
+     *  ,STASH_ITEM_NUMBER    ! STASH PARAMETER VALUE        INPUT         PP2GRIBA.360   
+     *  ,GRIB_BLOCK1_OCTET4   ! OCTET 4 FROM GRIB PDB        OUTPUT        PP2GRIBA.361   
+     *  ,GRIB_BLOCK1_OCTET9   ! OCTET 9 FROM GRIB PDB        OUTPUT        PP2GRIBA.362   
+     *  ,ERROR                ! ERROR OUTPUT CODE            OUTPUT        PP2GRIBA.363   
+C     LOCAL VARIABLES                                                      PP2GRIBA.364   
+      INTEGER                                                              PP2GRIBA.365   
+     *   CARRY   ! CARRY VALUE FROM ODD VALUES OF GRIB_BLOCK1_OCTET4       PP2GRIBA.366   
+C****                                                                      PP2GRIBA.367   
+      IF(STASH_ITEM_NUMBER.GT.511.OR.STASH_ITEM_NUMBER.LT.0) THEN          PP2GRIBA.368   
+        ERROR = 999                                                        PP2GRIBA.369   
+        RETURN                                                             PP2GRIBA.370   
+      ELSE IF(STASH_ITEM_NUMBER.GT.255) THEN                               PP2GRIBA.371   
+        CARRY = 1                                                          PP2GRIBA.372   
+        GRIB_BLOCK1_OCTET9 = STASH_ITEM_NUMBER - 256                       PP2GRIBA.373   
+      ELSE                                                                 PP2GRIBA.374   
+        CARRY = 0                                                          PP2GRIBA.375   
+        GRIB_BLOCK1_OCTET9 = STASH_ITEM_NUMBER                             PP2GRIBA.376   
+      ENDIF                                                                PP2GRIBA.377   
+      IF((STASH_SECTION_NUMBER.GE.0).AND.                                  PP2GRIBA.378   
+     *   (STASH_SECTION_NUMBER.LE.62)) THEN                                PP2GRIBA.379   
+        GRIB_BLOCK1_OCTET4 = STASH_SECTION_NUMBER*2 + 128 + CARRY          PP2GRIBA.380   
+      ELSE                                                                 PP2GRIBA.381   
+        ERROR = 999                                                        PP2GRIBA.382   
+      ENDIF                                                                PP2GRIBA.383   
+      RETURN                                                               PP2GRIBA.384   
+C****                                                                      PP2GRIBA.385   
+      END                                                                  PP2GRIBA.386   
+*ENDIF                                                                     PP2GRIBA.387   

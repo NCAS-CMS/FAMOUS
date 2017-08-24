@@ -1,0 +1,964 @@
+#!/usr/bin/perl
+#
+#================================================================
+# RCS Header:
+#   Revision     [$Revision: 3.15 $]
+#   Last checkin [$Date: 2005/01/10 12:40:58 $]
+#   Author       [$Author: hadan $]
+#================================================================
+#
+# Version: 4.3
+# 
+# Usage: sfmakedepend.v4 [-t] [-s "string"] [-e ext] [-f file] 
+#                     [-I incdir] [-d src_dir]
+#                     [-m mod_ext] [-c] [-p objprefix] [-q] [-g] 
+#                     [-h] [-o obj_ext] [-a add_ext] file ...
+#
+# I have adapted this script from sfmakedepend, public domain
+# software. It is a makedepend script for Fortran, including 
+# Fortran 90. It searches for Fortran style includes, C 
+# preprocessor includes, and module dependencies to the extent 
+# that I understand them.
+#
+# Your files must have an extension listed in the @suffixes list
+# below.  
+#
+# sfmakedepend.v4 first searches the makefile for the line
+#
+#      DO NOT DELETE THIS LINE - used by sfmakedepend
+#
+# or one provided with the -s option, as a delimiter for the
+# dependency output. If it finds it, it will delete every-
+# thing following this to the end of the makefile and put the
+# output after this line. If it doesn't find it, the program
+# will append the string to the end of the makefile and place
+# the output after that.
+#
+# The switch [-t] is for stupid Fortran compilers that don't know
+# how to automatically send things through the C preprocessor.
+# It is possible to force 'make' to invoke 'cpp' to create a .f
+# file from a .F file (which has cpp directives), but make won't
+# know that a .f file will depend on the files that the .F file
+# included.  This option will provide those dependencies.
+#
+# The [-e ext] switch is used with the [-t] switch for compilers
+# which expect an extension other than .f on source files.  For
+# instance, for the Connection Machine one would use "-e fcm".
+#
+# The [-f file] switch is used to change the name of the current
+# Makefile.
+#
+# The [-I incdir] option tells sfmakedepend to look in alternative
+# directories for the include files.  There can be several "-I dir"
+# options used at once.  The current directory is still searched
+# first. The directory /usr/include is automatically appended to 
+# the list of directories to search.
+#
+# The [-m mod_ext] option tells sfmakedepend what extension to
+# use for Fortran 90 module files.  The default for "use My_Mod"
+# is to list the dependency as "my_mod.mod" since this is what
+# NAG f90 and IBM xlf both use.  Let me know if other compilers
+# use a different filename for the module information.
+#
+# The [-p objprefix] option tells sfmakedepend to use an
+# object file prefix.  The prefix is prepended to the
+# name of the object file in the dependency lines. This is usually 
+# used to designate a different directory for the object file. The
+# default is the empty string.
+#
+# The [-c] specifies that a Cray compiler is being used. 
+# As this compiler builds module information into the object file
+# rather than having a seperate module file and as such,  different 
+# dependencies are required in order to pick up this module information.
+#
+# The [-q] option specifies that the Parasoft compiler is being used.
+#
+# The [-x] switch can only be used with the -c (Cray)  or 
+# -q (Parasoft) switches. The Cray can use a "-p file.o" option
+# for each object file that contains a module used by your current
+# source file. Similarly, the Parasoft compiler requires a 
+# "-module file.o" switch.
+# The -x switch generates compile lines with these flags set 
+# appropriately.
+# This is rarely needed for the Cray compiler as the -p compiler 
+# option can also accept a directory where the required object 
+# files reside. 
+#
+# It might be necessary to modify $compile_string if you use
+# the -c or -q option.  The compiler is called $(CFT) for historical
+# reasons.
+#
+# The [-g] option specifies that the SGI compiler is being used.
+# This compiler names the module file in uppercase with the extension
+# .kmo.
+#
+# The [-h] option specifies that the HP compiler is being used.
+# This compiler names the module file in uppercase with the extension
+# .mod (added by Patrick Jessee who also fixed an include bug).
+#
+# The [-o obj_ext] option tells sfmakedepend what extension to use for
+# object files.  The default is "o", but "obj", for instance, is
+# appropriate on MS-DOG etc.  This option was added by Dave Love.
+#
+# The [-a add_ext] option (also added by Dave Love) tells sfmakedepend
+# to add targets with extension add_ext to the rules for object files.
+# For instance, to operate with (f77) ftnchek .prj files, you could use
+# `-a prj' to get rules like:
+# foo.prj foo.o: ...
+#
+# The [-d src_dir] option tells sfmakedepend to look in the directory
+# src_dir to find the source code to work on. Currently only files
+# ending with .F or .F90 are accepted as source code. The use of
+# -d does not preclude specifying other source seperately.
+#
+# The final arguments contain the list of source files to be
+# searched for dependencies.
+#
+# EXAMPLE
+#       sfmakedepend.v4 -I /usr/local/include *.F
+#
+# NOTES
+#	sfmakedepend.v4 requires perl 5 and will die if you try
+#	to use it with an older perl.
+#
+#	Fortran 90 introduces some interesting dependencies.  Two
+#	compilers (NAG f90 and IBM xlf) produce a
+#	private "mod_name.mod" file if you define "module mod_name"
+#	in your code.  This file is used by the compiler when you
+#	use the module as a consistency check (type-safe).
+#
+#	This script assumes that all the files using and defining
+#	modules are in the same directory and are all in the list of
+#	files to be searched.  It seems that the industry has not
+#	settled on a practical way to deal with a separate modules
+#	directory, anyway.
+#
+#	This program warns about include files it can't find, but
+#	not if there is a "bogus" on the same line, e.g.
+#
+#	   #include "PLOTS"       /* bogus include */
+#
+#     *	The f90 module dependencies can confuse some versions of
+#	make, especially of the System V variety.  Apparently, gnu
+#	make has no problems with these dependencies.
+#
+#       Please let me know if you find any bugs.
+#
+#	Rosalyn Hatcher
+#	rhatcher@meto.gov.uk
+#
+#  History
+#------------
+#
+#   pre 4.2  2002-2005   History comments lodged in RCS notes
+#    4.3     10/01/05    Ignore any fortran source starting with
+#                        i.file.F(90). Anthony A. Dickinson
+#
+# End of History Comments
+#
+package source_file;
+
+# hashes containing names of included files, modules in files
+%inc_files = ();
+%main::mod_files = ();
+
+# Constructor
+sub new {
+    my $type = shift;
+    my $filename = shift;
+    my $path = shift;
+    my $self = {};
+    $self->{'source_file'} = $filename;
+    $self->{'filepath'} = $path;
+    $self->{'includes'} = {};
+    $self->{'uses'} = {};
+    $self->{'modules'} = {};
+    bless $self;
+}
+
+sub find_includes {
+    my $self = shift;
+    my $file = $self->{'filepath'};
+    my($after, $filepath, $ref, $included, $use, $modname);
+    my @include_files;
+
+    local($_);
+
+    (@include_files)=get_incl_files($file);
+
+    foreach (@include_files) {
+
+	$included = "";
+	$use = "";
+        # look for Fortran style includes
+        if (/^\s*include\s*['"]([^"']*)["']/i) {
+            $included = $1;
+	    $after = $';
+	# C preprocessor style includes
+        } elsif (/^#\s*include\s*["<]([^">]*)[">]/) {
+            $included = $1;
+	    $after = $';
+        # Fortran 90 "use"
+        } elsif (/^\s*use\s+(\w+)/i) {   
+	    $use = $1;
+       #     print "DEBUG: use ---> $use\n";
+# Make the module name lowercase except for SGI & HP.
+# May be compiler dependent!!
+	    if ($main::sgi || $main::hp) {
+		$use = uc($use);
+	    } else {
+		$use = lc($use);
+	    }
+	    $self->{'uses'}{$use} = 1;
+	# Fortran 90 module
+	} elsif (/^\s*module\s+(\w+)/i) {
+	    $modname = $1;
+       #     print "DEBUG: modname ---> $modname\n";
+	    if ($main::sgi || $main::hp) {
+		$modname = uc($modname);
+	    } else {
+		$modname = lc($modname);
+	    }
+	    unless (lc($modname) eq "procedure") {
+		$main::mod_files{$modname} = $file;
+		$self->{'modules'}{$modname} = 1;
+	    }
+	}
+	if ($included) {
+	    if ( $inc_files{$included} ) {
+		$filepath = $inc_files{$included}{'filepath'};
+	    } else {
+                $filepath = &main::findfile($included);
+		$ref = new source_file($included, $filepath);
+                $inc_files{$included} = $ref;
+# Search included file for includes
+		$ref->find_includes();
+	    }
+            if ( $filepath ) {
+		$self->{'includes'}{$included} = 1;
+	    } else {
+                if ($after !~ /bogus/i) {
+
+		    # Following test is needed to prevent C system include files
+		    # which aren't needed being flagged as not found.
+		    ($dir,$end)=split(/\//,$included);
+		    $end=~s/\.h//;
+		    if ($dir eq $end) {
+			warn "Can't find file: $included\n".
+			    "Included in file: $file\n";
+		    }
+		}
+	    }
+	}
+    }
+}
+
+sub print_includes {
+    my $self = shift;
+    my $target = shift;
+    my $len_sum = shift;
+    my($file, $ref);
+
+    foreach $file (keys %{$self->{'includes'}}) {
+
+	$ref = $inc_files{$file};
+	next if $printed{$file};
+	my $len = length($ref->{'filepath'}) + 1;
+	if (($len_sum + $len > 80) &&
+	       (length($target) + 1 < $len_sum)) {
+	    print "\n$main::objprefix" , "$target:";
+	    $len_sum = length($main::objprefix . $target) + 1;
+	}
+	print " " . $ref->{'filepath'};
+	$printed{$file} = 1;
+	$len_sum += $len;
+	$len_sum = $ref->print_includes($target, $len_sum);
+    }
+    $len_sum;
+}
+
+# return list of modules used by included files
+sub inc_mods {
+    my $self = shift;
+    my($file, $ref, $mod, @sub_list);
+    my @list = ();
+    my %printed = ();
+
+    foreach $mod (keys %{$self->{'uses'}}) {
+	push(@list, $mod);
+    }
+
+    foreach $file (keys %{$self->{'includes'}}) {
+	next if $printed{$file};
+	$ref = $inc_files{$file};
+	$printed{$file} = 1;
+	@sub_list = $ref->inc_mods();
+	@list = (@list, @sub_list);
+    }
+    @list;
+}
+
+# filenames containing the list of modules used by file and all its includes
+sub find_mods {
+    my $self = shift;
+    my($ref, $modname, $file, @list, $base);
+    my @module_files = ();
+    my @mod_list = ();
+    my @tmp_list = ();
+
+# find modules used by include files
+    if (%{$self->{'includes'}}) {
+	foreach $file (keys %{$self->{'includes'}}) {
+	    $ref = $inc_files{$file};
+	    @list = $ref->inc_mods();
+            @tmp_list = @mod_list;
+	    @mod_list = (@tmp_list, @list);
+	}
+    }
+
+# add them to the uses list (hash ensures uniqueness)
+    foreach $modname (@mod_list) {
+	$self->{'uses'}{$modname} = 1;
+    }
+    
+# now find the filename that contains the module information
+    foreach $modname (keys %{$self->{'uses'}}) {
+	if ($main::cray || $main::parasoft) {
+	    if ($file = $main::mod_files{$modname}) {
+                $base = &main::basename($file, @main::suffixes);
+		$file = $base . "." . $main::obj_ext;
+		push(@module_files, $file);
+	    } else {
+		warn "Don't know where module $modname lives.\n";
+	    }
+	} else {
+	    $modname .= "." . $main::mod_ext;
+	    push(@module_files, $modname);
+	}
+    }
+    sort(@module_files);
+}
+
+sub print {
+    my $self = shift;
+    my $source = $self->{'source_file'};
+    my $compile_string = "\t" . '$(CFT) $(FFLAGS) -c';
+    my($base, $object, $modname, $flag, $target, $ftarget);
+
+    $base = &main::basename($source, @main::suffixes);
+    $target = $base . "." . $main::obj_ext;
+
+if ($main::stupid) {
+
+	$ftarget = $base . "." . $main::ext;
+    }
+
+    if ($main::cray) {
+	$flag = " -p ";
+    } elsif ($main::parasoft) {
+	$flag = " -module ";
+    }
+
+# print out "include" dependencies
+    if (%{$self->{'includes'}}) {
+	my $len_sum = length($main::objprefix . $target) + 1;
+	if ($main::add_ext) {
+	    $target .= " $base.$main::add_ext";
+	    $len_sum += length($base) + length($main::add_ext) + 2;
+	}
+        print "$main::objprefix" , "$target:";
+        %printed = ();
+        $self->print_includes($target, $len_sum);
+        print "\n";
+        if ($main::stupid) {
+	    $len_sum = length($main::objprefix . $ftarget) + 1;
+            print "$main::objprefix" , "$ftarget:";
+            $self->print_includes($ftarget, $len_sum);
+            print "\n";
+        }
+    }
+
+# clean out "use" of modules in own file
+    foreach $mod ( keys %{$self->{'uses'}} ) {
+	if ( ${$self->{'modules'}}{$mod} ) {
+	    delete ${$self->{'uses'}}{$mod};
+	}
+    }
+
+# Print out "use" dependencies
+# ----------------------------
+# I've commented out 
+#    || %{$self->{'includes'}}
+# in the following line, since, in the case of no use dependencies, 
+# it was responsible for an additional blank dependency line in the 
+# Makefile, e.g.
+# A.o:
+# I don't understand why it was there anyway. It might become clear to
+# me one day. Luke.
+#
+#    if (%{$self->{'uses'}} || %{$self->{'includes'}}) {
+     if (%{$self->{'uses'}}) {
+	@module_files = $self->find_mods();
+	my $len_sum = length($main::objprefix . $target) + 1;
+	print "$main::objprefix" , "$target:";
+	foreach $file (@module_files) {
+	    my $len = length($file) + 1;
+	    if (($len_sum + $len > 80) &&
+		     (length($target) + 1 < $len_sum)) {
+		print "\n$main::objprefix" , "$target:";
+		$len_sum = length($main::objprefix . $target) + 1;
+	    }
+	    $len_sum += $len;
+	    print " " . $file;
+	}
+	if ($main::need_f) {
+	    my $len = length($ftarget) + 1;
+	    if (($len_sum + $len > 80) &&
+		     (length($target) + 1 < $len_sum)) {
+		print "\n$main::objprefix" , "$target:";
+		$len_sum = length($main::objprefix . $target) + 1;
+	    }
+	    print " " . $ftarget;
+	}
+	print "\n";
+# PS. Only use this if the -x option has been given
+# extra Cray / Parasoft stuff
+        if (($main::cray || $main::parasoft) 
+                         && $main::use_compile_lines) {
+	    print $compile_string;
+	    foreach $file (@module_files) {
+		print $flag . $file;
+	    }
+	    if ($main::stupid) {
+	        print " " . $ftarget . "\n";
+	    } else {
+	        print " " . $source . "\n";
+	    }
+	}
+    }
+}
+
+#==================================================================
+# The following subroutines: check_next_def 
+#                            validate_defline
+#                            get_full_line
+#                            get_incl_files
+# are used to determine the #include, Use and Module pre-processor
+# lines which will be switched on according to the DEFs set.
+#
+# Author: R.Hatcher         Date: 14.09.00
+#==================================================================
+
+#------------------------------------------------------------------
+# check_next_def: Determines if the next DEF on the directive
+#                 is defined or not.  Depending on this result
+#                 check the next DEF or return whether directive
+#                 "true" or "false". (def_set keeps track of the
+#                 status of the directive as it cycles through
+#                 the components.)
+#
+# Return value: yes - directive is "true"
+#               no  - directive is "false"
+#------------------------------------------------------------------
+sub check_next_def {
+    my ($pos)=@_;       # Position of the next DEF to be checked
+
+    # Is DEF set in updefs file
+    if ($DEFINED[$pos] eq "!") {
+	$def_set=(!grep (/^$DEFS[$pos]$/,@updefs))? "yes" : "no";
+    } else {
+	$def_set=(grep (/^$DEFS[$pos]$/,@updefs))? "yes" : "no";
+    }
+
+    # Get next || or &&
+    $next_logical=$ANDORS[$pos];
+
+    if ($next_logical eq "||" && $def_set eq "no") {
+
+	$pos++;
+	check_next_def($pos);
+
+    } elsif ($next_logical eq "&&" && $def_set eq "yes") {
+
+        $pos++;
+	check_next_def($pos);
+
+    } elsif ($next_logical eq "&&" && $def_set eq "no") {
+
+	# No need to bother checking the next DEF as the 
+	# directive is already "false" and the next logical
+	# is &&
+
+	# Find position of next || 
+	while ($next_logical eq "&&") {
+	    $pos++;
+	    $next_logical=$ANDORS[$pos];
+	}
+	
+	if ($next_logical ne "") {
+
+	    # Check next DEF
+	    $pos++;
+	    check_next_def($pos);
+	}
+
+    }
+    # if next_logical = || and $def_set = yes : pre-processor line switched on
+    return $def_set;
+}
+
+#--------------------------------------------------------------
+# validate_defline: Determines from the list of DEFS in @updefs
+#                   whether the pre-processor line evaluates to
+#                   true or false.
+#--------------------------------------------------------------
+sub validate_defline {
+    my ($defline)=@_;      # DEF switch line
+
+    # Extract the ! or " " from infront of the defined
+    (@DEFINED)=($defline=~/(!?)defined(?:\s+)?\(\w+\)/g);
+
+    # Extract DEFs only
+    (@DEFS)=($defline=~/defined(?:\s+)?\((\w+)\)/g);
+
+    # Extract the ||s and &&s
+    (@ANDORS)=($defline=~/(\|\||&&)/g);
+
+    if (scalar(@ANDORS) == 0) {
+	# Only 1 DEF is on this line. It must be set in order to switch 
+	# on subsequent code.
+
+        # Should the DEF be defined or not for the directive to evaluate as true.
+	if ($DEFINED[0] eq "!") {
+	    $defset{$nestcnt}=( !grep (/^$DEFS[0]$/,@updefs))? "yes" : "no";
+	} else {
+	    $defset{$nestcnt}=( grep (/^$DEFS[0]$/,@updefs))? "yes" : "no";
+	}
+    } else {
+	# Determine whether just ||s or just &&s or a mixture of both
+	$ors="yes" if (grep (/\|\|/,@ANDORS));
+	$ands="yes" if (grep (/&&/,@ANDORS));
+	    
+	if (defined($ors) && defined($ands)) {
+	    # Both &&s and ||s on DEF line
+	    $def_num=0;
+	    $defset{$nestcnt}=check_next_def($def_num);
+		
+	} elsif (defined($ors)) {
+	    # Only ||s on DEF line
+	    
+	    # Is at least 1 of the DEFs set
+	    $set="no";  # Initialize DEF set flag
+	    $counter=0;
+	    foreach $def (@DEFS) {
+		if ($DEFINED[$counter] eq "!") {
+		    $set=yes if (!grep (/^$def$/,@updefs));
+		} else {
+		    $set=yes if (grep (/^$def$/,@updefs));
+		}
+		last if $set eq "yes";
+		$counter++;
+	    }
+	    $defset{$nestcnt}=$set;
+
+	} elsif (defined($ands)) {
+	    # Only &&s on DEF line
+	    # All DEFs must be set
+	    $set="yes";  # Initialize DEF set flag
+	    foreach $def (@DEFS) {
+		if ($DEFINED[$counter] eq "!") {
+		    $set="no" if (grep (/^$def$/,@updefs));
+		} else {
+		    $set="no" if (!grep (/^$def$/,@updefs));
+		}
+		last if $set eq "no";
+	    }
+	    $defset{$nestcnt}=$set;
+	}
+    }
+    $def_switch{$nestcnt}="done" if $defset{$nestcnt} eq "yes";
+}
+
+#----------------------------------------------
+# get_full_line: Obtains the full pre-processor 
+#                directive line as some may
+#                flow over multiple lines. 
+#----------------------------------------------
+sub get_full_line {
+    my($line)=@_;
+    my ($line2, $next_line);
+
+    # multi lines end with \
+    if ($line=~/.*\\/) {
+	# multi line DEFs
+	# Remove \ and all spaces preceding it
+	$line=~s/\s+\\//; chomp($line);
+	
+	# Get the next line and determine if it goes
+	# onto the next line.
+	$next_line=<FILE>;
+	$line2=get_full_line($next_line);
+	$line=$line."$line2";
+    }
+    return $line;
+}
+
+#----------------------------------------------------------------
+# get_incl_files: Cycles through the file, initially extracting
+#                 all the DEFs from updefs.  Then parses the
+#                 file to extract all the #include, Use and Module
+#                 lines which are switched on.  These are then
+#                 passed back to find_includes, where the include
+#                 files themselves are then searched. No recursion
+#                 is done here.
+#-----------------------------------------------------------------
+sub get_incl_files {
+
+    my ($file)=@_;
+    my @inc_files;    # List of #include, use and Module lines switched on.
+    my %seen;
+
+    # Read in file
+    if (-f $file) {
+        open(FILE, $file) || warn "Can't open $file: $!\n";
+    } elsif (-f "RCS/$file,v" || -f "$file,v" ) {
+        system("co $file");
+        open(FILE, $file) || warn "Can't open $file: $!\n";
+        $main::rcs{$file} = 1;
+    } else {
+	return;
+    }
+
+    # Set up the DEFs set array.
+    # Updefs should be read in on the first line.
+    # Note: may be possible to have further #includes within this 
+    #       file (updefs.h)  which in turn contain more #defines.
+    $first_line=<FILE>;
+
+    # Since all decks should include the same DEFs updefs only needs to be
+    # checked/read in once per invocation of sfmakedepend.
+    if ($first_line=~/^#\s*include\s*"updefs.h"/ && !defined $updefs_chk) {
+	# Check updefs.h file exists
+	$updefs_file = &main::findfile("updefs.h");
+
+	@updefs=();		# Initialise updefs
+
+	# Obtain a list of the DEFs set.
+	open (UPDEFS,"<$updefs_file") || die "Can't open file 'updefs.h': $!\n";
+	chomp(@updefs_tmp=<UPDEFS>);
+	
+	foreach $updefs_line (@updefs_tmp) { 
+	    if ($updefs_line!~/^\s*#define/ && $updefs!~/^\s*$/) {
+		print "WARNING: Invalid directive in \"updefs.h\"\n";
+		print "Ignoring: $updefs_line\n";
+		next;
+	    }
+	    # Get rid of the #define's.
+	    $updefs_line=~s/^\s*#define\s+//;
+            $updefs_line =~ s/(\w*)\s+(\w*)/$1/;
+	    push (@updefs,$updefs_line);
+	}
+#	@updefs=grep { s/^\#define\s+// } @updefs;
+	$updefs_chk="done";
+    }
+
+    # Replace file position to the start
+    seek FILE, 0, 0;
+
+    $nestcnt=0;		 # Initialize nest counter
+
+    # Hash to indicate whether #if nest is switched on - Indexed by $nestcnt
+    %defset=();
+
+    %def_switch=();	 # Has the current #if, #elsif structure been switched on yet
+
+    while (<FILE>) {
+	if (/#if /) {
+	    # Increment the nest counter (I.e. number of this nested #if statement)
+	    $nestcnt++;
+
+	    # If any outer nests are not activated this if can't be either
+	    @defset_vals=values %defset;
+            %seen=();		# Initialize look up
+
+	    @sorted_defset=sort (grep { !$seen{$_}++ } @defset_vals);
+
+            # "no" always comes before "yes" bcos of the 'sort' so if "no" is the
+            # first element of sorted_defset an outer nest is not activated
+	    if (scalar(@sorted_defset) > 0 && $sorted_defset[0] eq "no") {
+		$defset{$nestcnt}="no";
+		$def_switch{$nestcnt}="done";
+		next;
+	    }
+	    # check whether DEFs run over multiple lines
+	    $_=get_full_line($_);
+
+	    validate_defline($_);
+	    
+	} elsif (/^\#elif /) {
+
+	    # No need to evaluate this line if a previous #if or #elif of this nest
+	    # has been validated as "true".
+	    if ($def_switch{$nestcnt} eq "done") {
+		$defset{$nestcnt}="no";
+		next;
+	    }
+            $_=get_full_line($_);
+	    validate_defline($_);
+	
+	} elsif (/^\#else/) {
+
+            # No need to evaluate this line if a previous #if or #elif of this nest
+	    # has been validated as "true".
+	    if ($def_switch{$nestcnt} eq "done") {
+		$defset{$nestcnt}="no";
+	    } else {
+		$defset{$nestcnt}="yes";
+	    }
+	    next;
+
+	} elsif (/^\#endif/) {
+	    # End of a nest
+	    # Re-initialize the hashes for this nest and decrement the nest counter
+	    delete $defset{$nestcnt};
+	    delete $def_switch{$nestcnt};
+	    $nestcnt--;
+
+	} elsif (/^\#include/) {
+
+	    # Store this include line if this nest is switched on
+	    push(@inc_files,$_) if $defset{$nestcnt} eq "yes" || $nestcnt == 0; 
+
+	} elsif (/^\s*use\s+\w+/i) {
+
+	    # F90 module use statement
+	    # Store this use statement if this nest is switched on
+	    push(@inc_files,$_) if $defset{$nestcnt} eq "yes" || $nestcnt == 0; 
+
+	} elsif (/^\s*module\s+(\w+)/i) {
+
+	    # F90 module definition
+	    # Store this Module line if this nest is switched on
+	    push(@inc_files,$_) if $defset{$nestcnt} eq "yes" || $nestcnt == 0;
+	}
+    }
+#    close FILE;
+    return @inc_files;
+}
+
+#==================================
+# Start of main program
+#==================================
+package main;
+
+if ($] < 5.000) { die "Need perl 5.000 or newer\n"; }
+use File::Basename;
+use Getopt::Long;
+@suffixes = qw( .c .C .cc .cxx .cpp .f .F .fcm .FCM .f90 .F90 .for);
+
+GetOptions("s=s", "t", "e=s", "f=s", "I=s@", "m=s", "c", "p=s", "g", "h", "o=s", "a=s", "x", "d=s")
+		       || die "problem in GetOptions";
+
+if ($opt_s) { 
+  $mystring=$opt_s; 
+} else {
+  $mystring = '# DO NOT DELETE THIS LINE - used by sfmakedepend';
+}
+
+# For compilers that don't invoke cpp for you
+if ($opt_t) {
+	$stupid = 1;
+}
+if ($opt_e) {
+	$ext = $opt_e;
+} else {
+	$ext = "f";
+}
+
+# list of directories to search, starting with current directory
+if (@opt_I) {
+    @incdirs = (@opt_I, "/usr/include");
+} elsif (@opt_i) {
+    @incdirs = (@opt_i, "/usr/include");
+}
+
+if ($opt_f) {
+    $mf = $opt_f;
+} elsif (-f "makefile") {
+    $mf = 'makefile';
+} else {
+    $mf = 'Makefile';
+}
+if ( !(-f $mf)) {
+    system "touch $mf";
+}
+
+# extension used for compiler's private module information
+if ($opt_m) {
+    $mod_ext = $opt_m;
+} else {
+    $mod_ext = 'mod';
+}
+
+if ($opt_c) {
+    $cray = 1;
+}
+
+# Add prefix to object file in dependency line:
+if ($opt_p) {
+    $objprefix = $opt_p;
+} else {
+    $objprefix = '';
+}
+
+if ($opt_q) {
+    $parasoft = 1;
+}
+
+if ($opt_x) {
+    if (! ($cray || $parasoft) ) {
+        print "-x option only available for Cray or Parasoft compilers - ignoring";
+    } else {
+        $use_compile_lines = 1; 
+    }
+}
+
+if ($opt_g) {
+    $sgi = 1;
+    $mod_ext = 'kmo';
+}
+
+if ($opt_h) {
+    $hp = 1;
+}
+
+# need to add some more dependencies so the .f file gets created
+if ($stupid && ($cray || $parasoft)) {
+    $need_f = 1;
+}
+
+if ($opt_c && $opt_q) {
+    die "Doesn't make sense to have both Cray and Parasoft options!";
+}
+
+# object file extension
+if ($opt_o) {
+    $obj_ext = $opt_o;
+} else {
+    $obj_ext = 'o';
+}
+
+# extension for additional targets (like .prj)
+if ($opt_a) {
+    $add_ext = $opt_a;
+}
+
+# Process a directory of files - searching for all the includes
+if ($opt_d) {
+    opendir(DIR, $opt_d) or die "Can't open directory $opt_d: $!";
+    while (defined($file = readdir(DIR))) {
+         # Only accept files with a .F or .F90 suffix
+         # and ignore any intermediate fortran source beginning 
+         # with i.
+        next if $file !~ /\.F(90)?$/;
+        next if $file =~ /^i\./;
+        $sources{$file} = new source_file($file, $file);
+        $sources{$file}->find_includes();
+    }
+    closedir(DIR);
+}
+
+# Search for the includes in all the files
+foreach $file (@ARGV) {
+    $sources{$file} = new source_file($file, $file);
+    $sources{$file}->find_includes();
+}
+
+# Create new Makefile with new dependencies.
+
+rename($mf, "$mf.old") ||
+     warn "can't move $mf to $mf.old: $!\n";
+
+open(OMFILE, "$mf.old") || die "can't read Makefile $mf.old: $!\n";
+open(MFILE, "> $mf") || die "can't write $mf: $!\n";
+select(MFILE);
+
+while (<OMFILE>) {
+    if (!/^$mystring/) {
+        print;
+    } else {
+        last;
+    }
+}
+
+print "$mystring\n";
+
+# Now print out include and use dependencies in sorted order.
+foreach $target (sort keys(%sources)) {
+    $sources{$target}->print();
+}
+
+# print out module dependencies
+if ( !( $cray || $parasoft) ) {
+    foreach $modname (sort keys(%mod_files)) {
+# print "DEBUG: modname = $modname\n";
+        ($name, $path, $suffix) =
+		&fileparse($sources{$mod_files{$modname}}->{'filepath'}, @suffixes);
+#print "$DEBUG: name is $name ; path is $path ; suffix is $suffix\n";
+
+        # PMS - I've removed the bit about $path . "/" . because it confused me
+	$object = $name . "." . $obj_ext;
+	print "$modname.$mod_ext: $object\n";
+    }
+}
+
+# Sort out the Makefiles
+
+# Delete those RCS files we checked out
+foreach $file (keys %rcs) {
+    unlink($file);
+}
+
+close MFILE;
+close OMFILE;
+close NMFILE;
+#
+# End of main
+#
+
+sub findfile {
+# Let's see if we can find the included file.  Look in current
+# directory first, then in directories from -I arguments.  Finally,
+# look for RCS files in current directory.
+    my $file = shift;
+    my($found, $i, $filepath);
+
+    $found = 0;
+
+    if ( -f $file ) {
+        $found = 1;
+        $file =~ s#^\./##;          # convert ./foo.h to foo.h
+        return $file;
+    }
+    foreach $i (0 .. $#incdirs) {
+        $filepath = $incdirs[$i]."/".$file;
+        if ( -f $filepath ) {
+	    $found = 1;
+            $filepath =~ s#^\./##;          # convert ./foo.h to foo.h
+            return $filepath;
+        }
+    }
+#see if it is a checked-in RCS file
+    if (-f "RCS/$file,v" || -f "$file,v" ) {
+        $found = 1;
+        system("co $file");
+	$filepath = $file;
+        $rcs{$file} = 1;
+    }
+    if ( ! $found ) {
+	$filepath = "";
+    }
+    $filepath;
+}
+
+

@@ -1,0 +1,208 @@
+*IF DEF,A03_3A,OR,DEF,A03_5A                                               AJS1F401.1479  
+C ******************************COPYRIGHT******************************    GTS2F400.2755  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.2756  
+C                                                                          GTS2F400.2757  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.2758  
+C restrictions as set forth in the contract.                               GTS2F400.2759  
+C                                                                          GTS2F400.2760  
+C                Meteorological Office                                     GTS2F400.2761  
+C                London Road                                               GTS2F400.2762  
+C                BRACKNELL                                                 GTS2F400.2763  
+C                Berkshire UK                                              GTS2F400.2764  
+C                RG12 2SZ                                                  GTS2F400.2765  
+C                                                                          GTS2F400.2766  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.2767  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.2768  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.2769  
+C Modelling at the above address.                                          GTS2F400.2770  
+C ******************************COPYRIGHT******************************    GTS2F400.2771  
+C                                                                          GTS2F400.2772  
+CLL   SUBROUTINE FCDCH--------------------------------------------------   FCDCH3A.3     
+CLL                                                                        FCDCH3A.4     
+CLL  Purpose: Calculate bulk transfer coefficients at one or more          FCDCH3A.5     
+CLL           gridpoints, according to formulae derived by R N B Smith,    FCDCH3A.6     
+CLL           October 1989.                                                FCDCH3A.7     
+CLL                                                                        FCDCH3A.8     
+CLL  Model            Modification history:                                FCDCH3A.9     
+CLL version  Date                                                          FCDCH3A.10    
+CLL                                                                        FCDCH3A.11    
+CLL   3.4  18/10/94   *DECK inserted into UM version 3.4. S Jackson        FCDCH3A.12    
+CLL                                                                        FCDCH3A.13    
+CLL   4.0  30/12/94   Revised stability functions and calcs. for           ARN1F400.130   
+CLL                   removing form drag effects from cH and cD(std);      ARN1F400.131   
+CLL                   cD(std) used in definition of the Prandtl number.    ARN1F400.132   
+CLL                                                      R.N.B.Smith       ARN1F400.133   
+CLL  4.5  12/05/98  Optimize use of sqrt.  RBarnes@ecmwf.int               GRB0F405.5     
+CLL                                                                        ARN1F400.134   
+CLL  Programming standard: Unified Model Documentation Paper No 4,         FCDCH3A.14    
+CLL                        Version 2, dated 18/1/90.                       FCDCH3A.15    
+CLL                                                                        FCDCH3A.16    
+CLL  System component covered: Part of P243.                               FCDCH3A.17    
+CLL                                                                        FCDCH3A.18    
+CLL  Documentation: UM Documentation Paper No 24, section P243.            FCDCH3A.19    
+CLL                 See especially sub-section (iv).                       FCDCH3A.20    
+CLL                                                                        FCDCH3A.21    
+C*L  Arguments:---------------------------------------------------------   FCDCH3A.22    
+      SUBROUTINE FCDCH(                                                    FCDCH3A.23    
+     & RIB,Z0M,Z0H,Z0F,Z1,WIND_PROFILE_FACTOR,POINTS,CD,CH,CD_STD,LTIMER   ARN1F400.135   
+     &)                                                                    ARN1F400.136   
+      IMPLICIT NONE                                                        FCDCH3A.26    
+                                                                           FCDCH3A.27    
+      LOGICAL LTIMER                                                       FCDCH3A.28    
+                                                                           FCDCH3A.29    
+      INTEGER POINTS ! IN Number of gridpoints treated.                    FCDCH3A.30    
+                                                                           FCDCH3A.31    
+      REAL                                                                 FCDCH3A.32    
+     + RIB(POINTS)   ! IN Bulk Richardson number.                          FCDCH3A.33    
+     +,Z0M(POINTS)   ! IN Roughness length for momentum transport (m).     FCDCH3A.34    
+     +,Z0H(POINTS)   ! IN Roughness length for heat and moisture (m).      FCDCH3A.35    
+     +,Z0F(POINTS)   ! IN Roughness length for free-convective heat and    FCDCH3A.36    
+     +               !    moisture transport (m).                          FCDCH3A.37    
+     +,Z1(POINTS)    ! IN Height of centre of lowest model layer(m).       FCDCH3A.38    
+     &,WIND_PROFILE_FACTOR(POINTS)                                         ARN1F400.137   
+C                    ! IN for adjusting the surface transfer               ARN1F400.138   
+C                    !    coefficients to remove form drag effects.        ARN1F400.139   
+                                                                           FCDCH3A.39    
+      REAL                                                                 FCDCH3A.40    
+     & CD(POINTS)    ! OUT Surface drag coefficient including form drag.   ARN1F400.140   
+     +,CH(POINTS)    ! OUT Bulk transfer coefficient for heat/moisture.    FCDCH3A.42    
+     &,CD_STD(POINTS)! OUT Surface drag coefficient excluding form drag.   ARN1F400.141   
+                                                                           FCDCH3A.43    
+C*L  Workspace usage----------------------------------------------------   FCDCH3A.44    
+C    No work areas are required.                                           FCDCH3A.45    
+C                                                                          FCDCH3A.46    
+C*----------------------------------------------------------------------   FCDCH3A.47    
+C*L  No external subprograms are called.                                   FCDCH3A.48    
+                                                                           FCDCH3A.49    
+      EXTERNAL TIMER                                                       FCDCH3A.50    
+                                                                           FCDCH3A.51    
+C*----------------------------------------------------------------------   FCDCH3A.52    
+C  Common and local physical constants.                                    FCDCH3A.53    
+*CALL C_VKMAN                                                              FCDCH3A.54    
+      REAL ALPHAR,HETGEN,CZ,DM,THIRD                                       FCDCH3A.55    
+      PARAMETER (                                                          FCDCH3A.56    
+     & ALPHAR=5.0,  ! Tunable parameter in FM and FH calculation.          FCDCH3A.57    
+     & HETGEN=0.0,  ! Tunable parameter to represent 'the degree of        FCDCH3A.58    
+C                   ! heterogeneity' of the surface; must be > or = 0.0    FCDCH3A.59    
+C                   ! and < or = 1.0                                       FCDCH3A.60    
+     + CZ=4.0,      ! Tunable parameter in unstable Fh, Fm calculations,   FCDCH3A.61    
+C                   ! equal to (3h)**-1.5 in the documentation.            FCDCH3A.62    
+     + DM=2.0,      ! Tunable parameter in unstable Fm calculation.        FCDCH3A.63    
+     + THIRD=1./3.  ! One third.                                           FCDCH3A.64    
+     +)                                                                    FCDCH3A.65    
+C                                                                          FCDCH3A.66    
+C  Define local variables (more or less in order of first appearance).     FCDCH3A.67    
+C                                                                          FCDCH3A.68    
+      INTEGER I       ! Loop counter; horizontal field index.              FCDCH3A.69    
+      REAL                                                                 FCDCH3A.70    
+     + KARMAN2        ! Square of von Karman's constant.                   FCDCH3A.71    
+     +,ZETAM          ! See documentation for definition.                  FCDCH3A.72    
+     +,ZETAH          ! See documentation for definition.                  FCDCH3A.73    
+     &,CDN            ! CD for neutral conditions.                         ARN1F400.142   
+     &,CHN            ! CH for neutral conditions.                         ARN1F400.143   
+     &,CDN_STD        ! CD_STD for neutral conditions.                     ARN1F400.144   
+     &,PRANDTL        ! Prandtl number at neutrality.                      ARN1F400.145   
+     +,RFZ            ! Temporary in calculation of FM and FH.             FCDCH3A.76    
+     &,RIF            ! Flux Richardson number.                            ARN1F400.146   
+     &,AM             ! Temporary in calculation of FM and FH.             FCDCH3A.81    
+     &,AH             ! Temporary in calculation of FM and FH.             FCDCH3A.82    
+     +,BM             ! Temporary in calculation of FM and FH.             FCDCH3A.83    
+     +,BH             ! Temporary in calculation of FM and FH.             FCDCH3A.84    
+     &,BM_STD         ! Temporary in calculation of FM_STD.                ARN1F400.147   
+     &,FM             ! Stability factor for CD.                           ARN1F400.148   
+     &,FH             ! Stability factor for CH.                           ARN1F400.149   
+     &,FM_STD         ! Stability factor for CD_STD.                       ARN1F400.150   
+     &,temp_sqrt      ! sqrt temporary value                               GRB0F405.6     
+                                                                           FCDCH3A.87    
+      IF (LTIMER) THEN                                                     FCDCH3A.88    
+        CALL TIMER('FCDCH   ',3)                                           FCDCH3A.89    
+      ENDIF                                                                FCDCH3A.90    
+                                                                           FCDCH3A.91    
+      KARMAN2=VKMAN*VKMAN                                                  FCDCH3A.92    
+      DO 1 I=1,POINTS                                                      FCDCH3A.93    
+C                                                                          FCDCH3A.94    
+C-----------------------------------------------------------------------   FCDCH3A.95    
+CL 1. Calculate neutral CD, CH.                                            FCDCH3A.96    
+C-----------------------------------------------------------------------   FCDCH3A.97    
+C                                                                          FCDCH3A.98    
+C  (A) Store ZETAM, ZETAH.                                                 FCDCH3A.99    
+C                                                                          FCDCH3A.100   
+        ZETAM = LOG( (Z1(I) + Z0M(I)) / Z0M(I) )                           ARN1F400.151   
+        ZETAH = LOG( (Z1(I) + Z0M(I)) / Z0H(I) )                           ARN1F400.152   
+C                                                                          FCDCH3A.103   
+C  (B) Calculate neutral CD, CH.  Eqns P243.40, P243.41.                   FCDCH3A.104   
+C                                                                          FCDCH3A.105   
+        CDN = KARMAN2 / ( ZETAM * ZETAM )                                  ARN1F400.153   
+        CHN = KARMAN2 / ( ZETAH * ZETAM ) * WIND_PROFILE_FACTOR(I)         ARN1F400.154   
+        CDN_STD = CDN * WIND_PROFILE_FACTOR(I) * WIND_PROFILE_FACTOR(I)    ARN1F400.155   
+                                                                           ARN1F400.156   
+        PRANDTL = CDN_STD / CHN                                            ARN1F400.157   
+C                                                                          FCDCH3A.108   
+C  (C) Calculate temporary quantities.                                     FCDCH3A.109   
+C                                                                          FCDCH3A.110   
+        AM = 2.0 * ALPHAR / PRANDTL                                        ARN1F400.158   
+        AH = AM                                                            FCDCH3A.114   
+C                                                                          FCDCH3A.115   
+C-----------------------------------------------------------------------   FCDCH3A.116   
+CL 2. Calculate functions Fm, Fh.                                          FCDCH3A.117   
+C-----------------------------------------------------------------------   FCDCH3A.118   
+        RFZ=0.0                                                            FCDCH3A.119   
+        BM=0.0                                                             FCDCH3A.120   
+        BH=0.0                                                             FCDCH3A.121   
+        BM_STD=0.0                                                         ARN1F400.159   
+                                                                           ARN1F400.160   
+        RIF = RIB(I) / PRANDTL                                             ARN1F400.161   
+C                                                                          FCDCH3A.124   
+C  Case 1: stable boundary layer (RIB > 0).                                ARN1F400.162   
+C                                                                          FCDCH3A.126   
+        IF (RIB(I) .GT. 0.0) THEN                                          FCDCH3A.127   
+          IF ( 1.0/RIF .GT. HETGEN*ALPHAR ) THEN                           ARN1F400.163   
+            FM = 1.0 - HETGEN * ALPHAR * RIF                               FCDCH3A.132   
+            FM = ( FM * FM ) /                                             FCDCH3A.133   
+     &            ( 1.0 + 2.0 * (1.0-HETGEN) * ALPHAR * RIF )              FCDCH3A.134   
+            FH = FM                                                        FCDCH3A.135   
+            FM_STD = FM                                                    ARN1F400.164   
+          ELSE                                                             FCDCH3A.136   
+            FM = 0.0                                                       FCDCH3A.137   
+            FH = 0.0                                                       FCDCH3A.138   
+            FM_STD = 0.0                                                   ARN1F400.165   
+          ENDIF                                                            FCDCH3A.139   
+        ELSE                                                               FCDCH3A.140   
+C                                                                          FCDCH3A.141   
+C  Case 2: unstable boundary layer (RIB < or = 0).                         FCDCH3A.142   
+C                                                                          FCDCH3A.143   
+C  (A) Store 1/Fz in RFZ.  Eqn P243.51, as approximated by P243.52.        FCDCH3A.144   
+C                                                                          FCDCH3A.145   
+          RFZ = CZ * SQRT ( Z1(I) / Z0F(I) )                               FCDCH3A.146   
+C                                                                          FCDCH3A.147   
+C  (B) Store BM, BH and BM_STD.                                            ARN1F400.166   
+C                                                                          FCDCH3A.149   
+          BM = DM * AM * CDN * RFZ                                         ARN1F400.167   
+          BH = AH * CHN * RFZ                                              ARN1F400.168   
+          BM_STD = DM * AM * CDN_STD * RFZ                                 ARN1F400.169   
+C                                                                          FCDCH3A.152   
+C  (C) Finally calculate FM, FH and FM_STD.                                ARN1F400.170   
+C                                                                          FCDCH3A.154   
+          temp_sqrt = SQRT(-RIB(I))                                        GRB0F405.7     
+          FM = 1.0 - AM * RIB(I) / ( 1.0 + BM * temp_sqrt )                GRB0F405.8     
+          FH = 1.0 - AH * RIB(I) / ( 1.0 + BH * temp_sqrt )                GRB0F405.9     
+          FM_STD = 1.0 - AM * RIB(I) / ( 1.0 + BM_STD * temp_sqrt )        GRB0F405.10    
+        ENDIF                                                              FCDCH3A.157   
+C                                                                          FCDCH3A.158   
+C-----------------------------------------------------------------------   FCDCH3A.159   
+CL 3. Calculate output coefficients.  Eqns P243.53, P243.54.               FCDCH3A.160   
+C-----------------------------------------------------------------------   FCDCH3A.161   
+C                                                                          FCDCH3A.162   
+        CD(I) = CDN * FM                                                   ARN1F400.174   
+        CH(I) = CHN * FH                                                   ARN1F400.175   
+        CD_STD(I) = CDN_STD * FM_STD                                       ARN1F400.176   
+                                                                           FCDCH3A.165   
+    1 CONTINUE                                                             FCDCH3A.166   
+                                                                           FCDCH3A.167   
+      IF (LTIMER) THEN                                                     FCDCH3A.168   
+        CALL TIMER('FCDCH   ',4)                                           FCDCH3A.169   
+      ENDIF                                                                FCDCH3A.170   
+                                                                           FCDCH3A.171   
+      RETURN                                                               FCDCH3A.172   
+      END                                                                  FCDCH3A.173   
+*ENDIF                                                                     FCDCH3A.174   

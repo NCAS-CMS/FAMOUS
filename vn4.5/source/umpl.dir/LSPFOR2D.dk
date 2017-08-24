@@ -1,0 +1,363 @@
+*IF DEF,A04_2E                                                             ADM0F405.294   
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.15031 
+C                                                                          GTS2F400.15032 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.15033 
+C restrictions as set forth in the contract.                               GTS2F400.15034 
+C                                                                          GTS2F400.15035 
+C                Meteorological Office                                     GTS2F400.15036 
+C                London Road                                               GTS2F400.15037 
+C                BRACKNELL                                                 GTS2F400.15038 
+C                Berkshire UK                                              GTS2F400.15039 
+C                RG12 2SZ                                                  GTS2F400.15040 
+C                                                                          GTS2F400.15041 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.15042 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.15043 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.15044 
+C Modelling at the above address.                                          GTS2F400.15045 
+C ******************************COPYRIGHT******************************    GTS2F400.15046 
+C                                                                          GTS2F400.15047 
+C*LL  SUBROUTINE LSP_FORM-----------------------------------------------   LSPFOR2D.3     
+!LL                                                                        LSPFOR2D.4     
+!LL  Purpose: Form or augment precipitation at the expense of cloud        LSPFOR2D.5     
+!LL           water in one model layer.                                    LSPFOR2D.6     
+!LL                                                                        LSPFOR2D.7     
+!LL C.Senior    <- programmer of some or all of previous code or changes   LSPFOR2D.8     
+!LL                                                                        LSPFOR2D.9     
+!LL  Model            Modification history from model version 3.0:         LSPFOR2D.10    
+!LL version  Date                                                          LSPFOR2D.11    
+!LL 3.1      23/02/93 Fully divergent form of ice fallout including:       LSPFOR2D.12    
+!LL                   1) fully implicit finite difference scheme           LSPFOR2D.13    
+!LL                   2) total cloud water used in determining RCL and     LSPFOR2D.14    
+!LL                      RCF instead of QL and QF used previously          LSPFOR2D.15    
+!LL                   3) separate precipitation rates for ice (RCF) and    LSPFOR2D.16    
+!LL                      liquid water (RCL) in mixed phase region          LSPFOR2D.17    
+!LL                   4) minimum cloud for precipitation, CFMIN set        LSPFOR2D.18    
+!LL                      equal to zero, in comdeck C_LSPFRM.               LSPFOR2D.19    
+!LL                                             Ruth Carnell 26/02/93      LSPFOR2D.20    
+!LL  Model            Modification history from model version 3.0:         LSPFOR2D.21    
+!LL version  Date                                                          LSPFOR2D.22    
+!LL 3.3      22/11/94 Distribution of moisture within gridbox added:       LSPFOR2D.23    
+!LL                   follows form of LSCLD1A routine / 2A variant.        LSPFOR2D.24    
+!LL                                           Andrew Bushell 15/12/94      LSPFOR2D.25    
+!LL                                                                        LSPFOR2D.26    
+!LL 3.3      04/04/95 Possible fix to long timestep solution of ice        LSPFOR2D.27    
+!LL                   fallout + explicit formulation for short ts case.    LSPFOR2D.28    
+!LL                                    D Gregory & A Bushell 04/04/95      LSPFOR2D.29    
+!LL                                                                        LSPFOR2D.30    
+!LL 3.5      28/09/95 Changed *CALL FOCWWIL to CALL LSP_FOCWWIL to allow   LSPFOR2D.31    
+!LL                   precompilation of alternative FOCWWIL options.       LSPFOR2D.32    
+!LL                                           Andrew Bushell 28/09/95      LSPFOR2D.33    
+!LL                                                                        LSPFOR2D.34    
+!LL 4.1      14/02/96 Tidied code to remove intermittent problem with      AYY1F401.41    
+!LL                   uninitialized LSCQC and LSCBS. Bit comparable.       AYY1F401.42    
+!LL                                           Andrew Bushell 14/02/96      AYY1F401.43    
+!LL                                                                        AYY1F401.44    
+!LL 4.5      31/03/98 Code change to avoid underflow divide by zero on     AYY1F405.1     
+!LL                   some machines. Bit comparable. Andrew Bushell        AYY1F405.2     
+!LL                                                                        AYY1F405.3     
+!LL  Programming standard: Unified Model Documentation Paper No 4,         LSPFOR2D.35    
+!LL                        Version 1, dated 12/9/89.                       LSPFOR2D.36    
+!LL                                                                        LSPFOR2D.37    
+!LL  Logical component covered: Part of P26.                               LSPFOR2D.38    
+!LL                                                                        LSPFOR2D.39    
+!LL  System task:                                                          LSPFOR2D.40    
+!LL                                                                        LSPFOR2D.41    
+!LL  Documentation: Unified Model Documentation Paper No 26.               LSPFOR2D.42    
+C*                                                                         LSPFOR2D.43    
+C*L  Arguments:---------------------------------------------------------   LSPFOR2D.44    
+      SUBROUTINE LSP_FORM(                                                 LSPFOR2D.45    
+     & CF,P,Q,RHODZ,T,TIMESTEP,POINTS,QCF,QCL,RAIN,SNOW                    LSPFOR2D.46    
+     &,F_DELTA_SNOW,BLAND,CW_SEA,CW_LAND,LSCQC,LSCBS,VFALL                 LSPFOR2D.47    
+     &)                                                                    LSPFOR2D.48    
+      IMPLICIT NONE                                                        LSPFOR2D.49    
+      INTEGER         ! Input integer scalar :-                            LSPFOR2D.50    
+     & POINTS         ! IN Number of points to be processed.               LSPFOR2D.51    
+      REAL            ! Input real arrays :-                               LSPFOR2D.52    
+     & CF(POINTS)     ! IN Cloud fraction in this layer.                   LSPFOR2D.53    
+     &,P(POINTS)      ! IN Air pressure at this level (Pa).                LSPFOR2D.54    
+     &,Q(POINTS)      ! IN Sp humidity at this level (kg wat per kg air)   LSPFOR2D.55    
+     &,RHODZ(POINTS)  ! IN Air mass p.u.a. in this layer (kg per sq m).    LSPFOR2D.56    
+     &,T(POINTS)      ! IN Temperature at this level (K).                  LSPFOR2D.57    
+     &,LSCQC(POINTS)  ! IN Large scale cloud Qc value.                     LSPFOR2D.58    
+     &,LSCBS(POINTS)  ! IN Large scale cloud bs value.                     LSPFOR2D.59    
+      REAL            ! Input real scalar :-                               LSPFOR2D.60    
+     & TIMESTEP       ! IN Timestep (s).                                   LSPFOR2D.61    
+     &,CW_SEA         ! IN threshold cloud liquid water content            LSPFOR2D.62    
+!                          over sea for conversion to ppn                  LSPFOR2D.63    
+!                          (kg water per m**3)                             LSPFOR2D.64    
+     &,CW_LAND        ! IN threshold cloud liquid water content            LSPFOR2D.65    
+!                          over land for conversion to ppn                 LSPFOR2D.66    
+!                          (kg water per m**3)                             LSPFOR2D.67    
+      REAL            ! Updated real arrays :-                             LSPFOR2D.68    
+     & QCF(POINTS)    ! INOUT Cloud ice (kg water per kg air).             LSPFOR2D.69    
+     &,QCL(POINTS)    ! INOUT Cloud liquid water (kg water per kg air).    LSPFOR2D.70    
+     &,RAIN(POINTS)   ! INOUT Rate of rainfall entering this layer from    LSPFOR2D.71    
+!                             above (on i/p), or leaving it (on o/p)       LSPFOR2D.72    
+!                             (kg per sq m per s).                         LSPFOR2D.73    
+     &,SNOW(POINTS)   ! INOUT Rate of snowfall entering this layer from    LSPFOR2D.74    
+!                             above (on i/p), or leaving it (on o/p)       LSPFOR2D.75    
+!                             (kg per sq m per s).                         LSPFOR2D.76    
+     &,F_DELTA_SNOW(POINTS) ! INOUT snow fraction from ice falling as      LSPFOR2D.77    
+!                                   water                                  LSPFOR2D.78    
+     &,VFALL(POINTS)  ! INOUT Fall velocity of ice into layer (m/s) i/p    LSPFOR2D.79    
+!                             Fall velocity of ice from layer (m/s) o/p    LSPFOR2D.80    
+      LOGICAL BLAND(POINTS)  ! IN Land/sea mask                            LSPFOR2D.81    
+C*L  Workspace usage----------------------------------------------------   LSPFOR2D.82    
+!  1 real, 0 logical and 0 integer blocks are required, as follows :-      LSPFOR2D.84    
+      REAL                                                                 LSPFOR2D.85    
+     & FL(POINTS)     ! Fraction of total cloud water which is liquid.     LSPFOR2D.86    
+C*L   External subprogram called :-                                        LSPFOR2D.93    
+      EXTERNAL LSP_FOCWWIL  !NB: ERF_LSP is an in-line comdeck             LSPFOR2D.94    
+      REAL ERF_LSP, XERF, TERF                                             LSPFOR2D.95    
+C*                                                                         LSPFOR2D.96    
+!-----------------------------------------------------------------------   LSPFOR2D.97    
+!  Common, then local, physical constants.                                 LSPFOR2D.98    
+!-----------------------------------------------------------------------   LSPFOR2D.99    
+*CALL C_R_CP                                                               LSPFOR2D.100   
+*CALL C_EPSLON                                                             LSPFOR2D.101   
+*CALL C_LSPFRM                                                             LSPFOR2D.102   
+*CALL C_PI                                                                 LSPFOR2D.103   
+      REAL      SQRT_PI   ! Defined for use by ERF                         LSPFOR2D.104   
+!-----------------------------------------------------------------------   LSPFOR2D.105   
+!  Define local scalars.                                                   LSPFOR2D.106   
+!-----------------------------------------------------------------------   LSPFOR2D.107   
+!  (a) Reals effectively expanded to workspace by the Cray (using          LSPFOR2D.108   
+!      vector registers).                                                  LSPFOR2D.109   
+      REAL            ! Real workspace.  At end of DO loop, contains :-    LSPFOR2D.110   
+     & QC             ! Total cloud water (liquid + ice).                  LSPFOR2D.111   
+     &,RCL            ! Rate of liquid water exchange                      LSPFOR2D.112   
+     &,RCF            ! Rate of ice exchange                               LSPFOR2D.113   
+     &,DELTA          ! 'ice' to be treated as water                       LSPFOR2D.114   
+     &,DELTA_SNOW     ! Snow formed by ice falling as water                LSPFOR2D.115   
+     &,RHO            ! Density of air in the layer.                       LSPFOR2D.116   
+     &,VFRDZ          ! Ice-particle fallout speed (m/s), divided by       LSPFOR2D.117   
+!                       layer depth (m).                                   LSPFOR2D.118   
+     &,QCF_U          ! Cloud ice nominal update value (kg/kg).            LSPFOR2D.119   
+     &,VTEMP          ! Virtual temperature as at start of loop.           LSPFOR2D.120   
+     &,CW             ! Parameter for efficient conversion of              LSPFOR2D.121   
+!                       liquid cloud water to ppn                          LSPFOR2D.122   
+     &,QCERR          ! Calculated qc from bs and Qc(lscld)                LSPFOR2D.123   
+     &,QSUM           ! Qc(lscld) + bs                                     LSPFOR2D.124   
+     &,QDIF           ! Qc(lscld) - bs                                     LSPFOR2D.125   
+     &,NORCT          ! (Ct * Cw**3) / (qc * rho**3 * bs**2 * 2.)          LSPFOR2D.126   
+     &,NERF_SUM       ! ERF_LSP(qsum * rho / Cw)                           LSPFOR2D.127   
+     &,NERF_DIF       ! ERF_LSP(qdif * rho / Cw)                           LSPFOR2D.128   
+!  (b) Others.                                                             LSPFOR2D.129   
+      INTEGER I       ! Loop counter (horizontal field index).             LSPFOR2D.130   
+     &,NV             ! Index counter for 'when' routine.                  LSPFOR2D.131   
+!->>>-------------------------------------------------------------------   LSPFOR2D.132   
+      SQRT_PI = SQRT(PI)                                                   LSPFOR2D.133   
+!                                                                          LSPFOR2D.134   
+!-----------------------------------------------------------------------   LSPFOR2D.145   
+!L 0. Calculate fraction of cloud water which is liquid (FL(I)),           LSPFOR2D.146   
+!L    according to equation P26.50.                                        LSPFOR2D.147   
+!-----------------------------------------------------------------------   LSPFOR2D.148   
+      CALL LSP_FOCWWIL(T, POINTS, FL)                                      LSPFOR2D.149   
+!                                                                          LSPFOR2D.150   
+      DO I=1,POINTS                                                        LSPFOR2D.151   
+!-----------------------------------------------------------------------   LSPFOR2D.152   
+!     Store total cloud water in QC (see eq P26.30) and ice falling as     LSPFOR2D.153   
+!     water in DELTA. Also update QCF.                                     LSPFOR2D.154   
+!-----------------------------------------------------------------------   LSPFOR2D.155   
+!                                                                          LSPFOR2D.156   
+        QC=QCL(I)+QCF(I)                                                   LSPFOR2D.157   
+        DELTA = (FL(I) * QC) - QCL(I)                                      LSPFOR2D.158   
+        QCF(I) = (1. - FL(I)) * QC                                         LSPFOR2D.159   
+!                                                                          LSPFOR2D.160   
+!-----------------------------------------------------------------------   LSPFOR2D.164   
+!  1. Perform error check on input LSCQC and LSCBS which should be able    LSPFOR2D.165   
+!     to reproduce QC. Commented out as this will stop multitasking.       AYY1F401.45    
+!-----------------------------------------------------------------------   LSPFOR2D.167   
+!----                                                                      AYY1F401.46    
+!       IF (LSCBS(I) .LT. 0.) THEN                                         AYY1F401.47    
+!-------Should equal RMDI indicating no cloud = no cloud distribution---   AYY1F401.48    
+!        IF (QC .GT. 0.) WRITE(6,*) '%Error @ ',I,'QC: ',QC,':',LSCBS(I)   AYY1F401.49    
+!         QCERR = 0.0                                                      AYY1F401.50    
+!       ELSE                                                               AYY1F401.51    
+!         IF (LSCQC(I) .LE. 0.) THEN                                       AYY1F401.52    
+!           QSUM = LSCQC(I) + LSCBS(I)                                     AYY1F401.53    
+!           QCERR = QSUM * QSUM * QSUM / (6. * LSCBS(I) * LSCBS(I))        AYY1F401.54    
+!         ELSEIF (0. .LT. LSCQC(I) .AND. LSCQC(I) .LT. LSCBS(I)) THEN      AYY1F401.55    
+!           QSUM = LSCQC(I) + LSCBS(I)                                     AYY1F401.56    
+!           QCERR = ((QSUM*QSUM*QSUM) - (2.*LSCQC(I)*LSCQC(I)*LSCQC(I)))   AYY1F401.57    
+!    &              / (6. * LSCBS(I) * LSCBS(I))                           AYY1F401.58    
+!         ELSE   ! LSCQC(I) .GE. LSCBS(I)                                  AYY1F401.59    
+!           QCERR = LSCQC(I)                                               AYY1F401.60    
+!         ENDIF  ! LSC_QC ranges                                           AYY1F401.61    
+!----                                                                      AYY1F401.62    
+!         IF (QC .LE. 0.) THEN                                             AYY1F401.63    
+!---------Might happen due to rounding errors. Large discrepancy would     AYY1F401.64    
+!---------indicate inconsistency: cloud distribution won't be used tho'.   AYY1F401.65    
+!           WRITE (6,*) '%QC @ ',I,' : ',QC,' /= QCERR ',QCERR             AYY1F401.66    
+!         ELSEIF (((QCERR/QC)-1.) * ((QCERR/QC)-1.) .GT. 1.0E-18) THEN     AYY1F401.67    
+!-------Only serious if discrepancy is above bit resolution error level-   AYY1F401.68    
+!---------(Needs to be set for given machine)---------------------------   AYY1F401.69    
+!           IF (QC .GT. 1.0E-18) THEN                                      AYY1F401.70    
+!             WRITE (6,*) '%CAUTION @ ',I,' : QC ',QC,' /= QCERR ',QCERR   AYY1F401.71    
+!           ENDIF                                                          AYY1F401.72    
+!         ENDIF ! Qc le 0                                                  AYY1F401.73    
+!       ENDIF  ! LSC_bs missing data                                       AYY1F401.74    
+!-----------------------------------------------------------------------   LSPFOR2D.193   
+!L 2. Calculate fractional rate of conversion of liquid cloud water to     LSPFOR2D.194   
+!L    precipitation.                                                       LSPFOR2D.195   
+!     Store in RCL.                                                        LSPFOR2D.196   
+!-----------------------------------------------------------------------   LSPFOR2D.197   
+!                                                                          LSPFOR2D.198   
+!  (a) Calculate density of air, RHO, via virtual temperature.             LSPFOR2D.199   
+!                                                                          LSPFOR2D.200   
+        VTEMP=T(I)*(1.+C_VIRTUAL*Q(I)-QC)      ! Virtual temperature       LSPFOR2D.201   
+        RHO=P(I)/(R*VTEMP)                                                 LSPFOR2D.202   
+!                                                                          LSPFOR2D.203   
+!  (b) Calculate P/CA.  Store in RCL.                                      LSPFOR2D.204   
+!                                                                          LSPFOR2D.205   
+        RCL=(RAIN(I)+SNOW(I))/CA                                           LSPFOR2D.206   
+!                                                                          LSPFOR2D.207   
+!  (c) Calculate term based on moisture distribution in gridbox as long    LSPFOR2D.208   
+!      as there is cloud present (QC from LS_CLD > -bs). Total qC used.    LSPFOR2D.209   
+!      (Also initialise variable calculated in sect 3 below, q.v.)         LSPFOR2D.210   
+!                                                                          LSPFOR2D.211   
+        VFRDZ=0.0                                                          LSPFOR2D.212   
+!                                                                          LSPFOR2D.213   
+        IF ((QC * LSCBS(I) * LSCBS(I)) .GT. 0.0) THEN                      AYY1F405.4     
+!       ie. cloud water content > 0                                        AYY1F405.5     
+! NB:QC LE 0 or ((-LSCBS(I)) .GE. LSCQC(I)) => leave RCL, RCF unchanged.   LSPFOR2D.215   
+!                                                                          AYY1F401.75    
+          QSUM = LSCQC(I) + LSCBS(I)                                       AYY1F401.76    
+          QDIF = LSCQC(I) - LSCBS(I)                                       AYY1F401.77    
+!                                                                          LSPFOR2D.216   
+          IF (BLAND(I)) THEN                                               LSPFOR2D.217   
+            CW=CW_LAND                                                     LSPFOR2D.218   
+          ELSE                                                             LSPFOR2D.219   
+            CW=CW_SEA                                                      LSPFOR2D.220   
+          ENDIF                                                            LSPFOR2D.221   
+!                                                                          LSPFOR2D.222   
+          NORCT= CW / RHO                                                  LSPFOR2D.223   
+          NORCT= 0.5 * CT * NORCT * NORCT * NORCT / (QC * LSCBS(I)         LSPFOR2D.224   
+     &               * LSCBS(I))                                           LSPFOR2D.225   
+!                                                                          LSPFOR2D.226   
+          XERF = (RHO * QSUM / CW)                                         LSPFOR2D.227   
+*CALL ERF_LSP                                                              LSPFOR2D.228   
+          NERF_SUM = ERF_LSP                                               LSPFOR2D.229   
+!                                                                          LSPFOR2D.230   
+!         Note 1st 2 conditions = .FALSE. if Bs = 0.                       LSPFOR2D.231   
+!                                                                          LSPFOR2D.232   
+          IF((- LSCBS(I)) .LT. LSCQC(I) .AND. LSCQC(I) .LE. 0.0) THEN      LSPFOR2D.233   
+            RCL=RCL + (NORCT * NERF_SUM)                                   LSPFOR2D.234   
+!   UMDP26 Eq(P26.53) ... -bs < Qc <= 0.                                   LSPFOR2D.235   
+          ELSEIF(0.0 .LT. LSCQC(I)  .AND.  LSCQC(I) .LT. LSCBS(I)) THEN    LSPFOR2D.236   
+            XERF = (LSCQC(I) * RHO / CW)                                   LSPFOR2D.237   
+*CALL ERF_LSP                                                              LSPFOR2D.238   
+            RCL=RCL + (NORCT * (NERF_SUM - (2. * ERF_LSP)) )               LSPFOR2D.239   
+!   UMDP26 Eq(P26.53) ... 0 < Qc < bs.                                     LSPFOR2D.240   
+          ELSEIF(LSCBS(I) .LE. LSCQC(I)) THEN                              LSPFOR2D.241   
+            XERF = (RHO * QDIF / CW)                                       LSPFOR2D.242   
+*CALL ERF_LSP                                                              LSPFOR2D.243   
+            NERF_DIF = ERF_LSP                                             LSPFOR2D.244   
+!                                                                          LSPFOR2D.245   
+            XERF = (LSCQC(I) * RHO / CW)                                   LSPFOR2D.246   
+*CALL ERF_LSP                                                              LSPFOR2D.247   
+!                                                                          LSPFOR2D.248   
+            RCL=RCL + (NORCT * (NERF_SUM - (2. * ERF_LSP) + NERF_DIF) )    LSPFOR2D.249   
+!   UMDP26 Eq(P26.53) ... bs <= Qc.                                        LSPFOR2D.250   
+          ENDIF ! QC conditions for rain calculation.                      LSPFOR2D.251   
+!                                                                          LSPFOR2D.252   
+!-----------------------------------------------------------------------   LSPFOR2D.253   
+!L 3. Calculate ice particle fall-out speed VFALL (eq P26.33), divided     LSPFOR2D.254   
+!L    by layer depth dz (metres), again assuming moisture distribution     LSPFOR2D.255   
+!L    across gridbox, with local mean LSCQC and fluctuation LSCBS.         LSPFOR2D.256   
+!-----------------------------------------------------------------------   LSPFOR2D.257   
+!      Store VFALL/dz in VFRDZ. Note use of RHO/RHODZ for 1/dz.            LSPFOR2D.258   
+!                                                                          LSPFOR2D.259   
+          VFRDZ=VF1*((RHO/PCF)**VFPOWER)/((2.+VFPOWER)*(3.+VFPOWER))       LSPFOR2D.260   
+          VFRDZ=VFRDZ*RHO/(RHODZ(I)*QC*LSCBS(I)*LSCBS(I))                  LSPFOR2D.261   
+!      We have already said IF(LSCQC(I) .GT. (-1*LSCBS(I)) ), so           LSPFOR2D.262   
+          IF(LSCQC(I) .LE. 0.0) THEN                                       LSPFOR2D.263   
+            VFRDZ=VFRDZ*(QSUM**(3.+VFPOWER))                               LSPFOR2D.264   
+!   UMDP26 Eq(P26.55) ... -bs < Qc <= 0.                                   LSPFOR2D.265   
+          ELSEIF(0.0 .LT. LSCQC(I) .AND. LSCQC(I) .LE. LSCBS(I)) THEN      LSPFOR2D.266   
+        VFRDZ=VFRDZ*((QSUM**(3.+VFPOWER))-(2.*(LSCQC(I)**(3.+VFPOWER))))   LSPFOR2D.267   
+!   UMDP26 Eq(P26.55) ... 0 < Qc <= bs.                                    LSPFOR2D.268   
+          ELSE ! Lscbs(I) .LT. lscqc(I)                                    LSPFOR2D.269   
+        VFRDZ=VFRDZ*((QSUM**(3.+VFPOWER))-(2.*(LSCQC(I)**(3.+VFPOWER)))    LSPFOR2D.270   
+     &      + ((LSCQC(I)-LSCBS(I))**(3.+VFPOWER)))                         LSPFOR2D.271   
+!   UMDP26 Eq(P26.55) ... bs < Qc.                                         LSPFOR2D.272   
+          ENDIF ! QC conditions for ice calculation.                       LSPFOR2D.273   
+        ENDIF ! Cloud water content > 0                                    LSPFOR2D.274   
+!                                                                          LSPFOR2D.275   
+!-----------------------------------------------------------------------   LSPFOR2D.276   
+!L 4. Calculate fraction of snow falling like water and adjust snow flux   LSPFOR2D.277   
+!L    to that of snow falling as ice.                                      LSPFOR2D.278   
+!-----------------------------------------------------------------------   LSPFOR2D.279   
+        DELTA_SNOW=F_DELTA_SNOW(I)*SNOW(I)                                 LSPFOR2D.280   
+        SNOW(I)=(1.-F_DELTA_SNOW(I))*SNOW(I)                               LSPFOR2D.281   
+!                                                                          LSPFOR2D.282   
+!-----------------------------------------------------------------------   LSPFOR2D.283   
+!L 5. Calculate ice water content and frozen water precipitation flux.     LSPFOR2D.284   
+!L    Distinguish short timestep and long timestep icefall cases on        LSPFOR2D.285   
+!L    basis of VFALL(I) from layer above (at this stage of routine).       LSPFOR2D.286   
+!-----------------------------------------------------------------------   LSPFOR2D.287   
+!                                                                          LSPFOR2D.288   
+        IF ((VFALL(I) * TIMESTEP) .LE. (RHODZ(I) / RHO)) THEN              LSPFOR2D.289   
+!-----------------------------------------------------------------------   LSPFOR2D.290   
+!       SHORT Timestep case (also no precip falling in from above)         LSPFOR2D.291   
+!-----------------------------------------------------------------------   LSPFOR2D.292   
+!                                                                          LSPFOR2D.293   
+          VFALL(I) = VFRDZ * RHODZ(I) / RHO                                LSPFOR2D.294   
+          IF ((VFALL(I) * TIMESTEP) .LE. (RHODZ(I) / RHO)) THEN            LSPFOR2D.295   
+            RCF = QCF(I) * RHO * VFALL(I)                                  LSPFOR2D.296   
+          ELSE                                                             LSPFOR2D.297   
+!         Cannot allow more ice to leave than was already there---------   LSPFOR2D.298   
+            RCF = QCF(I) * RHODZ(I) / TIMESTEP                             LSPFOR2D.299   
+          ENDIF                                                            LSPFOR2D.300   
+          QCF(I) = QCF(I) + (TIMESTEP * (SNOW(I) - RCF) / RHODZ(I))        LSPFOR2D.301   
+!                                                                          LSPFOR2D.302   
+        ELSE                                                               LSPFOR2D.303   
+!-----------------------------------------------------------------------   LSPFOR2D.304   
+!       LONG Timestep case                                                 LSPFOR2D.305   
+!-----------------------------------------------------------------------   LSPFOR2D.306   
+!                                                                          LSPFOR2D.307   
+          QCF_U = SNOW(I) / (RHO * VFALL(I))                               LSPFOR2D.308   
+!                                                                          LSPFOR2D.309   
+          RCF = SNOW(I) - (RHODZ(I) * (QCF_U - QCF(I)) / TIMESTEP)         LSPFOR2D.310   
+!         IF (RCF .LT. 0.)  THEN  ! Cannot, due to long TS condition       LSPFOR2D.311   
+          QCF(I) = QCF_U                                                   LSPFOR2D.312   
+          IF (VFALL(I) .LT. (VFRDZ * RHODZ(I) / RHO)) VFALL(I) = VFRDZ *   LSPFOR2D.313   
+     &                                                    RHODZ(I) / RHO   LSPFOR2D.314   
+        ENDIF  ! VFALL * Timestep =< Rhodz / Rho                           LSPFOR2D.315   
+!                                                                          LSPFOR2D.316   
+!-----------------------------------------------------------------------   LSPFOR2D.317   
+!L 6. Update cloud water components (QCL, DELTA) as per eqn P26.36.        LSPFOR2D.318   
+!     Note use of TIMESTEP to integrate changes over the timestep.         LSPFOR2D.319   
+!-----------------------------------------------------------------------   LSPFOR2D.320   
+!                                                                          LSPFOR2D.321   
+        QCL(I)=QCL(I)/(1.0+TIMESTEP*RCL)                                   LSPFOR2D.322   
+        DELTA=DELTA/(1.0+TIMESTEP*RCL)                                     LSPFOR2D.323   
+!                                                                          LSPFOR2D.324   
+!-----------------------------------------------------------------------   LSPFOR2D.325   
+!L 7. Increase rates of rain- and snowfall (in kg per sq m per sec), as    LSPFOR2D.326   
+!L    per eqs P26.38, 39.                                                  LSPFOR2D.327   
+!-----------------------------------------------------------------------   LSPFOR2D.328   
+!                                                                          LSPFOR2D.329   
+        RAIN(I)=RAIN(I) + RHODZ(I)*RCL*QCL(I)                              LSPFOR2D.330   
+        DELTA_SNOW=DELTA_SNOW+RHODZ(I)*RCL*DELTA                           LSPFOR2D.331   
+        SNOW(I) = RCF + DELTA_SNOW                                         LSPFOR2D.332   
+!                                                                          LSPFOR2D.333   
+!-----------------------------------------------------------------------   LSPFOR2D.334   
+!L 8. Remember fraction of SNOW from DELTA so that it can be allowed       LSPFOR2D.335   
+!L    not to fall into the next layer.                                     LSPFOR2D.336   
+!L    Update QCF.                                                          LSPFOR2D.337   
+!-----------------------------------------------------------------------   LSPFOR2D.338   
+!                                                                          LSPFOR2D.339   
+        IF (SNOW(I).GT.0.0) THEN                                           LSPFOR2D.340   
+          F_DELTA_SNOW(I)=DELTA_SNOW/SNOW(I)                               LSPFOR2D.341   
+        ELSE                                                               LSPFOR2D.342   
+          F_DELTA_SNOW(I)=0.0                                              LSPFOR2D.343   
+        ENDIF                                                              LSPFOR2D.344   
+!                                                                          LSPFOR2D.345   
+        QCF(I)=QCF(I) + DELTA                                              LSPFOR2D.346   
+!                                                                          LSPFOR2D.347   
+      END DO ! Loop over points                                            LSPFOR2D.348   
+!                                                                          LSPFOR2D.349   
+      RETURN                                                               LSPFOR2D.350   
+      END                                                                  LSPFOR2D.351   
+*ENDIF                                                                     LSPFOR2D.352   

@@ -1,0 +1,487 @@
+*IF DEF,A71_1A,AND,DEF,ATMOS                                               GLW1F404.30    
+C ******************************COPYRIGHT******************************    GTS2F400.2989  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.2990  
+C                                                                          GTS2F400.2991  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.2992  
+C restrictions as set forth in the contract.                               GTS2F400.2993  
+C                                                                          GTS2F400.2994  
+C                Meteorological Office                                     GTS2F400.2995  
+C                London Road                                               GTS2F400.2996  
+C                BRACKNELL                                                 GTS2F400.2997  
+C                Berkshire UK                                              GTS2F400.2998  
+C                RG12 2SZ                                                  GTS2F400.2999  
+C                                                                          GTS2F400.3000  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.3001  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.3002  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.3003  
+C Modelling at the above address.                                          GTS2F400.3004  
+C ******************************COPYRIGHT******************************    GTS2F400.3005  
+C                                                                          GTS2F400.3006  
+CLL  SUBROUTINES FLDSTAT AND FLDDIAG ---------------------------------     FLDSTAT1.3     
+CLL                                                                        FLDSTAT1.4     
+CLL  PURPOSE:                                                              FLDSTAT1.5     
+CLL   CALCULATE VALUES OF increments of T,RH,U,V between timesteps         FLDSTAT1.6     
+CLL                FLDDIAG:                                                FLDSTAT1.7     
+CLL   PRINT VALUES OF max,min increments of T,RH,U,V between timesteps     FLDSTAT1.8     
+CLL                                                                        FLDSTAT1.9     
+CLL  MODIFIED VERSION OF FLDDIAG FOR CRAY Y-MP BASED ON                    FLDSTAT1.10    
+CLL  EARLIER ROUTINE BY S.BELL WRITTEN BY F. RAWLINS                       FLDSTAT1.11    
+CLL                                                                        FLDSTAT1.12    
+CLL  SUITABLE FOR ROTATED GRIDS                                            FLDSTAT1.13    
+CLL                                                                        FLDSTAT1.14    
+CLL RR / DR     <- PROGRAMMER OF SOME OR ALL OF PREVIOUS CODE OR CHANGES   FLDSTAT1.15    
+CLL                                                                        FLDSTAT1.16    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         FLDSTAT1.17    
+CLL VERSION  DATE                                                          FLDSTAT1.18    
+CLL 4.2  8 Jan 97  Changes for MPP. Gather domains from each pe to         ARR1F402.1     
+CLL                provide full global fields on pe0 to be written         ARR1F402.2     
+CLL                and read from disk files (1 per pe). R.Rawlins          ARR1F402.3     
+CLL 4.3 15 May 97  Correction to 4.2 change: V increments against V        ARR0F403.40    
+CLL                instead of U. Correct RH label. R.Rawlins               ARR0F403.41    
+CLL 4.4 28 Aug 97  Change method of I/O from Fortran unformatted to        ARR0F404.48    
+Cll                C buffer streams with portable I/O, thus freeing        ARR0F404.49    
+!LL 4.5 13/01/98   Replace reference to IOVARS comdeck to ATM_LSM          GPB2F405.52    
+!LL                                                      P.Burton          GPB2F405.53    
+CLL 4.5 25 Mar 98  Change formatting of printed diagnostics to cater       ARR3F405.1     
+CLL                for 10**7 points in horizontal field (from 10**5):      ARR3F405.2     
+CLL                needed for new op. resolution. Rick Rawlins             ARR3F405.3     
+CLL                                                                        FLDSTAT1.19    
+CLL  PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 5,        FLDSTAT1.20    
+CLL  VERSION 4, DATED 31/05/90                                             FLDSTAT1.21    
+CLL                                                                        FLDSTAT1.22    
+CLL  SYSTEM TASK: increment diagnostics  D67                               FLDSTAT1.23    
+CLL                                                                        FLDSTAT1.24    
+CLL  DOCUMENTATION:        None                                            FLDSTAT1.25    
+CLL                                                                        FLDSTAT1.26    
+CLLEND-------------------------------------------------------------        FLDSTAT1.27    
+                                                                           FLDSTAT1.28    
+      SUBROUTINE FLDSTAT (NUP,NRP,ILENP,JLENP,LENTHP,LENUVP,KSTEP,         FLDSTAT1.29    
+     +                    AK,BK,AKH,BKH,P_EXNER,                           FLDSTAT1.30    
+     +                    PSTAR,TH,Q,U,V,                                  FLDSTAT1.31    
+     &                    LTHETA,PRFLD_STEP,PRFLD_FIRST,PRFLD_LAST,        ARR0F404.51    
+     &                    NDEV_FLD,LEN_FLD_FILENAME,FLD_FILENAME)          ARR0F404.52    
+C                                                                          FLDSTAT1.33    
+C FLDSTAT   GETS STATS FOR MEANS/MAX/MIN OF PROGNOSTIC VARIABLES           FLDSTAT1.34    
+C           PLUS STATS ON CHANGE SINCE LAST TIMESTEP                       FLDSTAT1.35    
+C           IT CALLS FLDDIAG AND ALSO DOES I/O TO UNIT NDEV_FLD            ARR0F404.53    
+C*                                                                         FLDSTAT1.37    
+      IMPLICIT NONE                                                        FLDSTAT1.38    
+                                                                           FLDSTAT1.39    
+      EXTERNAL FLDDIAG,QSAT                                                FLDSTAT1.40    
+C                                                                          FLDSTAT1.41    
+C*L  ARGUMENTS:---------------------------------------------------         FLDSTAT1.42    
+                                                                           FLDSTAT1.43    
+      INTEGER                                                              FLDSTAT1.44    
+     +      NUP,                  ! (IN) TOTAL NUMBER OF LEVELS            FLDSTAT1.45    
+     +      NRP,                  ! (IN) NUMBER OF WET LEVELS              FLDSTAT1.46    
+     +      ILENP,                ! (IN) NUMBER OF POINTS ON ROW           FLDSTAT1.47    
+     +      JLENP,                ! (IN) NUMBER OF ROWS                    FLDSTAT1.48    
+     +      LENTHP,               ! (IN) NUMBER OF POINTS IN MASS FIELD    FLDSTAT1.49    
+     +      LENUVP,               ! (IN) NUMBER OF POINTS IN WIND FIELD    FLDSTAT1.50    
+     +      KSTEP,                ! (IN) CURRENT MODEL TIMESTEP            FLDSTAT1.51    
+     +      PRFLD_STEP,           ! (IN) STEP INTERVAL FOR PRINTING        FLDSTAT1.52    
+     +      PRFLD_FIRST,          ! (IN) FIRST STEP    FOR PRINTING        FLDSTAT1.53    
+     &      PRFLD_LAST,           ! (IN) LAST STEP     FOR PRINTING        ARR0F404.54    
+     &      NDEV_FLD,             ! (IN) OUTPUT DEVICE NUMBER              ARR0F404.55    
+     &      LEN_FLD_FILENAME      ! (IN) Filename length of NDEV_FLD       ARR0F404.56    
+                                                                           ARR0F404.57    
+      CHARACTER*80 FLD_FILENAME   ! (IN) Filename of NDEV_FLD file         ARR0F404.58    
+                                                                           ARR0F404.59    
+      LOGICAL                                                              FLDSTAT1.55    
+     +     LTHETA                      ! (IN) THETA OR TEMPERATURE         FLDSTAT1.56    
+      REAL                                                                 FLDSTAT1.57    
+     +     AK(NUP),BK(NUP),            ! (IN) HYBRID CO-ORDS - full levs   FLDSTAT1.58    
+     +     AKH(NUP+1),BKH(NUP+1),      ! (IN) HYBRID CO-ORDS - 1/2 levs    FLDSTAT1.59    
+     +     P_EXNER(LENTHP,NUP+1),      ! (IN) EXNER PRESSURE               FLDSTAT1.60    
+     +     PSTAR(LENTHP),              ! (IN) PROG VARIABLE PSTAR          FLDSTAT1.61    
+     +     TH   (LENTHP,NUP),          ! (IN) THETA  (LTHETA=.T. OR        FLDSTAT1.62    
+C                                        TEMPERATURE (LTHETA=.F.)          FLDSTAT1.63    
+     +     Q    (LENTHP,NRP),          ! (IN) PROG VARIABLE Q              FLDSTAT1.64    
+     +     U    (LENUVP,NUP),          ! (IN) PROG VARIABLE U              FLDSTAT1.65    
+     +     V    (LENUVP,NUP)           ! (IN) PROG VARIABLE V              FLDSTAT1.66    
+                                                                           FLDSTAT1.67    
+*CALL DECOMPTP                                                             ARR1F402.4     
+*CALL PARVARS                                                              ARR1F402.5     
+*CALL AMAXSIZE                                                             ARR1F402.6     
+*CALL ATM_LSM                                                              GPB2F405.54    
+*CALL CENVIR                                                               ARR0F404.60    
+*CALL C_R_CP                                                               ARR0F404.61    
+*CALL P_EXNERC                                                             ARR0F404.62    
+                                                                           ARR0F404.63    
+C*L  WORKSPACE USAGE:-------------------------------------------------     FLDSTAT1.68    
+C DYNAMIC SPACE FOR LAST TIMESTEP PROGNOSTIC VARIABLES                     FLDSTAT1.69    
+      REAL WORKPTR(LENTHP),WORKUV(LENUVP),                                 FLDSTAT1.70    
+     +     P    (LENTHP),             ! WORKSPACE FOR PRESSURE             FLDSTAT1.71    
+     +     T    (LENTHP,NUP),         ! WORKSPACE FOR TEMPERATURE          FLDSTAT1.72    
+     +     RH   (LENTHP,NRP)          ! WORKSPACE FOR RELATIVE HUMIDITY    FLDSTAT1.73    
+*IF DEF,MPP                                                                ARR1F402.8     
+      REAL WORK_FULL(glsize(1)*glsize(2))                                  ARR1F402.9     
+     &    ,WORKPTR_FULL(glsize(1)*glsize(2))                               ARR1F402.10    
+*ENDIF                                                                     ARR1F402.11    
+      INTEGER                                                              ARR1F402.12    
+     &     gather_pe                                                       ARR1F402.13    
+     &    ,info       ! return code for MPP gather                         ARR1F402.14    
+                                                                           ARR1F402.15    
+                                                                           FLDSTAT1.74    
+      INTEGER LEV,                    ! LEVEL COUNTER                      FLDSTAT1.75    
+     &        I,                      ! POINT COUNTER                      ARR0F404.64    
+     &        ICODE,                  ! ERROR RETURN CODE FROM I/O         ARR0F404.65    
+     &        LEN_IO,                 ! I/O LENGTH RETURNED FROM I/O       ARR0F404.66    
+     &        IPOS                    ! I/O POINTER                        ARR0F404.67    
+                                                                           FLDSTAT1.78    
+      REAL PLEV,PLEVP1                ! Pressures at half levels           FLDSTAT1.79    
+                                      ! LEV and LEV+1                      FLDSTAT1.80    
+      REAL P_EXNER_FULL               ! Exner pressure at full model       FLDSTAT1.81    
+                                      ! levels.                            FLDSTAT1.82    
+      REAL A_IO                       ! Error return from buffer i/o       ARR0F404.68    
+                                                                           FLDSTAT1.83    
+      LOGICAL FIRST                   ! FIRST TIME THROUGH CODE?           FLDSTAT1.84    
+      DATA FIRST /.TRUE./                                                  FLDSTAT1.85    
+      SAVE FIRST                                                           ARR0F404.69    
+                                                                           ARR1F402.16    
+      gather_pe=0     ! only PE 0 for MPP gathering                        ARR1F402.17    
+                                                                           FLDSTAT1.91    
+C  (  THE LOGICAL DEVICE IS OPENED AT TOP LEVEL IN ROUTINE INITIAL)        FLDSTAT1.92    
+                                                                           ARR0F404.70    
+CL                                                                         FLDSTAT1.94    
+CL GET TEMPERATURE OF EACH LEVEL                                           FLDSTAT1.95    
+CL                                                                         FLDSTAT1.96    
+      DO LEV=1,NUP                                                         FLDSTAT1.97    
+      IF(LTHETA) THEN                                                      FLDSTAT1.98    
+         DO I=1,LENTHP                                                     FLDSTAT1.99    
+         PLEVP1 = AKH(LEV+1) + BKH(LEV+1)*PSTAR(I)                         FLDSTAT1.100   
+         PLEV   = AKH(LEV)   + BKH(LEV)  *PSTAR(I)                         FLDSTAT1.101   
+         P_EXNER_FULL = P_EXNER_C                                          FLDSTAT1.102   
+     +   (P_EXNER(I,LEV+1),P_EXNER(I,LEV),PLEVP1,PLEV,KAPPA)               FLDSTAT1.103   
+         T(I,LEV) = TH(I,LEV) * P_EXNER_FULL                               FLDSTAT1.104   
+         ENDDO                                                             FLDSTAT1.105   
+      ELSE                                                                 FLDSTAT1.106   
+         DO I=1,LENTHP                                                     FLDSTAT1.107   
+         T(I,LEV)=TH(I,LEV)                                                FLDSTAT1.108   
+         ENDDO                                                             FLDSTAT1.109   
+      ENDIF                                                                FLDSTAT1.110   
+      ENDDO                                                                FLDSTAT1.111   
+CL                                                                         FLDSTAT1.112   
+CL GET RELATIVE HUMIDITY FOR EACH LEVEL                                    FLDSTAT1.113   
+CL                                                                         FLDSTAT1.114   
+      DO LEV=1,NRP                                                         FLDSTAT1.115   
+        DO I=1,LENTHP                                                      FLDSTAT1.116   
+        P(I)=AK(LEV) + BK(LEV)*PSTAR(I)                                    FLDSTAT1.117   
+        ENDDO                                                              FLDSTAT1.118   
+        CALL QSAT(WORKPTR,T(1,LEV),P,LENTHP)                               FLDSTAT1.119   
+        DO I=1,LENTHP                                                      FLDSTAT1.120   
+        RH(I,LEV)=Q(I,LEV)/WORKPTR(I)*100.0                                FLDSTAT1.121   
+        ENDDO                                                              FLDSTAT1.122   
+      ENDDO                                                                FLDSTAT1.123   
+                                                                           FLDSTAT1.124   
+      IF(FIRST)THEN                                                        FLDSTAT1.125   
+         FIRST=.FALSE.                                                     FLDSTAT1.126   
+         WRITE(6,*) ' First call to FLDSTAT at step ',KSTEP                ARR0F404.71    
+      ELSE                                                                 FLDSTAT1.128   
+CL                                                                         FLDSTAT1.129   
+CL READ PREVIOUS TIMESTEP AND CALL FLDDIAG TO GET STATS                    FLDSTAT1.130   
+CL                                                                         FLDSTAT1.131   
+       IF(MOD(KSTEP-PRFLD_FIRST,PRFLD_STEP).EQ.0) THEN                     FLDSTAT1.132   
+          IPOS=0                ! Point to start of file                   ARR0F404.72    
+*IF DEF,MPP                                                                ARR1F402.18    
+          CALL SETPOS_SINGLE(NDEV_FLD,IPOS,ICODE)                          ARR0F404.73    
+          CALL BUFFIN_SINGLE(NDEV_FLD,WORKPTR,LENTHP,LEN_IO,A_IO)          ARR0F404.74    
+                                                                           ARR0F404.75    
+           CALL GATHER_FIELD(PSTAR,WORK_FULL,                              ARR1F402.19    
+     &          lasize(1),lasize(2),glsize(1),glsize(2),                   ARR1F402.20    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.21    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.22    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of PSTAR'        ARR1F402.23    
+           ENDIF                                                           ARR1F402.24    
+           CALL GATHER_FIELD(WORKPTR,WORKPTR_FULL,                         ARR1F402.25    
+     &          lasize(1),lasize(2),glsize(1),glsize(2),                   ARR1F402.26    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.27    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.28    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of PSTAR work'   ARR1F402.29    
+           ENDIF                                                           ARR1F402.30    
+                                                                           ARR1F402.31    
+           IF(mype.eq.gather_pe) THEN                                      ARR1F402.32    
+              CALL FLDDIAG(WORK_FULL,WORKPTR_FULL,KSTEP,                   ARR1F402.33    
+     &            glsize(1)*glsize(2),     1,' PSTAR ')                    ARR1F402.34    
+           ENDIF    ! test on gather PE                                    ARR1F402.35    
+*ELSE                                                                      ARR1F402.36    
+           CALL SETPOS(NDEV_FLD,IPOS,ICODE)                                ARR0F404.76    
+           CALL BUFFIN(NDEV_FLD,WORKPTR,LENTHP,LEN_IO,A_IO)                ARR0F404.77    
+           CALL FLDDIAG(PSTAR   ,WORKPTR,KSTEP,LENTHP,    1,' PSTAR ')     ARR1F402.37    
+*ENDIF                                                                     ARR1F402.38    
+          DO 10 LEV=1,NUP                                                  FLDSTAT1.136   
+*IF DEF,MPP                                                                ARR1F402.39    
+           CALL BUFFIN_SINGLE(NDEV_FLD,WORKPTR,LENTHP,LEN_IO,A_IO)         ARR0F404.78    
+           CALL GATHER_FIELD(T(1,LEV),WORK_FULL,                           ARR1F402.40    
+     &          lasize(1),lasize(2),glsize(1),glsize(2),                   ARR1F402.41    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.42    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.43    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of T'            ARR1F402.44    
+           ENDIF                                                           ARR1F402.45    
+           CALL GATHER_FIELD(WORKPTR,WORKPTR_FULL,                         ARR1F402.46    
+     &          lasize(1),lasize(2),glsize(1),glsize(2),                   ARR1F402.47    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.48    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.49    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of T work'       ARR1F402.50    
+           ENDIF                                                           ARR1F402.51    
+                                                                           ARR1F402.52    
+           IF(mype.eq.gather_pe) THEN                                      ARR1F402.53    
+              CALL FLDDIAG(WORK_FULL,WORKPTR_FULL,KSTEP,                   ARR1F402.54    
+     &            glsize(1)*glsize(2),   LEV,' T     ')                    ARR1F402.55    
+           ENDIF    ! test on gather PE                                    ARR1F402.56    
+*ELSE                                                                      ARR1F402.57    
+           CALL BUFFIN(NDEV_FLD,WORKPTR,LENTHP,LEN_IO,A_IO)                ARR0F404.79    
+           CALL FLDDIAG(T(1,LEV),WORKPTR,KSTEP,LENTHP,  LEV,' T     ')     ARR1F402.58    
+*ENDIF                                                                     ARR1F402.59    
+10        CONTINUE                                                         FLDSTAT1.139   
+          DO 11 LEV=1,NRP                                                  FLDSTAT1.140   
+*IF DEF,MPP                                                                ARR1F402.60    
+           CALL BUFFIN_SINGLE(NDEV_FLD,WORKPTR,LENTHP,LEN_IO,A_IO)         ARR0F404.80    
+           CALL GATHER_FIELD(RH(1,LEV),WORK_FULL,                          ARR1F402.61    
+     &          lasize(1),lasize(2),glsize(1),glsize(2),                   ARR1F402.62    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.63    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.64    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of RH'           ARR1F402.65    
+           ENDIF                                                           ARR1F402.66    
+           CALL GATHER_FIELD(WORKPTR,WORKPTR_FULL,                         ARR1F402.67    
+     &          lasize(1),lasize(2),glsize(1),glsize(2),                   ARR1F402.68    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.69    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.70    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of RH work'      ARR1F402.71    
+           ENDIF                                                           ARR1F402.72    
+                                                                           ARR1F402.73    
+           IF(mype.eq.gather_pe) THEN                                      ARR1F402.74    
+              CALL FLDDIAG(WORK_FULL,WORKPTR_FULL,KSTEP,                   ARR1F402.75    
+     &            glsize(1)*glsize(2),   LEV,' RH    ')                    ARR0F403.42    
+           ENDIF    ! test on gather PE                                    ARR1F402.77    
+*ELSE                                                                      ARR1F402.78    
+           CALL BUFFIN(NDEV_FLD,WORKPTR,LENTHP,LEN_IO,A_IO)                ARR0F404.81    
+           CALL FLDDIAG(RH(1,LEV),WORKPTR,KSTEP,LENTHP,  LEV,' RH    ')    ARR1F402.79    
+*ENDIF                                                                     ARR1F402.80    
+11        CONTINUE                                                         FLDSTAT1.143   
+          DO 12 LEV=1,NUP                                                  FLDSTAT1.144   
+*IF DEF,MPP                                                                ARR1F402.81    
+           CALL BUFFIN_SINGLE(NDEV_FLD,WORKUV,LENUVP,LEN_IO,A_IO)          ARR0F404.82    
+           CALL GATHER_FIELD(U(1,LEV),WORK_FULL,                           ARR1F402.82    
+     &          lasize(1),lasize(2),glsize(1),glsize(2)-1,                 ARR1F402.83    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.84    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.85    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of U'            ARR1F402.86    
+           ENDIF                                                           ARR1F402.87    
+           CALL GATHER_FIELD(WORKUV ,WORKPTR_FULL,                         ARR1F402.88    
+     &          lasize(1),lasize(2),glsize(1),glsize(2)-1,                 ARR1F402.89    
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.90    
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.91    
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of U work'       ARR1F402.92    
+           ENDIF                                                           ARR1F402.93    
+                                                                           ARR1F402.94    
+           IF(mype.eq.gather_pe) THEN                                      ARR1F402.95    
+              CALL FLDDIAG(WORK_FULL,WORKPTR_FULL,KSTEP,                   ARR1F402.96    
+     &            glsize(1)*(glsize(2)-1),   LEV,' U     ')                ARR1F402.97    
+           ENDIF    ! test on gather PE                                    ARR1F402.98    
+*ELSE                                                                      ARR1F402.99    
+           CALL BUFFIN(NDEV_FLD,WORKUV,LENUVP,LEN_IO,A_IO)                 ARR0F404.83    
+           CALL FLDDIAG(U(1,LEV),WORKUV ,KSTEP,LENUVP,  LEV,' U     ')     ARR1F402.100   
+*ENDIF                                                                     ARR1F402.101   
+12        CONTINUE                                                         FLDSTAT1.147   
+          DO 13 LEV=1,NUP                                                  FLDSTAT1.148   
+*IF DEF,MPP                                                                ARR1F402.102   
+           CALL BUFFIN_SINGLE(NDEV_FLD,WORKUV,LENUVP,LEN_IO,A_IO)          ARR0F404.84    
+           CALL GATHER_FIELD(V(1,LEV),WORK_FULL,                           ARR1F402.103   
+     &          lasize(1),lasize(2),glsize(1),glsize(2)-1,                 ARR1F402.104   
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.105   
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.106   
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of V'            ARR1F402.107   
+           ENDIF                                                           ARR1F402.108   
+           CALL GATHER_FIELD(WORKUV ,WORKPTR_FULL,                         ARR1F402.109   
+     &          lasize(1),lasize(2),glsize(1),glsize(2)-1,                 ARR1F402.110   
+     &          gather_pe,GC_ALL_PROC_GROUP,info)                          ARR1F402.111   
+           IF(info.NE.0) THEN      ! Check return code                     ARR1F402.112   
+              write(6,*) 'FLDSTAT1: Error in GATHER_FIELD of V work'       ARR1F402.113   
+           ENDIF                                                           ARR1F402.114   
+                                                                           ARR1F402.115   
+           IF(mype.eq.gather_pe) THEN                                      ARR1F402.116   
+              CALL FLDDIAG(WORK_FULL,WORKPTR_FULL,KSTEP,                   ARR1F402.117   
+     &            glsize(1)*(glsize(2)-1),   LEV,' V     ')                ARR1F402.118   
+           ENDIF    ! test on gather PE                                    ARR1F402.119   
+*ELSE                                                                      ARR1F402.120   
+           CALL BUFFIN(NDEV_FLD,WORKUV,LENUVP,LEN_IO,A_IO)                 ARR0F404.85    
+           CALL FLDDIAG(V(1,LEV),WORKUV ,KSTEP,LENUVP,  LEV,' V     ')     ARR0F403.43    
+*ENDIF                                                                     ARR1F402.122   
+13        CONTINUE                                                         FLDSTAT1.151   
+       ENDIF                                                               FLDSTAT1.152   
+      ENDIF                                                                FLDSTAT1.153   
+CL                                                                         FLDSTAT1.154   
+CL CLOSE DEVICE IF LAST TIMESTEP FOR DIAGNOSTIC (AND DELETE)               ARR0F404.86    
+CL                                                                         FLDSTAT1.156   
+      IF(KSTEP.EQ.PRFLD_LAST) THEN                                         FLDSTAT1.157   
+*IF DEF,MPP                                                                ARR0F404.87    
+C   Close and delete explicit file name                                    ARR0F404.88    
+         CALL CLOSE_SINGLE(NDEV_FLD,FLD_FILENAME,                          ARR0F404.89    
+     &                    LEN_FLD_FILENAME,1,1,ICODE)                      ARR0F404.90    
+*ELSE                                                                      ARR0F404.91    
+C   Close and delete file name referenced by environment variable          ARR0F404.92    
+         CALL FILE_CLOSE(NDEV_FLD,FT_ENVIRON(NDEV_FLD),                    ARR0F404.93    
+     &                    LEN_FT_ENVIR(NDEV_FLD),0,1,ICODE)                ARR0F404.94    
+*ENDIF                                                                     ARR0F404.95    
+      ELSE                                                                 FLDSTAT1.159   
+CL                                                                         FLDSTAT1.160   
+CL SAVE THIS TIMESTEP TO TMP DISK FILE USING (UNIT NDEV_FLD)               ARR0F404.96    
+CL                                                                         FLDSTAT1.162   
+         IPOS=0                ! Point to start of file                    ARR0F404.97    
+*IF DEF,MPP                                                                ARR0F404.98    
+         CALL SETPOS_SINGLE(NDEV_FLD,IPOS,ICODE)                           ARR0F404.99    
+         CALL BUFFOUT_SINGLE(NDEV_FLD,PSTAR,LENTHP,LEN_IO,A_IO)            ARR0F404.100   
+                                                                           ARR0F404.101   
+         DO LEV=1,NUP                                                      ARR0F404.102   
+          CALL BUFFOUT_SINGLE(NDEV_FLD,T (1,LEV),LENTHP,LEN_IO,A_IO)       ARR0F404.103   
+         ENDDO ! LEV                                                       ARR0F404.104   
+         DO LEV=1,NRP                                                      ARR0F404.105   
+          CALL BUFFOUT_SINGLE(NDEV_FLD,RH (1,LEV),LENTHP,LEN_IO,A_IO)      ARR0F404.106   
+         ENDDO ! LEV                                                       ARR0F404.107   
+         DO LEV=1,NUP                                                      ARR0F404.108   
+          CALL BUFFOUT_SINGLE(NDEV_FLD,U (1,LEV),LENUVP,LEN_IO,A_IO)       ARR0F404.109   
+         ENDDO ! LEV                                                       ARR0F404.110   
+         DO LEV=1,NUP                                                      ARR0F404.111   
+          CALL BUFFOUT_SINGLE(NDEV_FLD,V (1,LEV),LENUVP,LEN_IO,A_IO)       ARR0F404.112   
+         ENDDO ! LEV                                                       ARR0F404.113   
+*ELSE                                                                      ARR0F404.114   
+         CALL SETPOS(NDEV_FLD,IPOS,ICODE)                                  ARR0F404.115   
+         CALL BUFFOUT(NDEV_FLD,PSTAR,LENTHP,LEN_IO,A_IO)                   ARR0F404.116   
+                                                                           ARR0F404.117   
+         DO LEV=1,NUP                                                      ARR0F404.118   
+          CALL BUFFOUT(NDEV_FLD,T (1,LEV),LENTHP,LEN_IO,A_IO)              ARR0F404.119   
+         ENDDO ! LEV                                                       ARR0F404.120   
+         DO LEV=1,NRP                                                      ARR0F404.121   
+          CALL BUFFOUT(NDEV_FLD,RH (1,LEV),LENTHP,LEN_IO,A_IO)             ARR0F404.122   
+         ENDDO ! LEV                                                       ARR0F404.123   
+         DO LEV=1,NUP                                                      ARR0F404.124   
+          CALL BUFFOUT(NDEV_FLD,U (1,LEV),LENUVP,LEN_IO,A_IO)              ARR0F404.125   
+         ENDDO ! LEV                                                       ARR0F404.126   
+         DO LEV=1,NUP                                                      ARR0F404.127   
+          CALL BUFFOUT(NDEV_FLD,V (1,LEV),LENUVP,LEN_IO,A_IO)              ARR0F404.128   
+         ENDDO ! LEV                                                       ARR0F404.129   
+*ENDIF                                                                     ARR0F404.130   
+      ENDIF                                                                FLDSTAT1.177   
+                                                                           FLDSTAT1.178   
+      RETURN                                                               FLDSTAT1.179   
+      END                                                                  FLDSTAT1.180   
+      SUBROUTINE FLDDIAG(THIS,LAST,KSTEP,LENP,LEV,TITLE)                   FLDSTAT1.181   
+C                                                                          FLDSTAT1.182   
+C CALC MAX MIN MEAN OF FIELD 'THIS'                                        FLDSTAT1.183   
+C &    MAX MIN MEAN AND RMS OF FIELD 'THIS' MINUS 'LAST'                   FLDSTAT1.184   
+C NO AREA WEIGHTING IS APPLIED                                             FLDSTAT1.185   
+C LOCATION OF MAX/MIN IS ALSO PRINTED                                      FLDSTAT1.186   
+                                                                           FLDSTAT1.187   
+CLL Modification                                                           NF171193.157   
+CLL vn3.3  22/11/93 : Arrays THIS and LAST were declared before LENP(N.F   NF171193.158   
+      IMPLICIT NONE                                                        FLDSTAT1.188   
+                                                                           FLDSTAT1.189   
+C                                                                          FLDSTAT1.190   
+C*L  ARGUMENTS:---------------------------------------------------         FLDSTAT1.191   
+                                                                           FLDSTAT1.192   
+      INTEGER                                                              FLDSTAT1.197   
+     +        KSTEP,            ! (IN) CURRENT TIMESTEP NO.                FLDSTAT1.198   
+     +        LENP,             ! (IN) FIELD LENGTH                        FLDSTAT1.199   
+     +        LEV               ! (IN) MODEL LEVEL                         FLDSTAT1.200   
+                                                                           FLDSTAT1.201   
+      REAL                                                                 NF171193.159   
+     +     THIS(LENP),          ! (IN) CURRENT FIELD                       NF171193.160   
+     +     LAST(LENP)           ! (IN) PREVIOUS FIELD                      NF171193.161   
+      CHARACTER*6 TITLE         ! (IN) FIELD TITLE                         FLDSTAT1.202   
+                                                                           FLDSTAT1.203   
+C                                                                          FLDSTAT1.204   
+C DYNAMIC SPACE                                                            FLDSTAT1.205   
+C                                                                          FLDSTAT1.206   
+      REAL                                                                 FLDSTAT1.207   
+     +     DIFF(LENP),                                                     FLDSTAT1.208   
+     +     AMAX,AMIN,DMAX,DMIN,AMEAN,DMEAN,DRMS                            FLDSTAT1.209   
+                                                                           FLDSTAT1.210   
+      INTEGER                                                              FLDSTAT1.211   
+     +        IPT,                     ! POINT COUNTER                     FLDSTAT1.212   
+     +        IAMAX,IAMIN,IDMAX,IDMIN  ! FIELD MAX, MIN NO.                FLDSTAT1.213   
+                                                                           FLDSTAT1.214   
+      AMAX=THIS(1)                                                         FLDSTAT1.215   
+      IAMAX=0                                                              FLDSTAT1.216   
+      DO 10 IPT=2,LENP                                                     FLDSTAT1.217   
+      IF(THIS(IPT).GT.AMAX)THEN                                            FLDSTAT1.218   
+        AMAX=THIS(IPT)                                                     FLDSTAT1.219   
+        IAMAX=IPT                                                          FLDSTAT1.220   
+      ENDIF                                                                FLDSTAT1.221   
+10    CONTINUE                                                             FLDSTAT1.222   
+                                                                           FLDSTAT1.223   
+      AMIN=THIS(1)                                                         FLDSTAT1.224   
+      IAMIN=0                                                              FLDSTAT1.225   
+      DO 11 IPT=2,LENP                                                     FLDSTAT1.226   
+      IF(THIS(IPT).LT.AMIN)THEN                                            FLDSTAT1.227   
+        AMIN=THIS(IPT)                                                     FLDSTAT1.228   
+        IAMIN=IPT                                                          FLDSTAT1.229   
+      ENDIF                                                                FLDSTAT1.230   
+11    CONTINUE                                                             FLDSTAT1.231   
+                                                                           FLDSTAT1.232   
+      DO 12 IPT=1,LENP                                                     FLDSTAT1.233   
+      DIFF(IPT)=THIS(IPT)-LAST(IPT)                                        FLDSTAT1.234   
+12    CONTINUE                                                             FLDSTAT1.235   
+                                                                           FLDSTAT1.236   
+      DMAX=DIFF(1)                                                         FLDSTAT1.237   
+      IDMAX=0                                                              FLDSTAT1.238   
+      DO 13 IPT=2,LENP                                                     FLDSTAT1.239   
+      IF(DIFF(IPT).GT.DMAX)THEN                                            FLDSTAT1.240   
+        DMAX=DIFF(IPT)                                                     FLDSTAT1.241   
+        IDMAX=IPT                                                          FLDSTAT1.242   
+      ENDIF                                                                FLDSTAT1.243   
+13    CONTINUE                                                             FLDSTAT1.244   
+                                                                           FLDSTAT1.245   
+      DMIN=DIFF(1)                                                         FLDSTAT1.246   
+      IDMIN=0                                                              FLDSTAT1.247   
+      DO 14 IPT=2,LENP                                                     FLDSTAT1.248   
+      IF(DIFF(IPT).LT.DMIN)THEN                                            FLDSTAT1.249   
+        DMIN=DIFF(IPT)                                                     FLDSTAT1.250   
+        IDMIN=IPT                                                          FLDSTAT1.251   
+      ENDIF                                                                FLDSTAT1.252   
+14    CONTINUE                                                             FLDSTAT1.253   
+                                                                           FLDSTAT1.254   
+      AMEAN=THIS(1)                                                        FLDSTAT1.255   
+      DO 15 IPT=2,LENP                                                     FLDSTAT1.256   
+      AMEAN=THIS(IPT)+AMEAN                                                FLDSTAT1.257   
+15    CONTINUE                                                             FLDSTAT1.258   
+      AMEAN=AMEAN/LENP                                                     FLDSTAT1.259   
+                                                                           FLDSTAT1.260   
+      DMEAN=DIFF(1)                                                        FLDSTAT1.261   
+      DO 16 IPT=2,LENP                                                     FLDSTAT1.262   
+      DMEAN=DIFF(IPT)+DMEAN                                                FLDSTAT1.263   
+16    CONTINUE                                                             FLDSTAT1.264   
+      DMEAN=DMEAN/LENP                                                     FLDSTAT1.265   
+                                                                           FLDSTAT1.266   
+      DO 17 IPT=1,LENP                                                     FLDSTAT1.267   
+      DIFF(IPT)=DIFF(IPT)*DIFF(IPT)                                        FLDSTAT1.268   
+17    CONTINUE                                                             FLDSTAT1.269   
+                                                                           FLDSTAT1.270   
+      DRMS=DIFF(1)                                                         FLDSTAT1.271   
+      DO 18 IPT=2,LENP                                                     FLDSTAT1.272   
+      DRMS=DIFF(IPT)+DRMS                                                  FLDSTAT1.273   
+18    CONTINUE                                                             FLDSTAT1.274   
+      DRMS=DRMS/LENP                                                       FLDSTAT1.275   
+      DRMS=SQRT(DRMS)                                                      FLDSTAT1.276   
+      IF(TITLE.EQ.' PSTAR ')THEN                                           FLDSTAT1.277   
+C CONVERT TO MB                                                            FLDSTAT1.278   
+      AMAX=AMAX*.01                                                        FLDSTAT1.279   
+      AMIN=AMIN*.01                                                        FLDSTAT1.280   
+      AMEAN=AMEAN*.01                                                      FLDSTAT1.281   
+      DMAX=DMAX*.01                                                        FLDSTAT1.282   
+      DMIN=DMIN*.01                                                        FLDSTAT1.283   
+      DMEAN=DMEAN*.01                                                      FLDSTAT1.284   
+      DRMS=DRMS*.01                                                        FLDSTAT1.285   
+      WRITE(6,*)' STEP TITLE   LEV ',                                      ARR3F405.4     
+     *          ' AMAX   IAMAX  AMIN    IAMIN  AMEAN  ',                   ARR3F405.5     
+     *          ' DMAX   IDMAX    DMIN   IDMIN   DMEAN  DRMS '             ARR3F405.6     
+      ENDIF                                                                FLDSTAT1.289   
+      WRITE(6,60)KSTEP,TITLE,LEV,                                          FLDSTAT1.290   
+     *           AMAX,IAMAX,AMIN,IAMIN,AMEAN,                              FLDSTAT1.291   
+     *           DMAX,IDMAX,DMIN,IDMIN,DMEAN,DRMS                          FLDSTAT1.292   
+60    FORMAT(1X,I4,1X,A6,1X,I4,1X,                                         ARR3F405.7     
+     *       F6.1,1X,I7,1X,F6.1,1X,I7,1X,F6.1,1X,                          ARR3F405.8     
+     *       F6.2,1X,I7,1X,F7.2,1X,I7,1X,F6.2,1X,F6.2)                     ARR3F405.9     
+      RETURN                                                               FLDSTAT1.296   
+      END                                                                  FLDSTAT1.297   
+*ENDIF                                                                     FLDSTAT1.298   

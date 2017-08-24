@@ -1,0 +1,333 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script:  qsmaster
+#LL---------------------------------------------------------------------
+#LL
+#LL  Purpose: Initiates qsprelim, qsmain and qsfinal scripts for a
+#LL           model, and handles error conditions at UNICOS level.
+#LL
+#LL  Author:   T C Johns          Date:           05 April 1990
+#LL  Reviewer: M A Smith          Date of review:
+#LL
+#LL  Tested under OS version: UNICOS 5.1.10
+#LL
+#LL  Code version no: 2.5         Date:  7 May       1992
+#LL
+#LL  Modification History:
+#LL    05/04/90 - Changed to exit with non-zero completion code if main
+#LL               script fails
+#LL    18/08/90 - Modified so that final script not executed if main
+#LL               completes with negative CC
+#LL               (indicates compile-only mode)
+#LL    08/11/90 - Reconfiguration without running added (STEPA=99)
+#LL    14/11/90 - Error exit codes represented by E_COND variables.
+#LL    15/07/91 - Set and export filename for exit processing status.
+#LL               New internal history file XHIST introduced.
+#LL    11/09/91 - Moved ERRFLAG from qsmain to qsmaster as also
+#LL               required by qsfinal.
+#LL     7/05/92 - Export CCMAIN to qsfinal to prevent resubmission if
+#LL               non-zero return code.
+#LL    09/10/95 - Remove setting of ERRFLAG - now higher up. K Rogers
+#LL    13/03/96 - vn4.1 - Introduce Wave sub-model.  RTHBarnes.
+#LL    19/01/98    4.4    Added compile tar initialisation. K Rogers
+#LL 4.4  08/12/97  Set up new history file THIST1. K Rogers
+#LL    21/05/97 - vn4.1 - Calls qsoasis for OASIS jobs. R Brugge
+#LL 4.5  24/08/98  Do not go into qsfinal with STEP=2. K Rogers
+#LL 4.5  24/08/98  Remove THIST1 file at start of NRUN. K Rogers
+#LL 4.5  24/08/98  Only delete tar README file if recompiling. K Rogers
+#LL
+#LL  Programming standard: UM Doc Paper 3A, version 1 (29/10/90)
+#LL
+#LL  Project task: C0
+#LL
+#LL  Logical components covered: J00
+#LL
+#LL  External documentation:
+#LL    UM Doc Paper C0 - The top-level control system
+#LL
+#L   Interface and arguments: ------------------------------------------
+#L
+#L   qsmaster job_id
+#L
+#L     job_id ::= 5 character job identifier
+#L
+#L   -------------------------------------------------------------------
+#L
+#L   Called by: jobscript
+#L   Calls    : qsprelim script
+#L              qsmain script
+#L              qsfinal script
+#L              qsoasis script
+#L
+#L   Imports:
+#L     SETOPT       - Shell options
+#L     TEMP         - Temporary directory pathname
+#L     STEPA        - Indicator for mode of running (general)
+#L     OASIS        - Indicator for running of OASIS
+#L     OMASTER      - Indicator of master script for oasis coupler
+#L     OASISRUNDIR  - Working directory of OASIS
+#L     SUBLOADMODULE- Entry point script of the slave/external model
+#L     FILENV_TEMP  - Temporary storage of the system var FILENV
+#L
+#L   Exports:
+#L     IHIST        - Interim history filename (input to model)
+#L     XHIST        - Interim history filename (after model exit)
+#L     FTXX         - Fortran unit cross-reference filename
+#L     EXITSTAT     - File for communicating exit processing status
+#L     E_NORMAL     - Error return code (normal completion)
+#L     E_ABORT      - Error return code (abort condition)
+#L     ERRFLAG      - File used to transfer error information
+#L                    between qsserver and the model
+#L     CCMAIN       - Completion code of main script
+#L     OASISEXEC    - ready-to-use copy of coupler executable
+#L     LAUNCHEXEC   - ready-to-use launcher executable
+#L
+#L   Local variables:
+#L     CCPRELIM     - Completion code of prelim script
+#L     CCOASIS      - Completion code of oasis script
+#L     CCFINAL      - Completion code of final script
+#L     E_USAGE      - Error return code (incorrect usage)
+#L
+#L----------------------------------------------------------------------
+#L Step 0.0 - validate correct usage
+#L
+ulimit -s unlimited
+E_USAGE=99
+if test $# -ne 1
+then
+  echo -e "$0: Usage is \"$0 model_id\""; exit $E_USAGE
+fi
+#L
+#L Step 0.1 - set up unified model environment
+#L
+set -$SETOPT
+IHIST=$TEMP/$RUNID.ihist
+XHIST=$TEMP/$RUNID.xhist
+THIST1=$DATAW/$RUNID.thist_keep
+THIST1=$DATAW/$RUNID.thist_keep
+if test $TYPE = 'NRUN'
+then
+  rm $THIST1  # There should be no .thist files at start of run
+fi
+FTXX=$TEMP/$RUNID.ftxx
+EXITSTAT=$TEMP/$RUNID.exstat
+E_NORMAL=0
+E_ABORT=135
+CCMAIN=0
+export IHIST XHIST FTXX E_NORMAL E_ABORT EXITSTAT ERRFLAG CCMAIN
+
+SKIP_TAR_COMPDIR=${SKIP_TAR_COMPDIR:-false}
+if test $SKIP_TAR_COMPDIR != 'true'
+then    # tar file system in use for compile files
+  COMP_README=$DATAW/README_$RUNID.comp
+  if test $STEP -le 2
+  then
+    # Delete previous copy of README file only if recompiling
+    > $COMP_README
+  fi
+  RECON_TAR=$DATAW/recon_$RUNID.tar
+  COMP_TAR=$DATAW/comp_$RUNID.tar
+  export COMP_README RECON_TAR COMP_TAR
+fi
+
+#L
+#L Step 0.2 - move to temporary directory
+#L
+cd $TEMP
+CC=$?
+if [[ $CC -ne 0 ]]
+then
+  echo -e $0 : cd to $TEMP has failed
+  exit $CC
+fi
+#L
+#L Step 0.3 - Generate summary message if non-standard mode
+#L
+if test $STEP -eq 99
+then
+  echo -e "*************************************"
+  echo -e "**  Reconfiguring without running  **"
+  echo -e "*************************************"
+  echo -e
+fi
+#
+#L----------------------------------------------------------------------
+#L Step 1 - Run preliminary script (exit immediately if it fails)
+#L
+echo -e "*****************************************************************"
+echo -e "   Starting script :   qsprelim"
+echo -e "   Starting time   :   `date`"
+echo -e "*****************************************************************"
+echo -e
+qsprelim $1
+CCPRELIM=$?
+if test $CCPRELIM -ne 0
+then
+echo -e "*****************************************************************"
+echo -e "   Ending script   :   qsprelim"
+echo -e "   Completion code :   $CCPRELIM"
+echo -e "   Completion time :   `date`"
+echo -e "*****************************************************************"
+echo -e "\n\n\n"
+  echo -e "$0: failed in prelim in model $1" >&2
+  exit $CCPRELIM
+else
+echo -e "*****************************************************************"
+echo -e "   Ending script   :   qsprelim"
+echo -e "   Completion code :   0"
+echo -e "   Completion time :   `date`"
+echo -e "*****************************************************************"
+echo -e "\n\n"
+fi
+
+if [ $OASIS = 'true' ]
+then
+  echo -e "************************************************************"
+  echo -e "   Starting script :   qsoasis"
+  echo -e "   Starting time   :   `date`"
+  echo -e "************************************************************"
+  echo -e "\n\n"
+  limit -p 0  -f 200
+  limit -v
+  export OASISRUNDIR=${OASISRUNDIR:-$DATAW}  # OASIS run Directory
+  qsoasis $1
+  CCOASIS=$?
+  if test $CCOASIS -ne 0
+  then
+    echo -e "**********************************************************"
+    echo -e "   Ending script   :   qsoasis"
+    echo -e "   Completion code :   $CCOASIS"
+    echo -e "   Completion time :   `date`"
+    echo -e "**********************************************************"
+    echo -e "\n\n\n"
+    echo -e "$0: failed in oasis in model $1" >&2
+    exit $CCOASIS
+  else
+    echo -e "***********************************************************"
+    echo -e "   Ending script   :   qsoasis"
+    echo -e "   Completion code :   0"
+    echo -e "   Completion time :   `date`"
+    echo -e "***********************************************************"
+    echo -e "\n\n"
+  fi
+fi
+
+#
+#L----------------------------------------------------------------------
+#L Step 2 - Run main script (save completion code)
+#L          Omit if reconfiguring without running (flagged by STEPA=99)
+#L
+if test $STEP -ne 99
+then
+echo -e "*****************************************************************"
+echo -e "   Starting script :   qsmain"
+echo -e "   Starting time   :   `date`"
+echo -e "*****************************************************************"
+echo -e
+if [ $OASIS = 'true' ]
+then
+   if [ $OMASTER = 'true' ]
+   then
+      # Define a private FILENV variable for OASIS assigns :
+      FILENV_TEMP=$FILENV
+      FILENV=$DATAW/.assign_oasis
+      assign -f 77 g:sf
+      # Prepare to launch OASIS and the submodels :
+      [ -s $OASISRUNDIR/qsmain_arg ] && rm $OASISRUNDIR/qsmain_arg
+      echo -e "#!/bin/ksh"  >  $OASISRUNDIR/qsmain_arg
+      echo -e "cd $TEMP  "  >> $OASISRUNDIR/qsmain_arg
+      echo -e "qsmain $1 "  >> $OASISRUNDIR/qsmain_arg
+      chmod +x $OASISRUNDIR/qsmain_arg
+      cd $OASISRUNDIR
+      $OASISRUNDIR/LAUNCHEXEC $OASISRUNDIR/OASISEXEC  \
+                              $OASISRUNDIR/qsmain_arg \
+                              $SUBLOADMODULE
+      CCMAIN=$?
+      cd $TEMP  # move back to the temp dir.
+      FILENV=$FILENV_TEMP # restore the original FILENV.
+   else
+      qsmain $1
+      CCMAIN=$?
+   fi
+else
+qsmain $1
+CCMAIN=$?
+fi
+
+if test $CCMAIN -ne 0
+then
+echo -e "*****************************************************************"
+echo -e "   Ending script   :   qsmain"
+echo -e "   Completion code :   $CCMAIN"
+echo -e "   Completion time :   `date`"
+echo -e "*****************************************************************"
+echo -e "\n\n\n"
+  echo -e
+  echo -e "$0: failed in main in model $1" >&2
+else
+echo -e "*****************************************************************"
+echo -e "   Ending script   :   qsmain"
+echo -e "   Completion code :   0"
+echo -e "   Completion time :   `date`"
+echo -e "*****************************************************************"
+echo -e "\n\n"
+fi
+#
+else                                # STEPA = 99
+  exit $E_NORMAL
+fi
+#L
+#L If main script was compile-only, don't execute final script
+#L
+if test $STEP -eq 0 -o $STEP -eq 2
+then
+  exit $E_NORMAL
+fi
+#
+#L----------------------------------------------------------------------
+#L Step 3 - Run final script (even if main script failed)
+#L
+echo -e "*****************************************************************"
+echo -e "   Starting script :   qsfinal"
+echo -e "   Starting time   :   `date`"
+echo -e "*****************************************************************"
+echo -e
+qsfinal $1
+CCFINAL=$?
+if test $CCFINAL -ne 0
+then
+echo -e "*****************************************************************"
+echo -e "   Ending script   :   qsfinal"
+echo -e "   Completion code :   $CCFINAL"
+echo -e "   Completion time :   `date`"
+echo -e "*****************************************************************"
+echo -e "\n\n\n"
+  echo -e
+  echo -e "$0: failed in final in model $1" >&2
+else
+echo -e "*****************************************************************"
+echo -e "   Ending script   :   qsfinal"
+echo -e "   Completion code :   0"
+echo -e "   Completion time :   `date`"
+echo -e "*****************************************************************"
+echo -e "\n\n"
+fi
+#L
+#L Exit to calling shell with appropriate completion code
+#L
+if test $CCMAIN -ne 0
+then
+  exit $CCMAIN
+else
+  exit $CCFINAL
+fi
+#L----------------------------------------------------------------------

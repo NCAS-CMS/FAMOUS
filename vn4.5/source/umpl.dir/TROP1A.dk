@@ -1,0 +1,241 @@
+*IF DEF,C92_1A                                                             TROP1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.10657 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.10658 
+C                                                                          GTS2F400.10659 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.10660 
+C restrictions as set forth in the contract.                               GTS2F400.10661 
+C                                                                          GTS2F400.10662 
+C                Meteorological Office                                     GTS2F400.10663 
+C                London Road                                               GTS2F400.10664 
+C                BRACKNELL                                                 GTS2F400.10665 
+C                Berkshire UK                                              GTS2F400.10666 
+C                RG12 2SZ                                                  GTS2F400.10667 
+C                                                                          GTS2F400.10668 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.10669 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.10670 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.10671 
+C Modelling at the above address.                                          GTS2F400.10672 
+C ******************************COPYRIGHT******************************    GTS2F400.10673 
+C                                                                          GTS2F400.10674 
+CLL  SUBROUTINE TROP--------------------------------------------------     TROP1A.3     
+CLL                                                                        TROP1A.4     
+CLL  Purpose:  Calculates tropopause temperature and pressure.             TROP1A.5     
+CLL            (This version uses approximation that z is linear with      TROP1A.6     
+CLL            Exner function within a layer)                              TROP1A.7     
+CLL            Note also routine TROPIN - any physical changes to one      AWI1F402.36    
+CLL            should be considered for mirroring in the other.            AWI1F402.37    
+CLL                                                                        TROP1A.8     
+CLL AD,DR,RS    <- programmer of some or all of previous code or changes   TROP1A.9     
+CLL                                                                        TROP1A.10    
+CLL  Model            Modification history from model version 3.0:         TROP1A.11    
+CLL version  Date                                                          TROP1A.12    
+CLL   3.2  19/04/93  Code for new real missing data indicator (TCJ).       TJ050593.122   
+CLL                                                                        TROP1A.13    
+CLL   3.3  25/11/93  Ensure no overshoot for trop height  (C Wilson)       CW251193.1     
+CLL   4.2  Nov. 96   T3E migration: Hf functions & *DEF CRAY replaced      GSS5F402.376   
+CLL                  by T3E function rtor_v & *DEF T3E; code               GSS5F402.377   
+CLL                  restructured appropriately.  S.J.Swarbrick            GSS5F402.378   
+CLL   4.4  18/06/97  Initialise P_EXNER_T. Set PT to RMDI if               GDR2F404.8     
+CLL                  Tropopause not found. S. Lorrimer                     GDR2F404.9     
+CLL                                                                        CW251193.2     
+CLL  Logical components covered: P3                                        TROP1A.14    
+CLL                                                                        TROP1A.15    
+CLL  Project task:                                                         TROP1A.16    
+CLL                                                                        TROP1A.17    
+CLL  Documentation: The interpolation formulae are described in            TROP1A.18    
+CLL                 unified model on-line documentation paper S1.          TROP1A.19    
+CLL                                                                        TROP1A.20    
+CLLEND----------------------------------------------------------------     TROP1A.21    
+C                                                                          TROP1A.22    
+C*L  Arguments:-------------------------------------------------------     TROP1A.23    
+      SUBROUTINE TROP                                                      TROP1A.24    
+     *(PSTAR,THETA,P_EXNER_HALF,ZH,TT,PT,ZT,POINTS,P_LEVELS,               TROP1A.25    
+     * MIN_TROP_LEVEL,AKH,BKH)                                             TROP1A.26    
+                                                                           TROP1A.27    
+      IMPLICIT NONE                                                        TROP1A.28    
+                                                                           TROP1A.29    
+      INTEGER                                                              TROP1A.30    
+     * POINTS    !IN Number of points to be processed                      TROP1A.31    
+     *,P_LEVELS  !IN Number of model levels                                TROP1A.32    
+     *,MIN_TROP_LEVEL  !IN Level no. for lowest possible tropopause.       TROP1A.33    
+     *                 !   Set to first level above boundary layer         TROP1A.34    
+                                                                           TROP1A.35    
+      REAL                                                                 TROP1A.36    
+     * PSTAR(POINTS)          !IN P Star                                   TROP1A.37    
+     *,THETA(POINTS,P_LEVELS) !IN Potential temperature at full levels     TROP1A.38    
+     *,P_EXNER_HALF(POINTS,P_LEVELS+1) !IN Exner pressure at model         TROP1A.39    
+     *                                 !   half levels                     TROP1A.40    
+     *,ZH(POINTS,P_LEVELS+1)  !IN Height of model half levels              TROP1A.41    
+     *,AKH(P_LEVELS+1)        !IN Hybrid Coords. A values for half levs.   TROP1A.42    
+     *,BKH(P_LEVELS+1)        !IN Hybrid Coords. B values for half levs.   TROP1A.43    
+     *,TT(POINTS)             !OUT Temperature of tropopause               TROP1A.44    
+     *,PT(POINTS)             !OUT Pressure of tropopause                  TROP1A.45    
+     *,ZT(POINTS)             !OUT Height of tropopause                    TROP1A.46    
+                                                                           TROP1A.47    
+C Workspace usage:-----------------------------------------------------    TROP1A.48    
+       REAL LAPSE_RATE(POINTS,MIN_TROP_LEVEL:P_LEVELS)                     TROP1A.49    
+       LOGICAL LTROP(POINTS)                                               TROP1A.50    
+C External subroutines called:-----------------------------------------    TROP1A.51    
+C*---------------------------------------------------------------------    TROP1A.53    
+C Define local variables:----------------------------------------------    TROP1A.54    
+      INTEGER I,J,JP1                                                      TROP1A.55    
+      REAL PJP1,PJ,PJM1  !  Pressures at half levels J+1/J/J-1             TROP1A.56    
+      REAL P_EXNER_FULL_J,P_EXNER_FULL_JM1                                 TROP1A.57    
+     *,DEL_EXNER_J,DEL_EXNER_JM1,TERM1,TERM2                               TROP1A.58    
+     *,ZDT                                                                 GSS5F402.379   
+     *,ZDJM1,ZDJ                                                           TROP1A.60    
+C     REAL P_EXNER_T                                                       GSS5F402.380   
+      REAL P_EXNER_T(POINTS)                                               GSS5F402.381   
+      REAL POWER(POINTS)                                                   GSS5F402.382   
+C----------------------------------------------------------------------    TROP1A.64    
+C Constants from comdecks:---------------------------------------------    TROP1A.65    
+*CALL C_MDI                                                                TJ050593.123   
+*CALL C_G                                                                  TROP1A.66    
+*CALL C_R_CP                                                               TROP1A.67    
+*CALL C_LAPSE                                                              TROP1A.68    
+                                                                           TROP1A.69    
+CL 1. Set up local constants and initialise arrays                         TROP1A.70    
+                                                                           TROP1A.71    
+      REAL CP_OVER_G,ONE_OVER_KAPPA,P_EXNER_500,P_EXNER_50                 TROP1A.72    
+      PARAMETER(CP_OVER_G=CP/G)                                            TROP1A.73    
+      PARAMETER(ONE_OVER_KAPPA=1./KAPPA)                                   TROP1A.74    
+                                                                           TROP1A.75    
+C----------------------------------------------------------------------    TROP1A.76    
+                                                                           TROP1A.77    
+*CALL P_EXNERC                                                             TROP1A.78    
+                                                                           TROP1A.79    
+      P_EXNER_500=(500./1000.)**KAPPA                                      TROP1A.80    
+      P_EXNER_50=(50./1000.)**KAPPA                                        TROP1A.81    
+                                                                           TROP1A.82    
+      DO 100 I=1,POINTS                                                    TROP1A.83    
+                                                                           TROP1A.84    
+C Initialise logical string which indicates whether tropopause found       TROP1A.85    
+C at a lower level: LTROP=T is not found; LTROP=F is found.                TROP1A.86    
+                                                                           TROP1A.87    
+      LTROP(I)=.TRUE.                                                      TROP1A.88    
+                                                                           TROP1A.89    
+C Initialise tropopause height and pressure to missing data                TROP1A.90    
+                                                                           TROP1A.91    
+      P_EXNER_T(I)=0                                                       GDR2F404.10    
+      TT(I)=RMDI                                                           TJ050593.125   
+      ZT(I)=RMDI                                                           TJ050593.126   
+                                                                           TROP1A.95    
+100   CONTINUE                                                             TROP1A.96    
+                                                                           TROP1A.97    
+CL 2. Compute lapse rate between full levels: equation (3.16)              TROP1A.98    
+                                                                           TROP1A.99    
+                                                                           TROP1A.100   
+      DO 200 J=MIN_TROP_LEVEL,P_LEVELS                                     TROP1A.101   
+      DO 210 I=1,POINTS                                                    TROP1A.102   
+                                                                           TROP1A.103   
+C Exner pressure at full levels                                            TROP1A.104   
+      PJP1 = AKH(J+1) + BKH(J+1)*PSTAR(I)                                  TROP1A.105   
+      PJ   = AKH(J)   + BKH(J)  *PSTAR(I)                                  TROP1A.106   
+      PJM1 = AKH(J-1) + BKH(J-1)*PSTAR(I)                                  TROP1A.107   
+      P_EXNER_FULL_J = P_EXNER_C                                           TROP1A.108   
+     +(P_EXNER_HALF(I,J+1),P_EXNER_HALF(I,J),PJP1,PJ,KAPPA)                TROP1A.109   
+      P_EXNER_FULL_JM1 = P_EXNER_C                                         TROP1A.110   
+     +(P_EXNER_HALF(I,J),P_EXNER_HALF(I,J-1),PJ,PJM1,KAPPA)                TROP1A.111   
+                                                                           TROP1A.112   
+C Exner pressure difference across half layers                             TROP1A.113   
+      DEL_EXNER_J=P_EXNER_HALF(I,J)-P_EXNER_FULL_J                         TROP1A.114   
+      DEL_EXNER_JM1=P_EXNER_FULL_JM1-P_EXNER_HALF(I,J)                     TROP1A.115   
+                                                                           TROP1A.116   
+C Denominator                                                              TROP1A.117   
+      TERM2=CP_OVER_G*(THETA(I,J-1)*DEL_EXNER_JM1                          TROP1A.118   
+     *       +THETA(I,J)*DEL_EXNER_J)                                      TROP1A.119   
+                                                                           TROP1A.120   
+C Numerator                                                                TROP1A.121   
+      TERM1=THETA(I,J-1)*P_EXNER_FULL_JM1-THETA(I,J)*P_EXNER_FULL_J        TROP1A.122   
+                                                                           TROP1A.123   
+C Lapse rate between level j-1 and j                                       TROP1A.124   
+      LAPSE_RATE(I,J)=TERM1/TERM2                                          TROP1A.125   
+210   CONTINUE                                                             TROP1A.126   
+200   CONTINUE                                                             TROP1A.127   
+                                                                           TROP1A.128   
+CL 3. Calculate tropopause temperature, height  and pressure               TROP1A.129   
+                                                                           TROP1A.130   
+      DO 300 J=MIN_TROP_LEVEL+1,P_LEVELS                                   TROP1A.131   
+                                                                           TROP1A.132   
+C 'J+1' level for lapse rate test; allows J iteration up to P_LEVELS       TROP1A.133   
+      JP1=MIN(J+1,P_LEVELS)                                                TROP1A.134   
+                                                                           TROP1A.135   
+      DO 310 I=1,POINTS                                                    TROP1A.136   
+                                                                           TROP1A.137   
+C Exner pressure at full levels                                            TROP1A.138   
+      PJP1 = AKH(J+1) + BKH(J+1)*PSTAR(I)                                  TROP1A.139   
+      PJ   = AKH(J)   + BKH(J)  *PSTAR(I)                                  TROP1A.140   
+      PJM1 = AKH(J-1) + BKH(J-1)*PSTAR(I)                                  TROP1A.141   
+      P_EXNER_FULL_J = P_EXNER_C                                           TROP1A.142   
+     +(P_EXNER_HALF(I,J+1),P_EXNER_HALF(I,J),PJP1,PJ,KAPPA)                TROP1A.143   
+      P_EXNER_FULL_JM1 = P_EXNER_C                                         TROP1A.144   
+     +(P_EXNER_HALF(I,J),P_EXNER_HALF(I,J-1),PJ,PJM1,KAPPA)                TROP1A.145   
+                                                                           TROP1A.146   
+C Criteria for layer containing tropopause                                 TROP1A.147   
+C (where 'layer' is interval between level j and level j-1)                TROP1A.148   
+      IF(P_EXNER_FULL_J.LT.P_EXNER_500.AND.                                TROP1A.149   
+     * P_EXNER_FULL_JM1.GT.P_EXNER_50.AND.                                 TROP1A.150   
+     * LAPSE_RATE(I,J).LT.LAPSE_TROP.AND.                                  TROP1A.151   
+     * LAPSE_RATE(I,JP1).LT.LAPSE_TROP.AND.                                TROP1A.152   
+     * LTROP(I))THEN                                                       TROP1A.153   
+                                                                           TROP1A.154   
+C Reset logical string to say tropopause now found                         AWI1F402.38    
+      LTROP(I)=.FALSE.                                                     TROP1A.156   
+                                                                           TROP1A.157   
+C Z(j-1)-Z(j-1/2); Z(j)-Z(j-1/2)                                           TROP1A.158   
+      ZDJM1=CP_OVER_G*THETA(I,J-1)*(P_EXNER_HALF(I,J)-P_EXNER_FULL_JM1)    TROP1A.159   
+      ZDJ=CP_OVER_G*THETA(I,J)*(P_EXNER_HALF(I,J)-P_EXNER_FULL_J)          TROP1A.160   
+                                                                           TROP1A.161   
+C Z(tropopause) - Z(j-1/2): equation (3.19)                                TROP1A.162   
+      ZDT=(THETA(I,J-1)*P_EXNER_FULL_JM1-THETA(I,J)*P_EXNER_FULL_J         TROP1A.163   
+     *+LAPSE_RATE(I,J-1)*ZDJM1                                             TROP1A.164   
+     *-LAPSE_RATE(I,JP1)*ZDJ)                                              TROP1A.165   
+     */(LAPSE_RATE(I,J-1)-LAPSE_RATE(I,JP1))                               TROP1A.166   
+                                                                           TROP1A.167   
+C Ensure trop level doesn't undershoot Z(j-1)                              CW251193.3     
+      ZDT=MAX(ZDT,ZDJM1)                                                   TROP1A.169   
+                                                                           CW251193.4     
+C Ensure trop level doesn't overshoot Z(j)                                 CW251193.5     
+      ZDT=MIN(ZDT,ZDJ)                                                     CW251193.6     
+                                                                           TROP1A.170   
+C Tropopause height                                                        TROP1A.171   
+      ZT(I)=ZDT+ZH(I,J)                                                    TROP1A.172   
+                                                                           TROP1A.173   
+C Tropopause temperature : equation (3.20)                                 TROP1A.174   
+      TT(I)=THETA(I,J)*P_EXNER_FULL_J                                      TROP1A.175   
+     *     -LAPSE_RATE(I,JP1)*(ZDT-ZDJ)                                    TROP1A.176   
+                                                                           TROP1A.177   
+C Exner pressure of tropopause: equation (3.22)                            TROP1A.178   
+      IF(ZDT.GT.0.0)THEN                                                   TROP1A.179   
+        P_EXNER_T(I)=P_EXNER_HALF(I,J)-G*ZDT/(CP*THETA(I,J))               GSS5F402.383   
+      ELSE                                                                 TROP1A.181   
+        P_EXNER_T(I)=P_EXNER_HALF(I,J)-G*ZDT/(CP*THETA(I,J-1))             GSS5F402.384   
+      ENDIF                                                                TROP1A.183   
+                                                                           TROP1A.191   
+      ENDIF                                                                TROP1A.192   
+                                                                           TROP1A.193   
+310   CONTINUE                                                             TROP1A.194   
+300   CONTINUE                                                             TROP1A.195   
+                                                                           GSS5F402.385   
+C Pressure of tropopause: equation (3.21)                                  GSS5F402.386   
+*IF DEF,VECTLIB                                                            PXVECTLB.147   
+      DO I=1,POINTS                                                        GSS5F402.388   
+        POWER(I)=ONE_OVER_KAPPA                                            GSS5F402.389   
+      END DO                                                               GSS5F402.390   
+      call rtor_v(points,P_EXNER_T,POWER,P_EXNER_T)                        GSS5F402.391   
+*ELSE                                                                      GSS5F402.392   
+      DO I=1,POINTS                                                        GSS5F402.393   
+        P_EXNER_T(I)=P_EXNER_T(I)**ONE_OVER_KAPPA                          GSS5F402.394   
+      END DO                                                               GSS5F402.395   
+*ENDIF                                                                     GSS5F402.396   
+      DO I=1,POINTS                                                        GSS5F402.397   
+        PT(I)=PREF*P_EXNER_T(I)                                            GSS5F402.398   
+        IF (LTROP(I)) THEN                                                 GDR2F404.11    
+          PT(I)=RMDI                                                       GDR2F404.12    
+        ENDIF                                                              GDR2F404.13    
+                                                                           GDR2F404.14    
+      END DO                                                               GSS5F402.399   
+                                                                           TROP1A.196   
+      RETURN                                                               TROP1A.197   
+      END                                                                  TROP1A.198   
+*ENDIF                                                                     TROP1A.199   

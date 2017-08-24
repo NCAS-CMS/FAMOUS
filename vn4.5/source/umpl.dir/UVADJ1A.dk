@@ -1,0 +1,841 @@
+*IF DEF,A10_1A,OR,DEF,A10_1B                                               ATJ0F402.3     
+C ******************************COPYRIGHT******************************    GTS2F400.10873 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.10874 
+C                                                                          GTS2F400.10875 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.10876 
+C restrictions as set forth in the contract.                               GTS2F400.10877 
+C                                                                          GTS2F400.10878 
+C                Meteorological Office                                     GTS2F400.10879 
+C                London Road                                               GTS2F400.10880 
+C                BRACKNELL                                                 GTS2F400.10881 
+C                Berkshire UK                                              GTS2F400.10882 
+C                RG12 2SZ                                                  GTS2F400.10883 
+C                                                                          GTS2F400.10884 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.10885 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.10886 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.10887 
+C Modelling at the above address.                                          GTS2F400.10888 
+C ******************************COPYRIGHT******************************    GTS2F400.10889 
+C                                                                          GTS2F400.10890 
+CLL   SUBROUTINE UV_ADJ ---------------------------------------------      UVADJ1A.3     
+CLL                                                                        UVADJ1A.4     
+CLL   PURPOSE:  CALCULATES AND ADDS INCREMENTS TO U AND V USING            UVADJ1A.5     
+CLL             EQUATIONS 23 TO 26.                                        UVADJ1A.6     
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  UVADJ1A.7     
+CLL                                                                        UVADJ1A.8     
+CLL   VERSION FOR CRAY Y-MP                                                UVADJ1A.9     
+CLL                                                                        UVADJ1A.10    
+CLL MM, DR      <- PROGRAMMER OF SOME OR ALL OF PREVIOUS CODE OR CHANGES   UVADJ1A.11    
+CLL                                                                        UVADJ1A.12    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         UVADJ1A.13    
+CLL VERSION  DATE                                                          UVADJ1A.14    
+CLL   3.1     24/02/93  Tidy code to remove QA Fortran messages.           MM240293.7     
+CLL   3.4     23/06/94  Argument LLINTS added and passed to CALC_TS        GSS1F304.925   
+CLL                     DEF NOWHBR replaced by LOGICAL LWHITBROM           GSS1F304.926   
+CLL                                                S.J.Swarbrick           GSS1F304.927   
+CLL                                                                        UVADJ1A.15    
+CLL   3.4    06/08/94 Micro tasking directives inserted and code           AAD2F304.32    
+CLL                   restructured to improve parallel efficiency          AAD2F304.33    
+CLL                   on C90.                                              AAD2F304.34    
+CLL                   Authors: A. Dickinson, D. Salmond                    AAD2F304.35    
+CLL                   Reviewer: M. Mawson                                  AAD2F304.36    
+!     3.5    28/03/95 MPP code: Change updateable area P.Burton            APB0F305.202   
+!     4.1    02/04/96 Added TYPFLDPT arguments to dynamics routines        APB0F401.268   
+!                     which allows many of the differences between         APB0F401.269   
+!                     MPP and "normal" code to be at top level             APB0F401.270   
+!                     P.Burton                                             APB0F401.271   
+!LL   4.2    25/10/96 Initialise RECIP_RS_UV before use  P.Burton          APB1F402.8     
+!LL  4.2  25/11/96  Corrections to allow LAM to run in MPP mode.           ARB2F402.35    
+!LL                                                   RTHBarnes.           ARB2F402.36    
+!LL   4.3    17/01/97 Initialise PHI_OUT diagnostic so that halos          GPB1F403.270   
+!LL                   contain real data                  P.Burton          GPB1F403.271   
+C     vn4.3    Mar. 97   T3E migration : optimisation changes              GSS1F403.744   
+C                                       D.Salmond                          GSS1F403.745   
+!LL   4.4    10/10/97 Correct loop bounds for u_field array                GPB1F404.145   
+!LL                                                   P.Burton             GPB1F404.146   
+CLL                                                                        AAD2F304.37    
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       UVADJ1A.16    
+CLL                         STANDARD B. VERSION 2, DATED 18/01/90          UVADJ1A.17    
+CLL   SYSTEM COMPONENTS COVERED: P111                                      UVADJ1A.18    
+CLL                                                                        UVADJ1A.19    
+CLL   SYSTEM TASK: P1                                                      UVADJ1A.20    
+CLL                                                                        UVADJ1A.21    
+CLL   DOCUMENTATION:       THE EQUATIONS USED ARE (23) TO (26)             UVADJ1A.22    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER NO. 10     UVADJ1A.23    
+CLL                        M.J.P. CULLEN,T.DAVIES, AND M.H.MAWSON          UVADJ1A.24    
+CLLEND-------------------------------------------------------------        UVADJ1A.25    
+                                                                           UVADJ1A.26    
+C                                                                          UVADJ1A.27    
+C*L   ARGUMENTS:---------------------------------------------------        UVADJ1A.28    
+      SUBROUTINE UV_ADJ                                                    UVADJ1A.29    
+     1              (U,V,THETA,Q,OROG_HEIGHT,PSTAR,F1,                     MM240293.8     
+     2              F2,F3,SEC_U_LATITUDE,TAN_U_LATITUDE,AK,BK,DELTA_AK,    UVADJ1A.31    
+     3              DELTA_BK,LATITUDE_STEP_INVERSE,ADJUSTMENT_TIMESTEP,    UVADJ1A.32    
+     4              LONGITUDE_STEP_INVERSE,RS,                             UVADJ1A.33    
+*CALL ARGFLDPT                                                             APB0F401.272   
+     5              U_FIELD,P_FIELD,ROW_LENGTH,P_LEVELS,                   APB0F401.273   
+     6              Q_LEVELS,CALL_NUMBER,AKH,BKH,P_EXNER,                  MM240293.9     
+     8              ADJUSTMENT_STEPS,L_PHI_OUT,PHI_OUT,LLINTS,             GSS1F304.928   
+     9              LWHITBROM)                                             GSS1F304.929   
+                                                                           UVADJ1A.38    
+      IMPLICIT NONE                                                        UVADJ1A.39    
+                                                                           UVADJ1A.40    
+      LOGICAL                                                              UVADJ1A.41    
+     * L_PHI_OUT              !IN. TRUE IF PHI OUTPUT REQUIRED AS          UVADJ1A.42    
+     *                        !    DIAGNOSTIC.                             UVADJ1A.43    
+     *,LLINTS                 !Switch for linear TS calc in CALC_TS        GSS1F304.930   
+     *,LWHITBROM              !Switch for White & Bromley terms            GSS1F304.931   
+                                                                           UVADJ1A.44    
+      INTEGER                                                              UVADJ1A.45    
+     *  P_FIELD               !IN DIMENSION OF FIELDS ON PRESSSURE GRID    UVADJ1A.46    
+     *, U_FIELD               !IN DIMENSION OF FIELDS ON VELOCITY GRID     UVADJ1A.47    
+     *, P_LEVELS              !IN    NUMBER OF PRESSURE LEVELS.            UVADJ1A.49    
+     *, Q_LEVELS              !IN    NUMBER OF MOIST LEVELS.               UVADJ1A.50    
+     *, ROW_LENGTH            !IN    NUMBER OF POINTS PER ROW              UVADJ1A.52    
+     *, CALL_NUMBER           !IN ADJUSTMENT STEP NUMBER                   UVADJ1A.53    
+     *, ADJUSTMENT_STEPS      !IN NUMBER OF ADJUSTMENT STEPS               UVADJ1A.54    
+! All TYPFLDPT arguments are intent IN                                     APB0F401.274   
+*CALL TYPFLDPT                                                             APB0F401.275   
+                                                                           UVADJ1A.55    
+      REAL                                                                 UVADJ1A.56    
+     * THETA(P_FIELD,P_LEVELS)!INOUT THETA FIELD                           UVADJ1A.57    
+     *,Q(P_FIELD,Q_LEVELS)    !INOUT Q FIELD                               UVADJ1A.58    
+     *,PSTAR(P_FIELD)         !INOUT PSTAR FIELD                           UVADJ1A.59    
+     *,RS(P_FIELD,P_LEVELS)   !INOUT PRIMARY MODEL ARRAY FOR RS FIELD      UVADJ1A.60    
+     *,U(U_FIELD,P_LEVELS)    !INOUT U FIELD                               UVADJ1A.61    
+     *,V(U_FIELD,P_LEVELS)    !INOUT V FIELD                               UVADJ1A.62    
+                                                                           UVADJ1A.63    
+      REAL                                                                 UVADJ1A.64    
+     * P_EXNER(P_FIELD,P_LEVELS+1) !IN HOLDS EXNER PRESSURE AT HALF        UVADJ1A.65    
+     *                             ! LEVELS                                UVADJ1A.66    
+     *,OROG_HEIGHT(P_FIELD)        !IN OROGRAPHIC HEIGHT FIELD             UVADJ1A.67    
+                                                                           UVADJ1A.68    
+      REAL                                                                 UVADJ1A.69    
+     * DELTA_AK(P_LEVELS)        !IN  LAYER THICKNESS                      UVADJ1A.70    
+     *,DELTA_BK(P_LEVELS)        !IN  LAYER THICKNESS                      UVADJ1A.71    
+     *,AK(P_LEVELS)              !IN  VALUE OF A AT P POINTS               UVADJ1A.72    
+     *,BK(P_LEVELS)              !IN  VALUE OF B AT P POINTS               UVADJ1A.73    
+     *,AKH(P_LEVELS+1)           !IN  VALUE OF A AT HALF LEVELS.           UVADJ1A.74    
+     *,BKH(P_LEVELS+1)           !IN  VALUE OF B AT HALF LEVELS.           UVADJ1A.75    
+     *,SEC_U_LATITUDE(U_FIELD)   !IN 1/COS(LAT) AT U POINTS (2-D ARRAY)    UVADJ1A.77    
+     *,TAN_U_LATITUDE(U_FIELD)   !IN TAN(LAT) AT U POINTS (2-D ARRAY)      UVADJ1A.79    
+                                                                           UVADJ1A.82    
+      REAL                                                                 UVADJ1A.83    
+     * F1(U_FIELD)            !IN A CORIOLIS TERM SEE DOCUMENTATION        UVADJ1A.84    
+     *,F2(U_FIELD)            !IN A CORIOLIS TERM SEE DOCUMENTATION        UVADJ1A.85    
+     *,F3(U_FIELD)            !IN A CORIOLIS TERM SEE DOCUMENTATION        UVADJ1A.86    
+     *,LONGITUDE_STEP_INVERSE !IN 1/LONGITUDE INCREMENT                    UVADJ1A.87    
+     *,LATITUDE_STEP_INVERSE  !IN 1/LATITUDE INCREMENT                     UVADJ1A.88    
+     *,ADJUSTMENT_TIMESTEP    !IN                                          UVADJ1A.89    
+                                                                           UVADJ1A.90    
+      REAL                                                                 UVADJ1A.91    
+     * PHI_OUT(P_FIELD,P_LEVELS) !OUT. PHI DIAGNOSTIC                      UVADJ1A.92    
+       REAL RECIP                                                          GSS1F403.746   
+                                                                           UVADJ1A.93    
+C*---------------------------------------------------------------------    UVADJ1A.94    
+                                                                           UVADJ1A.95    
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    UVADJ1A.96    
+C DEFINE LOCAL ARRAYS: 15 ARE REQUIRED                                     UVADJ1A.97    
+                                                                           UVADJ1A.98    
+      REAL                                                                 UVADJ1A.99    
+     * DPHI_BY_DLATITUDE          !HOLDS HORIZONTAL PRESSURE GRADIENT      GSS1F403.747   
+     *                            !IN X-DIRECTION AT U POINTS              UVADJ1A.101   
+     *,DPHI_BY_DLONGITUDE         !HOLDS HORIZONTAL PRESSURE GRADIENT      GSS1F403.748   
+     *                            !IN Y-DIRECTION AT U POINTS              UVADJ1A.103   
+     *,P(P_FIELD)                 !HOLDS PRESSURE AT A MODEL LEVEL         UVADJ1A.104   
+     *,RECIP_RS_UV(U_FIELD,P_LEVELS)     !HOLDS 1/RS AT U POINTS           AAD2F304.38    
+     *,PHI_FULL_LEVEL(P_FIELD)    !HOLDS GEOPOTENTIAL AT A FULL LEVEL      UVADJ1A.106   
+     *,PHI_HALF_LEVEL(P_FIELD,P_LEVELS)  !HOLDS GEOPOT AT A HALF LEVEL     AAD2F304.39    
+     *,DELTA_P_P_EXNER_BY_DELTAP(P_FIELD) !                                UVADJ1A.108   
+                                                                           UVADJ1A.109   
+      REAL                                                                 UVADJ1A.110   
+     * THETAS(P_FIELD,P_LEVELS)   !HOLDS THETAV + MU*THETAS                AAD2F304.40    
+     *,TS(P_FIELD)                !HOLDS STANDARD TEMPERATURE              UVADJ1A.128   
+     *,WORK_U(U_FIELD)            !GENERAL WORKSPACE FOR VARIABLES         UVADJ1A.129   
+     *                            !AT U POINTS                             UVADJ1A.130   
+     *,WORK_P(P_FIELD)            !GENERAL WORKSPACE FOR VARIABLES         UVADJ1A.131   
+     *                            !AT P POINTS                             UVADJ1A.132   
+     *,U_TEMP_R(U_FIELD),V_TEMP_R(U_FIELD)                                 GSS1F403.749   
+     *,U_TEMP_L(U_FIELD),V_TEMP_L(U_FIELD)                                 GSS1F403.750   
+      INTEGER IP,IJP                                                       GSS1F403.751   
+                                                                           UVADJ1A.133   
+C*---------------------------------------------------------------------    UVADJ1A.134   
+C DEFINE LOCAL VARIABLES                                                   UVADJ1A.135   
+      INTEGER POINTS  ! Number of points with valid part of field          APB0F401.276   
+                                                                           UVADJ1A.145   
+*IF DEF,MPP                                                                APB0F305.207   
+*IF DEF,GLOBAL                                                             APB0F305.208   
+      INTEGER info                                                         APB0F401.277   
+*ELSE                                                                      APB0F305.211   
+      INTEGER row_start_offset,row_end_offset                              APB0F401.278   
+! offsets required to mark out the updatable area for LAM MPP code         APB0F401.279   
+*ENDIF                                                                     APB0F305.213   
+*ENDIF                                                                     APB0F305.215   
+       REAL                                                                UVADJ1A.146   
+     *  HALF_ADJUSTMENT_TIMESTEP                                           UVADJ1A.147   
+     *, RECIP_G                                                            UVADJ1A.148   
+*IF DEF,GLOBAL                                                             APB0F401.280   
+      INTEGER np,sp  ! points in field refering to poles                   APB0F401.281   
+      REAL                                                                 APB0F401.282   
+     &  MU_NORTH_POLE(P_LEVELS)   ! MU at North Pole                       APB0F401.283   
+     &, MU_SOUTH_POLE(P_LEVELS)   ! MU at South Pole                       APB0F401.284   
+*ENDIF                                                                     UVADJ1A.153   
+                                                                           UVADJ1A.154   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        UVADJ1A.155   
+      INTEGER                                                              UVADJ1A.156   
+     *  I,IJ,IK,K                                                          UVADJ1A.157   
+C WORK-SPACE SCALARS                                                       UVADJ1A.158   
+      REAL                                                                 UVADJ1A.159   
+     *  TEMP1,TEMP2                                                        UVADJ1A.160   
+     * ,PKP1,PK               ! Pressures at half levels k+1 and k         UVADJ1A.161   
+     * ,c1,c2,WORK_V                                                       GSS1F403.752   
+C LOGICAL VARIABLE                                                         UVADJ1A.162   
+      LOGICAL                                                              UVADJ1A.163   
+     *  CONSTANT_PRESSURE     ! TRUE IF ON A CONSTANT PRESSURE SURFACE     UVADJ1A.164   
+                                                                           UVADJ1A.165   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    UVADJ1A.166   
+                                                                           UVADJ1A.167   
+      EXTERNAL P_TO_UV,POLAR_UV,UV_TO_P                                    UVADJ1A.168   
+     *         ,CALC_TS,CALC_RS                                            GSS1F304.932   
+C*---------------------------------------------------------------------    UVADJ1A.172   
+CL CALL COMDECK TO OBTAIN CONSTANTS USED.                                  UVADJ1A.173   
+                                                                           UVADJ1A.174   
+*CALL C_UVADJ                                                              UVADJ1A.175   
+                                                                           UVADJ1A.176   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD                             UVADJ1A.177   
+CL---------------------------------------------------------------------    UVADJ1A.178   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       UVADJ1A.179   
+CL---------------------------------------------------------------------    UVADJ1A.180   
+CL                                                                         UVADJ1A.181   
+*CALL P_EXNERC                                                             UVADJ1A.182   
+                                                                           UVADJ1A.183   
+CL---------------------------------------------------------------------    UVADJ1A.184   
+CL    SECTION 1.    INITIALISATION                                         UVADJ1A.185   
+CL---------------------------------------------------------------------    UVADJ1A.186   
+C INCLUDE LOCAL CONSTANTS FROM GENERAL CONSTANTS BLOCK                     UVADJ1A.187   
+                                                                           UVADJ1A.188   
+      POINTS=LAST_P_VALID_PT-FIRST_VALID_PT+1                              APB0F401.285   
+! Number of points to be processed by CALC_RS/TS. For non-MPP runs         APB0F401.286   
+! this is simply P_FIELD, for MPP, it is all the points, minus any         APB0F401.287   
+! unused halo areas (ie. the halo above North pole row, and beneath        APB0F401.288   
+! South pole row)                                                          APB0F401.289   
+                                                                           APB0F401.290   
+      HALF_ADJUSTMENT_TIMESTEP = ADJUSTMENT_TIMESTEP*.5                    UVADJ1A.195   
+      RECIP_G = 1./G                                                       UVADJ1A.196   
+                                                                           UVADJ1A.197   
+CL    SET PHI_HALF_LEVEL FOR LEVEL 1/2 = OROG_HEIGHT * G                   UVADJ1A.198   
+! loop over all points, including valid halos                              APB0F401.291   
+      DO 100 I=FIRST_VALID_PT,LAST_P_VALID_PT                              APB0F401.292   
+        PHI_HALF_LEVEL(I,1) = OROG_HEIGHT(I) * G                           AAD2F304.41    
+ 100  CONTINUE                                                             UVADJ1A.201   
+                                                                           UVADJ1A.202   
+CL LOOP OVER ALL PRESSURE LEVELS.                                          UVADJ1A.203   
+                                                                           UVADJ1A.204   
+      DO K=1,P_LEVELS                                                      AAD2F304.42    
+                                                                           UVADJ1A.206   
+CL---------------------------------------------------------------------    UVADJ1A.207   
+CL   IF (.NOT.LWHITBROM) THEN                                              GSS1F304.933   
+CL    SECTION 2.    STORE RADIUS OF EARTH IN HORIZONTAL FIELD.             UVADJ1A.209   
+CL   ELSE                                                                  GSS1F304.934   
+CL    SECTION 2.    CALCULATE RS AT LEVEL K.                               UVADJ1A.211   
+CL   END IF                                                                GSS1F304.935   
+CL---------------------------------------------------------------------    UVADJ1A.213   
+                                                                           UVADJ1A.214   
+C----------------------------------------------------------------------    UVADJ1A.215   
+CL   IF (.NOT.LWHITBROM) THEN                                              GSS1F304.936   
+CL    SECTION 2.1.  STORE RADIUS OF EARTH IN HORIZONTAL FIELD.             UVADJ1A.217   
+CL   ELSE                                                                  GSS1F304.937   
+CL    SECTION 2.1.  CALL CALC_RS TO GET RS ON FIRST CALL ONLY.             UVADJ1A.219   
+CL                  ALSO RETURNS TS SAVING CALL TO CALC_TS IN 3.4          UVADJ1A.220   
+CL   END IF                                                                GSS1F304.938   
+C----------------------------------------------------------------------    UVADJ1A.222   
+                                                                           UVADJ1A.223   
+      IF (.NOT.LWHITBROM) THEN                                             GSS1F304.939   
+! loop over all points, including valid halos                              APB0F401.293   
+        DO 210 I=1,P_FIELD                                                 APB0F401.294   
+          RS(I,K) = A                                                      UVADJ1A.226   
+ 210    CONTINUE                                                           UVADJ1A.227   
+        DO I=1,U_FIELD                                                     GPB1F404.147   
+          RECIP_RS_UV(I,K)=1.0                                             GPB1F404.148   
+        ENDDO                                                              GPB1F404.149   
+      ELSE                                                                 GSS1F304.940   
+        IF(CALL_NUMBER.EQ.1) THEN                                          UVADJ1A.229   
+! QAN fix                                                                  APB0F401.295   
+          DO I=1,P_FIELD                                                   APB0F401.296   
+            RS(I,K)=1.0                                                    APB0F401.297   
+          ENDDO                                                            APB0F401.298   
+          DO I=1,U_FIELD                                                   GPB1F404.150   
+            RECIP_RS_UV(I,K)=1.0                                           GPB1F404.151   
+          ENDDO                                                            GPB1F404.152   
+          IF(K.NE.1) THEN                                                  UVADJ1A.230   
+            CALL CALC_RS(PSTAR(FIRST_VALID_PT),AK,BK,TS(FIRST_VALID_PT),   APB0F401.299   
+     &                   RS(FIRST_VALID_PT,K-1),                           APB0F401.300   
+     &                   RS(FIRST_VALID_PT,K),                             APB0F401.301   
+     &                   POINTS,K,P_LEVELS,LLINTS)                         APB0F401.302   
+          ELSE                                                             UVADJ1A.233   
+C IF LEVEL 1 CALC_RS NEEDS A DUMMY ARRAY IN PLACE OF RS( ,K-1)             UVADJ1A.234   
+            CALL CALC_RS(PSTAR(FIRST_VALID_PT),AK,BK,TS(FIRST_VALID_PT),   APB0F401.303   
+     &                   RS(FIRST_VALID_PT,K+1),                           APB0F401.304   
+     &                   RS(FIRST_VALID_PT,K),                             APB0F401.305   
+     &                   POINTS,K,P_LEVELS,LLINTS)                         APB0F401.306   
+          END IF                                                           UVADJ1A.237   
+        END IF                                                             UVADJ1A.238   
+      ENDIF ! LWHITBROM                                                    GSS1F304.943   
+                                                                           UVADJ1A.240   
+C----------------------------------------------------------------------    UVADJ1A.241   
+CL   IF (.NOT.LWHITBROM) THEN                                              GSS1F304.944   
+CL    SECTION 2.2.  STORE 1./RADIUS OF EARTH IN HORIZONTAL FIELD.          UVADJ1A.243   
+CL   ELSE                                                                  GSS1F304.945   
+CL    SECTION 2.2.  CALL P_TO_UV TO GET RS AT U POINTS.                    UVADJ1A.245   
+CL   END IF                                                                GSS1F304.946   
+C----------------------------------------------------------------------    UVADJ1A.247   
+                                                                           UVADJ1A.248   
+      IF (.NOT.LWHITBROM) THEN                                             GSS1F304.947   
+! loop over all points, including valid halos                              APB0F401.307   
+         DO 220 I=FIRST_VALID_PT,LAST_U_VALID_PT                           APB0F401.308   
+            RECIP_RS_UV(I,K) = 1./A                                        AAD2F304.43    
+ 220     CONTINUE                                                          UVADJ1A.252   
+      ELSE                                                                 GSS1F304.948   
+C STORE RS AT U POINTS IN RECIP_RS_UV                                      UVADJ1A.254   
+                                                                           UVADJ1A.255   
+         CALL P_TO_UV(RS(1,K),RECIP_RS_UV(1,K),P_FIELD,                    AAD2F304.44    
+     &                U_FIELD,ROW_LENGTH,tot_P_ROWS)                       APB0F401.309   
+! loop over "local" points - not including top and bottom halos            APB0F401.310   
+        DO  I=FIRST_FLD_PT,LAST_U_FLD_PT                                   APB0F401.311   
+            RECIP_RS_UV(I,K) = 1./RECIP_RS_UV(I,K)                         AAD2F304.46    
+       ENDDO                                                               AAD2F304.47    
+                                                                           UVADJ1A.258   
+      ENDIF                                                                GSS1F304.949   
+      ENDDO                                                                AAD2F304.48    
+*IF DEF,MPP                                                                APB0F401.312   
+      IF (LWHITBROM) THEN                                                  APB0F401.313   
+        CALL SWAPBOUNDS(RECIP_RS_UV,ROW_LENGTH,tot_P_ROWS,                 APB0F401.314   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          APB0F401.315   
+      ENDIF                                                                APB0F401.316   
+*ENDIF                                                                     APB0F401.317   
+CL---------------------------------------------------------------------    UVADJ1A.260   
+CL    SECTION 3.    CALCULATE PHI AT LEVEL K-1/2, EXNER AT LEVEL K,        UVADJ1A.261   
+CL   IF (.NOT.LWHITBROM) THEN                                              GSS1F304.950   
+CL                  AND THETAV.                                            UVADJ1A.263   
+CL   ELSE                                                                  GSS1F304.951   
+CL                  AND THETAV + MU * THETAS AT LEVEL K.                   UVADJ1A.265   
+CL   END IF                                                                GSS1F304.952   
+CL---------------------------------------------------------------------    UVADJ1A.267   
+*IF DEF,GLOBAL                                                             APB0F401.318   
+! Set up array of MU values at poles for use in section 3.5                APB0F305.232   
+! put into north_pole_mu(level) and south_pole_mu(level)                   APB0F305.233   
+      IF (LWHITBROM) THEN                                                  APB0F401.319   
+! North Pole first                                                         APB0F401.320   
+*IF DEF,MPP                                                                APB0F401.321   
+        IF (MY_PROC_ID .EQ. NP_PROC_ID) THEN                               APB0F401.322   
+*ENDIF                                                                     APB0F401.323   
+        np=TOP_ROW_START+FIRST_ROW_PT-1                                    APB0F401.324   
+        DO K=1,P_LEVELS                                                    APB0F401.325   
+          MU_NORTH_POLE(K)=(U(np,K)*U(np,K)+V(np,K)*V(np,K))/              APB0F401.326   
+     &                      RS(np,K)*RECIP_G                               APB0F401.327   
+        ENDDO                                                              APB0F401.328   
+*IF DEF,MPP                                                                APB0F401.329   
+        ENDIF                                                              APB0F401.330   
+        IF (at_top_of_LPG) THEN                                            APB0F401.331   
+! Send this array to everyone on top processor row                         APB0F401.332   
+          CALL GCG_RBCAST(123,P_LEVELS,NP_PROC_ID,                         APB0F401.333   
+     &                    GC_ROW_GROUP,info,MU_NORTH_POLE)                 APB0F401.334   
+        ENDIF                                                              APB0F401.335   
+*ENDIF                                                                     APB0F401.336   
+                                                                           APB0F401.337   
+! And now the South Pole                                                   APB0F401.338   
+*IF DEF,MPP                                                                APB0F401.339   
+        IF (MY_PROC_ID .EQ. SP_PROC_ID) THEN                               APB0F401.340   
+*ENDIF                                                                     APB0F401.341   
+        sp=U_BOT_ROW_START+LAST_ROW_PT-1                                   APB0F401.342   
+        DO K=1,P_LEVELS                                                    APB0F401.343   
+          MU_SOUTH_POLE(K)=(U(sp,K)*U(sp,K)+V(sp,K)*V(sp,K))/              APB0F401.344   
+     &                      RS(sp+ROW_LENGTH,K)*RECIP_G                    APB0F401.345   
+        ENDDO                                                              APB0F401.346   
+*IF DEF,MPP                                                                APB0F401.347   
+        ENDIF                                                              APB0F401.348   
+        IF (at_base_of_LPG) THEN                                           APB0F401.349   
+! Send this array to everyone on bottom processor row                      APB0F401.350   
+          CALL GCG_RBCAST(321,P_LEVELS,SP_PROC_ID,                         APB0F401.351   
+     &                    GC_ROW_GROUP,info,MU_SOUTH_POLE)                 APB0F401.352   
+        ENDIF                                                              APB0F401.353   
+*ENDIF                                                                     APB0F401.354   
+      ENDIF ! IF (LWHITBROM)                                               APB0F401.355   
+*ENDIF                                                                     APB0F305.259   
+                                                                           UVADJ1A.268   
+cmic$ do all shared (adjustment_timestep, ak, akh, bk, bkh, c_virtual)     AAD2F304.49    
+cmic$*       shared (cp, delta_ak, delta_bk)                               APB0F401.356   
+cmic$*       shared (epsilon, f1, f2, f3, half_adjustment_timestep)        AAD2F304.51    
+cmic$*       shared ( kappa)                                               AAD2F304.52    
+cmic$*       shared (longitude_step_inverse, p_exner, p_field)             AAD2F304.53    
+cmic$*       shared (p_levels, phi_half_level, phi_out)                    APB0F401.357   
+cmic$*       shared (pstar, q, q_levels, r, recip_g, row_length)           APB0F401.358   
+cmic$*       shared (rs, sec_u_latitude, points)                           APB0F401.359   
+cmic$*       shared (tan_u_latitude, theta, thetas, u, u_field, v)         AAD2F304.57    
+cmic$*       shared (call_number, lwhitbrom, llints)                       AAD2F304.58    
+*CALL CMICFLD                                                              APB0F401.360   
+cmic$*       private (constant_pressure, delta_p_p_exner_by_deltap)        AAD2F304.59    
+cmic$*       private (dphi_by_dlatitude, dphi_by_dlatitude_p)              AAD2F304.60    
+cmic$*       private (dphi_by_dlongitude, dphi_by_dlongitude_p)            AAD2F304.61    
+cmic$*       private(dppebd_by_dlatitude_p,dppebd_by_dlongitude_p,i,ij)    AAD2F304.62    
+cmic$*       private (k, kappa_dum, p, p_exl_dum, p_exu_dum)               AAD2F304.63    
+cmic$*       private (phi_full_level, pk, pkp1, pl_dum, pu_dum)            AAD2F304.64    
+cmic$*       shared (recip_rs_uv)                                          AAD2F304.65    
+cmic$*       private (temp1, temp2, ts, work_p, work_u)                    AAD2F304.66    
+cmic$*       shared (MU_NORTH_POLE, MU_SOUTH_POLE)                         APB3F402.1     
+      DO K=1,P_LEVELS                                                      AAD2F304.68    
+                                                                           UVADJ1A.279   
+C----------------------------------------------------------------------    UVADJ1A.280   
+CL    SECTION 3.2.  CALCULATE EXNER AT LEVEL K.                            UVADJ1A.281   
+C----------------------------------------------------------------------    UVADJ1A.282   
+C STORE EXNER AT LEVEL K IN WORK_P                                         UVADJ1A.283   
+! loop over all points, including valid halos                              APB0F401.361   
+          DO 320 I= FIRST_VALID_PT,LAST_P_VALID_PT                         APB0F401.362   
+            PKP1 = AKH(K+1) + BKH(K+1)*PSTAR(I)                            UVADJ1A.285   
+            PK   = AKH(K)   + BKH(K)  *PSTAR(I)                            UVADJ1A.286   
+            WORK_P(I) = P_EXNER_C                                          UVADJ1A.287   
+     +      (P_EXNER(I,K+1),P_EXNER(I,K),PKP1,PK,KAPPA)                    UVADJ1A.288   
+ 320      CONTINUE                                                         UVADJ1A.289   
+                                                                           UVADJ1A.290   
+      IF (LWHITBROM) THEN                                                  GSS1F304.953   
+C----------------------------------------------------------------------    UVADJ1A.293   
+CL    SECTION 3.3.  CALCULATES PRESSURE AT LEVEL K NEEDED FOR CALL         UVADJ1A.294   
+CL                  TO CALC_TS. PERFORMED ONLY IF CALL_NUMBER > 1.         UVADJ1A.295   
+C----------------------------------------------------------------------    UVADJ1A.296   
+                                                                           UVADJ1A.297   
+          IF(BK(K).EQ.0.) THEN                                             UVADJ1A.298   
+C SET CONSTANT_PRESSURE BEFORE CALL TO TS AND P AT START ADDRESS AS        UVADJ1A.299   
+C THIS IS ALL TS NEEDS IN THIS CASE.                                       UVADJ1A.300   
+            CONSTANT_PRESSURE = .TRUE.                                     UVADJ1A.301   
+            P(FIRST_VALID_PT) = AK(K)                                      APB0F401.363   
+          ELSE                                                             UVADJ1A.303   
+C SET CONSTANT_PRESSURE BEFORE CALL TO TS AND P.                           UVADJ1A.304   
+! loop over all points, including valid halos                              APB0F401.364   
+            DO 330 I=FIRST_VALID_PT,LAST_P_VALID_PT                        APB0F401.365   
+              P(I) = AK(K) + BK(K)*PSTAR(I)                                UVADJ1A.306   
+ 330        CONTINUE                                                       UVADJ1A.307   
+            CONSTANT_PRESSURE = .FALSE.                                    UVADJ1A.308   
+          END IF                                                           UVADJ1A.309   
+                                                                           UVADJ1A.310   
+C----------------------------------------------------------------------    UVADJ1A.311   
+CL    SECTION 3.4.  CALL CALC_TS TO GET STANDARD TEMPERATURE.              UVADJ1A.312   
+CL                  ONLY CALLED IF CALL_NUMBER GREATER THAN 1              UVADJ1A.313   
+CL                  AS TS CALCULATED IN SECTION 2.1 ON CALL_NUMBER 1.      UVADJ1A.314   
+CL                  THEN CALCULATE THETAS BY DIVIDING BY EXNER.            UVADJ1A.315   
+C----------------------------------------------------------------------    UVADJ1A.316   
+C EXNER AT LEVEL K IS IN WORK_P                                            UVADJ1A.317   
+                                                                           UVADJ1A.318   
+          CALL CALC_TS(P(FIRST_VALID_PT),TS(FIRST_VALID_PT),POINTS,        APB0F401.366   
+     &                 CONSTANT_PRESSURE,LLINTS)                           APB0F401.367   
+                                                                           UVADJ1A.321   
+C       Convert TS to THETAS                                               UVADJ1A.322   
+! loop over all valid points - including top and bottom halos              APB0F401.368   
+        DO 340 I=FIRST_VALID_PT,LAST_P_VALID_PT                            APB0F401.369   
+          THETAS(I,K) = TS(I)/WORK_P(I)                                    AAD2F304.69    
+ 340    CONTINUE                                                           UVADJ1A.325   
+                                                                           UVADJ1A.326   
+C----------------------------------------------------------------------    UVADJ1A.327   
+CL    SECTION 3.5.  CALCULATE MU                                           UVADJ1A.328   
+CL                  CALCULATE 1/RS AT U POINTS.                            UVADJ1A.329   
+C----------------------------------------------------------------------    UVADJ1A.330   
+                                                                           UVADJ1A.331   
+C MU IS CALCULATED AT U POINTS AND HELD IN WORK_U                          UVADJ1A.332   
+! QAN fix                                                                  APB0F401.370   
+        DO I=1,U_FIELD                                                     APB0F401.371   
+          WORK_U(I)=0.0                                                    APB0F401.372   
+        ENDDO                                                              APB0F401.373   
+! loop over all points, including valid halos                              APB0F401.374   
+        DO 350 I=FIRST_VALID_PT,LAST_U_VALID_PT                            APB0F401.375   
+            WORK_U(I) = (F2(I)*U(I,K) - F1(I)*V(I,K) +                     UVADJ1A.336   
+     *              (U(I,K)*U(I,K)+V(I,K)*V(I,K))*RECIP_RS_UV(I,K))*       AAD2F304.70    
+     *              RECIP_G                                                UVADJ1A.338   
+ 350    CONTINUE                                                           UVADJ1A.339   
+C CALL UV_TO_P TO INTERPOLATE MU ONTO P-GRID HELD IN WORK_P                UVADJ1A.340   
+                                                                           UVADJ1A.341   
+        CALL UV_TO_P(WORK_U(START_POINT_NO_HALO-ROW_LENGTH),               APB0F401.376   
+     &               WORK_P(START_POINT_NO_HALO),                          APB0F401.377   
+     &               U_FIELD-(START_POINT_NO_HALO-ROW_LENGTH)+1,           APB0F401.378   
+     &               P_FIELD-START_POINT_NO_HALO+1,                        APB0F401.379   
+     &               ROW_LENGTH,upd_P_ROWS+1)                              APB0F401.380   
+                                                                           UVADJ1A.344   
+*IF DEF,GLOBAL                                                             UVADJ1A.345   
+! Set WORK at poles to MU                                                  APB0F401.381   
+*ELSE                                                                      APB0F401.382   
+! Set WORK at North and South edges to one row in                          APB0F401.383   
+*ENDIF                                                                     APB0F401.384   
+*IF DEF,MPP                                                                APB0F401.385   
+        IF (at_top_of_LPG) THEN                                            APB0F401.386   
+*ENDIF                                                                     APB0F401.387   
+          DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                    APB0F401.388   
+*IF DEF,GLOBAL                                                             APB0F401.389   
+            WORK_P(I) = MU_NORTH_POLE(K)                                   APB0F401.390   
+*ELSE                                                                      APB0F401.391   
+            WORK_P(I) = WORK_P(I+ROW_LENGTH)                               APB0F401.392   
+*ENDIF                                                                     APB0F401.393   
+          ENDDO                                                            APB0F401.394   
+*IF DEF,MPP                                                                APB0F401.395   
+        ENDIF                                                              APB0F401.396   
+        IF (at_base_of_LPG) THEN                                           APB0F401.397   
+*ENDIF                                                                     APB0F401.398   
+          DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                APB0F401.399   
+*IF DEF,GLOBAL                                                             APB0F401.400   
+            WORK_P(I) = MU_SOUTH_POLE(K)                                   APB0F401.401   
+*ELSE                                                                      APB0F401.402   
+            WORK_P(I) = WORK_P(I-ROW_LENGTH)                               APB0F401.403   
+*ENDIF                                                                     APB0F401.404   
+          ENDDO                                                            APB0F401.405   
+*IF DEF,MPP                                                                APB0F401.406   
+        ENDIF                                                              APB0F401.407   
+*ENDIF                                                                     APB0F401.408   
+                                                                           UVADJ1A.366   
+C----------------------------------------------------------------------    UVADJ1A.367   
+CL    SECTION 3.6.  CALCULATE THETAV + MU * THETAS                         UVADJ1A.368   
+C----------------------------------------------------------------------    UVADJ1A.369   
+                                                                           UVADJ1A.370   
+        IF(K.LE.Q_LEVELS) THEN                                             UVADJ1A.371   
+! loop over all points - including top and bottom halos                    APB0F401.409   
+        DO 360 I=FIRST_VALID_PT,LAST_P_VALID_PT                            APB0F401.410   
+            THETAS(I,K) = THETA(I,K)*(1.+ C_VIRTUAL                        AAD2F304.71    
+     *                     *Q(I,K))+ WORK_P(I)*THETAS(I,K)                 AAD2F304.72    
+ 360      CONTINUE                                                         UVADJ1A.375   
+        ELSE                                                               UVADJ1A.376   
+! loop over all points - including top and bottom halos                    APB0F401.411   
+        DO 362 I=FIRST_VALID_PT,LAST_P_VALID_PT                            APB0F401.412   
+            THETAS(I,K) = THETA(I,K) + WORK_P(I)*THETAS(I,K)               AAD2F304.73    
+ 362      CONTINUE                                                         UVADJ1A.379   
+        END IF                                                             UVADJ1A.380   
+                                                                           GSS1F304.955   
+      ELSE      !   LWHITBROM                                              GSS1F304.956   
+                                                                           UVADJ1A.382   
+C----------------------------------------------------------------------    UVADJ1A.383   
+CL    SECTION 3.3.  CALCULATE THETAV                                       UVADJ1A.384   
+C----------------------------------------------------------------------    UVADJ1A.385   
+                                                                           UVADJ1A.386   
+        IF(K.LE.Q_LEVELS) THEN                                             UVADJ1A.387   
+! loop over all points, including valid halos                              APB0F401.413   
+        DO 460 I=FIRST_VALID_PT,LAST_P_VALID_PT                            APB0F401.414   
+            THETAS(I,K) = THETA(I,K)*(1.+ C_VIRTUAL                        AAD2F304.74    
+     *                     *Q(I,K))                                        UVADJ1A.390   
+ 460      CONTINUE                                                         GSS1F304.958   
+        ELSE                                                               UVADJ1A.392   
+! loop over all points, including valid halos                              APB0F401.415   
+        DO 462 I=FIRST_VALID_PT,LAST_P_VALID_PT                            APB0F401.416   
+            THETAS(I,K) = THETA(I,K)                                       AAD2F304.75    
+ 462      CONTINUE                                                         GSS1F304.960   
+        END IF                                                             UVADJ1A.396   
+                                                                           GSS1F304.961   
+      END IF    !   LWHITBROM                                              GSS1F304.962   
+                                                                           UVADJ1A.398   
+                                                                           AAD2F304.82    
+      ENDDO                                                                AAD2F304.83    
+                                                                           APB0F401.417   
+*IF DEF,MPP                                                                APB0F401.418   
+      IF (LWHITBROM) THEN                                                  APB0F401.419   
+        CALL SWAPBOUNDS(THETAS,ROW_LENGTH,tot_P_ROWS,                      APB0F401.420   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          APB0F401.421   
+      ENDIF                                                                APB0F401.422   
+*ENDIF                                                                     APB0F401.423   
+                                                                           APB0F401.424   
+        c1=.5*LONGITUDE_STEP_INVERSE*ADJUSTMENT_TIMESTEP                   GSS1F403.753   
+        c2=.5*LATITUDE_STEP_INVERSE*ADJUSTMENT_TIMESTEP                    GSS1F403.754   
+                                                                           AAD2F304.84    
+cmic$ do all shared (adjustment_timestep, ak, akh, bk, bkh, c_virtual)     AAD2F304.91    
+cmic$*       shared (cp, delta_ak, delta_bk)                               APB0F401.433   
+cmic$*       shared (epsilon, f1, f2, f3, half_adjustment_timestep)        AAD2F304.93    
+cmic$*       shared ( kappa)                                               AAD2F304.94    
+cmic$*       shared (l_phi_out, latitude_step_inverse)                     AAD2F304.95    
+cmic$*       shared (longitude_step_inverse, p_exner, p_field)             AAD2F304.96    
+cmic$*       shared (p_levels, phi_half_level, phi_out)                    APB0F401.434   
+cmic$*       shared (pstar, q, q_levels, r, recip_g, row_length)           APB0F401.435   
+cmic$*       shared (rs, sec_u_latitude)                                   APB0F401.436   
+*CALL CMICFLD                                                              APB0F401.437   
+cmic$*       shared (tan_u_latitude, theta, thetas, u, u_field, v)         AAD2F304.100   
+cmic$*       private (constant_pressure, delta_p_p_exner_by_deltap)        AAD2F304.101   
+cmic$*       private (dphi_by_dlatitude, dphi_by_dlatitude_p)              AAD2F304.102   
+cmic$*       private (dphi_by_dlongitude, dphi_by_dlongitude_p)            AAD2F304.103   
+cmic$*       private(dppebd_by_dlatitude_p,dppebd_by_dlongitude_p,i,ij)    AAD2F304.104   
+cmic$*       private (k, kappa_dum, p, p_exl_dum, p_exu_dum)               AAD2F304.105   
+cmic$*       private (phi_full_level, pk, pkp1, pl_dum, pu_dum)            AAD2F304.106   
+cmic$*       shared (recip_rs_uv)                                          AAD2F304.107   
+cmic$*       private (ik,temp1, temp2, ts, work_p, work_u)                 AAD2F304.108   
+cmic$*       shared (c1,c2)                                                GSS1F403.755   
+cmic$*       private (work_v,u_temp,v_temp)                                GSS1F403.756   
+      DO 110 K=1,P_LEVELS                                                  AAD2F304.109   
+                                                                           UVADJ1A.406   
+CL---------------------------------------------------------------------    GSS1F403.757   
+CL    SECTION 4.    CALCULATE PHI AT LEVEL K, EQUATION (26).               GSS1F403.758   
+CL---------------------------------------------------------------------    GSS1F403.759   
+C----------------------------------------------------------------------    GSS1F403.760   
+CL    SECTION 4.1.  CALCULATE PHI AT LEVEL K                               GSS1F403.761   
+C----------------------------------------------------------------------    GSS1F403.762   
+        TEMP2 = 1./(KAPPA+1.)                                              UVADJ1A.407   
+                                                                           GSS1F403.763   
+      if(k.ne.p_levels.and.k.ne.1)then                                     GSS1F403.764   
+                                                                           GSS1F403.765   
+cdir$ nosplit                                                              GSS1F403.766   
+! loop over all points, including valid halos                              APB0F401.438   
+        DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                GSS1F403.767   
+         PHI_HALF_LEVEL(I,K) = PHI_HALF_LEVEL(I,K)+PHI_HALF_LEVEL(I,K-1)   GSS1F403.768   
+         PHI_HALF_LEVEL(I,K+1) = -CP*THETAS(I,K)*                          GSS1F403.769   
+     &                            (P_EXNER(I,K+1) - P_EXNER(I,K) )         GSS1F403.770   
+          DELTA_P_P_EXNER_BY_DELTAP(I) = (P_EXNER(I,K+1)*                  UVADJ1A.410   
+     *        (AKH(K+1)+BKH(K+1)*PSTAR(I)) -                               UVADJ1A.411   
+     *        P_EXNER(I,K)*(AKH(K)+BKH(K)*PSTAR(I)))                       UVADJ1A.412   
+     *        / (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))*TEMP2                   UVADJ1A.413   
+         PHI_FULL_LEVEL(I) = PHI_HALF_LEVEL(I,K) + CP*THETAS(I,K)*         GSS1F403.771   
+     *              (P_EXNER(I,K) - DELTA_P_P_EXNER_BY_DELTAP(I))          GSS1F403.772   
+      ENDDO                                                                GSS1F403.773   
+                                                                           GSS1F403.774   
+      else if(k.eq.1)then                                                  GSS1F403.775   
+                                                                           GSS1F403.776   
+cdir$ nosplit                                                              GSS1F403.777   
+! loop over all points, including valid halos                              GSS1F403.778   
+        DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                GSS1F403.779   
+         PHI_HALF_LEVEL(I,K+1) = -CP*THETAS(I,K)*                          GSS1F403.780   
+     &                            (P_EXNER(I,K+1) - P_EXNER(I,K) )         GSS1F403.781   
+         DELTA_P_P_EXNER_BY_DELTAP(I) = (P_EXNER(I,K+1)*                   GSS1F403.782   
+     *        (AKH(K+1)+BKH(K+1)*PSTAR(I)) -                               GSS1F403.783   
+     *        P_EXNER(I,K)*(AKH(K)+BKH(K)*PSTAR(I)))                       GSS1F403.784   
+     *        / (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))*TEMP2                   GSS1F403.785   
+         PHI_FULL_LEVEL(I) = PHI_HALF_LEVEL(I,K) + CP*THETAS(I,K)*         GSS1F403.786   
+     *              (P_EXNER(I,K) - DELTA_P_P_EXNER_BY_DELTAP(I))          GSS1F403.787   
+      ENDDO                                                                GSS1F403.788   
+                                                                           GSS1F403.789   
+      else if(k.eq.p_levels)then                                           GSS1F403.790   
+                                                                           GSS1F403.791   
+cdir$ nosplit                                                              GSS1F403.792   
+! loop over all points, including valid halos                              GSS1F403.793   
+        DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                GSS1F403.794   
+         PHI_HALF_LEVEL(I,K) = PHI_HALF_LEVEL(I,K)+PHI_HALF_LEVEL(I,K-1)   GSS1F403.795   
+         DELTA_P_P_EXNER_BY_DELTAP(I) = (P_EXNER(I,K+1)*                   GSS1F403.796   
+     *        (AKH(K+1)+BKH(K+1)*PSTAR(I)) -                               GSS1F403.797   
+     *        P_EXNER(I,K)*(AKH(K)+BKH(K)*PSTAR(I)))                       GSS1F403.798   
+     *        / (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))*TEMP2                   GSS1F403.799   
+C CALCULATE PHI AT LEVEL K                                                 UVADJ1A.414   
+          PHI_FULL_LEVEL(I) = PHI_HALF_LEVEL(I,K) + CP*THETAS(I,K)*        AAD2F304.110   
+     *              (P_EXNER(I,K) - DELTA_P_P_EXNER_BY_DELTAP(I))          UVADJ1A.416   
+        ENDDO                                                              GSS1F403.800   
+                                                                           UVADJ1A.418   
+       endif                                                               GSS1F403.801   
+                                                                           GSS1F403.802   
+CL    COPY PHI_FULL_LEVEL INTO OUTPUT ARRAY IF DIAGNOSTIC REQUIRED.        UVADJ1A.419   
+                                                                           UVADJ1A.420   
+        IF(L_PHI_OUT) THEN                                                 UVADJ1A.421   
+! loop over all points, including valid halos                              APB0F401.440   
+          DO I=FIRST_VALID_PT,LAST_P_VALID_PT                              APB0F401.441   
+            PHI_OUT(I,K) = PHI_FULL_LEVEL(I)                               UVADJ1A.423   
+          END DO                                                           UVADJ1A.424   
+*IF DEF,MPP                                                                GPB1F403.272   
+! Initialise whole array so there are no NaNs for STASH to fall            GPB1F403.273   
+! over on                                                                  GPB1F403.274   
+          DO I=1,FIRST_VALID_PT-1                                          GPB1F403.275   
+            PHI_OUT(I,K)=PHI_OUT(FIRST_VALID_PT,K)                         GPB1F403.276   
+          ENDDO                                                            GPB1F403.277   
+          DO I=LAST_P_VALID_PT+1,P_FIELD                                   GPB1F403.278   
+            PHI_OUT(I,K)=PHI_OUT(LAST_P_VALID_PT,K)                        GPB1F403.279   
+          ENDDO                                                            GPB1F403.280   
+*ENDIF                                                                     GPB1F403.281   
+        END IF                                                             UVADJ1A.425   
+                                                                           UVADJ1A.426   
+CL---------------------------------------------------------------------    UVADJ1A.427   
+CL    SECTION 5.    CALCULATE HORIZONTAL PRESSURE GRADIENTS.               UVADJ1A.428   
+CL                  THEN CALCULATE CORIOLIS TERM AND IMPLICITLY UPDATE     UVADJ1A.429   
+CL                  U AND V. EQUATIONS (23) TO (25).                       UVADJ1A.430   
+CL---------------------------------------------------------------------    UVADJ1A.431   
+C----------------------------------------------------------------------    UVADJ1A.433   
+CL    SECTION 5.1.  CALCULATE HORIZONTAL PRESSURE GRADIENT,                UVADJ1A.434   
+CL                  D(PHI)/D(LONGITUDE).                                   UVADJ1A.435   
+C----------------------------------------------------------------------    UVADJ1A.436   
+C----------------------------------------------------------------------    GSS1F403.803   
+CL    SECTION 5.2.  CALCULATE HORIZONTAL PRESSURE GRADIENT,                GSS1F403.804   
+CL                  D(PHI)/D(LATITUDE).                                    GSS1F403.805   
+C----------------------------------------------------------------------    GSS1F403.806   
+C----------------------------------------------------------------------    GSS1F403.807   
+CL    SECTION 5.3.  UPDATE U AND V USING IMPLICIT                          GSS1F403.808   
+CL                  TREATMENT OF CORIOLIS TERMS.                           GSS1F403.809   
+C----------------------------------------------------------------------    GSS1F403.810   
+                                                                           UVADJ1A.437   
+*IF -DEF,GLOBAL                                                            GSS1F403.811   
+*IF DEF,MPP                                                                APB0F401.445   
+        IF (at_left_of_LPG) THEN                                           GSS1F403.812   
+*ENDIF                                                                     APB0F401.453   
+        DO I=START_POINT_NO_HALO + FIRST_ROW_PT-1,                         GSS1F403.813   
+     &       END_U_POINT_NO_HALO,ROW_LENGTH                                GSS1F403.814   
+        U_TEMP_L(I)=U(I,K)                                                 GSS1F403.815   
+        V_TEMP_L(I)=V(I,K)                                                 GSS1F403.816   
+        ENDDO                                                              GSS1F403.817   
+*IF DEF,MPP                                                                APB0F401.456   
+        ENDIF                                                              GSS1F403.818   
+        IF (at_right_of_LPG) THEN                                          APB0F401.457   
+*ENDIF                                                                     APB0F401.458   
+        DO I=START_POINT_NO_HALO + LAST_ROW_PT-1,                          GSS1F403.819   
+     &       END_U_POINT_NO_HALO,ROW_LENGTH                                GSS1F403.820   
+        U_TEMP_R(I)=U(I,K)                                                 GSS1F403.821   
+        V_TEMP_R(I)=V(I,K)                                                 GSS1F403.822   
+        U_TEMP_R(I-1)=U(I-1,K)                                             GSS1F403.823   
+        V_TEMP_R(I-1)=V(I-1,K)                                             GSS1F403.824   
+          ENDDO                                                            APB0F401.463   
+*IF DEF,MPP                                                                APB0F401.464   
+        ENDIF                                                              APB0F401.465   
+*ENDIF                                                                     APB0F401.466   
+*ENDIF                                                                     UVADJ1A.464   
+                                                                           UVADJ1A.465   
+                                                                           UVADJ1A.476   
+*IF DEF,GLOBAL                                                             GSS1F403.825   
+*IF -DEF,MPP                                                               GSS1F403.826   
+        DO I=START_POINT_NO_HALO + LAST_ROW_PT-1,                          GSS1F403.827   
+     &       END_U_POINT_NO_HALO,ROW_LENGTH                                GSS1F403.828   
+        U_TEMP_R(I)=U(I,K)                                                 GSS1F403.829   
+        V_TEMP_R(I)=V(I,K)                                                 GSS1F403.830   
+          ENDDO                                                            GSS1F403.831   
+*ENDIF                                                                     GSS1F403.832   
+*ENDIF                                                                     GSS1F403.833   
+C LOOP OVER ALL POINTS TO BE UPDATED.                                      GSS1F403.834   
+                                                                           UVADJ1A.481   
+cdir$ nosplit                                                              GSS1F403.835   
+cdir$ nounroll                                                             GSS1F403.836   
+                                                                           GSS1F403.837   
+        DO 530 I=START_POINT_NO_HALO,END_U_POINT_NO_HALO-1                 GSS1F403.838   
+                                                                           GSS1F403.839   
+          TEMP1 = HALF_ADJUSTMENT_TIMESTEP*                                GSS1F403.840   
+     *            (F3(I)+U(I,K)*TAN_U_LATITUDE(I)*RECIP_RS_UV(I,K))        GSS1F403.841   
+          TEMP2 = TEMP1 * TEMP1                                            GSS1F403.842   
+          RECIP=1.0/(1.+TEMP2)                                             GSS1F403.843   
+                                                                           GSS1F403.844   
+          IJ = I + ROW_LENGTH                                              UVADJ1A.483   
+          DPHI_BY_DLONGITUDE = c1*(                                        GSS1F403.845   
+     *                  (PHI_FULL_LEVEL(I+1)-PHI_FULL_LEVEL(I))+           GSS1F403.846   
+     *                  (PHI_FULL_LEVEL(IJ+1)-PHI_FULL_LEVEL(IJ))+         GSS1F403.847   
+     *     .5*CP*(THETAS(I+1,K)+THETAS(I,K))                               GSS1F403.848   
+     *                  *(DELTA_P_P_EXNER_BY_DELTAP(I+1) -                 GSS1F403.849   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(I))+                   GSS1F403.850   
+     *     .5*CP*(THETAS(IJ+1,K)+THETAS(IJ,K))                             GSS1F403.851   
+     *                  *(DELTA_P_P_EXNER_BY_DELTAP(IJ+1) -                GSS1F403.852   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(IJ)))*                 GSS1F403.853   
+     *     SEC_U_LATITUDE(I)*RECIP_RS_UV(I,K)                              GSS1F403.854   
+          DPHI_BY_DLATITUDE = c2*(                                         GSS1F403.855   
+     *                  (PHI_FULL_LEVEL(I)-PHI_FULL_LEVEL(IJ))+            GSS1F403.856   
+     *                  (PHI_FULL_LEVEL(I+1)-PHI_FULL_LEVEL(IJ+1))+        GSS1F403.857   
+     *     .5*CP*(THETAS(I,K)+THETAS(IJ,K))                                GSS1F403.858   
+     *                 *(DELTA_P_P_EXNER_BY_DELTAP(I) -                    UVADJ1A.487   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(IJ))+                  GSS1F403.859   
+     *     .5*CP*(THETAS(I+1,K)+THETAS(IJ+1,K))                            GSS1F403.860   
+     *                  *(DELTA_P_P_EXNER_BY_DELTAP(I+1) -                 GSS1F403.861   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(IJ+1)))*               GSS1F403.862   
+     *                                RECIP_RS_UV(I,K)                     AAD2F304.115   
+                                                                           UVADJ1A.498   
+C CALCULATE V AT NEW TIME LEVEL.                                           GSS1F403.863   
+C WORK_V HOLDS V AT NEW TIME-LEVEL.                                        GSS1F403.864   
+                                                                           UVADJ1A.512   
+          WORK_V= (V(I,K)*(1.-TEMP2)                                       GSS1F403.865   
+     *                - TEMP1*(2.*U(I,K)-DPHI_BY_DLONGITUDE)               GSS1F403.866   
+     *                - DPHI_BY_DLATITUDE)*RECIP                           GSS1F403.867   
+                                                                           UVADJ1A.517   
+C CALCULATE U AT NEW TIME-LEVEL.                                           GSS1F403.868   
+                                                                           UVADJ1A.519   
+          U(I,K) = U(I,K) + TEMP1*(V(I,K)+WORK_V) -                        GSS1F403.869   
+     *                 DPHI_BY_DLONGITUDE                                  GSS1F403.870   
+                                                                           GSS1F403.871   
+C SET V EQUAL TO V AT NEW TIME-LEVEL.                                      GSS1F403.872   
+                                                                           GSS1F403.873   
+          V(I,K) = WORK_V                                                  GSS1F403.874   
+                                                                           GSS1F403.875   
+ 530    CONTINUE                                                           GSS1F403.876   
+*IF DEF,GLOBAL                                                             GSS1F403.877   
+*IF -DEF,MPP                                                               GSS1F403.878   
+C Redo last point of each row with correct wraparound for nonMPP code      GSS1F403.879   
+                                                                           GSS1F403.880   
+cdir$ nosplit                                                              GSS1F403.881   
+cdir$ nounroll                                                             GSS1F403.882   
+                                                                           GSS1F403.883   
+        DO I=START_POINT_NO_HALO + LAST_ROW_PT-1,                          GSS1F403.884   
+     &       END_U_POINT_NO_HALO,ROW_LENGTH                                GSS1F403.885   
+                                                                           GSS1F403.886   
+          TEMP1 = HALF_ADJUSTMENT_TIMESTEP*                                GSS1F403.887   
+     *            (F3(I)+U_TEMP_R(I)*TAN_U_LATITUDE(I)*                    GSS1F403.888   
+     &             RECIP_RS_UV(I,K))                                       GSS1F403.889   
+          TEMP2 = TEMP1 * TEMP1                                            GSS1F403.890   
+          RECIP=1.0/(1.+TEMP2)                                             GSS1F403.891   
+                                                                           GSS1F403.892   
+          IP = I + 1 - ROW_LENGTH                                          GSS1F403.893   
+          IJ = I + ROW_LENGTH                                              GSS1F403.894   
+          IJP = IJ + 1 - ROW_LENGTH                                        GSS1F403.895   
+                                                                           GSS1F403.896   
+          DPHI_BY_DLONGITUDE = c1*(                                        GSS1F403.897   
+     *                  (PHI_FULL_LEVEL(IP )-PHI_FULL_LEVEL(I))+           GSS1F403.898   
+     *                  (PHI_FULL_LEVEL(IJP )-PHI_FULL_LEVEL(IJ))+         GSS1F403.899   
+     *     .5*CP*(THETAS(IP ,K)+THETAS(I,K))                               GSS1F403.900   
+     *                  *(DELTA_P_P_EXNER_BY_DELTAP(IP ) -                 GSS1F403.901   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(I))+                   GSS1F403.902   
+     *     .5*CP*(THETAS(IJP ,K)+THETAS(IJ,K))                             GSS1F403.903   
+     *                  *(DELTA_P_P_EXNER_BY_DELTAP(IJP ) -                GSS1F403.904   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(IJ)))*                 GSS1F403.905   
+     *     SEC_U_LATITUDE(I)*RECIP_RS_UV(I,K)                              GSS1F403.906   
+          DPHI_BY_DLATITUDE = c2*(                                         GSS1F403.907   
+     *                  (PHI_FULL_LEVEL(I)-PHI_FULL_LEVEL(IJ))+            GSS1F403.908   
+     *                  (PHI_FULL_LEVEL(IP )-PHI_FULL_LEVEL(IJP ))+        GSS1F403.909   
+     *     .5*CP*(THETAS(I,K)+THETAS(IJ,K))                                GSS1F403.910   
+     *                 *(DELTA_P_P_EXNER_BY_DELTAP(I) -                    GSS1F403.911   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(IJ))+                  GSS1F403.912   
+     *     .5*CP*(THETAS(IP ,K)+THETAS(IJP ,K))                            GSS1F403.913   
+     *                  *(DELTA_P_P_EXNER_BY_DELTAP(IP ) -                 GSS1F403.914   
+     *                    DELTA_P_P_EXNER_BY_DELTAP(IJP )))*               GSS1F403.915   
+     *                                RECIP_RS_UV(I,K)                     GSS1F403.916   
+                                                                           GSS1F403.917   
+C CALCULATE V AT NEW TIME LEVEL.                                           GSS1F403.918   
+C WORK_V HOLDS V AT NEW TIME-LEVEL.                                        GSS1F403.919   
+                                                                           GSS1F403.920   
+          WORK_V= (V_TEMP_R(I)*(1.-TEMP2)                                  GSS1F403.921   
+     *                - TEMP1*(2.*U_TEMP_R(I)-DPHI_BY_DLONGITUDE)          GSS1F403.922   
+     *                - DPHI_BY_DLATITUDE)*RECIP                           GSS1F403.923   
+                                                                           GSS1F403.924   
+C CALCULATE U AT NEW TIME-LEVEL.                                           GSS1F403.925   
+                                                                           GSS1F403.926   
+          U(I,K) = U_TEMP_R(I) + TEMP1*(V_TEMP_R(I)+WORK_V) -              GSS1F403.927   
+     *                 DPHI_BY_DLONGITUDE                                  GSS1F403.928   
+                                                                           GSS1F403.929   
+C SET V EQUAL TO V AT NEW TIME-LEVEL.                                      GSS1F403.930   
+                                                                           GSS1F403.931   
+          V(I,K) = WORK_V                                                  GSS1F403.932   
+                                                                           GSS1F403.933   
+      ENDDO                                                                GSS1F403.934   
+                                                                           GSS1F403.935   
+*ENDIF                                                                     GSS1F403.936   
+*ENDIF                                                                     GSS1F403.937   
+                                                                           GSS1F403.938   
+                                                                           GSS1F403.939   
+C END LOOP OVER ALL POINTS TO BE UPDATED.                                  GSS1F403.940   
+                                                                           GSS1F403.941   
+*IF -DEF,GLOBAL                                                            GSS1F403.942   
+*IF DEF,MPP                                                                GSS1F403.943   
+        IF (at_left_of_LPG) THEN                                           APB0F401.484   
+*ENDIF                                                                     GSS1F403.944   
+        DO I=START_POINT_NO_HALO + FIRST_ROW_PT-1,                         GSS1F403.945   
+     &       END_U_POINT_NO_HALO,ROW_LENGTH                                GSS1F403.946   
+        U(I,K)=U_TEMP_L(I)                                                 GSS1F403.947   
+        V(I,K)=V_TEMP_L(I)                                                 GSS1F403.948   
+        ENDDO                                                              GSS1F403.949   
+*IF DEF,MPP                                                                GSS1F403.950   
+        ENDIF                                                              APB0F401.488   
+        IF (at_right_of_LPG) THEN                                          APB0F401.490   
+*ENDIF                                                                     GSS1F403.951   
+        DO I=START_POINT_NO_HALO + LAST_ROW_PT-1,                          GSS1F403.952   
+     &       END_U_POINT_NO_HALO,ROW_LENGTH                                GSS1F403.953   
+        U(I,K)=U_TEMP_R(I)                                                 GSS1F403.954   
+        V(I,K)=V_TEMP_R(I)                                                 GSS1F403.955   
+        U(I-1,K)=U_TEMP_R(I-1)                                             GSS1F403.956   
+        V(I-1,K)=V_TEMP_R(I-1)                                             GSS1F403.957   
+        ENDDO                                                              GSS1F403.958   
+*IF DEF,MPP                                                                GSS1F403.959   
+        ENDIF                                                              APB0F401.495   
+*ENDIF                                                                     APB0F305.350   
+*ENDIF                                                                     UVADJ1A.525   
+                                                                           UVADJ1A.547   
+CL END LOOP OVER P_LEVELS                                                  UVADJ1A.548   
+ 110  CONTINUE                                                             UVADJ1A.549   
+                                                                           UVADJ1A.550   
+CL END OF ROUTINE UV_ADJ                                                   UVADJ1A.551   
+                                                                           UVADJ1A.552   
+      RETURN                                                               UVADJ1A.553   
+      END                                                                  UVADJ1A.554   
+*ENDIF                                                                     UVADJ1A.555   

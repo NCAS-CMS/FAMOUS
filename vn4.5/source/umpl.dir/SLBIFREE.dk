@@ -1,0 +1,278 @@
+*IF DEF,S40_1A                                                             SJC0F305.7     
+C ******************************COPYRIGHT******************************    GTS2F400.9127  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9128  
+C                                                                          GTS2F400.9129  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9130  
+C restrictions as set forth in the contract.                               GTS2F400.9131  
+C                                                                          GTS2F400.9132  
+C                Meteorological Office                                     GTS2F400.9133  
+C                London Road                                               GTS2F400.9134  
+C                BRACKNELL                                                 GTS2F400.9135  
+C                Berkshire UK                                              GTS2F400.9136  
+C                RG12 2SZ                                                  GTS2F400.9137  
+C                                                                          GTS2F400.9138  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9139  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9140  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9141  
+C Modelling at the above address.                                          GTS2F400.9142  
+C ******************************COPYRIGHT******************************    GTS2F400.9143  
+C                                                                          GTS2F400.9144  
+!+ Subroutine calculates free drift ice velocity for SLAB ocean.           SLBIFREE.3     
+!                                                                          SLBIFREE.4     
+! Subroutine Interface:                                                    SLBIFREE.5     
+      SUBROUTINE slab_icefreec(                                            SLBIFREE.6     
+     & imt,jmt,jmtm1,lglobal                                               SLBIFREE.7     
+     &,tol,nmax,weight                                                     SLBIFREE.8     
+     &,delta_lat,delta_long                                                SLBIFREE.9     
+     &,cos_p_latitude,umask,ccalc                                          SLBIFREE.10    
+     &,umc,vmc,pressure                                                    SLBIFREE.11    
+     &,ax,ay,bx,by                                                         SLBIFREE.12    
+     &,x_stress,y_stress                                                   SLBIFREE.13    
+     &,uice,vice                                                           SLBIFREE.14    
+     & )                                                                   SLBIFREE.15    
+                                                                           SLBIFREE.16    
+      IMPLICIT NONE                                                        SLBIFREE.17    
+!                                                                          SLBIFREE.18    
+! Description:                                                             SLBIFREE.19    
+!     DYNAMIC SEA ICE MODEL SUBROUTINE TO CALCULATE MODIFIED FREE          SLBIFREE.20    
+!     DRIFT ICE VELOCITIES IN C GRID WITH GIVEN PRESSURE.                  SLBIFREE.21    
+!                                                                          SLBIFREE.22    
+! Method:                                                                  SLBIFREE.23    
+! Loop over maximum number of iterations.                                  SLBIFREE.24    
+!   Copy initial velocities for this sweep to workspace.                   SLBIFREE.25    
+!   Loop over each point in grid requiring free drift calculation          SLBIFREE.26    
+!   using chequerboard scheme to improve vectorisation.                    SLBIFREE.27    
+!     C grid free drift underrelaxation scheme.                            SLBIFREE.28    
+!     See documentation (to be released - contact J. Thomson)              SLBIFREE.29    
+!     for details of calculation.                                          SLBIFREE.30    
+!   End loop over grid.                                                    SLBIFREE.31    
+!   Calculate maximum velocity change in this iteration and compare        SLBIFREE.32    
+!   with tolerance. If tolerance exceeds max change, jump out of           SLBIFREE.33    
+!   loop.                                                                  SLBIFREE.34    
+! End loop over max iterations, printing warning if max iterations         SLBIFREE.35    
+! reached                                                                  SLBIFREE.36    
+!                                                                          SLBIFREE.37    
+! Current Code Owner: J.F.Thomson                                          SLBIFREE.38    
+!                                                                          SLBIFREE.39    
+! History:                                                                 SLBIFREE.40    
+! Version   Date     Comment                                               SLBIFREE.41    
+! -------   ----     -------                                               SLBIFREE.42    
+! 3.4       6/94     Original code. J.Thomson                              SLBIFREE.43    
+!                                                                          SLBIFREE.44    
+! Code Description:                                                        SLBIFREE.45    
+!   Language: FORTRAN 77 + common extensions.                              SLBIFREE.46    
+!   This code is written to UMDP3 v6 programming standards.                SLBIFREE.47    
+!                                                                          SLBIFREE.48    
+! System component covered:                                                SLBIFREE.49    
+! System Task:              P40                                            SLBIFREE.50    
+!                                                                          SLBIFREE.51    
+! Declarations:                                                            SLBIFREE.52    
+!   These are of the form:-                                                SLBIFREE.53    
+!     INTEGER      ExampleVariable      !Description of variable           SLBIFREE.54    
+!                                                                          SLBIFREE.55    
+! Global variables (*CALLed COMDECKs etc...):                              SLBIFREE.56    
+*CALL C_A                                                                  SLBIFREE.57    
+                                                                           SLBIFREE.58    
+! Subroutine arguments                                                     SLBIFREE.59    
+!   Scalar arguments with intent(in):                                      SLBIFREE.60    
+      INTEGER     imt            ! number of tracer columns.               SLBIFREE.61    
+      INTEGER     jmt            ! number of tracer rows.                  SLBIFREE.62    
+      INTEGER     jmtm1          ! number of velocity rows.                SLBIFREE.63    
+      LOGICAL     lglobal        ! true for global models.                 SLBIFREE.64    
+      REAL        delta_lat      ! meridional grid spacing in radians.     SLBIFREE.65    
+      REAL        delta_long     ! zonal grid spacing in radians.          SLBIFREE.66    
+      REAL        weight         ! weighting term for C grid calc.         SLBIFREE.67    
+      REAL        tol            ! tolerance for C grid calc.              SLBIFREE.68    
+      INTEGER     nmax           ! maximum iterations                      SLBIFREE.69    
+                                                                           SLBIFREE.70    
+!   Array  arguments with intent(in):                                      SLBIFREE.71    
+      REAL    cos_p_latitude(imt,jmt) ! cosine of p grid points.           SLBIFREE.72    
+      REAL    umask(imt,jmtm1)        ! in 1.0 for uv land 0.0 for sea.    SLBIFREE.73    
+      REAL    umc(imt,jmtm1)          ! in 1.0 for cu land 0.0 for sea.    SLBIFREE.74    
+      REAL    vmc(imt,jmtm1)          ! in 1.0 for cv land 0.0 for sea.    SLBIFREE.75    
+      LOGICAL ccalc(imt,jmt)          ! true if C grid calcs required.     SLBIFREE.76    
+      REAL    pressure(imt,jmtm1)     ! internal ice pressure.             SLBIFREE.77    
+      REAL    x_stress(imt,jmtm1)     ! zonal stress on ice (C grid)       SLBIFREE.78    
+      REAL    y_stress(imt,jmtm1)     ! merid. stress on ice (C grid)      SLBIFREE.79    
+      REAL    ax(imt,jmtm1)           ! cdw * sin(psi) for C x pts         SLBIFREE.80    
+      REAL    ay(imt,jmtm1)           ! cdw * sin(psi) for C y pts         SLBIFREE.81    
+      REAL    bx(imt,jmtm1)           ! mf + cdw * cos(psi) for C x pts    SLBIFREE.82    
+      REAL    by(imt,jmtm1)           ! mf + cdw * cos(psi) for C y pts    SLBIFREE.83    
+     &                                ! m = gbm ice depth * rhoice         SLBIFREE.84    
+     &                                ! f = coriolis parameter             SLBIFREE.85    
+                                                                           SLBIFREE.86    
+!   Scalar arguments with intent(InOut):                                   SLBIFREE.87    
+                                                                           SLBIFREE.88    
+!   Array  arguments with intent(InOut):                                   SLBIFREE.89    
+      REAL    uice(imt,jmtm1)         ! zonal sea ice velocity.            SLBIFREE.90    
+      REAL    vice(imt,jmtm1)         ! meridional sea ice velocity.       SLBIFREE.91    
+                                                                           SLBIFREE.92    
+!   Scalar arguments with intent(out):                                     SLBIFREE.93    
+                                                                           SLBIFREE.94    
+!   Array  arguments with intent(out):                                     SLBIFREE.95    
+                                                                           SLBIFREE.96    
+! Local parameters:                                                        SLBIFREE.97    
+      REAL    zero                    ! 0.0                                SLBIFREE.98    
+      PARAMETER ( zero = 0.0 )                                             SLBIFREE.99    
+      REAL    fr1                     ! 1/4 as used in relaxation          SLBIFREE.100   
+      PARAMETER ( fr1  = 0.25 )                                            SLBIFREE.101   
+      REAL    fr2                     ! 1/16 as used in relaxation         SLBIFREE.102   
+      PARAMETER ( fr2  = 0.0625 )                                          SLBIFREE.103   
+                                                                           SLBIFREE.104   
+! Local scalars:                                                           SLBIFREE.105   
+      REAL    r1                      ! term in C grid calc                SLBIFREE.106   
+      REAL    r2                      ! term in C grid calc                SLBIFREE.107   
+      REAL    rdet                    ! term in C grid calc                SLBIFREE.108   
+      REAL    det                     ! term in C grid calc                SLBIFREE.109   
+      REAL    errm                    ! error term in C grid calc          SLBIFREE.110   
+      REAL    erru                    ! error term in C grid calc          SLBIFREE.111   
+      REAL    errv                    ! error term in C grid calc          SLBIFREE.112   
+      REAL    dpdx                    ! pressure gradient                  SLBIFREE.113   
+      REAL    dpdy                    ! pressure gradient                  SLBIFREE.114   
+      INTEGER imtm1                   ! number of columns minus 1          SLBIFREE.115   
+      INTEGER imtm2                   ! number of columns minus 2          SLBIFREE.116   
+      INTEGER i,j,istart,iter         ! loop counters                      SLBIFREE.117   
+                                                                           SLBIFREE.118   
+! Local dynamic arrays:                                                    SLBIFREE.119   
+      REAL    uwork(imt,jmtm1)        ! work array for u ice velocity.     SLBIFREE.120   
+      REAL    vwork(imt,jmtm1)        ! work array for v ice velocity.     SLBIFREE.121   
+                                                                           SLBIFREE.122   
+! Function & Subroutine calls:                                             SLBIFREE.123   
+!     External                                                             SLBIFREE.124   
+                                                                           SLBIFREE.125   
+!- End of header                                                           SLBIFREE.126   
+*IF DEF,TIMER                                                              SLBIFREE.127   
+      call timer('icefreec',3)                                             SLBIFREE.128   
+*ENDIF                                                                     SLBIFREE.129   
+      imtm1=imt-1                                                          SLBIFREE.130   
+      imtm2=imt-2                                                          SLBIFREE.131   
+                                                                           SLBIFREE.132   
+! Iterative C grid 'free drift' velocity calculations                      SLBIFREE.133   
+! Begin loop over maximum number of iterations                             SLBIFREE.134   
+      do iter=1,nmax                                                       SLBIFREE.135   
+                                                                           SLBIFREE.136   
+! Copy initial velocities to work space                                    SLBIFREE.137   
+        do j=1,jmtm1                                                       SLBIFREE.138   
+          do i=1,imt                                                       SLBIFREE.139   
+            uwork(i,j) = uice(i,j)                                         SLBIFREE.140   
+            vwork(i,j) = vice(i,j)                                         SLBIFREE.141   
+          end do                                                           SLBIFREE.142   
+        end do                                                             SLBIFREE.143   
+!                                                                          SLBIFREE.144   
+! Calculate velocity components using w as a weight.                       SLBIFREE.145   
+!                                                                          SLBIFREE.146   
+        do j=2,jmt-2                                                       SLBIFREE.147   
+          do istart=2,3                                                    SLBIFREE.148   
+          do i=istart,imtm1,2                                              SLBIFREE.149   
+          if(ccalc(i+1,j+1)) then                                          SLBIFREE.150   
+            dpdx = ( pressure(i+1,j+1) - pressure(i,j+1) )                 SLBIFREE.151   
+     &             / ( a * cos_p_latitude(i+1,j+1) * delta_long )          SLBIFREE.152   
+            dpdy = ( pressure(i+1,j+1) - pressure(i+1,j) )                 SLBIFREE.153   
+     &             / ( a * delta_lat )                                     SLBIFREE.154   
+            r1 = dpdx - x_stress(i,j) - fr1 * bx(i,j)                      SLBIFREE.155   
+     &  *(vice(i-1,j) + vice(i-1,j+1) + vice(i,j+1) )                      SLBIFREE.156   
+            r2 = dpdy - y_stress(i,j) + fr1 * by(i,j)                      SLBIFREE.157   
+     &  *(uice(i+1,j) + uice(i,j-1) + uice(i+1,j-1) )                      SLBIFREE.158   
+            det = ( ax(i,j)*ay(i,j) + bx(i,j)*by(i,j)*fr2 )                SLBIFREE.159   
+            if ( abs(det) .lt. 1.0e-6 ) then                               SLBIFREE.160   
+              rdet = zero                                                  SLBIFREE.161   
+            else                                                           SLBIFREE.162   
+              rdet = 1. / det                                              SLBIFREE.163   
+            endif                                                          SLBIFREE.164   
+            uice(i,j) = (weight*rdet*( -ay(i,j)*r1 - bx(i,j)*r2*fr1 )      SLBIFREE.165   
+     &                  + (1.0-weight) * uwork(i,j) ) * umc(i,j)           SLBIFREE.166   
+            vice(i,j) = (weight*rdet*( -ax(i,j)*r2 + by(i,j)*r1*fr1 )      SLBIFREE.167   
+     &                  + (1.0-weight) * vwork(i,j) ) * vmc(i,j)           SLBIFREE.168   
+          else                                                             SLBIFREE.169   
+            uice(i,j)=0.0                                                  SLBIFREE.170   
+            vice(i,j)=0.0                                                  SLBIFREE.171   
+          endif                                                            SLBIFREE.172   
+          end do                                                           SLBIFREE.173   
+          end do                                                           SLBIFREE.174   
+        end do                                                             SLBIFREE.175   
+        do j=2,jmt-2                                                       SLBIFREE.176   
+          if (lglobal) then                                                SLBIFREE.177   
+            if(ccalc(2,j+1)) then                                          SLBIFREE.178   
+              dpdx = ( pressure(2,j+1) - pressure(1,j+1) )                 SLBIFREE.179   
+     &               / ( a * cos_p_latitude(2,j+1) * delta_long )          SLBIFREE.180   
+              dpdy = ( pressure(2,j+1) - pressure(2,j) )                   SLBIFREE.181   
+     &               / ( a * delta_lat )                                   SLBIFREE.182   
+              r1 = dpdx - x_stress(1,j) - fr1 * bx(1,j)                    SLBIFREE.183   
+     &    *(vice(imt,j) + vice(imt,j+1) + vice(1,j+1) )                    SLBIFREE.184   
+              r2 = dpdy - y_stress(1,j) + fr1 * by(1,j)                    SLBIFREE.185   
+     &    *(uice(2,j) + uice(1,j-1) + uice(2,j-1) )                        SLBIFREE.186   
+              det = ( ax(1,j)*ay(1,j) + bx(1,j)*by(1,j)*fr2 )              SLBIFREE.187   
+              if ( abs(det) .lt. 1.0e-6 ) then                             SLBIFREE.188   
+                rdet = zero                                                SLBIFREE.189   
+              else                                                         SLBIFREE.190   
+                rdet = 1. / det                                            SLBIFREE.191   
+              endif                                                        SLBIFREE.192   
+              uice(1,j) = (weight*rdet*(-ay(1,j)*r1 - bx(1,j)*r2*fr1)      SLBIFREE.193   
+     &                  + (1.0-weight) * uwork(1,j) ) * umc(1,j)           SLBIFREE.194   
+              vice(1,j) = (weight*rdet*(-ax(1,j)*r2 + by(1,j)*r1*fr1)      SLBIFREE.195   
+     &                  + (1.0-weight) * vwork(1,j) ) * vmc(1,j)           SLBIFREE.196   
+            else                                                           SLBIFREE.197   
+              uice(1,j)=0.0                                                SLBIFREE.198   
+              vice(1,j)=0.0                                                SLBIFREE.199   
+            endif                                                          SLBIFREE.200   
+            if(ccalc(1,j+1)) then                                          SLBIFREE.201   
+              dpdx = ( pressure(1,j+1) - pressure(imt,j+1) )               SLBIFREE.202   
+     &               / ( a * cos_p_latitude(1,j+1) * delta_long )          SLBIFREE.203   
+              dpdy = ( pressure(1,j+1) - pressure(1,j) )                   SLBIFREE.204   
+     &               / ( a * delta_lat )                                   SLBIFREE.205   
+              r1 = dpdx - x_stress(imt,j) - fr1 * bx(imt,j)                SLBIFREE.206   
+     &    *(vice(imtm1,j) + vice(imtm1,j+1) + vice(imt,j+1) )              SLBIFREE.207   
+              r2 = dpdy - y_stress(imt,j) + fr1 * by(imt,j)                SLBIFREE.208   
+     &    *(uice(1,j) + uice(imt,j-1) + uice(1,j-1) )                      SLBIFREE.209   
+              det = (ax(imt,j)*ay(imt,j) + bx(imt,j)*by(imt,j)*fr2)        SLBIFREE.210   
+              if ( abs(det) .lt. 1.0e-6 ) then                             SLBIFREE.211   
+                rdet = zero                                                SLBIFREE.212   
+              else                                                         SLBIFREE.213   
+                rdet = 1. / det                                            SLBIFREE.214   
+              endif                                                        SLBIFREE.215   
+          uice(imt,j) = (weight*rdet*(-ay(imt,j)*r1 - bx(imt,j)*r2*fr1)    SLBIFREE.216   
+     &                  + (1.0-weight) * uwork(imt,j) ) * umc(imt,j)       SLBIFREE.217   
+          vice(imt,j) = (weight*rdet*(-ax(imt,j)*r2 + by(imt,j)*r1*fr1)    SLBIFREE.218   
+     &                  + (1.0-weight) * vwork(imt,j) ) * vmc(imt,j)       SLBIFREE.219   
+            else                                                           SLBIFREE.220   
+              uice(imt,j)=0.0                                              SLBIFREE.221   
+              vice(imt,j)=0.0                                              SLBIFREE.222   
+            endif                                                          SLBIFREE.223   
+          else                                                             SLBIFREE.224   
+            uice(1,j)=0.0                                                  SLBIFREE.225   
+            vice(1,j)=0.0                                                  SLBIFREE.226   
+            uice(imt,j)=0.0                                                SLBIFREE.227   
+            vice(imt,j)=0.0                                                SLBIFREE.228   
+          endif                                                            SLBIFREE.229   
+        end do                                                             SLBIFREE.230   
+! Check maximum error and jump out of loop if this is within the           SLBIFREE.231   
+! tolerance set above.                                                     SLBIFREE.232   
+        errm = zero                                                        SLBIFREE.233   
+        do j = 2,jmt-2                                                     SLBIFREE.234   
+          do i = 1,imt                                                     SLBIFREE.235   
+            erru = abs(uice(i,j)-uwork(i,j))                               SLBIFREE.236   
+            errv = abs(vice(i,j)-vwork(i,j))                               SLBIFREE.237   
+            if (erru .gt. errm) errm=erru                                  SLBIFREE.238   
+            if (errv .gt. errm) errm=errv                                  SLBIFREE.239   
+          end do                                                           SLBIFREE.240   
+        end do                                                             SLBIFREE.241   
+        if (errm .le. tol) go to 888                                       SLBIFREE.242   
+! End loop over maximum iterations                                         SLBIFREE.243   
+      end do                                                               SLBIFREE.244   
+      if (iter.ge.nmax) write(6,*)                                         SLBIFREE.245   
+     &   'Maximum number of iterations exceeded in free drift calc.'       SLBIFREE.246   
+ 888  continue                                                             SLBIFREE.247   
+      write(6,*) 'Number of iterations in free drift calc = ',iter         SLBIFREE.248   
+! Copy velocities from adjacent rows into rows 1 and jmtm1                 SLBIFREE.249   
+        do i=1,imt                                                         SLBIFREE.250   
+          uice(i,1)     = uice(i,2)*umc(i,1)                               SLBIFREE.251   
+          uice(i,jmtm1) = uice(i,jmt-2)*umc(i,jmtm1)                       SLBIFREE.252   
+          vice(i,1)     = vice(i,2)*vmc(i,1)                               SLBIFREE.253   
+          vice(i,jmtm1) = vice(i,jmt-2)*vmc(i,jmtm1)                       SLBIFREE.254   
+        end do                                                             SLBIFREE.255   
+*IF DEF,TIMER                                                              SLBIFREE.256   
+      call timer('icefreec',4)                                             SLBIFREE.257   
+*ENDIF                                                                     SLBIFREE.258   
+      return                                                               SLBIFREE.259   
+      end                                                                  SLBIFREE.260   
+*ENDIF                                                                     SLBIFREE.261   

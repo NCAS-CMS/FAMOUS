@@ -1,0 +1,643 @@
+*IF DEF,C93_1A,OR,DEF,C93_2A                                               APB0F402.55    
+C ******************************COPYRIGHT******************************    GTS2F400.2827  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.2828  
+C                                                                          GTS2F400.2829  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.2830  
+C restrictions as set forth in the contract.                               GTS2F400.2831  
+C                                                                          GTS2F400.2832  
+C                Meteorological Office                                     GTS2F400.2833  
+C                London Road                                               GTS2F400.2834  
+C                BRACKNELL                                                 GTS2F400.2835  
+C                Berkshire UK                                              GTS2F400.2836  
+C                RG12 2SZ                                                  GTS2F400.2837  
+C                                                                          GTS2F400.2838  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.2839  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.2840  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.2841  
+C Modelling at the above address.                                          GTS2F400.2842  
+C ******************************COPYRIGHT******************************    GTS2F400.2843  
+C                                                                          GTS2F400.2844  
+CLL  SUBROUTINE FILTER     -----------------------------------------       FILTER1A.3     
+CLL                                                                        FILTER1A.4     
+CLL  PURPOSE: FOURIER DAMPS ALL WAVES AFTER THE WAVE-NUMBER HELD IN        FILTER1A.5     
+CLL           FILTER_WAVE_NUMBER FOR ALL ROWS WHERE FILTERING IS           FILTER1A.6     
+CLL           NECESSARY. USES THE ECMWF FFT ROUTINES TO CALCULATE THE      FILTER1A.7     
+CLL           FOURIER PARTS OF THE CODE.                                   FILTER1A.8     
+CLL  NOT SUITABLE FOR I.B.M USE.                                           FILTER1A.9     
+CLL                                                                        FILTER1A.10    
+CLL  WRITTEN BY M.H MAWSON.                                                FILTER1A.11    
+CLL                                                                        FILTER1A.12    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         FILTER1A.13    
+CLL VERSION  DATE                                                          FILTER1A.14    
+!   4.1      09/05/96 Added MPP code.   P.Burton                           APB7F401.1     
+!    4.2    18/10/96  New name for group of processors in all_to_all       GPB0F402.181   
+!                     P.Burton                                             GPB0F402.182   
+!LL 4.2      16/08/96 Added TYPLDPT variables.                             APB0F402.56    
+!LL                   Made FILTER_WAVE_NUMBER globally sized.              APB0F402.57    
+!LL                   Removal of identical deck FILTER2A, requires         APB0F402.58    
+!LL                   *DEFs to be changed.                P.Burton         APB0F402.59    
+!LL 4.2      17/10/96 Changed arguments to ALLTOALL for GCC v1.1           GPB2F402.1     
+!LL                   P.Burton                                             GPB2F402.2     
+C     vn4.3    Mar. 97   T3E migration : optimisation changes              GSS1F403.1039  
+C                                       D.Salmond                          GSS1F403.1040  
+!LL 4.4      08/08/97 Remove filter data common block, adding new          GPB2F404.1     
+!LL                   subroutine MPP_FILTER.                               GPB2F404.2     
+!LL                   Add chunking optimisation.                           GPB2F404.3     
+!LL                   Add T3E optimised communications.                    GPB2F404.4     
+!LL                                                       P.Burton         GPB2F404.5     
+!LL 4.5      22/06/98 Remove redundant divides.                            GBCNF405.1     
+!LL                     Author: Bob Carruthers, Cray Research              GBCNF405.2     
+CLL                                                                        FILTER1A.15    
+CLL                                                                        FILTER1A.16    
+CLL  PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,        FILTER1A.17    
+CLL                        STANDARD B. VERSION 2, DATED 18/01/90           FILTER1A.18    
+CLL  SYSTEM COMPONENTS COVERED: 142                                        FILTER1A.19    
+CLL  SYSTEM TASK: P1                                                       FILTER1A.20    
+CLL  DOCUMENTATION:        EQUATIONS (53) AND (54) IN SECTION 3.5          FILTER1A.21    
+CLL                        OF UNIFIED MODEL DOCUMENTATION PAPER            FILTER1A.22    
+CLL                        NO. 10 M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON    FILTER1A.23    
+CLL                        VERSION 11, DATED 10/10/90.                     FILTER1A.24    
+CLLEND-------------------------------------------------------------        FILTER1A.25    
+                                                                           FILTER1A.26    
+C                                                                          FILTER1A.27    
+C*L  ARGUMENTS:---------------------------------------------------         FILTER1A.28    
+      SUBROUTINE FILTER                                                    FILTER1A.29    
+     1                 (FIELD,FIELD_LENGTH,LEVELS,FILTER_SPACE,            FILTER1A.30    
+     2                  ROW_LENGTH,                                        APB0F402.60    
+*CALL ARGFLDPT                                                             APB0F402.61    
+     &                  FILTER_WAVE_NUMBER,TRIGS,IFAX,                     APB0F402.62    
+     3                  NORTHERN_FILTERED_ROW,                             FILTER1A.32    
+     4                  SOUTHERN_FILTERED_ROW)                             FILTER1A.33    
+                                                                           FILTER1A.34    
+      IMPLICIT NONE                                                        FILTER1A.35    
+                                                                           APB0F402.63    
+! All TYPFLDPT arguments are intent IN                                     APB0F402.64    
+*CALL TYPFLDPT                                                             APB0F402.65    
+                                                                           FILTER1A.36    
+      INTEGER                                                              FILTER1A.37    
+     *  FIELD_LENGTH       !IN HORIZONTAL DIMENSION OF FIELD TO BE         FILTER1A.38    
+     *                     !   FILTERED.                                   FILTER1A.39    
+     *, LEVELS             !IN NUMBER OF MODEL LEVELS IN FIELD.            FILTER1A.40    
+     *, ROW_LENGTH         !IN NUMBER OF POINTS ON A ROW.                  FILTER1A.41    
+     *, NORTHERN_FILTERED_ROW !IN LAST ROW, MOVING EQUATORWARDS,           FILTER1A.42    
+     *                          ! IN NORTHERN HEMISPHERE                   FILTER1A.43    
+     *                          ! ON WHICH FILTERING IS PERFORMED.         FILTER1A.44    
+     *, SOUTHERN_FILTERED_ROW !IN LAST ROW, MOVING EQUATORWARDS,           FILTER1A.45    
+     *                          ! IN SOUTHERN HEMISPHERE                   FILTER1A.46    
+     *                          ! ON WHICH FILTERING IS PERFORMED.         FILTER1A.47    
+     *, FILTER_SPACE       !IN HORIZONTAL DIMENSION OF ARRAY NEEDED TO     FILTER1A.48    
+     *                     ! HOLD DATA TO BE FILTERED TO PASS TO FFT'S.    FILTER1A.49    
+     *, IFAX(10)           !IN HOLDS FACTORS OF ROW_LENGTH USED IN FFT'S   FILTER1A.50    
+     *, FILTER_WAVE_NUMBER(GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH)               APB0F402.66    
+     &     ! LAST WAVE NUMBER ON EACH ROW WHICH IS NOT FILTERED            APB0F402.67    
+                                                                           FILTER1A.54    
+      REAL                                                                 FILTER1A.55    
+     * FIELD(FIELD_LENGTH,LEVELS) !INOUT HOLDS FIELD TO BE FILTERED.       FILTER1A.56    
+                                                                           FILTER1A.57    
+      REAL                                                                 FILTER1A.58    
+     * TRIGS(ROW_LENGTH)    !IN HOLDS TRIGONOMETRIC TERMS USED IN FFT'S    FILTER1A.59    
+C*---------------------------------------------------------------------    FILTER1A.60    
+*IF DEF,MPP                                                                APB7F401.2     
+! Common blocks and parameters for MPP code                                APB7F401.3     
+*CALL PARVARS                                                              APB7F401.4     
+*CALL PARFFTS                                                              APB7F401.5     
+*CALL GCCOM                                                                APB7F401.6     
+*ENDIF                                                                     APB7F401.7     
+                                                                           FILTER1A.61    
+C*L  DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------     FILTER1A.62    
+C   DEFINE LOCAL ARRAYS: 1 IS REQUIRED                                     FILTER1A.63    
+                                                                           FILTER1A.64    
+*IF -DEF,MPP                                                               APB7F401.8     
+      REAL                                                                 FILTER1A.65    
+     *  FILTER_DATA(FILTER_SPACE,LEVELS)  ! HOLDS DATA PASSED TO FFT'S     FILTER1A.66    
+     *                                    ! AND COEFFICIENTS RETURNED.     FILTER1A.67    
+*ENDIF                                                                     APB7F401.12    
+C*---------------------------------------------------------------------    FILTER1A.68    
+C   DEFINE LOCAL VARIABLES                                                 FILTER1A.69    
+                                                                           FILTER1A.70    
+C   COUNT VARIABLES FOR DO LOOPS ETC.                                      FILTER1A.71    
+      INTEGER                                                              APB7F401.13    
+     &  I,J ,IJ                                                            APB7F401.14    
+     &, LOT                 ! NUMBER OF DATA VECTORS PASSED TO FFT'S.      APB7F401.15    
+     &, JUMP                ! NUMBER OF STORAGE LOCATIONS BETWEEN THE      APB7F401.16    
+     &                      ! START OF CONSECUTIVE DATA VECTOR.            APB7F401.17    
+     &, INCREMENT           ! NUMBER OF STORAGE LOCATIONS BETWEEN EACH     APB7F401.18    
+     &                      ! ELEMENT OF THE SAME DATA VECTOR, 1, IF       APB7F401.19    
+     &                      ! CONSECUTIVE.                                 APB7F401.20    
+     &, FFTSIGN             ! PARAMETER DETERMINING WHETHER SPECTRAL       APB7F401.21    
+     &                      ! TO GRID-POINT (FFTSIGN = 1) OR GRID-POINT    APB7F401.22    
+     &                      ! TO SPECTRAL (FFTSIGN = -1) FFT'S ARE         APB7F401.23    
+     &                      ! REQUIRED.                                    APB7F401.24    
+*IF -DEF,MPP                                                               APB7F401.25    
+     &, K,IK,IL                                                            APB7F401.26    
+     &, ROWS                ! NUMBER OF ROWS IN FIELD                      APB7F401.27    
+*ELSE                                                                      APB7F401.28    
+     &, fld_type,fft_row_len                                               GPB2F404.6     
+     &, info,max_field_length                                              ACN2F405.125   
+*ENDIF                                                                     APB7F401.30    
+                                                                           FILTER1A.85    
+C*L  EXTERNAL SUBROUTINE CALLS:------------------------------------        FILTER1A.86    
+      EXTERNAL FOURIER                                                     FILTER1A.87    
+C*---------------------------------------------------------------------    FILTER1A.88    
+                                                                           FILTER1A.89    
+*IF -DEF,MPP                                                               APB7F401.31    
+CL  MAXIMUM VECTOR LENGTH ASSUMED IS ROW_LENGTH                            FILTER1A.90    
+CL---------------------------------------------------------------------    FILTER1A.91    
+CL    INTERNAL STRUCTURE.                                                  FILTER1A.92    
+CL---------------------------------------------------------------------    FILTER1A.93    
+CL                                                                         FILTER1A.94    
+                                                                           FILTER1A.95    
+CL---------------------------------------------------------------------    FILTER1A.96    
+CL    SECTION 1.     COLLECT ALL DATA TO BE FILTERED INTO CONTIGUOUS       FILTER1A.97    
+CL                   STORAGE IN FILTER_DATA. LAST 2 ELEMENTS ON EACH ROW   FILTER1A.98    
+CL                   ARE LEFT EMPTY AS FFT ROUTINE RETURNS                 FILTER1A.99    
+CL                   ROW_LENGTH/2+1 PAIRS OF COEFFICIENTS. DATA IS STILL   FILTER1A.100   
+CL                   ARRANGED ON ROWS AS FFT ROUTINES USE CONSTANT         FILTER1A.101   
+CL                   STRIDE VECTORISATION CAPABILITY OF CRAY MACHINE.      FILTER1A.102   
+CL---------------------------------------------------------------------    FILTER1A.103   
+                                                                           FILTER1A.104   
+      ROWS = FIELD_LENGTH/ROW_LENGTH                                       FILTER1A.105   
+                                                                           FILTER1A.106   
+CL COLLECT DATA FROM NORTHERN HEMISPHERE.                                  FILTER1A.107   
+                                                                           FILTER1A.108   
+CFPP$ NODEPCHK                                                             FILTER1A.109   
+! Fujitsu vectorization directive                                          GRB0F405.599   
+!OCL NOVREC                                                                GRB0F405.600   
+      DO 100 I=2,NORTHERN_FILTERED_ROW                                     FILTER1A.110   
+        IJ = (I-2)*(ROW_LENGTH+2)                                          FILTER1A.111   
+        IK = (I-1)*ROW_LENGTH                                              FILTER1A.112   
+        DO 110 K=1,LEVELS                                                  FILTER1A.113   
+          DO 120 J=1,ROW_LENGTH                                            FILTER1A.114   
+            FILTER_DATA(IJ+J,K)=FIELD(IK+J,K)                              FILTER1A.115   
+ 120      CONTINUE                                                         FILTER1A.116   
+ 110    CONTINUE                                                           FILTER1A.117   
+ 100  CONTINUE                                                             FILTER1A.118   
+                                                                           FILTER1A.119   
+CL COLLECT DATA FROM SOUTHERN HEMISPHERE.                                  FILTER1A.120   
+                                                                           FILTER1A.121   
+      IL = (NORTHERN_FILTERED_ROW-1)*(ROW_LENGTH+2)                        FILTER1A.122   
+CFPP$ NODEPCHK                                                             FILTER1A.123   
+! Fujitsu vectorization directive                                          GRB0F405.601   
+!OCL NOVREC                                                                GRB0F405.602   
+      DO 130 I=SOUTHERN_FILTERED_ROW,ROWS-1                                FILTER1A.124   
+        IJ = IL+(I-SOUTHERN_FILTERED_ROW)*(ROW_LENGTH+2)                   FILTER1A.125   
+        IK = (I-1)*ROW_LENGTH                                              FILTER1A.126   
+        DO 140 K=1,LEVELS                                                  FILTER1A.127   
+          DO 150 J=1,ROW_LENGTH                                            FILTER1A.128   
+            FILTER_DATA(IJ+J,K)=FIELD(IK+J,K)                              FILTER1A.129   
+ 150      CONTINUE                                                         FILTER1A.130   
+ 140    CONTINUE                                                           FILTER1A.131   
+ 130  CONTINUE                                                             FILTER1A.132   
+                                                                           FILTER1A.133   
+CL---------------------------------------------------------------------    FILTER1A.134   
+CL    SECTION 2.     CALL FOURIER TO GET FOURIER DECOMPOSITION OF DATA.    FILTER1A.135   
+CL---------------------------------------------------------------------    FILTER1A.136   
+                                                                           FILTER1A.137   
+      INCREMENT = 1                                                        FILTER1A.138   
+      JUMP = ROW_LENGTH+2                                                  FILTER1A.139   
+      FFTSIGN=-1                                                           APB7F401.32    
+      LOT = ((NORTHERN_FILTERED_ROW-1)+(ROWS-SOUTHERN_FILTERED_ROW))       FILTER1A.141   
+     *      *LEVELS                                                        FILTER1A.142   
+      CALL FOURIER(FILTER_DATA,TRIGS,IFAX,INCREMENT,JUMP,ROW_LENGTH,       FILTER1A.143   
+     *            LOT,FFTSIGN)                                             APB7F401.33    
+                                                                           FILTER1A.145   
+CL---------------------------------------------------------------------    FILTER1A.146   
+CL    SECTION 3.     ZERO COEFFICIENTS OF WAVE-NUMBERS TO BE CHOPPED.      FILTER1A.147   
+CL                   COEFFICIENTS ARE HELD AS A(0),B(0),A(1),B(1), ETC     FILTER1A.148   
+CL                   ON EACH ROW.                                          FILTER1A.149   
+CL---------------------------------------------------------------------    FILTER1A.150   
+                                                                           FILTER1A.151   
+CL NORTHERN HEMISPHERE DATA                                                FILTER1A.152   
+      DO 300 K=1,LEVELS                                                    FILTER1A.153   
+        DO 310 I=2,NORTHERN_FILTERED_ROW                                   FILTER1A.154   
+          IJ = (I-2)*(ROW_LENGTH+2)                                        FILTER1A.155   
+C 3 IS USED IN LOOP 320 COUNTER AS WAVE-NUMBER 0 HAS TO BE RETAINED.       FILTER1A.156   
+          DO 320 J=3+(FILTER_WAVE_NUMBER(I))*2,ROW_LENGTH+2                FILTER1A.157   
+            FILTER_DATA(IJ+J,K)=FILTER_DATA(IJ+J,K)*                       FILTER1A.158   
+     *                     (FILTER_WAVE_NUMBER(I)/REAL(((J-1)/2)*2))**2    FILTER1A.159   
+ 320      CONTINUE                                                         FILTER1A.160   
+ 310    CONTINUE                                                           FILTER1A.161   
+ 300  CONTINUE                                                             FILTER1A.162   
+                                                                           FILTER1A.163   
+CL SOUTHERN HEMISPHERE DATA                                                FILTER1A.164   
+      IL = (NORTHERN_FILTERED_ROW-1)*(ROW_LENGTH+2)                        FILTER1A.165   
+      DO 330 K=1,LEVELS                                                    FILTER1A.166   
+        DO 340 I=SOUTHERN_FILTERED_ROW,ROWS-1                              FILTER1A.167   
+          IJ = IL+(I-SOUTHERN_FILTERED_ROW)*(ROW_LENGTH+2)                 FILTER1A.168   
+C 3 IS USED IN LOOP 320 COUNTER AS WAVE-NUMBER 0 HAS TO BE RETAINED.       FILTER1A.169   
+          DO 350 J=3+(FILTER_WAVE_NUMBER(I))*2,ROW_LENGTH+2                FILTER1A.170   
+            FILTER_DATA(IJ+J,K)=FILTER_DATA(IJ+J,K)*                       FILTER1A.171   
+     *                     (FILTER_WAVE_NUMBER(I)/REAL(((J-1)/2)*2))**2    FILTER1A.172   
+ 350      CONTINUE                                                         FILTER1A.173   
+ 340    CONTINUE                                                           FILTER1A.174   
+ 330  CONTINUE                                                             FILTER1A.175   
+                                                                           FILTER1A.176   
+CL---------------------------------------------------------------------    FILTER1A.177   
+CL    SECTION 4.     CALL FOURIER TO RE-CREATE GRID-POINT FIELDS FROM      FILTER1A.178   
+CL                   FILTERED FOURIER MODES.                               FILTER1A.179   
+CL---------------------------------------------------------------------    FILTER1A.180   
+                                                                           FILTER1A.181   
+      INCREMENT = 1                                                        FILTER1A.182   
+      JUMP = ROW_LENGTH+2                                                  FILTER1A.183   
+      FFTSIGN=1                                                            APB7F401.34    
+      LOT = ((NORTHERN_FILTERED_ROW-1)+(ROWS-SOUTHERN_FILTERED_ROW))       FILTER1A.185   
+     *      *LEVELS                                                        FILTER1A.186   
+      CALL FOURIER(FILTER_DATA,TRIGS,IFAX,INCREMENT,JUMP,ROW_LENGTH,       FILTER1A.187   
+     *            LOT,FFTSIGN)                                             APB7F401.35    
+                                                                           FILTER1A.189   
+CL---------------------------------------------------------------------    FILTER1A.190   
+CL    SECTION 5.     COPY FILTERED FIELD BACK OVER ORIGINAL ONE.           FILTER1A.191   
+CL---------------------------------------------------------------------    FILTER1A.192   
+                                                                           FILTER1A.193   
+CL RESTORE DATA IN NORTHERN HEMISPHERE.                                    FILTER1A.194   
+                                                                           FILTER1A.195   
+      DO 500 I=2,NORTHERN_FILTERED_ROW                                     FILTER1A.196   
+        IJ = (I-2)*(ROW_LENGTH+2)                                          FILTER1A.197   
+        IK = (I-1)*ROW_LENGTH                                              FILTER1A.198   
+        DO 510 K=1,LEVELS                                                  FILTER1A.199   
+          DO 520 J=1,ROW_LENGTH                                            FILTER1A.200   
+            FIELD(IK+J,K) = FILTER_DATA(IJ+J,K)                            FILTER1A.201   
+ 520      CONTINUE                                                         FILTER1A.202   
+ 510    CONTINUE                                                           FILTER1A.203   
+ 500  CONTINUE                                                             FILTER1A.204   
+                                                                           FILTER1A.205   
+CL RESTORE DATA IN SOUTHERN HEMISPHERE.                                    FILTER1A.206   
+                                                                           FILTER1A.207   
+      IL = (NORTHERN_FILTERED_ROW-1)*(ROW_LENGTH+2)                        FILTER1A.208   
+      DO 530 I=SOUTHERN_FILTERED_ROW,ROWS-1                                FILTER1A.209   
+        IJ = IL+(I-SOUTHERN_FILTERED_ROW)*(ROW_LENGTH+2)                   FILTER1A.210   
+        IK = (I-1)*ROW_LENGTH                                              FILTER1A.211   
+        DO 540 K=1,LEVELS                                                  FILTER1A.212   
+          DO 550 J=1,ROW_LENGTH                                            FILTER1A.213   
+            FIELD(IK+J,K) = FILTER_DATA(IJ+J,K)                            FILTER1A.214   
+ 550      CONTINUE                                                         FILTER1A.215   
+ 540    CONTINUE                                                           FILTER1A.216   
+ 530  CONTINUE                                                             FILTER1A.217   
+                                                                           APB7F401.36    
+*ELSE                                                                      APB7F401.37    
+                                                                           APB7F401.38    
+      IF (filter_off) THEN  ! if filter has been switched off for          APB7F401.43    
+!                             some reason                                  APB7F401.44    
+        WRITE(6,*) 'FILTERING SWITCHED OFF.'                               APB7F401.45    
+        WRITE(6,*) 'See earlier in output for error message'               APB7F401.46    
+        GOTO 9999                                                          APB7F401.47    
+      ENDIF                                                                APB7F401.48    
+                                                                           APB7F401.49    
+                                                                           APB7F401.55    
+! Determine what field type this is, and set variables accordingly         APB7F401.56    
+      fld_type=south_filt_p_row-SOUTHERN_FILTERED_ROW+1                    APB7F401.57    
+!             =1 for p_field and =2 for u_field                            APB7F401.58    
+                                                                           APB7F401.59    
+! Find the number of levels involved in the data transpose                 APB7F401.60    
+                                                                           APB7F401.61    
+      DO I = 1, n_items_to_send(fld_type)                                  APB7F401.62    
+        filt_send_map(S_NUMBER_OF_ELEMENTS_IN_ITEM,i,fld_type) =           GPB2F402.4     
+     &    MAX( MIN(filt_send_max(i,fld_type),                              GPB2F402.5     
+     &             LEVELS - filt_send_start(i,fld_type) + 1),              GPB2F402.6     
+     &         0)                                                          GPB2F402.7     
+      ENDDO                                                                APB7F401.65    
+      DO I = 1, n_items_to_recv(fld_type)                                  APB7F401.66    
+        filt_recv_map(R_NUMBER_OF_ELEMENTS_IN_ITEM,i,fld_type) =           GPB2F402.8     
+     &    MAX( MIN(filt_recv_max(i,fld_type),                              GPB2F402.9     
+     &             LEVELS - filt_recv_start(i,fld_type) + 1),              GPB2F402.10    
+     &         0)                                                          GPB2F402.11    
+      ENDDO                                                                APB7F401.69    
+                                                                           APB7F401.70    
+                                                                           GPB2F404.7     
+      fft_row_len=glsize(1)+2                                              GPB2F404.8     
+! Call routine to perform redistribution of data and filtering             GPB2F404.9     
+                                                                           GPB2F404.10    
+! Find the maximum field size across processors                            ACN2F405.126   
+                                                                           ACN2F405.127   
+      max_field_length=FIELD_LENGTH*LEVELS                                 ACN2F405.128   
+      CALL GC_IMAX(1,nproc,info,max_field_length)                          ACN2F405.129   
+                                                                           ACN2F405.130   
+      CALL MPP_FILTER(FIELD,FIELD_LENGTH,LEVELS,max_field_length,          ACN2F405.131   
+     &                fft_rows(fld_type),fft_row_len,fld_type,             GPB2F404.12    
+     &                GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH,                    GPB2F404.13    
+     &                FILTER_WAVE_NUMBER,IFAX)                             GPB2F404.14    
+ 9999 CONTINUE                                                             APB7F401.119   
+*ENDIF                                                                     APB7F401.120   
+                                                                           FILTER1A.218   
+CL END OF ROUTINE FILTER                                                   FILTER1A.219   
+                                                                           FILTER1A.220   
+      RETURN                                                               FILTER1A.221   
+      END                                                                  FILTER1A.222   
+*IF DEF,MPP                                                                GPB2F404.15    
+                                                                           GPB2F404.16    
+                                                                           GPB2F404.17    
+      SUBROUTINE MPP_FILTER                                                GPB2F404.18    
+     &                     (FIELD,FIELD_LENGTH,LEVELS,dummy_len,           ACN2F405.132   
+     &                      rows_to_fft,fft_row_len,fld_type,              GPB2F404.20    
+     &                      global_rows,                                   GPB2F404.21    
+     &                      filter_wave_number,ifax)                       GPB2F404.22    
+                                                                           GPB2F404.23    
+      IMPLICIT NONE                                                        GPB2F404.24    
+                                                                           GPB2F404.25    
+      INTEGER                                                              GPB2F404.26    
+     &  FIELD_LENGTH  ! IN : horizontal size of FIELD array                GPB2F404.27    
+     &, LEVELS        ! IN : number of levels in FIELD                     GPB2F404.28    
+     &, dummy_len     ! IN : size for dummy_FIELD                          ACN2F405.133   
+     &, rows_to_fft   ! IN : number of rows I will fft                     GPB2F404.29    
+     &, fft_row_len   ! IN : size of rows that I will fft                  GPB2F404.30    
+     &, fld_type      ! IN : field type (P or U) of FIELD                  GPB2F404.31    
+     &, global_rows   ! IN : number of rows in global field                GPB2F404.32    
+     &, filter_wave_number(global_rows)                                    GPB2F404.33    
+!                       IN : last wave number on each global row           GPB2F404.34    
+!                            which is not filtered                         GPB2F404.35    
+     &, ifax(10)      ! IN : factors of row length used in ffts            GPB2F404.36    
+                                                                           GPB2F404.37    
+      REAL                                                                 GPB2F404.38    
+     &  FIELD(FIELD_LENGTH,LEVELS)  ! IN/OUT : data to be filtered         GPB2F404.39    
+                                                                           GPB2F404.40    
+                                                                           GPB2F404.41    
+! Dynamic array for putting data to be filtered                            GPB2F404.42    
+                                                                           GPB2F404.43    
+      REAL                                                                 GPB2F404.44    
+     &  FILTER_DATA(fft_row_len*rows_to_fft)                               GPB2F404.45    
+cdir$ cache_align filter_data                                              GBCNF405.3     
+                                                                           GPB2F404.46    
+! Comdecks/ commonblocks/parameters                                        GPB2F404.47    
+*CALL PARVARS                                                              GPB2F404.48    
+*CALL PARFFTS                                                              GPB2F404.49    
+*CALL GCCOM                                                                GPB2F404.50    
+                                                                           GPB2F404.51    
+                                                                           GPB2F404.52    
+! The following variables are used to make the MPP filter more             GPB2F404.53    
+! efficient. The FILTER_DATA array may contain rows of data for            GPB2F404.54    
+! levels LEVELS+1 -> P_LEVELS containing null data, but which              GPB2F404.55    
+! was filtered. Now, the chunk_start(i) array points to chunks of          GPB2F404.56    
+! rows (being chunk_row(i) rows in length) which require filtering         GPB2F404.57    
+! n_chunks says how many chunks there are for filtering                    GPB2F404.58    
+                                                                           GPB2F404.59    
+      INTEGER                                                              GPB2F404.60    
+     &  chunk_start(rows_to_fft)                                           GPB2F404.61    
+     &, chunk_rows(rows_to_fft)                                            GPB2F404.62    
+     &, n_chunks,chunk                                                     GPB2F404.63    
+                                                                           GPB2F404.64    
+! Local scalars                                                            GPB2F404.65    
+                                                                           GPB2F404.66    
+      INTEGER                                                              GPB2F404.67    
+     &  increment,jump,fftsign,lot,row_number,filt_wave_no                 GPB2F404.68    
+     &, i,j                                                                GPB2F404.69    
+                                                                           GPB2F404.70    
+*IF -DEF,T3E                                                               GPB2F404.71    
+      INTEGER                                                              GPB2F404.72    
+     &  info,flag                                                          GPB2F404.73    
+*ELSE                                                                      GPB2F404.74    
+      INTEGER address_FIELD(0:MAXPROC)  ! address of FIELD array on        GPB2F404.75    
+!                                       ! each PE                          GPB2F404.76    
+      COMMON /shmem_align_address_FIELD/ address_FIELD                     GPB2F404.77    
+cdir$ cache_align /shmem_align_address_FIELD/                              GBCNF405.4     
+                                                                           GPB2F404.78    
+      REAL dummy_FIELD(dummy_len)                                          ACN2F405.134   
+                                                                           ACN2F405.135   
+      POINTER (PTR_dummy_FIELD,dummy_FIELD)                                GPB2F404.80    
+! dummy_FIELD will point to the address of FIELD on the remote PE          GPB2F404.81    
+                                                                           GPB2F404.82    
+      INTEGER lbase,lstride,rbase,rstride                                  GPB2F404.83    
+      INTEGER this_pe,last_pe                                              GPB2F404.84    
+*CALL AMAXSIZE                                                             GBCNF405.5     
+c                                                                          GBCNF405.6     
+      integer                                                              GBCNF405.7     
+     & old_fft_row_len,     ! Preserve the row length for which            GBCNF405.8     
+                            ! factors have been prepared                   GBCNF405.9     
+     & old_filt_wave_no     ! Preserve the last filt_wave_no for           GBCNF405.10    
+                            ! which factors have been prepared             GBCNF405.11    
+      data old_fft_row_len/0/, old_filt_wave_no/0/                         GBCNF405.12    
+      save old_fft_row_len, old_filt_wave_no                               GBCNF405.13    
+c                                                                          GBCNF405.14    
+      real                                                                 GBCNF405.15    
+     & fft_row_factors(row_length_max+2)                                   GBCNF405.16    
+                            ! Factors for the Filtering in Fourier         GBCNF405.17    
+                            ! Space                                        GBCNF405.18    
+      data fft_row_factors/row_length_max*0./                              GBCNF405.19    
+      save fft_row_factors                                                 GBCNF405.20    
+c                                                                          GBCNF405.21    
+c--variables to determine the loop direction, based on PE parity           GBCNF405.22    
+      integer loop_start, loop_end, loop_inc                               GBCNF405.23    
+c                                                                          GBCNF405.24    
+                                                                           GPB2F404.85    
+*ENDIF                                                                     GPB2F404.86    
+                                                                           GPB2F404.87    
+! 1.0 Set up chunk arrays describing where the filterable data             GPB2F404.88    
+!     in filter_data will be.                                              GPB2F404.89    
+                                                                           GPB2F404.90    
+      n_chunks=1                                                           GPB2F404.91    
+      chunk_start(1)=-1                                                    GPB2F404.92    
+      chunk_rows(1)=0                                                      GPB2F404.93    
+                                                                           GPB2F404.94    
+      DO i=1,rows_to_fft                                                   GPB2F404.95    
+                                                                           GPB2F404.96    
+        IF ((filt_level(i,fld_type) .GT. LEVELS) .AND.                     GPB2F404.97    
+     &      (chunk_rows(n_chunks) .NE. 0)) THEN                            GPB2F404.98    
+          n_chunks=n_chunks+1                                              GPB2F404.99    
+          chunk_start(n_chunks)=-1                                         GPB2F404.100   
+          chunk_rows(n_chunks)=0                                           GPB2F404.101   
+        ENDIF                                                              GPB2F404.102   
+                                                                           GPB2F404.103   
+        IF (filt_level(i,fld_type) .LE. LEVELS) THEN                       GPB2F404.104   
+          IF (chunk_start(n_chunks) .EQ. -1)                               GPB2F404.105   
+     &      chunk_start(n_chunks)=i                                        GPB2F404.106   
+          chunk_rows(n_chunks)=chunk_rows(n_chunks)+1                      GPB2F404.107   
+        ENDIF                                                              GPB2F404.108   
+                                                                           GPB2F404.109   
+      ENDDO                                                                GPB2F404.110   
+                                                                           GPB2F404.111   
+      IF (chunk_start(n_chunks) .EQ. -1) THEN                              GPB2F404.112   
+        n_chunks=n_chunks-1                                                GPB2F404.113   
+      ENDIF                                                                GPB2F404.114   
+                                                                           GPB2F404.115   
+! 2.0 Move the data to the filter_data array                               GPB2F404.116   
+                                                                           GPB2F404.117   
+*IF -DEF,T3E                                                               GPB2F404.118   
+                                                                           GPB2F404.119   
+      flag=GC_NONE                                                         GPB2F404.120   
+                                                                           GPB2F404.121   
+      CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)                           GPB2F404.122   
+      info=GC_NONE                                                         GPB2F404.123   
+                                                                           GPB2F404.124   
+      CALL gcg_ralltoalle(field, filt_send_map(1,1,fld_type),              GPB2F404.125   
+     &                    n_items_to_send(fld_type),                       GPB2F404.126   
+     &                    FIELD_LENGTH*LEVELS,                             GPB2F404.127   
+     &                    filter_data, filt_recv_map(1,1,fld_type),        GPB2F404.128   
+     &                    n_items_to_recv(fld_type),                       GPB2F404.129   
+     &                    fft_row_len*rows_to_fft,                         GPB2F404.130   
+     &                    gc_all_proc_group, flag, info)                   GPB2F404.131   
+                                                                           GPB2F404.132   
+*ELSE                                                                      GPB2F404.133   
+                                                                           GPB2F404.134   
+! Send the address of my FIELD array to other PEs                          GPB2F404.135   
+      CALL barrier()                                                       GPB2F404.136   
+                                                                           GPB2F404.137   
+      last_pe=-1                                                           GPB2F404.138   
+      DO i=1,n_items_to_send(fld_type)                                     GPB2F404.139   
+        this_pe=filt_send_map(1,i,fld_type)                                GPB2F404.140   
+        IF (this_pe .ne. last_pe) THEN                                     GPB2F404.141   
+          last_pe=this_pe                                                  GPB2F404.142   
+          CALL shmem_put(address_FIELD(mype),LOC(FIELD),1,                 GPB2F404.143   
+     &                   this_pe)                                          GPB2F404.144   
+        ENDIF                                                              GPB2F404.145   
+      ENDDO                                                                GPB2F404.146   
+                                                                           GPB2F404.147   
+      CALL barrier()                                                       GPB2F404.148   
+                                                                           GPB2F404.149   
+! And now each PE must get the data it's going to filter                   GPB2F404.150   
+                                                                           GPB2F404.151   
+c--select the loop direction for the gather based on PE parity             GBCNF405.25    
+      if(gridpos(2).eq.(gridpos(2)/2)*2) then                              GBCNF405.26    
+        loop_start=1                                                       GBCNF405.27    
+        loop_end=n_items_to_recv(fld_type)                                 GBCNF405.28    
+        loop_inc=1                                                         GBCNF405.29    
+      else                                                                 GBCNF405.30    
+        loop_start=n_items_to_recv(fld_type)                               GBCNF405.31    
+        loop_end=1                                                         GBCNF405.32    
+        loop_inc=-1                                                        GBCNF405.33    
+      endif                                                                GBCNF405.34    
+c                                                                          GBCNF405.35    
+      do j=loop_start, loop_end, loop_inc                                  GBCNF405.36    
+                                                                           GPB2F404.153   
+        lbase=filt_recv_map(R_BASE_ADDRESS_IN_RECV_ARRAY,j,fld_type)       GPB2F404.154   
+        lstride=filt_recv_map(R_STRIDE_IN_RECV_ARRAY,j,fld_type)           GPB2F404.155   
+        rbase=filt_recv_map(R_BASE_ADDRESS_IN_SEND_ARRAY,j,fld_type)       GPB2F404.156   
+        rstride=filt_recv_map(R_STRIDE_IN_SEND_ARRAY,j,fld_type)           GPB2F404.157   
+                                                                           GPB2F404.158   
+        PTR_dummy_FIELD=                                                   GPB2F404.159   
+     &    address_FIELD(filt_recv_map(R_SOURCE_PE,j,fld_type))             GPB2F404.160   
+! This causes dummy_FIELD to have the address of FIELD on the PE           GPB2F404.161   
+! we are about to shmem_get from                                           GPB2F404.162   
+                                                                           GPB2F404.163   
+        DO i=1,filt_recv_map(R_NUMBER_OF_ELEMENTS_IN_ITEM,J,fld_type)      GPB2F404.164   
+                                                                           GPB2F404.165   
+          CALL shmem_get(FILTER_DATA(lbase+(i-1)*lstride),                 GPB2F404.166   
+     &                   dummy_FIELD(rbase+(i-1)*rstride),                 GPB2F404.167   
+     &                   filt_recv_map(R_ELEMENT_LENGTH,j,fld_type),       GPB2F404.168   
+     &                   filt_recv_map(R_SOURCE_PE,j,fld_type))            GPB2F404.169   
+                                                                           GPB2F404.170   
+        ENDDO                                                              GPB2F404.171   
+                                                                           GPB2F404.172   
+      ENDDO                                                                GPB2F404.173   
+*ENDIF                                                                     GPB2F404.174   
+                                                                           GPB2F404.175   
+! 3.0 Move to wave space                                                   GPB2F404.176   
+                                                                           GPB2F404.177   
+      INCREMENT=1                                                          GPB2F404.178   
+      JUMP=fft_row_len                                                     GPB2F404.179   
+      FFTSIGN=-1                                                           GPB2F404.180   
+                                                                           GPB2F404.181   
+      DO chunk=1,n_chunks                                                  GPB2F404.182   
+                                                                           GPB2F404.183   
+        LOT=chunk_rows(chunk)                                              GPB2F404.184   
+                                                                           GPB2F404.185   
+        CALL FOURIER(FILTER_DATA(1+(chunk_start(chunk)-1)*fft_row_len),    GPB2F404.186   
+     &               global_trigs,                                         GPB2F404.187   
+     &               IFAX,INCREMENT,JUMP,glsize(1),LOT,FFTSIGN)            GPB2F404.188   
+      ENDDO                                                                GPB2F404.189   
+                                                                           GPB2F404.190   
+! 4.0 Perform the truncation                                               GPB2F404.191   
+                                                                           GPB2F404.192   
+      DO chunk=1,n_chunks                                                  GPB2F404.193   
+        DO I=chunk_start(chunk),chunk_start(chunk)+chunk_rows(chunk)-1     GPB2F404.194   
+                                                                           GPB2F404.195   
+          row_number=filt_info(I,fld_type)                                 GPB2F404.196   
+          filt_wave_no=FILTER_WAVE_NUMBER(row_number)                      GPB2F404.197   
+*IF DEF,T3E                                                                GBCNF405.37    
+c                                                                          GBCNF405.38    
+c--precompute the filtering term if necessary                              GBCNF405.39    
+          if(old_fft_row_len.ne.fft_row_len .or.                           GBCNF405.40    
+     2       old_filt_wave_no.ne.filt_wave_no) then                        GBCNF405.41    
+c--prepare the new factors                                                 GBCNF405.42    
+            do j=3+(filt_wave_no)*2, fft_row_len                           GBCNF405.43    
+              fft_row_factors(j)=(filt_wave_no/REAL(((J-1)/2)*2))**2       GBCNF405.44    
+            end do                                                         GBCNF405.45    
+c--preserve the indicative constants                                       GBCNF405.46    
+            old_fft_row_len=fft_row_len                                    GBCNF405.47    
+            old_filt_wave_no=filt_wave_no                                  GBCNF405.48    
+          endif                                                            GBCNF405.49    
+c                                                                          GBCNF405.50    
+*ENDIF                                                                     GBCNF405.51    
+                                                                           GPB2F404.198   
+          DO J=3+(filt_wave_no)*2,fft_row_len                              GPB2F404.199   
+                                                                           GPB2F404.200   
+            FILTER_DATA((I-1)*fft_row_len+J)=                              GPB2F404.201   
+     &                       FILTER_DATA((I-1)*fft_row_len+J)*             GPB2F404.202   
+*IF DEF,T3E                                                                GBCNF405.52    
+     &                       fft_row_factors(j)                            GBCNF405.53    
+*ELSE                                                                      GBCNF405.54    
+     &                       (filt_wave_no/REAL(((J-1)/2)*2))**2           GPB2F404.203   
+*ENDIF                                                                     GBCNF405.55    
+                                                                           GPB2F404.204   
+          ENDDO ! J : loop along fft row                                   GPB2F404.205   
+        ENDDO ! I : loop over fft rows in chunk                            GPB2F404.206   
+      ENDDO ! chunk : loop over chunks of rows                             GPB2F404.207   
+                                                                           GPB2F404.208   
+! 5.0 Move back to grid-point space                                        GPB2F404.209   
+                                                                           GPB2F404.210   
+      FFTSIGN=1                                                            GPB2F404.211   
+                                                                           GPB2F404.212   
+      DO chunk=1,n_chunks                                                  GPB2F404.213   
+                                                                           GPB2F404.214   
+        LOT=chunk_rows(chunk)                                              GPB2F404.215   
+                                                                           GPB2F404.216   
+        CALL FOURIER(FILTER_DATA(1+(chunk_start(chunk)-1)*fft_row_len),    GPB2F404.217   
+     &               global_trigs,                                         GPB2F404.218   
+     &               IFAX,INCREMENT,JUMP,glsize(1),LOT,FFTSIGN)            GPB2F404.219   
+      ENDDO                                                                GPB2F404.220   
+                                                                           GPB2F404.221   
+! 6.0 And finally, move the data back to the FIELD array                   GPB2F404.222   
+                                                                           GPB2F404.223   
+*IF -DEF,T3E                                                               GPB2F404.224   
+                                                                           GPB2F404.225   
+      flag=GC_NONE                                                         GPB2F404.226   
+                                                                           GPB2F404.227   
+      CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)                           GPB2F404.228   
+      info=GC_NONE                                                         GPB2F404.229   
+      CALL gcg_ralltoalle(filter_data, filt_recv_map(1,1,fld_type),        GPB2F404.230   
+     &                   n_items_to_recv(fld_type),                        GJC0F405.16    
+     &                    fft_row_len*rows_to_fft,                         GPB2F404.232   
+     &                    field, filt_send_map(1,1,fld_type),              GPB2F404.233   
+     &                    n_items_to_send(fld_type),                       GPB2F404.234   
+     &                    FIELD_LENGTH*LEVELS,                             GPB2F404.235   
+     &                    gc_all_proc_group, flag, info)                   GPB2F404.236   
+                                                                           GPB2F404.237   
+*ELSE                                                                      GPB2F404.238   
+                                                                           GPB2F404.239   
+c--select the loop direction for the gather based on PE parity             GBCNF405.56    
+      if(gridpos(2).eq.(gridpos(2)/2)*2) then                              GBCNF405.57    
+        loop_start=1                                                       GBCNF405.58    
+        loop_end=n_items_to_recv(fld_type)                                 GBCNF405.59    
+        loop_inc=1                                                         GBCNF405.60    
+      else                                                                 GBCNF405.61    
+        loop_start=n_items_to_recv(fld_type)                               GBCNF405.62    
+        loop_end=1                                                         GBCNF405.63    
+        loop_inc=-1                                                        GBCNF405.64    
+      endif                                                                GBCNF405.65    
+c                                                                          GBCNF405.66    
+      do j=loop_start, loop_end, loop_inc                                  GBCNF405.67    
+                                                                           GPB2F404.241   
+        lbase=filt_recv_map(R_BASE_ADDRESS_IN_RECV_ARRAY,j,fld_type)       GPB2F404.242   
+        lstride=filt_recv_map(R_STRIDE_IN_RECV_ARRAY,j,fld_type)           GPB2F404.243   
+        rbase=filt_recv_map(R_BASE_ADDRESS_IN_SEND_ARRAY,j,fld_type)       GPB2F404.244   
+        rstride=filt_recv_map(R_STRIDE_IN_SEND_ARRAY,j,fld_type)           GPB2F404.245   
+                                                                           GPB2F404.246   
+        PTR_dummy_FIELD=                                                   GPB2F404.247   
+     &    address_FIELD(filt_recv_map(R_SOURCE_PE,j,fld_type))             GPB2F404.248   
+! This causes dummy_FIELD to have the address of FIELD on the PE           GPB2F404.249   
+! we are about to shmem_get from                                           GPB2F404.250   
+                                                                           GPB2F404.251   
+        DO I=1,filt_recv_map(R_NUMBER_OF_ELEMENTS_IN_ITEM,j,fld_type)      GPB2F404.252   
+                                                                           GPB2F404.253   
+          call shmem_put(dummy_FIELD(rbase+(i-1)*rstride),                 GPB2F404.254   
+     &                   FILTER_DATA(lbase+(i-1)*lstride),                 GPB2F404.255   
+     &                   filt_recv_map(R_ELEMENT_LENGTH,j,fld_type),       GPB2F404.256   
+     &                   filt_recv_map(R_SOURCE_PE,j,fld_type))            GPB2F404.257   
+        ENDDO                                                              GPB2F404.258   
+      ENDDO                                                                GPB2F404.259   
+                                                                           GPB2F404.260   
+      CALL barrier()                                                       GPB2F404.261   
+*ENDIF                                                                     GPB2F404.262   
+                                                                           GPB2F404.263   
+      RETURN                                                               GPB2F404.264   
+      END                                                                  GPB2F404.265   
+*ENDIF                                                                     GPB2F404.266   
+*ENDIF                                                                     FILTER1A.223   

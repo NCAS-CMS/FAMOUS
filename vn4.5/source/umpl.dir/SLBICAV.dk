@@ -1,0 +1,314 @@
+*IF DEF,S40_1A                                                             SJC0F305.4     
+C ******************************COPYRIGHT******************************    GTS2F400.9055  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9056  
+C                                                                          GTS2F400.9057  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9058  
+C restrictions as set forth in the contract.                               GTS2F400.9059  
+C                                                                          GTS2F400.9060  
+C                Meteorological Office                                     GTS2F400.9061  
+C                London Road                                               GTS2F400.9062  
+C                BRACKNELL                                                 GTS2F400.9063  
+C                Berkshire UK                                              GTS2F400.9064  
+C                RG12 2SZ                                                  GTS2F400.9065  
+C                                                                          GTS2F400.9066  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9067  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9068  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9069  
+C Modelling at the above address.                                          GTS2F400.9070  
+C ******************************COPYRIGHT******************************    GTS2F400.9071  
+C                                                                          GTS2F400.9072  
+!+ Relaxation routine to correct ice velocities for slab model.            SLBICAV.3     
+!                                                                          SLBICAV.4     
+! Subroutine Interface:                                                    SLBICAV.5     
+      SUBROUTINE slab_icecavrx(                                            SLBICAV.6     
+     &           imt,jmt,jmtm1,delta_lat,delta_long                        SLBICAV.7     
+     &          ,tol,nmax                                                  SLBICAV.8     
+     &          ,cos_p_latitude,cos_u_latitude,sec_p_latitude              SLBICAV.9     
+     &          ,hmask,umask,umc,vmc,ccalc,cavrow                          SLBICAV.10    
+     &          ,ax,ay,bx,by,pmax                                          SLBICAV.11    
+     &          ,uice,vice,pressure                                        SLBICAV.12    
+     &          )                                                          SLBICAV.13    
+                                                                           SLBICAV.14    
+      IMPLICIT NONE                                                        SLBICAV.15    
+!                                                                          SLBICAV.16    
+! Description:                                                             SLBICAV.17    
+!   DYNAMIC SEA ICE MODEL SUBROUTINE TO CORRECT C GRID FREE DRIFT          SLBICAV.18    
+!   VELOCITIES USING THE CAVITATING FLUID ICE RHEOLOGY.                    SLBICAV.19    
+!                                                                          SLBICAV.20    
+! Method:                                                                  SLBICAV.21    
+! Calculate various constants to improve vectorisation of main loop.       SLBICAV.22    
+! Loop over maximum number of iterations.                                  SLBICAV.23    
+!   Copy initial velocities in this loop to workspace.                     SLBICAV.24    
+!   Loop over each point for which calculations are required.              SLBICAV.25    
+!     Calculate divergence of velocity field.                              SLBICAV.26    
+!     Calculate pressure fiedl increment required prevent convergence,     SLBICAV.27    
+! or reduce pressure within a diverging grid square to zero.               SLBICAV.28    
+!     Compare resulting pressure with ice strength and reduce if           SLBICAV.29    
+!     necessary.                                                           SLBICAV.30    
+!     Calculate velocity increments for each face implied by pressure      SLBICAV.31    
+!     correction, masking land and land boundaries.                        SLBICAV.32    
+!   End loop over grid points.                                             SLBICAV.33    
+!   Loop over grid points and find maximum velocity component              SLBICAV.34    
+!   correction for this iteration. Compare with tolerance.                 SLBICAV.35    
+!   If tolerance exceeds largest velocity correction jump out of loop.     SLBICAV.36    
+! End loop over maximum iterations and print warning if max itertations    SLBICAV.37    
+! was required.                                                            SLBICAV.38    
+!                                                                          SLBICAV.39    
+! Current Code Owner: J.F.Thomson                                          SLBICAV.40    
+!                                                                          SLBICAV.41    
+! History:                                                                 SLBICAV.42    
+! Version   Date     Comment                                               SLBICAV.43    
+! -------   ----     -------                                               SLBICAV.44    
+!  3.4      6/94     Original code. J.Thomson                              SLBICAV.45    
+!                                                                          SLBICAV.46    
+! Code Description:                                                        SLBICAV.47    
+!   Language: FORTRAN 77 + common extensions.                              SLBICAV.48    
+!   This code is written to UMDP3 v6 programming standards.                SLBICAV.49    
+!                                                                          SLBICAV.50    
+! System component covered:                                                SLBICAV.51    
+! System Task:              P40                                            SLBICAV.52    
+!                                                                          SLBICAV.53    
+! Declarations:                                                            SLBICAV.54    
+!   These are of the form:-                                                SLBICAV.55    
+!     INTEGER      ExampleVariable      !Description of variable           SLBICAV.56    
+!                                                                          SLBICAV.57    
+! Global variables (*CALLed COMDECKs etc...):                              SLBICAV.58    
+*CALL C_A                                                                  SLBICAV.59    
+                                                                           SLBICAV.60    
+! Subroutine arguments                                                     SLBICAV.61    
+!   Scalar arguments with intent(in):                                      SLBICAV.62    
+      INTEGER imt                      ! number of columns                 SLBICAV.63    
+      INTEGER jmt                      ! number of rows                    SLBICAV.64    
+      INTEGER jmtm1                    ! number of rows minus 1            SLBICAV.65    
+      REAL    delta_lat                ! zonal grid spacing in radians     SLBICAV.66    
+      REAL    delta_long               ! merid. grid spacing in radians    SLBICAV.67    
+      REAL    tol                      ! tolerance for correction scheme   SLBICAV.68    
+      INTEGER nmax                     ! maximum iterations                SLBICAV.69    
+                                                                           SLBICAV.70    
+!   Array  arguments with intent(in):                                      SLBICAV.71    
+      REAL    cos_p_latitude(imt,jmt)  ! cos latitude on p pts             SLBICAV.72    
+      REAL    cos_u_latitude(imt,jmtm1)! cos latitude on p pts             SLBICAV.73    
+      REAL    sec_p_latitude(imt,jmt)  ! 1/(cos latitude) on p pts         SLBICAV.74    
+      REAL    hmask(imt,jmt)           ! 1. for sea 0. for land p pts      SLBICAV.75    
+      REAL    umask(imt,jmtm1)         ! 1. for sea 0. for land uv pts     SLBICAV.76    
+      REAL    umc(imt,jmtm1)           ! 1. for sea 0. for land cu pts     SLBICAV.77    
+      REAL    vmc(imt,jmtm1)         ! 1. for sea 0. for land cv pts       SLBICAV.78    
+      REAL    ax(imt,jmtm1)            ! cdw * sin(psi) for C x pts        SLBICAV.79    
+      REAL    ay(imt,jmtm1)            ! cdw * sin(psi) for C y pts        SLBICAV.80    
+      REAL    bx(imt,jmtm1)            ! mf+cdw*cos(psi) for C x pts       SLBICAV.81    
+      REAL    by(imt,jmtm1)            ! mf+cdw*cos(psi) for C y pts       SLBICAV.82    
+     &                                 ! m is gbm ice depth * rhoice       SLBICAV.83    
+     &                                 ! f is coriolis parameter           SLBICAV.84    
+      REAL    pmax(imt,jmt)            ! ice strength (max pressure)       SLBICAV.85    
+      LOGICAL ccalc(imt,jmt)           ! true if dynamics calcs needed     SLBICAV.86    
+      LOGICAL cavrow(jmt)              ! true if dynamics calcs needed     SLBICAV.87    
+                                                                           SLBICAV.88    
+!   Scalar arguments with intent(InOut):                                   SLBICAV.89    
+                                                                           SLBICAV.90    
+!   Array  arguments with intent(InOut):                                   SLBICAV.91    
+      REAL    uice(imt,jmtm1)          ! x ice vel. component (C grid)     SLBICAV.92    
+      REAL    vice(imt,jmtm1)          ! y ice vel. component (C grid)     SLBICAV.93    
+      REAL    pressure(imt,jmt)        ! internal ice pressure             SLBICAV.94    
+                                                                           SLBICAV.95    
+!   Scalar arguments with intent(out):                                     SLBICAV.96    
+                                                                           SLBICAV.97    
+!   Array  arguments with intent(out):                                     SLBICAV.98    
+                                                                           SLBICAV.99    
+! Local parameters:                                                        SLBICAV.100   
+      REAL    zero                     ! 0.0                               SLBICAV.101   
+      PARAMETER ( zero = 0.0 )                                             SLBICAV.102   
+      REAL    cos_80_deg               ! cos ( 80 degrees )                SLBICAV.103   
+      PARAMETER ( cos_80_deg = 0.1736 )                                    SLBICAV.104   
+                                                                           SLBICAV.105   
+! Local scalars:                                                           SLBICAV.106   
+      INTEGER imtm1                    ! number of columns minus 1         SLBICAV.107   
+      INTEGER imtm2                    ! number of columns minus 2         SLBICAV.108   
+      INTEGER i,j,n,istart             ! loop counters                     SLBICAV.109   
+      INTEGER i1,j1                    ! pointers                          SLBICAV.110   
+      INTEGER iter                     ! iteration count                   SLBICAV.111   
+      INTEGER niter                    ! iteration count for polar rows    SLBICAV.112   
+      REAL    errm,erru,errv           ! error terms in iteration          SLBICAV.113   
+      REAL    pcorr,delp               ! pressure corrections              SLBICAV.114   
+      REAL    rdlat                    ! recip of merid grid spacing       SLBICAV.115   
+      REAL    rdlon                    ! recip of zonal grid spacing       SLBICAV.116   
+      REAL    t1                       ! intermediate value in calc        SLBICAV.117   
+      REAL    pdiff                    ! pressure gradient                 SLBICAV.118   
+      REAL    duij,duip1j,dvij,dvijp1  ! velocity increments               SLBICAV.119   
+      REAL    div                      ! divergence at a point             SLBICAV.120   
+                                                                           SLBICAV.121   
+! Local dynamic arrays:                                                    SLBICAV.122   
+      REAL    uwork(imt,jmtm1)         ! work array for u ice velocity.    SLBICAV.123   
+      REAL    vwork(imt,jmtm1)         ! work array for v ice velocity.    SLBICAV.124   
+      REAL con1(imt,jmt),con2(imt,jmt),con3(imt,jmt),dmlt(imt,jmt)         SLBICAV.125   
+      REAL con5(imt,jmt),con6(imt,jmt),con7(imt,jmt),con8(imt,jmt)         SLBICAV.126   
+      REAL con9(imt,jmt)                                                   SLBICAV.127   
+                                                                           SLBICAV.128   
+! Function & Subroutine calls:                                             SLBICAV.129   
+      External timer                                                       SLBICAV.130   
+                                                                           SLBICAV.131   
+!- End of header                                                           SLBICAV.132   
+*IF DEF,TIMER                                                              SLBICAV.133   
+      call timer('icecavrx',3)                                             SLBICAV.134   
+*ENDIF                                                                     SLBICAV.135   
+      imtm1=imt-1                                                          SLBICAV.136   
+      imtm2=imt-2                                                          SLBICAV.137   
+      rdlat=1.0/delta_lat                                                  SLBICAV.138   
+      rdlon=1.0/delta_long                                                 SLBICAV.139   
+                                                                           SLBICAV.140   
+! Initialise arrays for use in cavitating fluid calculations               SLBICAV.141   
+      do j=1,jmt              ! start j loop                               SLBICAV.142   
+        do i=1,imt            ! start i loop                               SLBICAV.143   
+          con1(i,j)=1.0/a*cos_p_latitude(i,j)                              SLBICAV.144   
+          con2(i,j)=zero                                                   SLBICAV.145   
+          con3(i,j)=zero                                                   SLBICAV.146   
+          dmlt(i,j)=zero                                                   SLBICAV.147   
+          con5(i,j)=zero                                                   SLBICAV.148   
+          con6(i,j)=zero                                                   SLBICAV.149   
+          con7(i,j)=zero                                                   SLBICAV.150   
+          con8(i,j)=zero                                                   SLBICAV.151   
+          con9(i,j)=zero                                                   SLBICAV.152   
+        end do                ! end i loop                                 SLBICAV.153   
+      end do                  ! end j loop                                 SLBICAV.154   
+      do j=1,jmtm1            ! start j loop                               SLBICAV.155   
+        j1=j+1                                                             SLBICAV.156   
+        do i=1,imt            ! start i loop                               SLBICAV.157   
+          i1=i+1                                                           SLBICAV.158   
+          if (i1.gt.imt) i1=i1-imt                                         SLBICAV.159   
+          if (abs(ax(i,j)).gt.1.0e-4) then                                 SLBICAV.160   
+            con2(i,j) = (1.0/ax(i,j))*sec_p_latitude(i1,j1)                SLBICAV.161   
+            con5(i,j) = (con1(i1,j1)*rdlon)/ax(i,j)                        SLBICAV.162   
+          endif                                                            SLBICAV.163   
+          if (abs(ay(i,j)).gt.1.0e-4) then                                 SLBICAV.164   
+            con3(i,j) = cos_u_latitude(i,j)/ay(i,j)                        SLBICAV.165   
+            con7(i,j) = rdlat/(a*ay(i,j))                                  SLBICAV.166   
+          endif                                                            SLBICAV.167   
+          if (abs(ax(i1,j)).gt.1.0e-4)                                     SLBICAV.168   
+     &      con6(i,j) = (con1(i1,j1)*rdlon)/ax(i1,j)                       SLBICAV.169   
+          if (abs(ay(i,j1)).gt.1.0e-4)                                     SLBICAV.170   
+     &      con8(i,j) = rdlat/(a*ay(i,j1))                                 SLBICAV.171   
+        end do                ! end i loop                                 SLBICAV.172   
+      end do                  ! end j loop                                 SLBICAV.173   
+      do j=1,jmtm1            ! start j loop                               SLBICAV.174   
+        j1=j+1                                                             SLBICAV.175   
+        do i=1,imt            ! start i loop                               SLBICAV.176   
+          i1=i+1                                                           SLBICAV.177   
+          if (i1.gt.imt) i1=i1-imt                                         SLBICAV.178   
+          t1 =                                                             SLBICAV.179   
+     &    ( ( con2(i1,j)+con2(i,j) )                                       SLBICAV.180   
+     &    *rdlon*rdlon                                                     SLBICAV.181   
+     &    + (con3(i,j1)+con3(i,j))*rdlat*rdlat )                           SLBICAV.182   
+          if ( abs(t1) .gt. 1.0e-4 )                                       SLBICAV.183   
+     &      con9(i,j) =  a*a*cos_p_latitude(i1,j1)/t1                      SLBICAV.184   
+        end do                ! end i loop                                 SLBICAV.185   
+      end do                  ! end j loop                                 SLBICAV.186   
+                                                                           SLBICAV.187   
+! Cavitating Fluid Correction Scheme                                       SLBICAV.188   
+! Repeat correction up to nmax times                                       SLBICAV.189   
+      do iter=1,nmax          ! start iter loop                            SLBICAV.190   
+        errm = zero                                                        SLBICAV.191   
+! Copy initial velocities to workspace                                     SLBICAV.192   
+        do j=1,jmtm1          ! start j loop                               SLBICAV.193   
+          do i=1,imt        ! start i loop                                 SLBICAV.194   
+            uwork(i,j) = uice(i,j) * umc(i,j)                              SLBICAV.195   
+            vwork(i,j) = vice(i,j) * vmc(i,j)                              SLBICAV.196   
+          end do            ! end i loop                                   SLBICAV.197   
+*IF DEF,OCYCLIC                                                            SLBICAV.198   
+          uwork(imt,j)  = uwork(2,j)                                       SLBICAV.199   
+          uwork(1,j)    = uwork(imtm1,j)                                   SLBICAV.200   
+          vwork(imt,j)  = vwork(2,j)                                       SLBICAV.201   
+          vwork(1,j)    = vwork(imtm1,j)                                   SLBICAV.202   
+*ENDIF                                                                     SLBICAV.203   
+        end do              ! end j loop                                   SLBICAV.204   
+! Loop over computational grid                                             SLBICAV.205   
+        do j=1,jmt-2        ! start j loop                                 SLBICAV.206   
+          j1=j+1                                                           SLBICAV.207   
+          if (cavrow(j1)) then                                             SLBICAV.208   
+            niter=1                                                        SLBICAV.209   
+            if ( cos_u_latitude(1,j1) .lt. cos_80_deg ) niter = 20         SLBICAV.210   
+            do n=1,niter      ! start n loop                               SLBICAV.211   
+              do istart=2,3              ! start istart loop               SLBICAV.212   
+                do i=istart,imtm1,2      ! start i loop                    SLBICAV.213   
+                  i1 = i+1                                                 SLBICAV.214   
+                  delp = zero                                              SLBICAV.215   
+                  pcorr = zero                                             SLBICAV.216   
+                  div = zero                                               SLBICAV.217   
+                  div = ( (uice(i1,j)-uice(i,j)) * rdlon                   SLBICAV.218   
+     &            + ( vice(i,j1)*cos_u_latitude(i,j1)                      SLBICAV.219   
+     &            - vice(i,j)*cos_u_latitude(i,j) ) * rdlat )              SLBICAV.220   
+     &            * con1(i1,j1)                                            SLBICAV.221   
+                  pcorr = -div * con9(i,j) * hmask(i1,j1)                  SLBICAV.222   
+                  if ( div .le. zero ) then                                SLBICAV.223   
+                    delp = pcorr                                           SLBICAV.224   
+                  endif                                                    SLBICAV.225   
+! Test ice pressure against ice strength, pmax.                            SLBICAV.226   
+                  pdiff = pmax(i1,j1) - ( pressure(i1,j1) + delp )         SLBICAV.227   
+                  if (pdiff.lt.zero) delp=pmax(i1,j1)-pressure(i1,j1)      SLBICAV.228   
+                  if (div.gt.zero .and. pressure(i1,j1).le.zero) then      SLBICAV.229   
+                    delp = zero                                            SLBICAV.230   
+                  elseif (div.gt.zero.and.pressure(i1,j1).gt.zero) then    SLBICAV.231   
+                    delp = max(pcorr,-pressure(i1,j1))                     SLBICAV.232   
+                  endif                                                    SLBICAV.233   
+! Calculate velocity corrections.                                          SLBICAV.234   
+                  duij   = -delp*con5(i,j)                                 SLBICAV.235   
+                  duip1j =  delp*con6(i,j)                                 SLBICAV.236   
+                  dvij   = -delp*con7(i,j)                                 SLBICAV.237   
+                  dvijp1 =  delp*con8(i,j)                                 SLBICAV.238   
+! Add corrections to velocities.                                           SLBICAV.239   
+                  uice(i,j)  = (uice(i,j)+duij) * umc(i,j)                 SLBICAV.240   
+                  uice(i1,j) = (uice(i1,j)+duip1j) * umc(i1,j)             SLBICAV.241   
+                  vice(i,j)  = (vice(i,j)+dvij) * vmc(i,j)                 SLBICAV.242   
+                  vice(i,j1) = (vice(i,j1)+dvijp1) * vmc(i,j1)             SLBICAV.243   
+! Calculate new ice pressure.                                              SLBICAV.244   
+                  pressure(i1,j1) = pressure(i1,j1) + delp                 SLBICAV.245   
+! End loop                                                                 SLBICAV.246   
+                end do                 ! end i loop                        SLBICAV.247   
+*IF DEF,OCYCLIC                                                            SLBICAV.248   
+                uice(1,j)       = uice(imtm1,j)                            SLBICAV.249   
+                uice(imt,j)     = uice(2,j)                                SLBICAV.250   
+                vice(1,j)       = vice(imtm1,j)                            SLBICAV.251   
+                vice(imt,j)     = vice(2,j)                                SLBICAV.252   
+                vice(1,j1)      = vice(imtm1,j1)                           SLBICAV.253   
+                vice(imt,j1)    = vice(2,j1)                               SLBICAV.254   
+                pressure(1,j1)  = pressure(imtm1,j1)                       SLBICAV.255   
+                pressure(imt,j1)= pressure(2,j1)                           SLBICAV.256   
+*ENDIF                                                                     SLBICAV.257   
+              end do                 ! end istart loop                     SLBICAV.258   
+            end do                   ! end n loop                          SLBICAV.259   
+          endif                                                            SLBICAV.260   
+        end do                         ! end j loop                        SLBICAV.261   
+! Check maximum error and jump out of loop if this is within the           SLBICAV.262   
+! tolerance set above.                                                     SLBICAV.263   
+        errm = zero                                                        SLBICAV.264   
+        do j = 1,jmt-2                 ! start j loop                      SLBICAV.265   
+          if (cavrow(j+1)) then                                            SLBICAV.266   
+            do i = 2,imtm1               ! start i loop                    SLBICAV.267   
+              erru = abs(uice(i,j)-uwork(i,j))                             SLBICAV.268   
+              errv = abs(vice(i,j)-vwork(i,j))                             SLBICAV.269   
+              errm = max(errm,erru,errv)                                   SLBICAV.270   
+            end do                       ! end i loop                      SLBICAV.271   
+          endif                                                            SLBICAV.272   
+        end do                         ! end j loop                        SLBICAV.273   
+        if ( errm .lt. tol ) go to 999                                     SLBICAV.274   
+! End loop over maximum iterations                                         SLBICAV.275   
+      end do                           ! end iter loop                     SLBICAV.276   
+      if (iter.ge.nmax) write(6,*)                                         SLBICAV.277   
+     &   'Maximum number of iterations exceeded in correction scheme'      SLBICAV.278   
+ 999  continue                                                             SLBICAV.279   
+      write(6,*) 'Number of iterations in correction scheme = ',iter       SLBICAV.280   
+*IF DEF,OCYCLIC                                                            SLBICAV.281   
+                                                                           SLBICAV.282   
+! Make velocities cyclic if necessary                                      SLBICAV.283   
+      do j=1,jmtm1                                                         SLBICAV.284   
+        uice(1,j)    = uice(imtm1,j)                                       SLBICAV.285   
+        uice(imt,j)  = uice(2,j)                                           SLBICAV.286   
+        vice(1,j)    = vice(imtm1,j)                                       SLBICAV.287   
+        vice(imt,j)  = vice(2,j)                                           SLBICAV.288   
+      end do                                                               SLBICAV.289   
+*ENDIF                                                                     SLBICAV.290   
+                                                                           SLBICAV.291   
+*IF DEF,TIMER                                                              SLBICAV.292   
+      call timer('icecavrx',4)                                             SLBICAV.293   
+*ENDIF                                                                     SLBICAV.294   
+      return                                                               SLBICAV.295   
+      end                                                                  SLBICAV.296   
+*ENDIF                                                                     SLBICAV.297   

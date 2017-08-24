@@ -1,0 +1,214 @@
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script: qscasedisp
+#LL---------------------------------------------------------------------
+#LL  Purpose: Process an archiving request i.e. delete or copy file
+#LL           to secondary system. Also releases user script if
+#LL           necessary and creates/copies trigger files.
+#LL
+#LL  Author: Chris Perks                  Date: August 1994
+#LL
+#LL  Code version no: 3.4
+#LL  Modification History:
+#LL  Date    Vn   Name      Change
+#LL  7/12/94 3.4  C D Perks Original Version
+#LL                         NB: CURRENT_RQST_DISP,RQST_DISP changed
+#LL                         to CURRENT_RQST_ACTION,RQST_ACTION
+#LL                         User script now runs under calling shell.
+#LL  6/06/95  4.0 C D Perks Introduced RUN_FLAG for NRUNs.
+#LL  14/12/95 4.0 L Wiles   Variable for trigger name replaces "HCEAFU"
+#LL  16/04/96 4.1 L Wiles   Changes for CRACER. Make 1st line of trigger
+#LL                         file always blank
+#LL                         Set CRACER Code for stream type and change
+#LL                         trigger name
+#LL                         Calculates number of files in trigger file
+#LL                         according to byte size.
+#LL  15/10/97 4.4  Write times of deletions of dump files to a log
+#LL                file for production runs. K Rogers
+#LL  16/09/98 4.5  Use different temporary variable to TEMP in REL
+#LL                section to avoid problems with real TEMP. K Rogers
+#LL  17/08/98 4.5 Optimisation changes  I Edmond
+#LL
+#LL  Programming Standard: UM Tech Doc Paper on
+#LL                        Automated Post Processing System
+#LL
+#LL  Project Task: Y1
+#LL---------------------------------------------------------------------
+#LL  Called by: qsserver
+#LL  Calls:     copy2dest
+#LL             archfail
+#LL  Variables:
+#LL  Imports:
+#LL
+#LL  VERSION                # UM version
+#LL  RUNID                  # Experiment and jobname
+#LL  DATAM                  # User cray experiment dirn.
+#LL  MACHINE                # Machine type
+#LL  OPERATIONAL            # Test for operational run
+#LL  TYPE                   # Run type (Normal or continuation)
+#LL  CURRENT_RQST_NAME      # Name of current request
+#LL  CURRENT_RQST_TYPE      # Data stream type: dump,pp,mean pp,bndy
+#LL  CURRENT_RQST_TYPE_TF   # Trigger file stream type
+#LL  CRACER_RQST_TYPE_TF    # Stream type for CRACER
+#LL  CURRENT_RQST_ACTION    # Archive or delete file
+#LL  FILECOUNT              # Number of entries in  TF
+#LL  RQST_LIMIT             # Maximum number of entries in TF
+#LL  RUN_FLAG               # First file of NRUN/CRUN? (T/F)
+#LL  F_END_TF_COPY          # Trigger file (T) or data file (F) to copy
+#LL  F_END_TF               # Trigger file name:Imported or created here
+#LL  LAST_TF                # Trigger file transfer required later (T/F)
+#LL  MODEL_FILE             # Model data file pathname on model machine
+#LL  TFPREFIX               # IBM prefix used in trigger files for
+#LL                         # archiving
+#LL  MAXBYTES               # Maximum number of bytes per trigger file
+#LL
+#LL  Local Variables:
+#LL
+#LL  MODEL_F_END_TF         # Trigger file pathname on model machine
+#LL  SUMBYTES               # Sum of bytes already in trigger file
+#LL  NUMBYTES               # Number of bytes in current request
+#LL  TEMP_REL               # temporary variable for script release
+#LL
+#LL  NB: Other variables in argument list pass through qscasedisp
+#LL      for use in hds_transfer_text, copy2dest, and ppcrayformat
+
+MODEL_F_END_TF=$DATAM/$F_END_TF
+
+#L----------------------------------------------------------------------
+#L Step 1:Request to delete current file
+#L----------------------------------------------------------------------
+
+case $CURRENT_RQST_ACTION in
+  DELETE)   if [[ $OPERATIONAL = true ]]
+            then
+              rm $DATAM/$CURRENT_RQST_NAME
+            else
+              rm $DATAM/$CURRENT_RQST_NAME
+              CC=$?
+              if (( $CC == 0 ))
+              then
+                echo -e "$CURRENT_RQST_NAME deleted"
+              else
+                echo -e "$CURRENT_RQST_NAME - unable to delete"
+              fi
+            fi
+            ;;
+#L----------------------------------------------------------------------
+#L Step 2:Request to archive: Take appropriate action on filecount
+#L----------------------------------------------------------------------
+
+  ARCHIVE)
+#
+#L----------------------------------------------------------------------
+#L Step 2a:Create new trigger file with first line blank.
+#L         Set CRACER stream type from CURRENT stream type
+#L         Put stream type for CRACER on IDRUN
+#L----------------------------------------------------------------------
+
+            case $CURRENT_RQST_TYPE_TF in
+            PP) CRACER_RQST_TYPE_TF='P00'
+                ;;
+            MPP) CRACER_RQST_TYPE_TF='M00'
+                ;;
+            PMP) CRACER_RQST_TYPE_TF='N00'
+                ;;
+            DMP) CRACER_RQST_TYPE_TF='D00'
+                ;;
+            BF) CRACER_RQST_TYPE_TF='B00'
+                ;;
+            DB) CRACER_RQST_TYPE_TF='C00'
+                ;;
+            MIX) CRACER_RQST_TYPE_TF='X00'
+                ;;
+            *) echo -e "ERROR in current request type"
+               . archfail
+                ;;
+            esac
+            if (( $FILECOUNT == 0 ))
+            then
+              F_END_TF="$TFPREFIX.$IDRUN$CRACER_RQST_TYPE_TF.V$VERSION\
+.D"`date '+%Y%j.T%H%M%S'`
+              LAST_TF='true'
+              MODEL_F_END_TF=$DATAM/$F_END_TF
+
+              RUN_FLAG='false'
+
+              FILECOUNT=1
+            fi
+#L----------------------------------------------------------------------
+#L Step 2b:Transfer current request file to front-end system
+#L         and calculate whether new trigger file required if using the
+#L         automatic trigger size system. Could be different for each
+#L         stream type. This system starts a new trigger file when the
+#L         total of the file sizes in the TF have reached a limit, or
+#L         when a maximum number of files is in the TF
+#L         Note: When a trigger file is ready, there are two passes
+#L         through copy2dest.
+#L---------------------------------------------------------------------
+
+            if (( $RQST_LIMIT > 0 ))
+            then # user has chosen trigger sizing
+              if (( $FILECOUNT < $RQST_LIMIT ))
+              then
+                F_END_TF_COPY='off'
+                MODEL_FILE=$DATAM/$CURRENT_RQST_NAME
+                . copy2dest
+              fi
+
+            else #automatic trigger sizing
+              NUMBYTES=`ls -l $DATAM/$CURRENT_RQST_NAME \
+              | $UM_AWK '{print $5}'`
+              ((SUMBYTES= SUMBYTES + NUMBYTES ))
+                F_END_TF_COPY='off'
+                MODEL_FILE=$DATAM/$CURRENT_RQST_NAME
+                . copy2dest
+
+            fi
+               ;;
+
+#L----------------------------------------------------------------------
+#L Step 3:Request to execute user-supplied pp script
+#L----------------------------------------------------------------------
+
+  REL)        echo -e "Executing user-supplied pp script"
+	      TEMP_REL=`echo -e "\\$$CURRENT_RQST_NAME"`
+              TEMP_REL=`eval echo -e $TEMP_REL`
+              REL_MEMBER=`eval echo -e $TEMP_REL`
+              $REL_MEMBER                # No specified shell
+              CC=$?
+
+              if [[ $OPERATIONAL = true ]]
+              then
+                :
+              else
+                if test $CC -eq 1
+                then
+          echo -e "======================================================="
+          echo -e "qsserver: user script $REL_MEMBER completed with errors"
+          echo -e "======================================================="
+                elif test $CC -eq 2
+                then
+          echo -e "======================================================="
+          echo -e "qsserver: fatal error in $REL_MEMBER model run stopped"
+          echo -e "======================================================="
+                  . archfail
+                  exit $CC
+                elif test $CC -ne 0
+                then
+          echo -e "======================================================="
+          echo -e "qsserver: $REL_MEMBER completed with errors no return"
+          echo -e "          code supplied in user script. Assumed safe"
+          echo -e "          to continue model run"
+          echo -e "======================================================="
+                fi
+              fi
+            ;;
+esac

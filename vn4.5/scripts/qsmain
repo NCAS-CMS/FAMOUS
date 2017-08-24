@@ -1,0 +1,1052 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script:  qsmain
+#LL---------------------------------------------------------------------
+#LL
+#LL  Purpose: Prepares source code; performs autotasking, compilation,
+#LL           link-editing and executes the resulting loadmodule for
+#LL           atmosphere, ocean or coupled model run.
+#LL           Initiates automatic output processing system in parallel
+#LL           with the model run.
+#LL
+#LL  Author:   T Smith & N Farnon Date:           22 February 1993
+#LL
+#LL  Tested under OS version: UNICOS 6.1.5A
+#LL
+#LL  UM   version no: 3.1         Date:  22 February 1993
+#LL
+#LL   Model
+#LL  version  Date     Modification history:
+#LL
+#LL    3.1    22/02/93 Link/compile stage extracted into a separate
+#LL                    script (qsmncompile) for portability.
+#LL                    Some assigns replaced with environmental
+#LL                    variables, UNITxx.
+#LL           24/02/93 Add option to compile c code mods
+#LL                    and also correct errors in script due to rewrite.
+#LL           11/03/93 Added ALABCOU1 etc to list of enviroment variable
+#LL                    and UNIT70-74 for acobs files (OBS_FORMAT=1 only)
+#LL           12/03/93 Added UNIT07 for OUTPUT2
+#LL           25/03/93 Added UNIT02 missed out when assigns removed.
+#LL    3.2    04/05/93 Changed from UPDOC to UPDATE for ocean. Removed
+#LL                    references to PARAM file.Added BAS_IND file.KMR
+#LL    3.2    13/07/93 Changed CFT77OPT to CFT77OPTIM in 3 variables
+#LL                    and added CFT77OPTA, CFT77OPTO and SPCFT77OPT
+#LL                    variables. K Rogers.
+#LL    3.2    14/09/93 Added UNIT58 for BAS_IND file. K Rogers
+#LL    3.3    01/11/93 Added environment variables ATRACER, OTRACER
+#LL                    and SOURCES. D L Roberts
+#LL    3.3    25/11/93 Added SAVECORE and option to save core file
+#LL                    to $COREDUMP. K Rogers
+#LL    3.4    03/08/94 Replaced cuts and greps with call to sed
+#LL                    in step 4a. (Tracey Smith)
+#LL    3.4    13/09/94 Change to 10 obs files (unifying ACOBS/OCOBS)
+#LL                    and add CX files for VAR      Stuart Bell
+#LL    3.4    05/09/94 Added environment variables USRANCIL,USRMULTI,
+#LL                    OUSRANCL,OUSRMULT,MURKFILE.          RTHBarnes
+#LL    3.4    09/08/94 Print out which CPU was in use when a corefile
+#LL                    was created.
+#LL
+#LL    3.4    18/1/95 Sets up parallel environment - only for MPP
+#LL                   version of code (*IF DEF,PARALLEL). P.Burton
+#LL    4.0    24/07/95 Put change to send message to operators to
+#LL                    indicate whether run completed successfully
+#LL                    for climate production/DoE runs.  Also sends
+#LL                    error messages to log files.      LCWiles
+#LL    3.5    26/4/95 Setup UNIT05 to point to $NAMELIST  P.Burton
+#LL    3.5    01/05/95 Created FTXX.vars with loop exports
+#LL    3.5    16/05/95 UNIT01 (housekeeping), UNIT05 (Namelist) and
+#LL                    UNIT09 (CONTCNTL) added.
+#LL    4.0    17/08/95 Giving NUPDATEd C code an individual name for
+#LL                    expts run in parallel (N.Farnon)
+#LL    4.0    12/10/95 UNIT57 and UNIT80, spectral file names added.
+#LL    4.1    13/03/96 Introduce Wave sub-model.  RTHBarnes.
+#LL    4.3    17/02/96 Change to edit on namelist UNIT11
+#LL    4.2    12/10/96 Various changes for T3E work  L C Wiles
+#LL    4.3    06/05/97 Remove hardware failure msgs to ops. Notify
+#LL                    ops of failures in night queue runs. K Rogers
+#LL    4.3    03/05/97 Add code to notify operators when run has failed
+#LL                    due to an archive problem or operator stoprun.
+#LL                    Notify user, via a file, of all types of failure.
+#LL                    (S Robertson)
+#LL    4.4    12/01/98 Change and simplify messages to ops. L.Wiles
+#LL    4.4    13/01/98 Add code to tar and untar compile files
+#LL                    at Met. Office. K Rogers
+#LL    4.4    08/12/97 Write to EXITSTAT if model fails in addition
+#LL           to partial sum copy failure.  Keep copy of thist in
+#LL           thist_keep file for when run stopped at non-mean
+#LL           point. K Rogers.
+#LL    4.4    02/12/97 Remove zero length files before make when using
+#LL                    SKIP_SRC_EXTRACT. K Rogers
+#LL    4.4    22/08/97 Add code to move restart file to $OPSYSERR
+#LL
+#LL    4.4    28/08/97 Add *DEFs for portability around namelist
+#LL                    assigns, and mpprun commands.
+#LL                    Ensure chmod only done in compile runs. LCW
+#LL    4.4PUM 15.03.99 Define UM_PE_LABEL for Met. Office T3E
+#LL                                                      P.Burton
+#LL    4.4    15.12.97 Output from build step goes to a separate
+#LL                    output file and is append to main output
+#LL                    after run completion. (A. Brady)
+#LL    4.5    24/08/98 Add changes to separate runs that compile
+#LL                    and run on Cray MPP machines for efficiency,
+#LL                    using STEP=2 as the default setting. K Rogers
+#LL    4.5    24/08/98 Add comment to $THIST1 deletion. K Rogers
+#LL    4.5    28/10/98 Added test on return code from qsmncompile.
+#LL                    K Rogers
+#LL    4.5    23/09/98 Append machine specific defs to temporary
+#LL                    UPDEFS file. K Rogers
+#LL    4.5    12.05.98 Remove references to UNIT03. R.Rawlins
+#LL    4.5    29-09-99 Changes relating to splitting of main
+#LL                    makefile into makefile.compile and makefile.link
+#LL                                             Luke Robinson.
+#LL  Programming standard: UM Doc Paper 3, version 5 (08/12/92)
+#LL
+#LL  Project task: C0
+#LL
+#LL  Logical components covered: J02
+#LL
+#LL  External documentation:
+#LL    UM Doc Paper C0 - The top-level control system
+#LL
+#L   Interface and arguments: ------------------------------------------
+#L
+#L   qsmain run_id
+#L
+#L     {run_id} ::= 5 character run identifier
+#L
+#L   -------------------------------------------------------------------
+#L
+#L   Called by: qsmaster
+#L   Calls    : qsserver script
+#L              qsmncompile script
+#L
+#L   Imports:
+#L     SETOPT        - shell options
+#L     TEMP          - temporary directory pathname (/tmp/...)
+#L     RUNID         - model run identifier
+#L     STEP         - first step of main script to be executed (atmos)
+#L     DEFS          - UPDATE *DEFS file pathname
+#L     CDECKS      - UPDATE *C directives file pathname
+#L     UPDATE        - UPDATE user mods file pathname for Fortran code
+#L     UPDATEC       - UPDATE user mods file pathname for C code
+#L     PROGLIB       - UPDATE program library pathname
+#L     UPDOUT       - UPDATE command line output options
+#L     PARAMO        - UPDATE ocean PARAMETER declarations file path
+#L     UPDATEO       - UPDATE ocean user mods file pathname
+#L     UPDATEW       - UPDATE wave user mods file pathname
+#L     PERFTRACE     - true if singletasked perftrace stats required
+#L     PERFVIEWOPT   - perfview options if PERFTRACE enabled
+#L     ATEXPERT      - if true and recompiling whole model adds options
+#L                     required to get atx.raw file.
+#L     OBJXREF       - source/object code cross-reference file
+#L     LOADMODULE    - loadmodule pathname
+#L     NAMELIST      - NAMELIST input file pathname
+#L     FTXX          - FORTRAN run-time assignments cross-ref file
+#L     IHIST         - interim history file pathname
+#L     XHIST         - interim history file (after model exit)
+#L     THIST         - temporary history file pathname
+#L     STASHCTL      - STASH control file pathname
+#L     PPXREFU       - User PP cross-ref file
+#L     OPERATIONAL   - operational flag
+#L     TYPE          - run type indicator
+#L     DATAM         - directory name in which model executes
+#L     AUTOMATIC_PP  - flag to activate automatic output processing
+#L     OUTPUT        - printed output file pathname
+#L     OUTPUT2       - extra printed output file pathname
+#L     SERVEROUT     - qsserver output file
+#L     EXITSTAT      - controls history file post-processing in qsfinal
+#L     ERRFLAG       - Error flag file
+#L     OBS_FORMAT    - OBS format switch    1- present option pre 2.7
+#L                   -                      2- new format 2.7 onwards
+#L     NUPCOMMD      - update or nupdate
+#L     SAVECORE      - true to save any core file produced
+#L     COREDUMP      - filename that core file is saved to (full path)
+#L     QSUB_REQNAME  - global variable containing jobid
+#L     LOGNAME       - global variable containing userid
+#L     OPSTARTDIR    - directory to hold re-start details
+#L     OPSYSERR      - directory re-start dets after a system error
+#L     OPARCHERR     - directory restart dets after an archive failure
+#L     CRERRDIR      - directory for error logs etc
+#L     CRPRODRUN     - true if run is a CR production run
+#L     CRDOERUN      - true if run is a CR night_DoE queue run
+#L
+#L   Exports:
+#L     LOCKFILE      - Lock file indicates model executing to qsserver
+#L     APSUM1,APSTMP1- partial sum dump files (period 1- atmosphere)
+#L     OPSUM1,OPSTMP1- partial sum dump files (period 1- ocean)
+#L     AOTRANS       - cache file for transfer of instantaneous data
+#L     ASWAP,OSWAP   - atmos/ocean swapping files (coupled mode)
+#L     CACHE1,CACHE2 - cache files for assimilation/physics code
+#L     CACHED        - cache file for diagnostic increments of pr fields
+#L     PPXREF        - PP cross-ref file (direct access master file)
+#L     ASTART,OSTART - atmos/ocean start dump
+#L     OBS01-10      - obs files 1-10
+#L     ATMANL        - atmosphere analysis dump
+#L     OCNANL        - ocean analysis dump
+#L     OZONE         - ozone ancillary file
+#L     SMCSNOWD      - soil moisture/snowdepth ancillary file
+#L     DSOILTMP      - deep soil temperature ancillary file
+#L     SOILTYPE      - soil-type dependent fields ancillary file
+#L     VEGTYPE       - vegetation-type dependent fields ancillary file
+#L     SSTIN         - sea surface temperature ancillary file
+#L     SICEIN        - sea ice fields ancillary file
+#L     CANOPYW       - canopy water ancillary file
+#L     CURNTIN       - surface currents ancillary file
+#L     ALABCIN       - lateral BCs into atmos LAM
+#L     OROG          - orography/height BCs
+#L     OLABCIN       - lateral BCs into ocean LAM
+#L     OCNDEPTH      - ocean depth
+#L     WFIN          - windstress, wind-mixing energy ancillary file
+#L     HFLUXIN       - solar/remaining heat flux ancillary file
+#L     PMEIN         - precipitation-evaporation ancillary file
+#L     ICEFIN        - rad over ice, snow+sublimation ancillary file
+#L     AIRTMP        - air temperature ancillary file
+#L     SALINITY      - surface salinity ancillary file
+#L     SLABHCON      - heat convergence ancillary file (slab ocean)
+#L     FLUXCORR      - heat/salt flux correction ancillary file
+#L     PP0-9         - output PP files 0 to 9
+#L     ALABCOUT      - atmos lateral BCs out
+#L     WAVEOUT       - wave model forcing
+#L     SURGEOUT      - surge model forcing
+#L     MESOUT        - mesoscale model forcing
+#L     STRATOUT      - stratosphere model forcing
+#L     WFOUT         - windstress, WM energy output file
+#L     HFLUXOUT      - solar/remaining heat flux output file
+#L     PMEOUT        - precipitation-evaporation output file
+#L     ICEFOUT       - rad over ice, snow+sublimation output file
+#L     MOSOUT        - Model Output Statistics (MOS) output file
+#L     OLABCOUT      - ocean lateral BCs out
+#L     SSTOUT        - SSTs out of ocean model
+#L     SICEOUT       - sea ice related fields output file
+#L     CURNTOUT      - surface currents output file
+#L     UNIT02        - User stash list.
+#L     UNIT04        - Stash control file pathname
+#L     UNIT07        - Error output for operators - operational model
+#L     UNIT08        - Pipe pathname for communication with qsserver
+#L     UNIT10        - Permanent history file pathname
+#L     UNIT11        - Interim history file pathname
+#L     UNIT12        - Temporary history file pathname
+#L     UNIT14        - Error flag file pathname
+#L     UNIT15        - Temporary cache file for assimilation
+#L     FORTA,FORTO   - compile file (atmos/ocean)
+#L     CCODEA        - compile file for c code (atmos)
+#L     SPCODE        - filename  compile and object code (special decks)
+#L     ALABCOU1      - atmos lateral BCs out file 1
+#L     ALABCOU2      - atmos lateral BCs out file 2
+#L     ALABCOU3      - atmos lateral BCs out file 3
+#L     ALABCOUT      - atmos lateral BCs out file 4
+#L     UPDINA        - UPDATE input file pathname (combined mods) atmos
+#L     ATRACER       - atmos tracer file
+#L     OTRACER       - ocean tracer file
+#L     SOURCES       - sources file for chemical species in atmos
+#L     CX01-10       - CX files 1-10 (model columns at ob pos for VAR)
+#L     USRANCIL      - user ancillaries file
+#L     USRMULTI      - multi-level user ancillaries file
+#L     OUSRANCL      - ocean user ancillaries file
+#L     OUSRMULT      - ocean multi-level user ancillaries file
+#L     MURKFILE      - file for murkiness aerosol and source term
+#L     WINITIAL      - initial dump file for wave (unused at vn4.1)
+#L     WSTART        - start dump file for wave
+#L     WRESTART      - restart dump file for wave
+#L     WAVANL        - analysis dump file for wave
+#L     WAVANCIN      - wind forcing ancillary file for wave
+#L
+#L   Local variables:
+#L     UPDINO        - UPDATE input file pathname (combined mods) ocean
+#L     UPDINW        - UPDATE input file pathname (combined mods) wave
+#L     UPDINC        - UPDATE input file for c code
+#L     CDECKSINA     - processed list of *C directives for atmos
+#L     CDECKSOUTA    - processed list of *C directives for atmos
+#L     CDECKSINO     - processed list of *C directives for ocean
+#L     CDECKSOUTO    - processed list of *C directives for ocean
+#L     SPUPDIN       - UPDATE input file for special decks
+#L     PIPE          - named pipe file for communication with qsserver
+#L     COMPDIR       - This is temp dir where nupdate writes to
+#L     N             - used as loop index over mean periods
+#L     RCSERVER      - return code for server
+#L     RMSERVER      - message in errflag on return from qsserver.
+#L     ERRTYPE       - holds the reason for failure of the run (string)
+#L     OPSR          - logical to indicate when run has failed due to
+#L                     an operator stoprun (set to false be default)
+#L     ARCHERR       - logical to indicate when run has failed due to
+#L                     an archive error (set to false by default)
+#L     RUN_DETS      - QSUB_REQID,LOGNAME and RUNID to standardise msgs
+#L     ARG1      - Argument passed in as $1
+#L
+#L----------------------------------------------------------------------
+#L Step 0 - Set up environment variables
+#L
+set -$SETOPT
+#
+ARG1=$1
+UPDIN=$TEMP/updin_$$
+UPDINC=$TEMP/updinc_$$
+CDECKSIN=$TEMP/$RUNID.cdeckin
+CDECKSOUT=$TEMP/$RUNID.cdeckout
+#
+
+# The default value of UM_PE_LABEL is "" (ie. unset) - but
+# this can be overriden by defining it in a higher script (or in
+# a .profile etc). Alternatively, the default value can be
+# set in the line below.
+# (UM_PE_LABEL gives the label name, used with the setlabel command,
+#  given to the reconfiguration executable. On the T3E the
+#  reconfiguration may have to be run on a >128Mb PE in order to
+#  execute)
+UM_PE_LABEL=${UM_PE_LABEL:-}
+SAVECORE=${SAVECORE:-false}
+COREDUMP=${COREDUMP:-/tmp/UMcore$$}
+#
+CCODEA=cc${ARG1}c
+SPCODE=spcode
+#
+APSUM1=$TEMP/$RUNID.apsum1       # Partial sum (period 1 atmos)
+APSTMP1=$TEMP/$RUNID.apstmp1     # Alternate partial sum (period 1)
+OPSUM1=$TEMP/$RUNID.opsum1       # Partial sum (period 1 ocean)
+OPSTMP1=$TEMP/$RUNID.opstmp1     # Alternate partial sum (period 1)
+AOTRANS=$TEMP/$RUNID.aotrans     # Temp file for instantaneous data
+ASWAP=$TEMP/$RUNID.aswap         # Temp file for coupled model swaps (A)
+OSWAP=$TEMP/$RUNID.oswap         # Temp file for coupled model swaps (O)
+CACHE1=$TEMP/$RUNID.cache1       # Temp file for memory cache
+CACHE2=$TEMP/$RUNID.cache2       # Temp file for memory cache
+CACHED=$TEMP/$RUNID.cached       # Temp file for memory cache
+PIPE=/tmp/$RUNID.pipe           # Named pipe for output proc requests
+COMPDIR=$TEMP/compdir_$$         # This is where the nupdate extracts to
+#
+LOCKFILE=$TEMP/$RUNID.lock       # Lock file indicating model execution
+export LOCKFILE
+
+## environment variable $lfile must be lowercase.
+typeset -l lfile
+
+#L----------------------------------------------------------------------
+#L Step 1 - Source code pre-processing
+#L
+#L Step 1.1 - UPDATE
+#L
+if test $STEP -le 2
+then
+
+# Unpack tar file containing compile directory files if necessary
+
+  if test $SKIP_TAR_COMPDIR != 'true'
+  then    # tar file system in use for compile files
+
+    if test `ls $UCOMPDIR/*.f 2>/dev/null|wc -w` -eq 0
+    then     # there are no .f files (so no manual user editing)
+
+      if test -s $COMP_TAR.gz
+      then     # zipped tar file exists ie. this is not the initial run
+
+        gzip -d $COMP_TAR.gz   # unzip tar file
+
+        if test $? -eq 0
+        then
+
+          if test -s $COMP_TAR
+          then     # tar file exists ie. this is not the initial run
+
+            cd $UCOMPDIR
+            if test $? -eq 0   # successful cd
+            then
+              tar -xf $COMP_TAR  # unpack compile tar file
+              if test $? -eq 0   # successful untar
+              then
+                rm $COMP_TAR  # remove tar file
+              fi
+            fi  # test $? on cd
+
+          fi    # test -s $COMP_TAR
+
+        fi  # test $? -eq 0
+
+      elif test -s $COMP_TAR
+      then     # zip file doesn't exist but tar file does
+
+        cd $UCOMPDIR
+        if test $? -eq 0   # successful cd
+        then
+          tar -xf $COMP_TAR  # unpack compile tar file
+          if test $? -eq 0   # successful untar
+          then
+            rm $COMP_TAR  # remove tar file
+          fi
+        fi  # test $? on cd
+
+      fi    # test -s $COMP_TAR.gz
+
+
+    fi      # test `ls -l $UCOMPDIR/*.f>/dev/null` -ne 0
+  fi        # test $SKIP_TAR_COMPDIR != 'true'
+
+
+  if [ ! -f "$UCOMPDIR/Makefile" ]
+  then
+    if [ "$SKIP_SRC_EXTRACT" = "true" ]
+    then
+      echo -e \
+"\nqsmain($SECONDS): ***\tReset SKIP_SRC_EXTRACT to false as this" \
+"\nqsmain($SECONDS): ***\tappears to be an initial run.\n" >>\
+$OUTPUT
+      SKIP_SRC_EXTRACT="false"
+    fi
+  fi
+  # create extracted source in temporary directory
+  if [ "$SKIP_SRC_EXTRACT" = "true" ]
+  then
+    # Remove any zero length files in the User Compile Directory.
+    echo -e "\nqsmain($SECONDS): ***\tRemoving zero length files" >>\
+      $OUTPUT
+    find $UCOMPDIR -size 0 -exec rm {} \; 1>> $OUTPUT 2>&1
+    echo -e "qsmain($SECONDS): ***\tFinished removing files\n" >>\
+      $OUTPUT
+  else
+    mkdir -p $COMPDIR
+    cd $COMPDIR
+#
+# Create UPDATE input file from *DEFs, PARAMETER block (configuration),
+# user's UPDATE modifications file, and list of *C directives
+#
+#  Prepare compile files
+    allcompfiles COMP_OPTS $JOBDIR $UCOMPVARS.tmp
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e "qsmain: Failure in allcompfiles"
+      exit $CC
+    fi
+#  Process DEFS and CDECKS to reduce to relevant list of *C's
+#
+
+#   Machine Definitions from PROGDEFS are added to the DEFS file.
+#   MPP is not included as UMUI supplies it since it is possible to run
+#   in MPP and non-MPP mode on an MPP machine.
+    cat>>$DEFS<<EOF
+`echo -e *DEFINE $PROGDEFS | $UM_SED -e 's/,MPP,/,/' -e 's/^MPP,//' \
+                              -e 's/,MPP$//' -e 's/^MPP$//'`
+EOF
+
+    cat $DEFS $CDECKS >$CDECKSIN
+    $NUPCOMMD -i $CDECKSIN -c $CDECKSOUT
+#
+#  Concatenate all the files for fortran update step
+#
+    cat $DEFS $UPDATE $CDECKSOUT.f >$UPDIN
+#
+# Normal update - fortran code only always required
+#
+    echo -e "\nqsmain($SECONDS): ***\tStarting fortran nupdate"
+    echo -e >>$OUTPUT
+    echo -e 'qsmain: %UPDATE% output follows:-' >>$OUTPUT
+    echo -e >>$OUTPUT
+    $NUPCOMMD -p $PROGLIB -i $UPDIN -D -o $UPDOUT -m 2 >>$OUTPUT
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e "$0: Model $ARG1 - Error(s) in update step"
+      exit $CC
+    fi
+    echo -e "qsmain($SECONDS): ***\tFinished fortran nupdate\n"
+# loop over these files and rename them so they can be identified as
+# fortran source later
+echo -e "\nqsmain($SECONDS): ***\tRenaming nupdate extracted files" >>\
+  $OUTPUT
+# Remove log files and zero length files
+    rm -f *.log
+    find . -size 0 -print | xargs rm -f
+    for file in `ls`
+    do
+      lfile=$file.f
+echo -e "qsmain($SECONDS): ***\t  Renaming $file to $lfile" >>\
+  $OUTPUT
+      mv $file $lfile
+    done
+echo -e "qsmain($SECONDS): ***\tFinished renaming files.\n" >>\
+  $OUTPUT
+
+#L
+#L Step 1.2 - normal UPDATE - c code only
+#L
+#
+# Only required if c code mods supplied
+#
+    if test -s $UPDATEC
+    then
+# concatenate file note PARAM not required as c code has no UI updates
+#
+      cat $DEFS $UPDATEC >$UPDINC
+#
+      echo -e "qsmain($SECONDS): ***\tStarting c-code nupdate"
+      echo -e >>$OUTPUT
+      echo -e 'qsmain: %UPDATEC% output follows:-' >>$OUTPUT
+      echo -e >>$OUTPUT
+      $NUPCOMMD -p $PROGLIB -i $UPDINC -D -a c \
+                            -o $UPDOUT -m 2 >>$OUTPUT
+      CC=$?
+      if test $CC -ne 0
+      then
+        echo -e "$0: Model $ARG1 - Error(s) in C code update step"
+        exit $CC
+      fi
+      echo -e "qsmain($SECONDS): ***\tFinished c-code nupdate\n"
+
+#L Need to move all unsuffixed files to file.c to enable
+#L correct identification in step 1.8. This would be unece-
+#L -ssary if the umpl stored file.f/file.c decks names.
+#L Loop over files that do not have .c (c-code) suffixes.
+      echo -e \
+"\nqsmain($SECONDS): ***\tRenaming nupdate extracted files." >>\
+$OUTPUT
+# Remove log files and zero length files
+      rm -f *.log
+      find . -size 0 -print | xargs rm -f
+      for file in `ls | $UM_GREP -E -v '\.f$'`
+      do
+        lfile=$file.c
+        echo -e "qsmain($SECONDS): ***\t  Renaming $file to $lfile" >>\
+          $OUTPUT
+        mv $file $lfile
+      done
+      echo -e "qsmain($SECONDS): ***\tFinished renaming files.\n" >>\
+        $OUTPUT
+    fi
+
+#L----------------------------------------------------------------------
+#L Step 2 - Compile
+#L
+    echo -e "\nqsmain($SECONDS): ***\tRunning qsmncompile"
+    echo -e "%QSMNCOMPILE%" >>$OUTPUT
+    . qsmncompile >>$OUTPUT 2>&1
+    test=$?
+    if [ "$test" -eq 0 ]
+    then
+      echo -e "qsmain($SECONDS): ***\tCompleted qsmncompile\n"
+      echo -e "\nqsmain($SECONDS): ***\tCompleted qsmncompile\n" >>$OUTPUT
+    else
+      echo -e "qsmain($SECONDS): ***\tQsmncompile has failed. Exiting\n"
+      echo -e "\nqsmain($SECONDS): ***\tQsmncompile has failed. Exiting\n"\
+         >> $OUTPUT
+      exit 1
+    fi
+  fi
+
+  cd $UCOMPDIR
+  if [ -d "$COMPDIR" ]
+  then
+    rm -rf $COMPDIR
+  fi
+
+##
+## Step 2.1 - Make executable
+##
+  echo -e "\nqsmain($SECONDS): ***\tRunning make for compile step"
+  echo -e "\nqsmain($SECONDS): ***\tRunning make for compile step\n" \
+    >>$OUTPUT
+  echo -e "%MAKEC%" >>$OUTPUT
+  make -f makefile.compile >>$OUTPUT 2>&1
+  test=$?
+  if [ "$test" -eq 0 ]
+  then
+    echo -e "qsmain($SECONDS): ***\tCompleted make for compile step\n"
+    echo -e "\nqsmain($SECONDS): ***\tCompleted make for compile step\n" \
+      >>$OUTPUT
+  else
+    echo -e "qsmain($SECONDS): ***\tCompile step make has failed.\
+ Exiting.\n"
+    echo -e "\nqsmain($SECONDS): ***\tCompile step make has failed.\
+ Exiting.\n" >> $OUTPUT
+    exit 1
+  fi
+
+# And link:
+  echo -e "\nqsmain($SECONDS): ***\tRunning make for link step"
+  echo -e "\nqsmain($SECONDS): ***\tRunning make for link step\n" \
+    >>$OUTPUT
+  echo -e "%MAKEL%" >>$OUTPUT
+  make -f makefile.link >>$OUTPUT 2>&1
+  test=$?
+  if [ "$test" -eq 0 ]
+  then
+    echo -e "qsmain($SECONDS): ***\tCompleted make for link step\n"
+    echo -e "\nqsmain($SECONDS): ***\tCompleted make for link step\n" \
+      >>$OUTPUT
+  else
+    echo -e "qsmain($SECONDS): ***\tLink step make has failed.\
+ Exiting.\n"
+    echo -e "\nqsmain($SECONDS): ***\tLink step make has failed.\
+ Exiting.\n" >> $OUTPUT
+    exit 1
+  fi
+
+# Remove the archives:
+  rm -f $UCOMPDIR/libum*.a
+  date >> $OUTPUT
+
+
+# Pack all compile directory files into a tar file and remove
+# compile files
+
+  if test $SKIP_TAR_COMPDIR != 'true'
+  then    # tar file system in use for compile files
+
+    cd $UCOMPDIR
+    if test $? -eq 0  # successful cd to compile directory
+    then
+      tar -cf $COMP_TAR *  # pack compile tar file
+      if test $? -eq 0              # successful tar
+      then
+
+        gzip $COMP_TAR  # gzip tar file
+        if test $? -eq 0              # successful tar
+        then
+
+          cd $DATAW
+          rm -r $UCOMPDIR              # remove compile files
+          mkdir $UCOMPDIR
+
+          echo -e "-----------------------------"    >>$COMP_README
+          echo -e "Model run compile files      "    >>$COMP_README
+          echo -e "-----------------------------"    >>$COMP_README
+          echo -e "To unpack tar file:"              >>$COMP_README
+          echo -e "cd $UCOMPDIR # compile directory" >>$COMP_README
+          echo -e "gzip -d $COMP_TAR.gz # unzip tar file" \
+                                                  >>$COMP_README
+          echo -e "tar -xf $COMP_TAR # extract all files" \
+                                                  >>$COMP_README
+          echo -e "or"                               >>$COMP_README
+          echo -e "tar -xf $COMP_TAR atmstep1.f" \
+            " # extract individual file(s)"       >>$COMP_README
+          echo -e                                    >>$COMP_README
+          echo -e "To repack tar file:"              >>$COMP_README
+          echo -e "cd $UCOMPDIR # compile directory" >>$COMP_README
+          echo -e "tar -cf $COMP_TAR *" \
+                   " # tar whole directory"       >>$COMP_README
+          echo -e "or"                               >>$COMP_README
+          echo -e "tar -uf $COMP_TAR atmstep1.f # update" \
+            " individual file(s) in tar file"     >>$COMP_README
+          echo -e "gzip $COMP_TAR # zip tar file"    >>$COMP_README
+          echo -e "rm * # remove .f, .c files etc"   >>$COMP_README
+          echo -e                                    >>$COMP_README
+        else
+          rm $COMP_TAR   # remove tar file
+        fi
+      else
+        rm $COMP_TAR   # remove tar file
+      fi
+    fi   # test $? -eq 0  # successful cd to compile directory
+  fi     # test $SKIP_TAR_COMPDIR != 'true'
+fi
+
+#L----------------------------------------------------------------------
+#L Step 3 - Loadmodule created
+#L
+if test $STEP -le 2
+then
+  chmod a+rx $LOADMODULE
+fi
+#L
+#L Step 3C - If STEP = 0 exit without running model
+#L
+if test $STEP -eq 0
+then
+  echo -e "$ARG1: Successfully built load module -- no run requested"
+  exit
+elif test $STEP -eq 2
+then
+  echo -e "$0: Creating script to submit to do model run"
+  if test -z "$RESUB_FILE"
+  then
+    RESUB_FILE=$TEMP/$RUNID.resub
+  fi
+  rm $RESUB_FILE
+
+# create complete script to submit (this gets submitted in submitchk
+# called at the end of the top level script just before job completes)
+
+  JOBNAME=$CJOBN
+  OUTFILE=$UMRUN_OUTPUT
+  export SUBMITID=$SUBMITID
+  export JOBDIR=$HOME/umui_runs/$RUNID-$SUBMITID
+  export OPRESTART=3  # indicates run has been automatically resubmitted
+
+  cp $JOBDIR/umuisubmit /tmp/umuisubmit.$$
+
+  cat > $RESUB_FILE << eof
+    qsub -x -r $JOBNAME -o $OUTFILE -s /bin/ksh /tmp/umuisubmit.$$
+    CC=\$?
+
+    if test \$CC -eq 0
+    then
+      echo -e "qsresubmit: submitted job successfully"
+    elif test \$CC -eq 1
+    then
+      echo -e "qsresubmit: job not resubmitted due to user error:"
+      echo -e qsub -x -r $JOBNAME -o $OUTFILE -s /bin/ksh \
+      /tmp/umuisubmit.$$
+    elif test \$CC -eq 2
+    then
+      echo -e "qsresubmit: job not resubmitted due to NQS error"
+    fi
+    rm /tmp/umuisubmit.$$
+eof
+
+  chmod 755 $RESUB_FILE
+
+  exit
+else
+  echo -e "$ARG1: Starting run"
+fi
+#L----------------------------------------------------------------------
+#L Step 4 - Run model
+#L
+#L
+#L Step 4A - Associate logical filenames with actual run-time filenames
+#L
+# set up file containing env vars by changing ':' to '='
+$UM_SED "s/ *: */=/" $FTXX >$FTXX.new
+>$FTXX.vars
+chmod 755 $FTXX.new $FTXX.vars
+. $FTXX.new
+#L
+#L Step 4B.1 - export all variable names implicitly with loop construct
+#L             - required by portable IO
+#
+echo -e `cat $FTXX|cut -d: -f1` > $FTXX.vars
+for var in `cat $FTXX.vars`
+do
+  export $var
+done
+#L
+#L Step 4B - Run-time files and their respective FORTRAN units
+#L
+# History/control files including diagnostic control file
+#
+UNIT01=$HKFILE
+UNIT02=$PPXREFU
+UNIT04=$STASHCTL
+UNIT05=$NAMELIST
+UNIT07=$OUTPUT2
+UNIT22=$STASHMSTR
+UNIT09=$CONTCNTL
+UNIT10=$XHIST
+UNIT11=$IHIST
+UNIT12=$THIST
+UNIT14=$ERRFLAG
+UNIT15=$CACHE1
+export UNIT01 UNIT02 UNIT04 UNIT05 UNIT07 UNIT09 UNIT10 UNIT11
+export UNIT12 UNIT14 UNIT15
+export UNIT22
+#
+# Spectral files
+#
+UNIT57=$SWSPECTD
+UNIT80=$LWSPECTD
+export UNIT57 UNIT80
+# Ocean basin indices file
+#
+UNIT58=$BAS_IND
+export UNIT58
+#
+# OBS files for OBS_FORMAT =1 type files only
+#
+if test $OBS_FORMAT -eq 1
+then
+UNIT70=$OBS01
+UNIT71=$OBS02
+UNIT72=$OBS03
+UNIT73=$OBS04
+UNIT74=$OBS05
+UNIT75=$OBS06
+UNIT76=$OBS07
+UNIT77=$OBS08
+UNIT78=$OBS09
+UNIT79=$OBS10
+export UNIT70 UNIT71 UNIT72 UNIT73 UNIT74
+export UNIT75 UNIT76 UNIT77 UNIT78 UNIT79
+fi
+#L
+#
+#L Step 4C - Move "permanent" copies of restart partial sum dumps to
+#L          "temporary" space if they exist (period 1 only).
+#L
+if $OPERATIONAL
+then
+  :
+else
+  if test -f $DATAM/$RUNID.apsum1
+  then
+    mv $DATAM/$RUNID.apsum1 $APSUM1
+  fi
+  if test -f $DATAM/$RUNID.apstmp1
+  then
+    mv $DATAM/$RUNID.apstmp1 $APSTMP1
+  fi
+  if test -f $DATAM/$RUNID.opsum1
+  then
+    mv $DATAM/$RUNID.opsum1 $OPSUM1
+  fi
+  if test -f $DATAM/$RUNID.opstmp1
+  then
+    mv $DATAM/$RUNID.opstmp1 $OPSTMP1
+  fi
+fi
+#L
+#L Step 4D - Execute load module, appending standard output to OUTPUT
+#L          with output processing performed by server process if req.
+#L          (model executes in directory $DATAM as specified in job)
+#L
+#
+cd $DATAM
+CC=$?
+if [[ $CC -ne 0 ]]
+then
+  echo -e $0 : cd to $DATAM has failed
+  exit $CC
+fi
+#
+#L  Set error flag to false ie model to run; remove XHIST
+#
+cat > $ERRFLAG << EOF
+F  No request to stop model
+EOF
+#
+rm $XHIST 2>/dev/null
+#
+echo -e >>$OUTPUT
+echo -e 'qsmain: %MODEL% output follows:-' >>$OUTPUT
+echo -e >>$OUTPUT
+if test -x $LOADMODULE # test loadmodule exists with excute permission
+then
+
+# Edit $UNIT11
+#
+
+  if test $UMMACHINE = 'METOCRAY'
+  then
+    if $AUTO_RESTART
+    then
+      echo -e "qsmain: writing restart information"
+      restartinfo
+      if test $? -ne 0
+      then
+	exit 1
+      fi
+    fi
+  fi
+  envfile=$TMPDIR/environ.$SUBMITID
+  #
+  # Construct a machines file with the local host listed N times.
+  # This could be changed if the model is to run non-locally.
+  #
+  nnodes=$UM_NPES
+  machfile=$TMPDIR/machines.$SUBMITID
+  host=`hostname`
+  #host=localhost
+  (for count in `seq 1 $nnodes`;do echo -e $host;done) > $machfile
+  mpiopts="-np $nnodes"
+  #mpiopts="-machinefile $machfile -np $nnodes"
+  #
+  # find out current "nice" level, so that all jobs run with the same
+  # nice level
+  #
+  nice=`awk '{print $19}' /proc/$$/stat`
+ if $AUTOMATIC_PP
+ then
+  rm $PIPE
+  mknod $PIPE p                      # Create named pipe
+  rm $SERVEROUT 2>/dev/null          # Clear server output file
+  qsserver <$PIPE >$SERVEROUT &      # Start background server process
+                                     # to read from named pipe
+  UNIT08=$PIPE
+  export UNIT08
+
+  >$LOCKFILE     # Create LOCKFILE to indicate model executing
+
+
+  UNIT05=$NAMELIST  # parallel code reads namelist explicitly from
+  export UNIT05     # unit05 rather that stdin
+  # set up special executable for parallel code : parexe
+  # this sets up the correct environemt before calling the
+  # normal executable
+  PAREXE=$DATAW/$RUNID.parexe.$$
+  export PAREXE   # ParUM will need to know what the file is called
+  echo -e "#!/bin/sh" > $PAREXE
+  echo -e "ulimit -c unlimited" >> $PAREXE
+  echo -e "ulimit -s unlimited" >> $PAREXE
+  #echo -e "renice $nice \$\$" >> $PAREXE
+  echo -e "$UMDIR/bin/env2 -f $envfile $LOADMODULE" '"$@"' >> $PAREXE
+  chmod u+x $PAREXE
+
+  env > $envfile
+  echo -e "hello  $mpiopts $PAREXE"
+  eval time mpirun $mpiopts $PAREXE
+  CC=$?
+  rm -f $envfile $machfile
+
+                 # output processing requests (indicated by %%%) to
+                 # PIPE on unit 8.  Normal output is added to $OUTPUT.
+  FILENV=$FILENV_TEMP # restore the original FILENV.
+
+
+
+  if test $CC -eq 0
+  then
+    rm $PAREXE
+  fi
+  rm $LOCKFILE   # Remove LOCKFILE to indicate model completed
+
+  wait $!                            # Wait for server to complete
+  RCSERVER=`cat $ERRFLAG|cut -c 1`  # return code from server
+  RMSERVER=`cat $ERRFLAG|cut -c 3-80`  # message from server
+ else
+  UNIT08=$PIPE
+  export UNIT08
+
+  UNIT05=$NAMELIST  # parallel code reads namelist explicitly from
+  export UNIT05     # unit05 rather that stdin
+  # set up special executable for parallel code : parexe
+  # this sets up the correct environemt before calling the
+  # normal executable
+  PAREXE=$LOADMODULE.parexe.$$
+  export PAREXE   # ParUM will need to know what the file is called
+  echo -e "#!/bin/sh" > $PAREXE
+  echo -e "ulimit -c unlimited" >> $PAREXE
+  echo -e "ulimit -s unlimited" >> $PAREXE
+  #echo -e "renice $nice \$\$" >> $PAREXE
+  echo -e "$UMDIR/bin/env2 -f $envfile $LOADMODULE" '"$@"' >> $PAREXE
+  chmod u+x $PAREXE
+
+  env > $envfile
+  eval time mpirun $mpiopts $PAREXE
+  echo -e "hello  $mpiopts $PAREXE"
+  CC=$?
+  rm -f $envfile $machfile
+  FILENV=$FILENV_TEMP # restore the original FILENV.
+
+
+
+  if test $CC -eq 0
+  then
+    rm $PAREXE
+  fi
+ fi
+else
+  echo -e "qsmain : error loadmodule $LOADMODULE not found" >>$OUTPUT
+  exit 135
+fi
+
+#
+# sync    #   Flush system buffers
+#L
+#L Step 4E - Move "temporary" copies of restart partial sum dumps to
+#L          "permanent" space again.  If diskspace problem precludes
+#L          this, set error message in EXITSTAT file so that qsfinal
+#L          will set the permanent history file to restart from a safe
+#L          point rather than the most recent dump.
+#L
+if $OPERATIONAL
+then
+  :
+else
+  >$EXITSTAT                # Null file indicates normal condition
+  if test -f $APSUM1
+  then
+    mv $APSUM1 $DATAM/$RUNID.apsum1
+    if test $? -ne 0
+    then
+      echo -e "Failed to move $RUNID.apsum1 to $DATAM" >$EXITSTAT
+    fi
+  fi
+  if test -f $APSTMP1
+  then
+    mv $APSTMP1 $DATAM/$RUNID.apstmp1
+    if test $? -ne 0
+    then
+      echo -e "Failed to move $RUNID.apstmp1 to $DATAM" >$EXITSTAT
+    fi
+  fi
+  if test -f $OPSUM1
+  then
+    mv $OPSUM1 $DATAM/$RUNID.opsum1
+    if test $? -ne 0
+    then
+      echo -e "Failed to move $RUNID.opsum1 to $DATAM" >$EXITSTAT
+    fi
+  fi
+  if test -f $OPSTMP1
+  then
+    mv $OPSTMP1 $DATAM/$RUNID.opstmp1
+    if test $? -ne 0
+    then
+      echo -e "Failed to move $RUNID.opstmp1 to $DATAM" >$EXITSTAT
+    fi
+  fi
+  if test $CC -ne 0
+  then
+      echo -e "Failed in model executable" >>$EXITSTAT
+  fi
+
+  if test -s $THIST
+  then
+    diff $XHIST $THIST >/dev/null
+    # If the xhist and thist files are different, assume that the
+    # the run has not stopped at a period 1 mean, which is when the
+    # thist file gets updated. Therefore the thist file needs to be
+    # kept in case the next CRUN needs to go back to a safe restart
+    # point (if the thist file is not kept itself).
+    if test $? -ne 0  # differences found
+    then
+      echo -e "qsmain: Copying $THIST to backup thist file $THIST1"
+      cp $THIST $THIST1
+    fi
+  fi
+fi
+#L
+#L Step 4F - If run failed, output debug and return completion code;
+#L          If run worked, delete temporary history file.
+#L
+if test $CC -ne 0
+then
+  echo -e "$ARG1: Run failed"
+  echo -e "$ARG1: Information on which CPU was in use follows:-"
+# which_cpu -s $LOADMODULE
+  echo -e
+  echo -e "$ARG1: debug information (if activated) follows :-"
+  echo -e
+  debugview $LOADMODULE core
+  if $SAVECORE
+  then
+    cp core $COREDUMP
+    echo -e "core file copied to $COREDUMP"
+  fi
+  rm core
+  exit $CC
+else
+  if $AUTOMATIC_PP
+  then
+    if test $RCSERVER = "T"
+    then
+      echo -e "========================================================="
+      echo -e "$ARG1: $RMSERVER"
+      echo -e "========================================================="
+      rm $THIST 2>/dev/null
+    else
+      rm $THIST 2>/dev/null
+      echo -e "$ARG1: Run terminated normally"
+    fi
+  else
+    rm $THIST 2>/dev/null
+    echo -e "$ARG1: Run terminated normally"
+  fi
+fi
+#L----------------------------------------------------------------------

@@ -1,0 +1,598 @@
+*IF DEF,S40_1A                                                             SJC0F305.6     
+C ******************************COPYRIGHT******************************    GTS2F400.9109  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9110  
+C                                                                          GTS2F400.9111  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9112  
+C restrictions as set forth in the contract.                               GTS2F400.9113  
+C                                                                          GTS2F400.9114  
+C                Meteorological Office                                     GTS2F400.9115  
+C                London Road                                               GTS2F400.9116  
+C                BRACKNELL                                                 GTS2F400.9117  
+C                Berkshire UK                                              GTS2F400.9118  
+C                RG12 2SZ                                                  GTS2F400.9119  
+C                                                                          GTS2F400.9120  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9121  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9122  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9123  
+C Modelling at the above address.                                          GTS2F400.9124  
+C ******************************COPYRIGHT******************************    GTS2F400.9125  
+C                                                                          GTS2F400.9126  
+!+ Main cavitating fluid sea ice dynamic subroutine for slab ocean.        SLBIDYN.3     
+!                                                                          SLBIDYN.4     
+! Subroutine Interface:                                                    SLBIDYN.5     
+      SUBROUTINE slab_icedyn(                                              SLBIDYN.6     
+*CALL ARGOINDX                                                             SDR1F404.105   
+! Input arguments                                                          SLBIDYN.7     
+     & icols,jrows,jrowsm1,lglobal                                         SLBIDYN.8     
+     &,delta_lat,delta_long,timestep                                       SLBIDYN.9     
+     &,amxsouth,amxnorth,aicemin                                           SLBIDYN.10    
+     &,Pstar_ice_strength,kappa_ice_strength,cdw                           SLBIDYN.11    
+     &,tol_ifree,nmax_ifree,weight_ifree,tol_icav,nmax_icav                SLBIDYN.12    
+! Inout arguments                                                          SLBIDYN.13    
+     &,landmask                                                            SLBIDYN.14    
+     &,cos_u_latitude,cos_p_latitude                                       SLBIDYN.15    
+     &,sec_p_latitude                                                      SLBIDYN.16    
+     &,sin_u_latitude                                                      SLBIDYN.17    
+     &,coriolis                                                            SLBIDYN.18    
+     &,wsx,wsy,ucurrent,vcurrent                                           SLBIDYN.19    
+     &,aice,hice,hsnow                                                     SLBIDYN.20    
+     &,icy,newice                                                          SLBIDYN.21    
+     &,opensea                                                             SLBIDYN.22    
+     &,uice,vice                                                           SLBIDYN.23    
+! Output arguments                                                         SLBIDYN.24    
+     &,pmax,pressure                                                       SLBIDYN.25    
+     & )                                                                   SLBIDYN.26    
+                                                                           SLBIDYN.27    
+      IMPLICIT NONE                                                        SLBIDYN.28    
+!                                                                          SLBIDYN.29    
+! Description:                                                             SLBIDYN.30    
+!   This routine calculates u and v components of ice velocity             SLBIDYN.31    
+! on Arakawa C grid velocity points and advects ice thickness,             SLBIDYN.32    
+! ice fraction, and snow depth using these velocities and upstream         SLBIDYN.33    
+! advection.                                                               SLBIDYN.34    
+!                                                                          SLBIDYN.35    
+! Method:                                                                  SLBIDYN.36    
+! Various constants are initialised, and real land-sea masks are           SLBIDYN.37    
+! calculated for the P grid and the C grid velocity points. Primary        SLBIDYN.38    
+! variables ( ice fraction, thickness and snow depth) are copied into      SLBIDYN.39    
+! workspace arrays with zero for land points. The ice strength field       SLBIDYN.40    
+! is calculated (this is a function of ice depth and fraction) and the     SLBIDYN.41    
+! internal ice pressure and various work arrays are zeroed.                SLBIDYN.42    
+!   Currents and velocities are interpolated to the p grid using           SLBIDYN.43    
+! service routines and drag coefficients and the coriolis parameter        SLBIDYN.44    
+! are calculated on the p grid.These are then interpolated to the C        SLBIDYN.45    
+! grid where stresses and dynamics coefficients are calculated.            SLBIDYN.46    
+! SLAB_ICEFREEC is called to calculate free drift velocities given a       SLBIDYN.47    
+! zero pressure field and SLAB_ICECAVRX is called to correct these         SLBIDYN.48    
+! velocities for the effects of internal ice stress. Drag coeff.s and      SLBIDYN.49    
+! dynamics coeff.s are then recalculated and SLAB_ICEFREEC is called       SLBIDYN.50    
+! again, this time with the pressure field produced by SLAB_ICECAVRX,      SLBIDYN.51    
+! and SLAB_ICECAVRX is called to produce final velocities. SLAB_ICE_       SLBIDYN.52    
+! _ADVECT is used to advect the primary variables using an upwind          SLBIDYN.53    
+! scheme. Ice fractions (and corresponding snow depths) outside the        SLBIDYN.54    
+! specified max/min are adjusted, and the logicals ICY and NEWICE          SLBIDYN.55    
+! are reset to reflect the altered ice edge.                               SLBIDYN.56    
+!                                                                          SLBIDYN.57    
+! Current Code Owner: J.F.Thomson                                          SLBIDYN.58    
+!                                                                          SLBIDYN.59    
+! History:                                                                 SLBIDYN.60    
+! Version   Date     Comment                                               SLBIDYN.61    
+! -------   ----     -------                                               SLBIDYN.62    
+!   3.4     6/94     Original code. J.F.Thomson                            SLBIDYN.63    
+!   4.0              Correct external statement. J.F.Crossley              SJC1F400.293   
+!LL  4.4   04/08/97  Add missing ARGOINDX to various argument lists.       SDR1F404.106   
+!LL                  D. Robinson.                                          SDR1F404.107   
+!                                                                          SLBIDYN.64    
+! Code Description:                                                        SLBIDYN.65    
+!   Language: FORTRAN 77 + common extensions.                              SLBIDYN.66    
+!   This code is written to UMDP3 v6 programming standards.                SLBIDYN.67    
+!                                                                          SLBIDYN.68    
+! System component covered:                                                SLBIDYN.69    
+! System Task:              P40                                            SLBIDYN.70    
+!                                                                          SLBIDYN.71    
+! Declarations:                                                            SLBIDYN.72    
+!   These are of the form:-                                                SLBIDYN.73    
+!     INTEGER      ExampleVariable      !Description of variable           SLBIDYN.74    
+!                                                                          SLBIDYN.75    
+! Global variables (*CALLed COMDECKs etc...):                              SLBIDYN.76    
+*CALL C_A                                                                  SLBIDYN.77    
+*CALL C_DENSTY                                                             SLBIDYN.78    
+*CALL C_MDI                                                                SLBIDYN.79    
+*CALL C_OMEGA                                                              SLBIDYN.80    
+*CALL C_PI                                                                 SLBIDYN.81    
+*CALL C_SLAB                                                               SLBIDYN.82    
+                                                                           SLBIDYN.83    
+! Subroutine arguments                                                     SLBIDYN.84    
+*CALL TYPOINDX                                                             SDR1F404.108   
+!   Scalar arguments with intent(in):                                      SLBIDYN.85    
+      INTEGER icols                      ! number of columns               SLBIDYN.86    
+      INTEGER jrows                      ! number of rows                  SLBIDYN.87    
+      INTEGER jrowsm1                    ! number of rows minus 1          SLBIDYN.88    
+      LOGICAL lglobal                    ! true for global model           SLBIDYN.89    
+      REAL    delta_lat                  ! meridional grid spacing(deg)    SLBIDYN.90    
+      REAL    delta_long                 ! zonal grid spacing (deg)        SLBIDYN.91    
+      REAL    timestep                   ! slab timestep (seconds)         SLBIDYN.92    
+      REAL    amxsouth                   ! min leads (southern hemi.)      SLBIDYN.93    
+      REAL    amxnorth                   ! min leads (northern hemi.)      SLBIDYN.94    
+      REAL    aicemin                    ! min ice fraction                SLBIDYN.95    
+      REAL    Pstar_ice_strength         ! Parameter in ice strength       SLBIDYN.96    
+      REAL    kappa_ice_strength         ! Parameter in ice strength       SLBIDYN.97    
+      REAL    cdw                        ! Quadratic water drag coeff      SLBIDYN.98    
+      REAL    tol_ifree                  ! tolerance in free drift calc    SLBIDYN.99    
+      INTEGER nmax_ifree                 ! max iterations in free drift    SLBIDYN.100   
+      REAL    weight_ifree               ! underrelaxation weight          SLBIDYN.101   
+      REAL    tol_icav                   ! tolerance in cav fluid calc     SLBIDYN.102   
+      INTEGER nmax_icav                  ! max iterations in cav fluid     SLBIDYN.103   
+                                                                           SLBIDYN.104   
+!   Array  arguments with intent(in):                                      SLBIDYN.105   
+      LOGICAL landmask(icols,jrows)        ! true=land points              SLBIDYN.106   
+      REAL    cos_u_latitude(icols,jrowsm1)! cos(lat) u grid               SLBIDYN.107   
+      REAL    cos_p_latitude(icols,jrows)  ! cos(lat) p grid               SLBIDYN.108   
+      REAL    sec_p_latitude(icols,jrows)  ! sec(lat) p grid               SLBIDYN.109   
+      REAL    sin_u_latitude(icols,jrowsm1)! sin(lat) u grid               SLBIDYN.110   
+      REAL    coriolis(icols,jrows)        ! 2 omega sin(lat) p grid       SLBIDYN.111   
+      REAL    wsx(icols,jrowsm1)           ! x wind stress (N/m2)          SLBIDYN.112   
+      REAL    wsy(icols,jrowsm1)           ! y wind stress (N/m2)          SLBIDYN.113   
+      REAL    ucurrent(icols,jrowsm1)      ! x current (m/s)               SLBIDYN.114   
+      REAL    vcurrent(icols,jrowsm1)      ! y current (m/s)               SLBIDYN.115   
+                                                                           SLBIDYN.116   
+!   Array  arguments with intent(InOut):                                   SLBIDYN.117   
+      REAL    aice(icols,jrows)     ! fractional ice concentration.        SLBIDYN.118   
+      REAL    hice(icols,jrows)     ! depth avged over grid square (m)     SLBIDYN.119   
+      REAL    hsnow(icols,jrows)    ! snow depth over ice fract only (m)   SLBIDYN.120   
+      REAL    uice(icols,jrowsm1)   ! zonal sea ice velocity.              SLBIDYN.121   
+      REAL    vice(icols,jrowsm1)   ! meridional sea ice velocity.         SLBIDYN.122   
+      LOGICAL icy(icols,jrows)      ! true for ocean pts with aice>.001    SLBIDYN.123   
+      LOGICAL newice(icols,jrows)   ! true for pts where ice is forming    SLBIDYN.124   
+      LOGICAL opensea(icols,jrows)  ! true for ocean pts with no ice       SLBIDYN.125   
+                                                                           SLBIDYN.126   
+!   Array  arguments with intent(out):                                     SLBIDYN.127   
+      REAL    pmax(icols,jrows)     ! ice strength (max pressure)          SLBIDYN.128   
+      REAL    pressure(icols,jrows) ! internal ice pressure                SLBIDYN.129   
+                                                                           SLBIDYN.130   
+! Local parameters:                                                        SLBIDYN.131   
+      REAL    zero                  ! 0.0                                  SLBIDYN.132   
+      PARAMETER ( zero=0.0 )                                               SLBIDYN.133   
+                                                                           SLBIDYN.134   
+! Local scalars:                                                           SLBIDYN.135   
+      INTEGER i         ! loop counter                                     SLBIDYN.136   
+      INTEGER j         ! loop counter                                     SLBIDYN.137   
+      INTEGER i1        ! loop counter                                     SLBIDYN.138   
+      INTEGER j1        ! loop counter                                     SLBIDYN.139   
+      INTEGER im1       ! loop counter                                     SLBIDYN.140   
+      INTEGER ip1       ! loop counter                                     SLBIDYN.141   
+      INTEGER jm1       ! loop counter                                     SLBIDYN.142   
+      INTEGER jp1       ! loop counter                                     SLBIDYN.143   
+      INTEGER jrowsby2  ! jrows/2                                          SLBIDYN.144   
+      INTEGER icolsm1   ! number of columns minus 1                        SLBIDYN.145   
+      REAL    uv                    ! workspace scalar.                    SLBIDYN.146   
+      REAL    cu                    ! workspace scalar.                    SLBIDYN.147   
+      REAL    cv                    ! workspace scalar.                    SLBIDYN.148   
+      REAL    dlat_rad              ! meridional grid spacing (radians)    SLBIDYN.149   
+      REAL    dlon_rad              ! zonal grid spacing (radians)         SLBIDYN.150   
+                                                                           SLBIDYN.151   
+! Local dynamic arrays:                                                    SLBIDYN.152   
+      LOGICAL ccalc(icols,jrows)    ! true= C grid calcs needed            SLBIDYN.153   
+      LOGICAL cavrow(jrows)         ! true= C grid calcs needed on row     SLBIDYN.154   
+      LOGICAL icyrow(jrows)         ! true= ice in this row                SLBIDYN.155   
+      LOGICAL ocrow(jrows)          ! true= ocean points on this row       SLBIDYN.156   
+      REAL psi(jrows)               ! constant water turning angle.        SLBIDYN.157   
+      REAL amx(jrows)               ! maximum ice fraction                 SLBIDYN.158   
+      REAL hmask(icols,jrows)       ! 1.0 for land 0.0 for sea points.     SLBIDYN.159   
+      REAL umask(icols,jrowsm1)     ! 1.0 for uv land 0.0 for sea.         SLBIDYN.160   
+      REAL umc(icols,jrowsm1)       ! 1.0 for cu land 0.0 for sea.         SLBIDYN.161   
+      REAL vmc(icols,jrowsm1)       ! 1.0 for cv land 0.0 for sea.         SLBIDYN.162   
+      REAL aice_old(icols,jrows)    ! initial ice fraction field.          SLBIDYN.163   
+      REAL hice_old(icols,jrows)    ! initial ice thickness field.         SLBIDYN.164   
+      REAL hsno_old(icols,jrows)    ! initial snow depth field.            SLBIDYN.165   
+      REAL aice_work(icols,jrows)   ! ice fraction (zero over land)        SLBIDYN.166   
+      REAL hice_work(icols,jrows)   ! ice thickness (zero over land)       SLBIDYN.167   
+      REAL hsnow_work(icols,jrows)  ! snow depth (zero over land)          SLBIDYN.168   
+      REAL uiceh(icols,jrows)       ! x vel comp. on P pts                 SLBIDYN.169   
+      REAL viceh(icols,jrows)       ! y vel comp. on P pts                 SLBIDYN.170   
+      REAL aice_uv(icols,jrowsm1)   ! ice fraction field on B uv pts       SLBIDYN.171   
+      REAL aice_cu(icols,jrowsm1)   ! ice fraction field on C u pts        SLBIDYN.172   
+      REAL aice_cv(icols,jrowsm1)   ! ice fraction field on C v pts        SLBIDYN.173   
+      REAL wsx_cu(icols,jrowsm1)    ! zonal wind stress on C u pts         SLBIDYN.174   
+      REAL wsy_cv(icols,jrowsm1)    ! merid. wind stress on C v pts        SLBIDYN.175   
+      REAL ucurrent_h(icols,jrows)  ! u current on P pts                   SLBIDYN.176   
+      REAL vcurrent_h(icols,jrows)  ! v current on P pts                   SLBIDYN.177   
+      REAL uw_cu(icols,jrowsm1)     ! u current on C u pts                 SLBIDYN.178   
+      REAL uw_cv(icols,jrowsm1)     ! u current on C v pts                 SLBIDYN.179   
+      REAL vw_cu(icols,jrowsm1)     ! v current on C u pts                 SLBIDYN.180   
+      REAL vw_cv(icols,jrowsm1)     ! v current on C v pts                 SLBIDYN.181   
+      REAL cwstar_h(icols,jrows)    ! drag coeff. on P points              SLBIDYN.182   
+!                                     cdw * rho_water * mod(Uw-U)          SLBIDYN.183   
+      REAL cwstar_cu(icols,jrowsm1) ! drag coeff. on C u pts               SLBIDYN.184   
+      REAL cwstar_cv(icols,jrowsm1) ! drag coeff. on C v pts               SLBIDYN.185   
+      REAL x_stress(icols,jrowsm1)  ! zonal stress on ice for C grid       SLBIDYN.186   
+      REAL y_stress(icols,jrowsm1)  ! merid. stress on ice for C grid      SLBIDYN.187   
+      REAL bh(icols,jrows)          ! mf + cwstar * sin(psi) on P pts      SLBIDYN.188   
+     &                              ! mf is mean ice mass * coriolis       SLBIDYN.189   
+                                                                           SLBIDYN.190   
+      REAL bx(icols,jrowsm1)        ! bh for C u pts                       SLBIDYN.191   
+      REAL by(icols,jrowsm1)        ! bh for C v pts                       SLBIDYN.192   
+      REAL ax(icols,jrowsm1)        ! cwstar * sin(psi) for C u pts        SLBIDYN.193   
+      REAL ay(icols,jrowsm1)        ! cwstar * sin(psi) for C v pts        SLBIDYN.194   
+                                                                           SLBIDYN.195   
+! Function & Subroutine calls:                                             SLBIDYN.196   
+      External TIMER,SLAB_ICEFREEC,SLAB_ICECAVRX,SLAB_ICE_ADVECT           SLBIDYN.197   
+     &,H_TO_CU,H_TO_CV,UV_TO_H,UV_TO_CU,UV_TO_CV                           SJC1F400.294   
+     &,CU_TO_H,CV_TO_H                                                     SJC1F400.295   
+                                                                           SLBIDYN.200   
+!- End of header                                                           SLBIDYN.201   
+! start executable code                                                    SLBIDYN.202   
+! initialise various constants.                                            SLBIDYN.203   
+      icolsm1  = icols-1                                                   SLBIDYN.204   
+      dlat_rad = delta_lat * pi_over_180                                   SLBIDYN.205   
+      dlon_rad = delta_long * pi_over_180                                  SLBIDYN.206   
+! psi is the angle between ice-ocean stress and velocity of ice            SLBIDYN.207   
+! relative to the ocean, assumed constant but different in sign            SLBIDYN.208   
+! between hemispheres.                                                     SLBIDYN.209   
+! psi initialised as 0.4363 i.e. 25 degrees expressed in radians.          SLBIDYN.210   
+      do j=1,jrows                                                         SLBIDYN.211   
+        do i=1,icols                                                       SLBIDYN.212   
+          psi(j) = 0.4363                                                  SLBIDYN.213   
+          if (sin_u_latitude(1,j).lt.0.0) psi(j) = -0.4363                 SLBIDYN.214   
+        end do                                                             SLBIDYN.215   
+      end do                                                               SLBIDYN.216   
+                                                                           SLBIDYN.217   
+! Set up land sea and ice-free sea masks                                   SLBIDYN.218   
+! Set up amx (max ice fraction as function of latitude)                    SLBIDYN.219   
+! Copy ice fraction, thickness and snow depth to workspace                 SLBIDYN.220   
+! setting land values to zero.                                             SLBIDYN.221   
+      do j = 1,jrows                                                       SLBIDYN.222   
+        do i = 1,icols                                                     SLBIDYN.223   
+          hmask(i,j)      =  0.0                                           SLBIDYN.224   
+          if (.not.landmask(i,j))     hmask(i,j)       = 1.0               SLBIDYN.225   
+          aice_work(i,j)  = aice(i,j)                                      SLBIDYN.226   
+          if (aice_work(i,j).eq.rmdi) aice_work(i,j)   = zero              SLBIDYN.227   
+          hice_work(i,j)  = hice(i,j)                                      SLBIDYN.228   
+          if (hice_work(i,j).eq.rmdi) hice_work(i,j)   = zero              SLBIDYN.229   
+          hsnow_work(i,j) = hsnow(i,j)                                     SLBIDYN.230   
+          if (hsnow_work(i,j).eq.rmdi) hsnow_work(i,j) = zero              SLBIDYN.231   
+        end do                                                             SLBIDYN.232   
+      end do                                                               SLBIDYN.233   
+      jrowsby2 = jrows/2                                                   SLBIDYN.234   
+      do j=1,jrowsby2                                                      SLBIDYN.235   
+        amx(j) = amxnorth                                                  SLBIDYN.236   
+      end do                                                               SLBIDYN.237   
+      do j=jrowsby2+1,jrows                                                SLBIDYN.238   
+        amx(j) = amxsouth                                                  SLBIDYN.239   
+      end do                                                               SLBIDYN.240   
+                                                                           SLBIDYN.241   
+! Calculate Arakawa B grid ice velocity mask.                              SLBIDYN.242   
+      do j = 1,jrowsm1                                                     SLBIDYN.243   
+        do i = 1,icolsm1                                                   SLBIDYN.244   
+          umask(i,j)    =  1.0                                             SLBIDYN.245   
+          uv = hmask(i,j)+hmask(i+1,j)+hmask(i,j+1)+hmask(i+1,j+1)         SLBIDYN.246   
+          if (uv.lt.3.5)  umask(i,j)    =  0.0                             SLBIDYN.247   
+        end do                                                             SLBIDYN.248   
+        if (lglobal) then                                                  SLBIDYN.249   
+          umask(icols,j)  =  1.0                                           SLBIDYN.250   
+          uv = hmask(icols,j)+hmask(icols,j+1)+hmask(1,j)+hmask(1,j+1)     SLBIDYN.251   
+          if (uv.lt.3.5)    umask(icols,j) = 0.0                           SLBIDYN.252   
+        else                                                               SLBIDYN.253   
+          umask(icols,j) = 0.0     ! what should i do here ?               SLBIDYN.254   
+        endif                                                              SLBIDYN.255   
+      end do                                                               SLBIDYN.256   
+                                                                           SLBIDYN.257   
+! Ccalc controls where C grid velocity calculations occur.                 SLBIDYN.258   
+      do i = 1,icols                                                       SLBIDYN.259   
+        ip1=i+1                                                            SLBIDYN.260   
+        if (ip1.gt.icols) ip1=ip1-icols                                    SLBIDYN.261   
+        im1=i-1                                                            SLBIDYN.262   
+        if (im1.eq.0) im1=icols                                            SLBIDYN.263   
+        ccalc(i,1)    =  ( ( icy(im1,1) .or. icy(i,1)                      SLBIDYN.264   
+     &                   .or. icy(ip1,1) )                                 SLBIDYN.265   
+     &                   .and.  ( hmask(i,1) .gt. 0.5 ) )                  SLBIDYN.266   
+        ccalc(i,jrows)=  ( ( icy(i,jrowsm1) .or. icy(im1,jrows)            SLBIDYN.267   
+     &                   .or. icy(i,jrows) .or. icy(ip1,jrows) )           SLBIDYN.268   
+     &                   .and.  ( hmask(i,jrows) .gt. 0.5 ) )              SLBIDYN.269   
+      end do                                                               SLBIDYN.270   
+      do j = 2,jrowsm1                                                     SLBIDYN.271   
+        do i = 1,icols                                                     SLBIDYN.272   
+          ip1=i+1                                                          SLBIDYN.273   
+          if (ip1.gt.icols) ip1=ip1-icols                                  SLBIDYN.274   
+          im1=i-1                                                          SLBIDYN.275   
+          if (im1.eq.0) im1=icols                                          SLBIDYN.276   
+          ccalc(i,j)    =  ( ( icy(i,j-1) .or. icy(im1,j) .or. icy(i,j)    SLBIDYN.277   
+     &                     .or. icy(ip1,j) .or. icy(ip1,j+1) )             SLBIDYN.278   
+     &                     .and.  ( hmask(i,j) .gt. 0.5 ) )                SLBIDYN.279   
+        end do                                                             SLBIDYN.280   
+        if (lglobal) then                                                  SLBIDYN.281   
+          ccalc(1,j)    = ( ( icy(1,j-1) .or. icy(icols,j) .or. icy(1,j)   SLBIDYN.282   
+     &                     .or. icy(2,j) .or. icy(2,j+1) )                 SLBIDYN.283   
+     &                     .and.  ( hmask(1,j) .gt. 0.5 ) )                SLBIDYN.284   
+          ccalc(icols,j)= ((icy(icols,j-1).or.icy(icolsm1,j)               SLBIDYN.285   
+     &                     .or.icy(icols,j).or.icy(1,j).or.icy(1,j+1))     SLBIDYN.286   
+     &                     .and.  ( hmask(icols,j) .gt. 0.5 ) )            SLBIDYN.287   
+        else                                                               SLBIDYN.288   
+          ccalc(1,j)    = ( ( icy(1,j-1) .or. icy(1,j)                     SLBIDYN.289   
+     &                     .or. icy(2,j) .or. icy(2,j+1) )                 SLBIDYN.290   
+     &                     .and.  ( hmask(1,j) .gt. 0.5 ) )                SLBIDYN.291   
+          ccalc(icols,j)= ( ( icy(icols,j-1).or.icy(icolsm1,j)             SLBIDYN.292   
+     &                     .or.icy(icols,j) )                              SLBIDYN.293   
+     &                     .and.  ( hmask(icols,j) .gt. 0.5 ) )            SLBIDYN.294   
+        endif                                                              SLBIDYN.295   
+                                                                           SLBIDYN.296   
+      end do                                                               SLBIDYN.297   
+                                                                           SLBIDYN.298   
+! Calculate C grid masks and row masks for icecavrx.                       SLBIDYN.299   
+      do j=1,jrowsm1                                                       SLBIDYN.300   
+        do i=1,icolsm1                                                     SLBIDYN.301   
+          umc(i,j)= 1.0                                                    SLBIDYN.302   
+          cu      = hmask(i,j+1) + hmask(i+1,j+1)                          SLBIDYN.303   
+          if ( cu .lt. 1.5 ) umc(i,j) = 0.0                                SLBIDYN.304   
+          vmc(i,j)= 1.0                                                    SLBIDYN.305   
+          cv      =  hmask(i+1,j) + hmask(i+1,j+1)                         SLBIDYN.306   
+          if ( cv .lt. 1.5 ) vmc(i,j) = 0.0                                SLBIDYN.307   
+        end do                                                             SLBIDYN.308   
+        if (lglobal) then                                                  SLBIDYN.309   
+          umc(icols,j)= 1.0                                                SLBIDYN.310   
+          cu      = hmask(icols,j+1) + hmask(1,j+1)                        SLBIDYN.311   
+          if ( cu .lt. 1.5 ) umc(icols,j) = 0.0                            SLBIDYN.312   
+          vmc(icols,j)= 1.0                                                SLBIDYN.313   
+          cv      =  hmask(1,j) + hmask(1,j+1)                             SLBIDYN.314   
+          if ( cv .lt. 1.5 ) vmc(icols,j) = 0.0                            SLBIDYN.315   
+        else                                                               SLBIDYN.316   
+          umc(icols,j) = zero                                              SLBIDYN.317   
+          vmc(icols,j) = zero                                              SLBIDYN.318   
+        endif                                                              SLBIDYN.319   
+      end do                                                               SLBIDYN.320   
+      do j = 1,jrows                                                       SLBIDYN.321   
+        ocrow(j)    =  .false.                                             SLBIDYN.322   
+        icyrow(j)   =  .false.                                             SLBIDYN.323   
+        cavrow(j)   =  .false.                                             SLBIDYN.324   
+        do i=1,icols                                                       SLBIDYN.325   
+          if (icy(i,j))   icyrow(j) = .true.                               SLBIDYN.326   
+          if (.not.landmask(i,j)) ocrow(j)  = .true.                       SLBIDYN.327   
+        end do                                                             SLBIDYN.328   
+      end do                                                               SLBIDYN.329   
+      do j = 1,jrows                                                       SLBIDYN.330   
+        jp1= j+1                                                           SLBIDYN.331   
+        jm1= j-1                                                           SLBIDYN.332   
+        if (j.eq.jrows) jp1=j                                              SLBIDYN.333   
+        if (j.eq.1)     jm1=j                                              SLBIDYN.334   
+        cavrow(j)   =  ocrow(j) .and.                                      SLBIDYN.335   
+     &  (icyrow(jm1).or.icyrow(j).or.icyrow(jp1))                          SLBIDYN.336   
+      end do                                                               SLBIDYN.337   
+                                                                           SLBIDYN.338   
+! Calculate ice strength, pmax and zero pressure field.                    SLBIDYN.339   
+      do j=1,jrows                                                         SLBIDYN.340   
+        do i=1,icols                                                       SLBIDYN.341   
+          pmax(i,j) = pstar_ice_strength * hice_work(i,j)                  SLBIDYN.342   
+     &                * exp(-kappa_ice_strength*(1-aice_work(i,j)))        SLBIDYN.343   
+          pressure(i,j) = zero                                             SLBIDYN.344   
+          aice_old(i,j) = aice_work(i,j)                                   SLBIDYN.345   
+          hice_old(i,j) = hice_work(i,j)                                   SLBIDYN.346   
+          hsno_old(i,j) = hsnow_work(i,j)                                  SLBIDYN.347   
+        end do                                                             SLBIDYN.348   
+      end do                                                               SLBIDYN.349   
+      do j=1,jrowsm1                                                       SLBIDYN.350   
+        do i=1,icols                                                       SLBIDYN.351   
+          ucurrent_h(i,j)= zero                                            SLBIDYN.352   
+          vcurrent_h(i,j)= zero                                            SLBIDYN.353   
+          uiceh(i,j)     = zero                                            SLBIDYN.354   
+          viceh(i,j)     = zero                                            SLBIDYN.355   
+          uw_cu(i,j)     = zero                                            SLBIDYN.356   
+          uw_cv(i,j)     = zero                                            SLBIDYN.357   
+          vw_cu(i,j)     = zero                                            SLBIDYN.358   
+          vw_cv(i,j)     = zero                                            SLBIDYN.359   
+          wsx_cu(i,j)    = zero                                            SLBIDYN.360   
+          wsy_cv(i,j)    = zero                                            SLBIDYN.361   
+        end do                                                             SLBIDYN.362   
+      end do                                                               SLBIDYN.363   
+C                                                                          SLBIDYN.364   
+C Interpolate currents and velocities to mass grid.                        SLBIDYN.365   
+C                                                                          SLBIDYN.366   
+      call uv_to_h(                                                        SDR1F404.109   
+*CALL ARGOINDX                                                             SDR1F404.110   
+     &     uice,uiceh,icols,jrows,jrowsm1)                                 SDR1F404.111   
+      call uv_to_h(                                                        SDR1F404.112   
+*CALL ARGOINDX                                                             SDR1F404.113   
+     &     vice,viceh,icols,jrows,jrowsm1)                                 SDR1F404.114   
+      call uv_to_h(                                                        SDR1F404.115   
+*CALL ARGOINDX                                                             SDR1F404.116   
+     &     ucurrent,ucurrent_h,icols,jrows,jrowsm1)                        SDR1F404.117   
+      call uv_to_h(                                                        SDR1F404.118   
+*CALL ARGOINDX                                                             SDR1F404.119   
+     &     vcurrent,vcurrent_h,icols,jrows,jrowsm1)                        SDR1F404.120   
+C                                                                          SLBIDYN.371   
+C Calculate drag coefficients and coriolis parameter on mass grid.         SLBIDYN.372   
+C                                                                          SLBIDYN.373   
+      do j=1,jrows                                                         SLBIDYN.374   
+        do i=1,icols                                                       SLBIDYN.375   
+          cwstar_h(i,j) = rho_water * cdw * sqrt ( (ucurrent_h(i,j)        SLBIDYN.376   
+     &    -uiceh(i,j))**2 + (vcurrent_h(i,j)-viceh(i,j))**2 )              SLBIDYN.377   
+     &    * aice_work(i,j)                                                 SLBIDYN.378   
+          bh(i,j) = ( hice_work(i,j)*rhoice + hsnow_work(i,j)              SLBIDYN.379   
+     &    *aice_work(i,j)*rhosnow ) * coriolis(i,j)                        SLBIDYN.380   
+          if ( cwstar_h(i,j) .lt. 0.25 ) cwstar_h(i,j) = 0.25              SLBIDYN.381   
+        end do                                                             SLBIDYN.382   
+      end do                                                               SLBIDYN.383   
+C                                                                          SLBIDYN.384   
+C Interpolate drag coeffs and coriolis param. to C grid u and v points     SLBIDYN.385   
+C                                                                          SLBIDYN.386   
+      call h_to_cu(                                                        SDR1F404.121   
+*CALL ARGOINDX                                                             SDR1F404.122   
+     &     cwstar_h,cwstar_cu,jrows,jrowsm1,icols)                         SDR1F404.123   
+      call h_to_cv(                                                        SDR1F404.124   
+*CALL ARGOINDX                                                             SDR1F404.125   
+     &     cwstar_h,cwstar_cv,jrows,jrowsm1,icols)                         SDR1F404.126   
+      call h_to_cu(                                                        SDR1F404.127   
+*CALL ARGOINDX                                                             SDR1F404.128   
+     &     bh,bx,jrows,jrowsm1,icols)                                      SDR1F404.129   
+      call h_to_cv(                                                        SDR1F404.130   
+*CALL ARGOINDX                                                             SDR1F404.131   
+     &     bh,by,jrows,jrowsm1,icols)                                      SDR1F404.132   
+C                                                                          SLBIDYN.391   
+C Interpolate currents from B grid uv points to C grid u and v points.     SLBIDYN.392   
+C ( Also wind stress components. )                                         SLBIDYN.393   
+C                                                                          SLBIDYN.394   
+      call uv_to_cu(                                                       SDR1F404.133   
+*CALL ARGOINDX                                                             SDR1F404.134   
+     &     ucurrent,uw_cu,jrowsm1,icols)                                   SDR1F404.135   
+      call uv_to_cu(                                                       SDR1F404.136   
+*CALL ARGOINDX                                                             SDR1F404.137   
+     &     vcurrent,vw_cu,jrowsm1,icols)                                   SDR1F404.138   
+      call uv_to_cv(                                                       SDR1F404.139   
+*CALL ARGOINDX                                                             SDR1F404.140   
+     &     ucurrent,uw_cv,jrowsm1,icols)                                   SDR1F404.141   
+      call uv_to_cv(                                                       SDR1F404.142   
+*CALL ARGOINDX                                                             SDR1F404.143   
+     &     vcurrent,vw_cv,jrowsm1,icols)                                   SDR1F404.144   
+      call uv_to_cu(                                                       SDR1F404.145   
+*CALL ARGOINDX                                                             SDR1F404.146   
+     &     wsx,wsx_cu,jrowsm1,icols)                                       SDR1F404.147   
+      call uv_to_cv(                                                       SDR1F404.148   
+*CALL ARGOINDX                                                             SDR1F404.149   
+     &     wsy,wsy_cv,jrowsm1,icols)                                       SDR1F404.150   
+C                                                                          SLBIDYN.401   
+C Calculate coeffs ax ay bx by and forcing x_stress y_stress on C grid.    SLBIDYN.402   
+C                                                                          SLBIDYN.403   
+      do j=1,jrowsm1                                                       SLBIDYN.404   
+        do i=1,icols                                                       SLBIDYN.405   
+          ax(i,j) = cwstar_cu(i,j)*cos(psi(j))*umc(i,j)                    SLBIDYN.406   
+          ay(i,j) = cwstar_cv(i,j)*cos(psi(j))*vmc(i,j)                    SLBIDYN.407   
+          bx(i,j) = bx(i,j) + cwstar_cu(i,j)*sin(psi(j))*umc(i,j)          SLBIDYN.408   
+          by(i,j) = by(i,j) + cwstar_cv(i,j)*sin(psi(j))*vmc(i,j)          SLBIDYN.409   
+          x_stress(i,j) = wsx_cu(i,j)                                      SLBIDYN.410   
+     &              + cwstar_cu(i,j)*(-sin(psi(j))*vw_cu(i,j)              SLBIDYN.411   
+     &              + cos(psi(j))*uw_cu(i,j) )*umc(i,j)                    SLBIDYN.412   
+          y_stress(i,j) = wsy_cv(i,j)                                      SLBIDYN.413   
+     &              + cwstar_cv(i,j)*(sin(psi(j))*uw_cv(i,j)               SLBIDYN.414   
+     &              + cos(psi(j))*vw_cv(i,j) )*vmc(i,j)                    SLBIDYN.415   
+        end do                                                             SLBIDYN.416   
+      end do                                                               SLBIDYN.417   
+! Iterative C grid 'free drift' velocity calculations                      SLBIDYN.418   
+      call slab_icefreec(                                                  SLBIDYN.419   
+     &              icols,jrows,jrowsm1,lglobal                            SLBIDYN.420   
+     &             ,tol_ifree,nmax_ifree,weight_ifree                      SLBIDYN.421   
+     &             ,dlat_rad,dlon_rad,cos_p_latitude,umask,ccalc           SLBIDYN.422   
+     &             ,umc,vmc,pressure                                       SLBIDYN.423   
+     &             ,ax,ay,bx,by,x_stress,y_stress                          SLBIDYN.424   
+     &             ,uice,vice                                              SLBIDYN.425   
+     &             )                                                       SLBIDYN.426   
+                                                                           SLBIDYN.427   
+! Cavitating Fluid Correction Scheme                                       SLBIDYN.428   
+      call slab_icecavrx(                                                  SLBIDYN.429   
+     &              icols,jrows,jrowsm1,dlat_rad,dlon_rad                  SLBIDYN.430   
+     &             ,tol_icav,nmax_icav                                     SLBIDYN.431   
+     &             ,cos_p_latitude,cos_u_latitude,sec_p_latitude           SLBIDYN.432   
+     &             ,hmask,umask,umc,vmc,ccalc,cavrow                       SLBIDYN.433   
+     &             ,ax,ay,bx,by,pmax                                       SLBIDYN.434   
+     &             ,uice,vice,pressure                                     SLBIDYN.435   
+     &             )                                                       SLBIDYN.436   
+                                                                           SLBIDYN.437   
+! Recalculate drag coefficients, forcing, A and B coefficients using       SLBIDYN.438   
+! mean of initial velocities and corrected velocities.                     SLBIDYN.439   
+!                                                                          SLBIDYN.440   
+! First interpolate ice velocity to C grid mass points                     SLBIDYN.441   
+      call cu_to_h(                                                        SDR1F404.151   
+*CALL ARGOINDX                                                             SDR1F404.152   
+     &     uice,uiceh,icols,jrows,jrowsm1)                                 SDR1F404.153   
+      call cv_to_h(                                                        SDR1F404.154   
+*CALL ARGOINDX                                                             SDR1F404.155   
+     &     vice,viceh,icols,jrows,jrowsm1)                                 SDR1F404.156   
+                                                                           SLBIDYN.444   
+! Calculate drag coefficients and coriolis parameter on mass grid.         SLBIDYN.445   
+      do j=1,jrows                                                         SLBIDYN.446   
+        do i=1,icols                                                       SLBIDYN.447   
+          cwstar_h(i,j) = cwstar_h(i,j)*0.5 +                              SLBIDYN.448   
+     &             0.5 * rho_water * cdw * sqrt ( (ucurrent_h(i,j)         SLBIDYN.449   
+     &    -uiceh(i,j))**2 + (vcurrent_h(i,j)-viceh(i,j))**2 )              SLBIDYN.450   
+     &    * aice(i,j)                                                      SLBIDYN.451   
+          if ( cwstar_h(i,j) .lt. 0.25 ) cwstar_h(i,j) = 0.25              SLBIDYN.452   
+        end do                                                             SLBIDYN.453   
+      end do                                                               SLBIDYN.454   
+                                                                           SLBIDYN.455   
+! Interpolate drag coeffs and coriolis param. to C grid u and v points     SLBIDYN.456   
+      call h_to_cu(                                                        SDR1F404.157   
+*CALL ARGOINDX                                                             SDR1F404.158   
+     &     cwstar_h,cwstar_cu,jrows,jrowsm1,icols)                         SDR1F404.159   
+      call h_to_cv(                                                        SDR1F404.160   
+*CALL ARGOINDX                                                             SDR1F404.161   
+     &     cwstar_h,cwstar_cv,jrows,jrowsm1,icols)                         SDR1F404.162   
+      call h_to_cu(                                                        SDR1F404.163   
+*CALL ARGOINDX                                                             SDR1F404.164   
+     &     bh,bx,jrows,jrowsm1,icols)                                      SDR1F404.165   
+      call h_to_cv(                                                        SDR1F404.166   
+*CALL ARGOINDX                                                             SDR1F404.167   
+     &     bh,by,jrows,jrowsm1,icols)                                      SDR1F404.168   
+                                                                           SLBIDYN.461   
+! Calculate coeffs ax ay bx by and forcing x_stress y_stress on C grid.    SLBIDYN.462   
+      do j=1,jrowsm1                                                       SLBIDYN.463   
+        do i=1,icols                                                       SLBIDYN.464   
+          ax(i,j) = cwstar_cu(i,j)*cos(psi(j))*umc(i,j)                    SLBIDYN.465   
+          ay(i,j) = cwstar_cv(i,j)*cos(psi(j))*vmc(i,j)                    SLBIDYN.466   
+          bx(i,j) = bx(i,j) + cwstar_cu(i,j)*sin(psi(j))*umc(i,j)          SLBIDYN.467   
+          by(i,j) = by(i,j) + cwstar_cv(i,j)*sin(psi(j))*vmc(i,j)          SLBIDYN.468   
+          x_stress(i,j) = wsx_cu(i,j)                                      SLBIDYN.469   
+     &              + cwstar_cu(i,j)*(-sin(psi(j))*vw_cu(i,j)              SLBIDYN.470   
+     &              + cos(psi(j))*uw_cu(i,j) )*umc(i,j)                    SLBIDYN.471   
+          y_stress(i,j) = wsy_cv(i,j)                                      SLBIDYN.472   
+     &              + cwstar_cv(i,j)*(sin(psi(j))*uw_cv(i,j)               SLBIDYN.473   
+     &              + cos(psi(j))*vw_cv(i,j) )*vmc(i,j)                    SLBIDYN.474   
+        end do                                                             SLBIDYN.475   
+      end do                                                               SLBIDYN.476   
+                                                                           SLBIDYN.477   
+! Iterative C grid 'free drift' velocity calculations                      SLBIDYN.478   
+! Using pressure field from first half timestep.                           SLBIDYN.479   
+      call slab_icefreec(                                                  SLBIDYN.480   
+     &              icols,jrows,jrowsm1,lglobal                            SLBIDYN.481   
+     &             ,tol_ifree,nmax_ifree,weight_ifree                      SLBIDYN.482   
+     &             ,dlat_rad,dlon_rad,cos_p_latitude,umask,ccalc           SLBIDYN.483   
+     &             ,umc,vmc,pressure                                       SLBIDYN.484   
+     &             ,ax,ay,bx,by,x_stress,y_stress                          SLBIDYN.485   
+     &             ,uice,vice                                              SLBIDYN.486   
+     &             )                                                       SLBIDYN.487   
+                                                                           SLBIDYN.488   
+! Cavitating Fluid Correction Scheme                                       SLBIDYN.489   
+      call slab_icecavrx(                                                  SLBIDYN.490   
+     &              icols,jrows,jrowsm1,dlat_rad,dlon_rad                  SLBIDYN.491   
+     &             ,tol_icav,nmax_icav                                     SLBIDYN.492   
+     &             ,cos_p_latitude,cos_u_latitude,sec_p_latitude           SLBIDYN.493   
+     &             ,hmask,umask,umc,vmc,ccalc,cavrow                       SLBIDYN.494   
+     &             ,ax,ay,bx,by,pmax                                       SLBIDYN.495   
+     &             ,uice,vice,pressure                                     SLBIDYN.496   
+     &             )                                                       SLBIDYN.497   
+                                                                           SLBIDYN.498   
+! Call ice_advect to advect ice thickness, compactness and snow depth.     SLBIDYN.499   
+      call slab_ice_advect(                                                SLBIDYN.500   
+     &                icols,jrows,jrowsm1,lglobal                          SLBIDYN.501   
+     &               ,dlat_rad,dlon_rad,timestep,a                         SLBIDYN.502   
+     &               ,uice,vice,hmask,umask,icy                            SLBIDYN.503   
+     &               ,cos_p_latitude,cos_u_latitude,sin_u_latitude         SLBIDYN.504   
+     &               ,aice_work,hice_work,hsnow_work                       SLBIDYN.505   
+     &               )                                                     SLBIDYN.506   
+                                                                           SLBIDYN.507   
+! Adjust ice fractions greater than the max or less than the min.          SLBIDYN.508   
+! Also adjust snow depth accordingly and reset icy and newice.             SLBIDYN.509   
+! And copy work arrays into main arrays.                                   SLBIDYN.510   
+      do j=1,jrows                                                         SLBIDYN.511   
+        do i=1,icols                                                       SLBIDYN.512   
+          if (aice_work(i,j).gt.amx(j)) then                               SLBIDYN.513   
+            hsnow(i,j) = hsnow_work(i,j)*aice_work(i,j)/amx(j)             SLBIDYN.514   
+            aice(i,j)  = amx(j)                                            SLBIDYN.515   
+          elseif ( (aice_work(i,j).gt.zero)                                SLBIDYN.516   
+     &            .and. (.not.landmask(i,j))) then                         SLBIDYN.517   
+            if ( aice_work(i,j).lt.aicemin ) then                          SLBIDYN.518   
+              hsnow(i,j) = hsnow_work(i,j)*aice_work(i,j)/aicemin          SLBIDYN.519   
+              aice(i,j)  = aicemin                                         SLBIDYN.520   
+            else                                                           SLBIDYN.521   
+              hsnow(i,j) = hsnow_work(i,j)                                 SLBIDYN.522   
+              aice(i,j)  = aice_work(i,j)                                  SLBIDYN.523   
+            endif                                                          SLBIDYN.524   
+          endif                                                            SLBIDYN.525   
+          icy(i,j) = (aice(i,j).gt.zero)                                   SLBIDYN.526   
+          if (icy(i,j)) then                                               SLBIDYN.527   
+            newice(i,j)=.false.                                            SLBIDYN.528   
+            hice(i,j)  = hice_work(i,j)                                    SLBIDYN.529   
+          endif                                                            SLBIDYN.530   
+        enddo                                                              SLBIDYN.531   
+      enddo                                                                SLBIDYN.532   
+                                                                           SLBIDYN.533   
+      return                                                               SLBIDYN.534   
+      end                                                                  SLBIDYN.535   
+*ENDIF                                                                     SLBIDYN.536   

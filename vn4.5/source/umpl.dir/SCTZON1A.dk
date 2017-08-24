@@ -1,0 +1,162 @@
+*IF DEF,C96_1A,OR,DEF,C96_1B                                               SCTZON1A.2     
+*IF DEF,MPP                                                                SCTZON1A.3     
+C ******************************COPYRIGHT******************************    SCTZON1A.4     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    SCTZON1A.5     
+C                                                                          SCTZON1A.6     
+C Use, duplication or disclosure of this code is subject to the            SCTZON1A.7     
+C restrictions as set forth in the contract.                               SCTZON1A.8     
+C                                                                          SCTZON1A.9     
+C                Meteorological Office                                     SCTZON1A.10    
+C                London Road                                               SCTZON1A.11    
+C                BRACKNELL                                                 SCTZON1A.12    
+C                Berkshire UK                                              SCTZON1A.13    
+C                RG12 2SZ                                                  SCTZON1A.14    
+C                                                                          SCTZON1A.15    
+C If no contract has been raised with this copy of the code, the use,      SCTZON1A.16    
+C duplication or disclosure of it is strictly prohibited.  Permission      SCTZON1A.17    
+C to do so must first be obtained in writing from the Head of Numerical    SCTZON1A.18    
+C Modelling at the above address.                                          SCTZON1A.19    
+C ******************************COPYRIGHT******************************    SCTZON1A.20    
+C                                                                          SCTZON1A.21    
+!                                                                          SCTZON1A.22    
+! + Scatters zonal field from one processor to many processors             SCTZON1A.23    
+!                                                                          SCTZON1A.24    
+! Subroutine interface:                                                    SCTZON1A.25    
+                                                                           SCTZON1A.26    
+      SUBROUTINE SCATTER_ZONAL_FIELD (                                     SCTZON1A.27    
+     &  LOCAL_FIELD , GLOBAL_FIELD ,                                       SCTZON1A.28    
+     &  LOCAL_SIZE  , GLOBAL_SIZE  ,                                       SCTZON1A.29    
+     &  LEVELS, GRID_TYPE ,                                                SCTZON1A.30    
+     &  SCATTER_PE)                                                        SCTZON1A.31    
+                                                                           SCTZON1A.32    
+      IMPLICIT NONE                                                        SCTZON1A.33    
+                                                                           SCTZON1A.34    
+! Description:                                                             SCTZON1A.35    
+! Takes a zonal field on a single processor, and decomposes it over        SCTZON1A.36    
+! many processors.                                                         SCTZON1A.37    
+!                                                                          SCTZON1A.38    
+! Current code owner : P.Burton                                            SCTZON1A.39    
+!                                                                          SCTZON1A.40    
+! History                                                                  SCTZON1A.41    
+! Model    Date      Modification history from model version 4.3           SCTZON1A.42    
+! version                                                                  SCTZON1A.43    
+! 4.4      20/05/97  New DECK created for MPP code.       P.Burton         SCTZON1A.44    
+!                    Added special case for gridtype=43+44,                SCTZON1A.45    
+!                    ocean Mead diagnostics - no halos    P.Burton         SCTZON1A.46    
+!                                                                          SCTZON1A.47    
+! Subroutine arguments:                                                    SCTZON1A.48    
+                                                                           SCTZON1A.49    
+      INTEGER                                                              SCTZON1A.50    
+     &  LOCAL_SIZE      ! IN: size of level of LOCAL_FIELD                 SCTZON1A.51    
+     &, GLOBAL_SIZE     ! IN: size of level of GLOBAL FIELD                SCTZON1A.52    
+     &, LEVELS          ! IN: number of levels in field                    SCTZON1A.53    
+     &, GRID_TYPE       ! IN: grid type of field                           SCTZON1A.54    
+     &, SCATTER_PE      ! IN:  PE on which GLOBAL_FIELD resides            SCTZON1A.55    
+                                                                           SCTZON1A.56    
+      REAL                                                                 SCTZON1A.57    
+     &  GLOBAL_FIELD(GLOBAL_SIZE,LEVELS) ! IN : field to scatter           SCTZON1A.58    
+     &, LOCAL_FIELD(LOCAL_SIZE,LEVELS) ! OUT : local part of field         SCTZON1A.59    
+                                                                           SCTZON1A.60    
+! Parameters and common blocks                                             SCTZON1A.61    
+                                                                           SCTZON1A.62    
+*CALL CPPXREF                                                              SCTZON1A.63    
+*CALL GCCOM                                                                SCTZON1A.64    
+                                                                           SCTZON1A.65    
+*CALL PARVARS                                                              SCTZON1A.66    
+                                                                           SCTZON1A.67    
+! Local variables                                                          SCTZON1A.68    
+                                                                           SCTZON1A.69    
+      INTEGER                                                              SCTZON1A.70    
+     &  fld_type  ! type (P or U) of field                                 SCTZON1A.71    
+     &, info      ! GCOM return code                                       SCTZON1A.72    
+     &, send_map(7,MAXPROC)  ! send map                                    SCTZON1A.73    
+     &, receive_map(7,1)     ! receive map                                 SCTZON1A.74    
+     &, flag                 ! GCOM dummy argument                         SCTZON1A.75    
+     &, n_mess_to_send       ! number of messages to send                  SCTZON1A.76    
+     &, k,iproc     ! loop counter                                         SCTZON1A.77    
+                                                                           SCTZON1A.78    
+      LOGICAL                                                              SCTZON1A.79    
+     &  mead_fld  ! indicates an ocean Mead diagnostic field               SCTZON1A.80    
+                                                                           SCTZON1A.81    
+!====================================================================      SCTZON1A.82    
+                                                                           SCTZON1A.83    
+      IF ((grid_type .EQ. ppx_atm_tzonal) .OR.                             SCTZON1A.84    
+     &    (grid_type .EQ. ppx_ocn_tzonal)) THEN                            SCTZON1A.85    
+        fld_type=fld_type_p                                                SCTZON1A.86    
+      ELSE                                                                 SCTZON1A.87    
+        fld_type=fld_type_u                                                SCTZON1A.88    
+      ENDIF                                                                SCTZON1A.89    
+                                                                           SCTZON1A.90    
+      mead_fld=((grid_type .EQ. ppx_ocn_uzonal) .OR.                       SCTZON1A.91    
+     &          (grid_type .EQ. ppx_ocn_tzonal))                           SCTZON1A.92    
+                                                                           SCTZON1A.93    
+!--------------------------------------------------------------------      SCTZON1A.94    
+                                                                           SCTZON1A.95    
+      n_mess_to_send=0                                                     SCTZON1A.96    
+                                                                           SCTZON1A.97    
+      IF (mype .EQ. SCATTER_PE) THEN                                       SCTZON1A.98    
+        DO iproc=0,nproc-1                                                 SCTZON1A.99    
+          send_map(S_DESTINATION_PE,iproc+1) = iproc                       SCTZON1A.100   
+          send_map(S_BASE_ADDRESS_IN_SEND_ARRAY,iproc+1) =                 SCTZON1A.101   
+     &      g_datastart(2,iproc)                                           SCTZON1A.102   
+          send_map(S_NUMBER_OF_ELEMENTS_IN_ITEM,iproc+1) = 1               SCTZON1A.103   
+          send_map(S_STRIDE_IN_SEND_ARRAY,iproc+1) = 0                     SCTZON1A.104   
+          IF (fld_type .EQ. fld_type_p) THEN                               SCTZON1A.105   
+            send_map(S_ELEMENT_LENGTH,iproc+1) = g_blsizep(2,iproc)        SCTZON1A.106   
+          ELSE                                                             SCTZON1A.107   
+            send_map(S_ELEMENT_LENGTH,iproc+1) = g_blsizeu(2,iproc)        SCTZON1A.108   
+          ENDIF                                                            SCTZON1A.109   
+          IF (mead_fld) THEN                                               SCTZON1A.110   
+            send_map(S_BASE_ADDRESS_IN_RECV_ARRAY,iproc+1) = 1             SCTZON1A.111   
+          ELSE                                                             SCTZON1A.112   
+            send_map(S_BASE_ADDRESS_IN_RECV_ARRAY,iproc+1) = Offy+1        SCTZON1A.113   
+          ENDIF                                                            SCTZON1A.114   
+          send_map(S_STRIDE_IN_RECV_ARRAY,iproc+1) = 0                     SCTZON1A.115   
+        ENDDO                                                              SCTZON1A.116   
+        n_mess_to_send=nproc                                               SCTZON1A.117   
+      ENDIF                                                                SCTZON1A.118   
+                                                                           SCTZON1A.119   
+      receive_map(R_SOURCE_PE,1) = SCATTER_PE                              SCTZON1A.120   
+      IF (mead_fld) THEN                                                   SCTZON1A.121   
+        receive_map(R_BASE_ADDRESS_IN_RECV_ARRAY,1) = 1                    SCTZON1A.122   
+      ELSE                                                                 SCTZON1A.123   
+        receive_map(R_BASE_ADDRESS_IN_RECV_ARRAY,1) = Offy+1               SCTZON1A.124   
+      ENDIF                                                                SCTZON1A.125   
+      receive_map(R_NUMBER_OF_ELEMENTS_IN_ITEM,1) = 1                      SCTZON1A.126   
+      receive_map(R_STRIDE_IN_RECV_ARRAY,1) = 0                            SCTZON1A.127   
+      IF (fld_type .EQ. fld_type_p) THEN                                   SCTZON1A.128   
+        receive_map(R_ELEMENT_LENGTH,1) = blsizep(2)                       SCTZON1A.129   
+      ELSE                                                                 SCTZON1A.130   
+        receive_map(R_ELEMENT_LENGTH,1) = blsizeu(2)                       SCTZON1A.131   
+      ENDIF                                                                SCTZON1A.132   
+      receive_map(R_BASE_ADDRESS_IN_SEND_ARRAY,1) = datastart(2)           SCTZON1A.133   
+      receive_map(R_STRIDE_IN_SEND_ARRAY,1) = 0                            SCTZON1A.134   
+                                                                           SCTZON1A.135   
+      info=GC_NONE                                                         SCTZON1A.136   
+                                                                           SCTZON1A.137   
+      CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)  ! set as scatter         SCTZON1A.138   
+                                                                           SCTZON1A.139   
+      DO k=1,LEVELS                                                        SCTZON1A.140   
+                                                                           SCTZON1A.141   
+        info=GC_NONE                                                       SCTZON1A.142   
+        flag=GC_NONE                                                       SCTZON1A.143   
+                                                                           SCTZON1A.144   
+        IF (fld_type .EQ. fld_type_p) THEN                                 SCTZON1A.145   
+          CALL GCG_RALLTOALLE(                                             SCTZON1A.146   
+     &      GLOBAL_FIELD(1,k),send_map,n_mess_to_send,glsize(2),           SCTZON1A.147   
+     &      LOCAL_FIELD(1,k), receive_map,1,lasize(2),                     SCTZON1A.148   
+     &      GC_ALL_PROC_GROUP,flag,info)                                   SCTZON1A.149   
+        ELSE                                                               SCTZON1A.150   
+          CALL GCG_RALLTOALLE(                                             SCTZON1A.151   
+     &      GLOBAL_FIELD(1,k),send_map,n_mess_to_send,glsize(2)-1,         SCTZON1A.152   
+     &      LOCAL_FIELD(1,k), receive_map,1,lasize(2),                     SCTZON1A.153   
+     &      GC_ALL_PROC_GROUP,flag,info)                                   SCTZON1A.154   
+        ENDIF                                                              SCTZON1A.155   
+                                                                           SCTZON1A.156   
+      ENDDO                                                                SCTZON1A.157   
+                                                                           SCTZON1A.158   
+      RETURN                                                               SCTZON1A.159   
+                                                                           SCTZON1A.160   
+      END                                                                  SCTZON1A.161   
+*ENDIF                                                                     SCTZON1A.162   
+*ENDIF                                                                     SCTZON1A.163   

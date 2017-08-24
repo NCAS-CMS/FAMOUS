@@ -1,0 +1,914 @@
+*IF DEF,A10_1A,OR,DEF,A10_1B,OR,DEF,A10_1C                                 AAD2F404.244   
+*IF -DEF,SCMA                                                              AJC0F405.265   
+C ******************************COPYRIGHT******************************    GTS2F400.2845  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.2846  
+C                                                                          GTS2F400.2847  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.2848  
+C restrictions as set forth in the contract.                               GTS2F400.2849  
+C                                                                          GTS2F400.2850  
+C                Meteorological Office                                     GTS2F400.2851  
+C                London Road                                               GTS2F400.2852  
+C                BRACKNELL                                                 GTS2F400.2853  
+C                Berkshire UK                                              GTS2F400.2854  
+C                RG12 2SZ                                                  GTS2F400.2855  
+C                                                                          GTS2F400.2856  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.2857  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.2858  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.2859  
+C Modelling at the above address.                                          GTS2F400.2860  
+C ******************************COPYRIGHT******************************    GTS2F400.2861  
+C                                                                          GTS2F400.2862  
+CLL  SUBROUTINE FILT_FLD   -----------------------------------------       FILTFL1A.3     
+CLL                                                                        FILTFL1A.4     
+CLL  PURPOSE: FOURIER DAMPS POTENTIAL TEMPERATURE FIELD.                   FILTFL1A.5     
+CLL           SETS SURFACE PRESSURE,POTENTIAL TEMPERATURE AND              FILTFL1A.6     
+CLL           MOISTURE VARIABLES AT POLES TO THE MEAN VALUE OF THE         FILTFL1A.7     
+CLL           SURROUNDING ROWS.                                            FILTFL1A.8     
+CLL  NOT SUITABLE FOR I.B.M USE.                                           FILTFL1A.9     
+CLL                                                                        FILTFL1A.10    
+CLL  WRITTEN BY M.H MAWSON.                                                FILTFL1A.11    
+CLL                                                                        FILTFL1A.12    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         FILTFL1A.13    
+CLL VERSION  DATE                                                          FILTFL1A.14    
+CLL   3.1     24/02/93  Tidy code to remove QA Fortran messages.           MM240293.48    
+CLL   3.4     26/05/94  Argument LLINTS added and passed to CALC_RS        GSS1F304.195   
+CLL                                                      S.J.Swarbrick     GSS1F304.196   
+!LL   4.2     16/08/96  Added TYPFLDPT arguments and made                  APB0F402.69    
+!LL                     FILTER_WAVE_NUMBER_P_ROWS globally sized.          APB0F402.70    
+!LL                     Add TYPFLDPT  args to FILTER.                      APB0F402.71    
+!LL                                                        P.Burton        APB0F402.72    
+!LL   4.3     11/03/97  Added MPP code to for zonal sums.                  ADR1F403.22    
+!LL                     (MPP Non bit-reproducible for different            ADR1F403.23    
+!LL                      numbers of processors)    P.Burton                ADR1F403.24    
+!LL   4.5     28/10/98  Introduce Single Column Model. JC Thil             AJC0F405.264   
+!LL                                                                        ADR1F403.25    
+CLL                                                                        FILTFL1A.15    
+CLL  PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,        FILTFL1A.16    
+CLL  SYSTEM COMPONENTS COVERED:  P142, P196.                               FILTFL1A.17    
+CLL  SYSTEM TASK: P1                                                       FILTFL1A.18    
+CLL  DOCUMENTATION:        SEE UNIFIED MODEL DOCUMENTATION PAPER           FILTFL1A.19    
+CLL                        NO. 10 M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON    FILTFL1A.20    
+CLL                        FOR DETAILS OF FOURIER DAMPING.                 FILTFL1A.21    
+CLLEND-------------------------------------------------------------        FILTFL1A.22    
+                                                                           FILTFL1A.23    
+C                                                                          FILTFL1A.24    
+C*L  ARGUMENTS:---------------------------------------------------         FILTFL1A.25    
+                                                                           FILTFL1A.26    
+      SUBROUTINE FILT_FLD                                                  FILTFL1A.27    
+     1                   (P_FIELD,P_LEVELS,Q_LEVELS,ROW_LENGTH,            FILTFL1A.28    
+*CALL ARGFLDPT                                                             APB0F402.73    
+     2                    PSTAR,THETA,Q,QCL,QCF,                           FILTFL1A.29    
+     3                    IFAX,TRIGS,FILTER_WAVE_NUMBER_P_ROWS,            FILTFL1A.30    
+     5                    NORTHERN_FILTERED_P_ROW,                         FILTFL1A.31    
+     6                    SOUTHERN_FILTERED_P_ROW,                         FILTFL1A.32    
+     7                    AK,BK,DELTA_AK,DELTA_BK,COS_P_LATITUDE,          FILTFL1A.33    
+     8                    RS_SQUARED_DELTAP,LATITUDE_STEP_INVERSE,         GSS1F304.197   
+     9                    LLINTS)                                          GSS1F304.198   
+                                                                           FILTFL1A.35    
+      IMPLICIT NONE                                                        FILTFL1A.36    
+                                                                           APB0F402.74    
+! All FLDPTR arguments are intent IN                                       APB0F402.75    
+*CALL TYPFLDPT                                                             APB0F402.76    
+                                                                           APB0F402.77    
+      LOGICAL  LLINTS  ! Arg passed to CALC_RS                             GSS1F304.199   
+                                                                           FILTFL1A.37    
+      INTEGER                                                              FILTFL1A.38    
+     1 P_FIELD,      !IN. NUMBER OF PRESSURE POINTS.                       FILTFL1A.39    
+     2 ROW_LENGTH,   !IN. NUMBER OF POINTS ON A ROW.                       FILTFL1A.40    
+     3 P_LEVELS,     !IN. NUMBER OF MODEL LEVELS.                          FILTFL1A.41    
+     4 Q_LEVELS      !IN. NUMBER OF MOIST MODEL LEVELS.                    FILTFL1A.42    
+                                                                           FILTFL1A.43    
+      REAL                                                                 FILTFL1A.44    
+     1 PSTAR(P_FIELD),  !INOUT. PRIMARY ARRAY FOR SURFACE PRESSURE         FILTFL1A.45    
+     2 THETA(P_FIELD,P_LEVELS),!INOUT.PRIMARY ARRAY FOR POT. TEMP.         FILTFL1A.46    
+     3 Q(P_FIELD,Q_LEVELS), !INOUT. PRIMARY ARRAY FOR MOISTURE.            FILTFL1A.47    
+     4 QCL(P_FIELD,Q_LEVELS), !INOUT. PRIMARY ARRAY FOR CLOUD LIQUID       FILTFL1A.48    
+     4                        !       WATER.                               FILTFL1A.49    
+     5 QCF(P_FIELD,Q_LEVELS)  !INOUT. PRIMARY ARRAY FOR CLOUD FROZEN       FILTFL1A.50    
+     5                        !       WATER.                               FILTFL1A.51    
+                                                                           FILTFL1A.52    
+      INTEGER                                                              FILTFL1A.53    
+     *  NORTHERN_FILTERED_P_ROW !IN P ROW ON WHICH FILTERING STOPS         FILTFL1A.54    
+     *                          ! MOVING TOWARDS EQUATOR                   FILTFL1A.55    
+     *, SOUTHERN_FILTERED_P_ROW !IN P ROW ON WHICH FILTERING STARTS        FILTFL1A.56    
+     *                          ! AGAIN MOVING TOWARDS SOUTH POLE          FILTFL1A.57    
+     &, FILTER_WAVE_NUMBER_P_ROWS(GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH)        APB0F402.78    
+     &               ! LAST WAVE NUMBER NOT TO BE DAMPED ON A P ROW        APB0F402.79    
+     *, IFAX(10)           !IN HOLDS FACTORS OF ROW_LENGTH USED BY         FILTFL1A.60    
+     *                     ! FILTERING.                                    FILTFL1A.61    
+                                                                           FILTFL1A.62    
+      REAL                                                                 FILTFL1A.63    
+     * TRIGS(ROW_LENGTH)      !IN HOLDS TRIGONOMETRIC FUNCTIONS USED       FILTFL1A.64    
+     *                        ! IN FILTERING.                              FILTFL1A.65    
+     *,COS_P_LATITUDE(P_FIELD)!IN HOLDS COSINES OF LATITUDE AT P POINTS    FILTFL1A.66    
+     *,LATITUDE_STEP_INVERSE  !IN 1./(LATITUDE STEP IN RADIANS)            FILTFL1A.67    
+     *,AK(P_LEVELS)           !IN A PART OF ETA CO-ORDINATE                FILTFL1A.68    
+     *,BK(P_LEVELS)           !IN B PART OF ETA CO-ORDINATE                FILTFL1A.69    
+     *,DELTA_AK(P_LEVELS)     !IN LAYER THICKNESS OF A PART OF ETA         FILTFL1A.70    
+     *,DELTA_BK(P_LEVELS)     !IN LAYER THICKNESS OF B PART OF ETA         FILTFL1A.71    
+     *,RS_SQUARED_DELTAP(P_FIELD,P_LEVELS) !IN SPACE USED TO PUT           FILTFL1A.72    
+     *                                     ! MASS FIELD IN.                FILTFL1A.73    
+                                                                           FILTFL1A.74    
+C*---------------------------------------------------------------------    FILTFL1A.75    
+                                                                           FILTFL1A.76    
+C*L  DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------     FILTFL1A.77    
+C   10 LOCAL ARRAYS REQUIRED                                               FILTFL1A.78    
+                                                                           FILTFL1A.79    
+      REAL                                                                 FILTFL1A.80    
+     & MEAN_MW_THETA(tot_P_ROWS,P_LEVELS)                                  ADR1F403.26    
+     &,MEAN_MW_THETA_NEW(tot_P_ROWS,P_LEVELS)                              ADR1F403.27    
+     &,MEAN_MASS(tot_P_ROWS,P_LEVELS)                                      ADR1F403.28    
+     &,MEAN_MW_NP_THETA_NEW(P_LEVELS)                                      ADR1F403.29    
+     &,MEAN_MW_SP_THETA_NEW(P_LEVELS)                                      ADR1F403.30    
+     &,MEAN_MW_NP_Q_NEW(Q_LEVELS)                                          ADR1F403.31    
+     &,MEAN_MW_SP_Q_NEW(Q_LEVELS)                                          ADR1F403.32    
+     &,MEAN_MW_NP_QCL_NEW(Q_LEVELS)                                        ADR1F403.33    
+     &,MEAN_MW_SP_QCL_NEW(Q_LEVELS)                                        ADR1F403.34    
+     &,MEAN_MW_NP_QCF_NEW(Q_LEVELS)                                        ADR1F403.35    
+     &,MEAN_MW_SP_QCF_NEW(Q_LEVELS)                                        ADR1F403.36    
+     &,MEAN_MASS_NP(P_LEVELS)                                              ADR1F403.37    
+     &,MEAN_MASS_SP(P_LEVELS)                                              ADR1F403.38    
+     &,NP_THETA(P_LEVELS)                                                  ADR1F403.39    
+     &,SP_THETA(P_LEVELS)                                                  ADR1F403.40    
+     &,NP_Q(Q_LEVELS)                                                      ADR1F403.41    
+     &,SP_Q(Q_LEVELS)                                                      ADR1F403.42    
+     &,NP_QCL(Q_LEVELS)                                                    ADR1F403.43    
+     &,SP_QCL(Q_LEVELS)                                                    ADR1F403.44    
+     &,NP_QCF(Q_LEVELS)                                                    ADR1F403.45    
+     &,SP_QCF(Q_LEVELS)                                                    ADR1F403.46    
+     &,MEAN_MW_NP_THETA(P_LEVELS)                                          FILTFL1A.82    
+     &,MEAN_MW_SP_THETA(P_LEVELS)                                          FILTFL1A.83    
+     &,MEAN_MW_NP_Q(Q_LEVELS)                                              FILTFL1A.84    
+     &,MEAN_MW_SP_Q(Q_LEVELS)                                              FILTFL1A.85    
+     &,MEAN_MW_NP_QCL(Q_LEVELS)                                            FILTFL1A.86    
+     &,MEAN_MW_SP_QCL(Q_LEVELS)                                            FILTFL1A.87    
+     &,MEAN_MW_NP_QCF(Q_LEVELS)                                            FILTFL1A.88    
+     &,MEAN_MW_SP_QCF(Q_LEVELS)                                            FILTFL1A.89    
+     &,WORK1(P_FIELD)                                                      FILTFL1A.90    
+C*---------------------------------------------------------------------    FILTFL1A.91    
+                                                                           FILTFL1A.92    
+C DEFINE LOCAL VARIABLES                                                   FILTFL1A.93    
+                                                                           FILTFL1A.94    
+      INTEGER                                                              FILTFL1A.95    
+     *  FILTER_SPACE_P     ! HORIZONTAL DIMENSION OF SPACE NEEDED IN       FILTFL1A.96    
+     *                     ! FILTERING ROUTINE FOR P ROWS.                 FILTFL1A.97    
+     &,  POINTS  ! number of updatable points                              ADR1F403.47    
+     &,  NORTH_FIRST_ROW,NORTH_LAST_ROW  ! limits for loop over            ADR1F403.48    
+     &,  SOUTH_FIRST_ROW,SOUTH_LAST_ROW  ! filterable rows                 ADR1F403.49    
+                                                                           FILTFL1A.98    
+      INTEGER                                                              FILTFL1A.99    
+     1 I,K,J                                                               FILTFL1A.100   
+*IF DEF,MPP                                                                ADR1F403.50    
+     &, info  ! return code for communcations                              ADR1F403.51    
+*ENDIF                                                                     ADR1F403.52    
+                                                                           FILTFL1A.101   
+      REAL                                                                 FILTFL1A.102   
+     & INCREMENT                                                           ADR1F403.53    
+     &,MEAN_RADIUS_NP                                                      FILTFL1A.109   
+     &,MEAN_RADIUS_SP                                                      FILTFL1A.110   
+                                                                           FILTFL1A.119   
+      REAL                                                                 FILTFL1A.120   
+     & POLAR_COSINE                                                        FILTFL1A.121   
+                                                                           FILTFL1A.122   
+      REAL                                                                 FILTFL1A.123   
+     * NP_PSTAR,                                                           FILTFL1A.124   
+     * SP_PSTAR                                                            ADR1F403.54    
+C ---------------------------------------------------------------------    FILTFL1A.134   
+                                                                           FILTFL1A.135   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    FILTFL1A.136   
+      EXTERNAL FILTER,CALC_RS                                              FILTFL1A.137   
+                                                                           FILTFL1A.138   
+C*---------------------------------------------------------------------    FILTFL1A.139   
+                                                                           FILTFL1A.140   
+CL  MAXIMUM VECTOR LENGTH ASSUMED IS ROW_LENGTH                            FILTFL1A.141   
+CL---------------------------------------------------------------------    FILTFL1A.142   
+CL    INTERNAL STRUCTURE.                                                  FILTFL1A.143   
+CL---------------------------------------------------------------------    FILTFL1A.144   
+CL                                                                         FILTFL1A.145   
+CL---------------------------------------------------------------------    FILTFL1A.146   
+CL    SECTION 1.    INITIALISE CONSTANTS.                                  FILTFL1A.147   
+CL---------------------------------------------------------------------    FILTFL1A.148   
+                                                                           FILTFL1A.149   
+C SET FILTER_SPACE WHICH IS ROW_LENGTH+2 TIMES THE NUMBER OF ROWS TO       FILTFL1A.150   
+C BE FILTERED.                                                             FILTFL1A.151   
+                                                                           FILTFL1A.152   
+      FILTER_SPACE_P = (ROW_LENGTH+2)*(NORTHERN_FILTERED_P_ROW-1+          FILTFL1A.153   
+     *                P_FIELD/ROW_LENGTH-SOUTHERN_FILTERED_P_ROW)          FILTFL1A.154   
+                                                                           ADR1F403.55    
+      POINTS=LAST_P_VALID_PT-FIRST_VALID_PT+1                              ADR1F403.56    
+                                                                           ADR1F403.57    
+! Set FIRST_ROW and LAST_ROW variables to point to the sections            ADR1F403.58    
+! of the field being updated by FILTER                                     ADR1F403.59    
+*IF -DEF,MPP                                                               ADR1F403.60    
+      NORTH_FIRST_ROW=FIRST_ROW  ! first non-polar row                     ADR1F403.61    
+      NORTH_LAST_ROW=NORTHERN_FILTERED_P_ROW                               ADR1F403.62    
+                                                                           ADR1F403.63    
+      SOUTH_FIRST_ROW=SOUTHERN_FILTERED_P_ROW                              ADR1F403.64    
+      SOUTH_LAST_ROW=P_LAST_ROW  ! last non-polar row                      ADR1F403.65    
+*ELSE                                                                      ADR1F403.66    
+! For the MPP code we must convert from global row numbers to local        ADR1F403.67    
+! row numbers.                                                             ADR1F403.68    
+      NORTH_FIRST_ROW=FIRST_ROW                                            ADR1F403.69    
+      NORTH_LAST_ROW=NORTHERN_FILTERED_P_ROW-FIRST_GLOBAL_ROW_NUMBER+      ADR1F403.70    
+     &               NS_Halo+1  ! gives local row number                   ADR1F403.71    
+      IF (NORTH_LAST_ROW .GT. (tot_P_ROWS-NS_Halo))                        ADR1F403.72    
+     &  NORTH_LAST_ROW=tot_P_ROWS-NS_Halo                                  ADR1F403.73    
+                                                                           ADR1F403.74    
+      SOUTH_FIRST_ROW=SOUTHERN_FILTERED_P_ROW-FIRST_GLOBAL_ROW_NUMBER+     ADR1F403.75    
+     &                NS_Halo+1  ! gives local row number                  ADR1F403.76    
+      IF (SOUTH_FIRST_ROW .LT. (NS_Halo+1))                                ADR1F403.77    
+     &  SOUTH_FIRST_ROW=NS_Halo+1                                          ADR1F403.78    
+      SOUTH_LAST_ROW=P_LAST_ROW                                            ADR1F403.79    
+*ENDIF                                                                     ADR1F403.80    
+                                                                           ADR1F403.81    
+                                                                           ADR1F403.82    
+                                                                           FILTFL1A.155   
+      POLAR_COSINE = 0.125/LATITUDE_STEP_INVERSE                           FILTFL1A.156   
+                                                                           FILTFL1A.157   
+CL                                                                         FILTFL1A.158   
+CL---------------------------------------------------------------------    FILTFL1A.159   
+CL    SECTION 2.    CALCULATE RS SQUARED AND MASS-WEIGHTED THETA ON        FILTFL1A.160   
+CL                  EACH ROW AT EACH LEVEL.                                FILTFL1A.161   
+CL---------------------------------------------------------------------    FILTFL1A.162   
+                                                                           FILTFL1A.163   
+CL    CALL CALC_RS TO GET RS FOR LEVEL 1.                                  FILTFL1A.164   
+C RS IS RETURNED IN RS_SQUARED_DELTAP( ,1)                                 FILTFL1A.165   
+C TS IS RETURNED IN WORK1, RS AT LEVEL K-1 IS INPUT IN                     FILTFL1A.166   
+C RS_SQUARED_DELTAP( ,2) AS AT K-1= 0 THE INPUT IS NOT USED BY CALC_RS.    FILTFL1A.167   
+                                                                           FILTFL1A.168   
+      CALL CALC_RS(PSTAR(FIRST_VALID_PT),AK,BK,                            ADR1F403.83    
+     &             WORK1(FIRST_VALID_PT),                                  ADR1F403.84    
+     &             RS_SQUARED_DELTAP(FIRST_VALID_PT,2),                    ADR1F403.85    
+     &             RS_SQUARED_DELTAP(FIRST_VALID_PT,1),                    ADR1F403.86    
+     &             POINTS,1,P_LEVELS,LLINTS)                               ADR1F403.87    
+                                                                           FILTFL1A.171   
+CL LOOP FROM 2 TO P_LEVELS                                                 FILTFL1A.172   
+      DO K= 2,P_LEVELS                                                     FILTFL1A.173   
+                                                                           FILTFL1A.174   
+CL    CALL CALC_RS TO GET RS FOR LEVEL K.                                  FILTFL1A.175   
+C RS IS RETURNED IN RS_SQUARED_DELTAP(1,K)                                 FILTFL1A.176   
+C TS IS RETURNED IN WORK1, RS AT LEVEL K-1 IS INPUT AS                     FILTFL1A.177   
+C RS_SQUARED_DELTAP(K-1).                                                  FILTFL1A.178   
+                                                                           FILTFL1A.179   
+        I=K                                                                MM240293.49    
+      CALL CALC_RS(PSTAR(FIRST_VALID_PT),AK,BK,                            ADR1F403.88    
+     &             WORK1(FIRST_VALID_PT),                                  ADR1F403.89    
+     &             RS_SQUARED_DELTAP(FIRST_VALID_PT,K-1),                  ADR1F403.90    
+     &             RS_SQUARED_DELTAP(FIRST_VALID_PT,K),                    ADR1F403.91    
+     &             POINTS,I,P_LEVELS,LLINTS)                               ADR1F403.92    
+                                                                           FILTFL1A.182   
+      END DO                                                               FILTFL1A.183   
+                                                                           FILTFL1A.184   
+CL END LOOP FROM 2 TO P_LEVELS.                                            FILTFL1A.185   
+                                                                           FILTFL1A.186   
+CL FORM RS SQUARED * DELTA P * COSINE OF LATITUDE                          FILTFL1A.187   
+CL AND ZONAL MEAN MASS-WEIGHTED THETA                                      FILTFL1A.188   
+                                                                           FILTFL1A.189   
+      DO K=1,P_LEVELS                                                      FILTFL1A.190   
+        DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                       ADR1F403.93    
+          RS_SQUARED_DELTAP(I,K) = RS_SQUARED_DELTAP(I,K)*                 FILTFL1A.192   
+     &                             RS_SQUARED_DELTAP(I,K)*                 FILTFL1A.193   
+     &                             (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))      FILTFL1A.194   
+     &                             *COS_P_LATITUDE(I)                      FILTFL1A.195   
+        END DO                                                             FILTFL1A.196   
+C SET POLAR VALUES.                                                        FILTFL1A.197   
+C THE CORRECT COSINE VALUE IS DELTA_PHI/8                                  FILTFL1A.198   
+*IF DEF,MPP                                                                ADR1F403.94    
+        IF (at_top_of_LPG) THEN                                            ADR1F403.95    
+*ENDIF                                                                     ADR1F403.96    
+          DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                    ADR1F403.97    
+            RS_SQUARED_DELTAP(I,K)=RS_SQUARED_DELTAP(I,K)*                 ADR1F403.98    
+     &        RS_SQUARED_DELTAP(I,K)*                                      ADR1F403.99    
+     &        (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))*                          ADR1F403.100   
+     &        POLAR_COSINE                                                 ADR1F403.101   
+          ENDDO                                                            ADR1F403.102   
+*IF DEF,MPP                                                                ADR1F403.103   
+        ENDIF                                                              ADR1F403.104   
+                                                                           ADR1F403.105   
+        IF (at_base_of_LPG) THEN                                           ADR1F403.106   
+*ENDIF                                                                     ADR1F403.107   
+          DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                ADR1F403.108   
+             RS_SQUARED_DELTAP(I,K)=RS_SQUARED_DELTAP(I,K)*                ADR1F403.109   
+     &                             RS_SQUARED_DELTAP(I,K)*                 ADR1F403.110   
+     &                             (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))*     ADR1F403.111   
+     &                             POLAR_COSINE                            ADR1F403.112   
+!         DONE                                                             ADR1F403.113   
+          ENDDO                                                            ADR1F403.114   
+*IF DEF,MPP                                                                ADR1F403.115   
+        ENDIF                                                              ADR1F403.116   
+*ENDIF                                                                     ADR1F403.117   
+        DO J=1,tot_P_ROWS                                                  ADR1F403.118   
+          MEAN_MW_THETA(J,K)=0.0                                           ADR1F403.119   
+          MEAN_MW_THETA_NEW(J,K)=0.0                                       ADR1F403.120   
+          MEAN_MASS(J,K)=0.0                                               ADR1F403.121   
+        ENDDO                                                              ADR1F403.122   
+                                                                           ADR1F403.123   
+        DO J=NORTH_FIRST_ROW,NORTH_LAST_ROW                                ADR1F403.124   
+!       loop over rows to be filtered                                      ADR1F403.125   
+                                                                           ADR1F403.126   
+          DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                              ADR1F403.127   
+     &         (J-1)*ROW_LENGTH+LAST_ROW_PT                                ADR1F403.128   
+            MEAN_MW_THETA(J,K) = MEAN_MW_THETA(J,K) + THETA(I,K)*          FILTFL1A.213   
+     &                           RS_SQUARED_DELTAP(I,K)                    FILTFL1A.214   
+          END DO                                                           FILTFL1A.215   
+        END DO                                                             FILTFL1A.216   
+        DO J=SOUTH_FIRST_ROW,SOUTH_LAST_ROW                                ADR1F403.129   
+!       loop over rows to be filtered                                      ADR1F403.130   
+                                                                           ADR1F403.131   
+          DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                              ADR1F403.132   
+     &         (J-1)*ROW_LENGTH+LAST_ROW_PT                                ADR1F403.133   
+            MEAN_MW_THETA(J,K) = MEAN_MW_THETA(J,K) + THETA(I,K)*          FILTFL1A.220   
+     &                           RS_SQUARED_DELTAP(I,K)                    FILTFL1A.221   
+          END DO                                                           FILTFL1A.222   
+        END DO                                                             FILTFL1A.223   
+      END DO                                                               FILTFL1A.224   
+                                                                           ADR1F403.134   
+*IF DEF,MPP                                                                ADR1F403.135   
+! So far MEAN_MW_THETA contains only the sum along my local part           ADR1F403.136   
+! of the row. We must now do a sum, so that it contains the full           ADR1F403.137   
+! sum for the entire global row                                            ADR1F403.138   
+! NB : Since the partial sums on each processor will be different          ADR1F403.139   
+! depending on the number of processors in the EW direction, the           ADR1F403.140   
+! total sum will also be non-reproducible if the number of EW              ADR1F403.141   
+! processors change.                                                       ADR1F403.142   
+                                                                           ADR1F403.143   
+      CALL GCG_RSUM(tot_P_ROWS*P_LEVELS,GC_ROW_GROUP,info,                 ADR1F403.144   
+     &              MEAN_MW_THETA)                                         ADR1F403.145   
+                                                                           ADR1F403.146   
+*ENDIF                                                                     ADR1F403.147   
+                                                                           ADR1F403.148   
+                                                                           FILTFL1A.225   
+CL                                                                         FILTFL1A.226   
+CL---------------------------------------------------------------------    FILTFL1A.227   
+CL    SECTION 3.    FILTER THETA FIELD.                                    FILTFL1A.228   
+CL---------------------------------------------------------------------    FILTFL1A.229   
+                                                                           FILTFL1A.230   
+CL    CALL FILTER FOR THETA                                                FILTFL1A.231   
+                                                                           FILTFL1A.232   
+        CALL FILTER(THETA,P_FIELD,P_LEVELS,FILTER_SPACE_P,ROW_LENGTH,      FILTFL1A.233   
+*CALL ARGFLDPT                                                             APB0F402.80    
+     *              FILTER_WAVE_NUMBER_P_ROWS,TRIGS,IFAX,                  FILTFL1A.234   
+     *              NORTHERN_FILTERED_P_ROW,SOUTHERN_FILTERED_P_ROW)       FILTFL1A.235   
+                                                                           FILTFL1A.236   
+CL                                                                         FILTFL1A.237   
+CL---------------------------------------------------------------------    FILTFL1A.238   
+CL    SECTION 4.    CALCULATE MASS-WEIGHTED THETA AFTER FILTERING.         FILTFL1A.239   
+CL                  CALCULATE CHANGE DUE TO FILTERING AND ADD AN           FILTFL1A.240   
+CL                  INCREMENT TO EACH POINT TO RETAIN CONSERVATION.        FILTFL1A.241   
+CL---------------------------------------------------------------------    FILTFL1A.242   
+                                                                           FILTFL1A.243   
+CL CALCULATE ZONAL MEAN MASS-WEIGHTED THETA                                FILTFL1A.244   
+CL CALCULATE INCREMENT NEEDED TO EACH THETA VALUE TO ENSURE                FILTFL1A.245   
+CL CONSERVATION.                                                           FILTFL1A.246   
+                                                                           FILTFL1A.247   
+      DO K=1,P_LEVELS                                                      ADR1F403.149   
+        DO J=NORTH_FIRST_ROW,NORTH_LAST_ROW                                ADR1F403.150   
+          DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                              ADR1F403.151   
+     &         (J-1)*ROW_LENGTH+LAST_ROW_PT                                ADR1F403.152   
+            MEAN_MW_THETA_NEW(J,K) = MEAN_MW_THETA_NEW(J,K) +              ADR1F403.153   
+     &                               THETA(I,K)*RS_SQUARED_DELTAP(I,K)     ADR1F403.154   
+            MEAN_MASS(J,K)=MEAN_MASS(J,K) + RS_SQUARED_DELTAP(I,K)         ADR1F403.155   
+          ENDDO                                                            ADR1F403.156   
+        ENDDO                                                              ADR1F403.157   
+                                                                           ADR1F403.158   
+        DO J=SOUTH_FIRST_ROW,SOUTH_LAST_ROW                                ADR1F403.159   
+          DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                              ADR1F403.160   
+     &         (J-1)*ROW_LENGTH+LAST_ROW_PT                                ADR1F403.161   
+            MEAN_MW_THETA_NEW(J,K) = MEAN_MW_THETA_NEW(J,K) +              ADR1F403.162   
+     &                               THETA(I,K)*RS_SQUARED_DELTAP(I,K)     ADR1F403.163   
+            MEAN_MASS(J,K)=MEAN_MASS(J,K) + RS_SQUARED_DELTAP(I,K)         ADR1F403.164   
+          ENDDO                                                            ADR1F403.165   
+        ENDDO                                                              ADR1F403.166   
+      ENDDO                                                                ADR1F403.167   
+                                                                           ADR1F403.168   
+*IF DEF,MPP                                                                ADR1F403.169   
+! Do sum along rows for MEAN_MW_THETA_NEW and MEAN_MASS as before          ADR1F403.170   
+                                                                           ADR1F403.171   
+      CALL GCG_RSUM(tot_P_ROWS*P_LEVELS,GC_ROW_GROUP,info,                 ADR1F403.172   
+     &              MEAN_MW_THETA_NEW)                                     ADR1F403.173   
+      CALL GCG_RSUM(tot_P_ROWS*P_LEVELS,GC_ROW_GROUP,info,                 ADR1F403.174   
+     &              MEAN_MASS)                                             ADR1F403.175   
+*ENDIF                                                                     ADR1F403.176   
+                                                                           ADR1F403.177   
+      DO K=1,P_LEVELS                                                      ADR1F403.178   
+        DO J=NORTH_FIRST_ROW,NORTH_LAST_ROW                                ADR1F403.179   
+          INCREMENT=(MEAN_MW_THETA_NEW(J,K)-MEAN_MW_THETA(J,K))/           ADR1F403.180   
+     &              MEAN_MASS(J,K)                                         ADR1F403.181   
+          DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                              ADR1F403.182   
+     &         (J-1)*ROW_LENGTH+LAST_ROW_PT                                ADR1F403.183   
+            THETA(I,K) = THETA(I,K) - INCREMENT                            ADR1F403.184   
+          ENDDO                                                            ADR1F403.185   
+        ENDDO                                                              ADR1F403.186   
+                                                                           ADR1F403.187   
+        DO J=SOUTH_FIRST_ROW,SOUTH_LAST_ROW                                ADR1F403.188   
+          INCREMENT=(MEAN_MW_THETA_NEW(J,K)-MEAN_MW_THETA(J,K))/           ADR1F403.189   
+     &              MEAN_MASS(J,K)                                         ADR1F403.190   
+          DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                              ADR1F403.191   
+     &         (J-1)*ROW_LENGTH+LAST_ROW_PT                                ADR1F403.192   
+            THETA(I,K) = THETA(I,K) - INCREMENT                            ADR1F403.193   
+          ENDDO                                                            ADR1F403.194   
+        ENDDO                                                              ADR1F403.195   
+                                                                           ADR1F403.196   
+      ENDDO                                                                ADR1F403.197   
+                                                                           ADR1F403.198   
+                                                                           FILTFL1A.276   
+CL                                                                         FILTFL1A.277   
+CL---------------------------------------------------------------------    FILTFL1A.278   
+CL    SECTION 5.    SET THETA,Q,QCL,QCF AND PSTAR AT POLES TO MEAN OF      FILTFL1A.279   
+CL                  SURROUNDING ROW IN A CONSERVATIVE WAY.                 FILTFL1A.280   
+CL---------------------------------------------------------------------    FILTFL1A.281   
+                                                                           FILTFL1A.282   
+C ---------------------------------------------------------------------    FILTFL1A.283   
+CL    SECTION 5.1   CALCULATE MEAN MASS-WEIGHTED VALUES OF FIELDS          FILTFL1A.284   
+CL                  AROUND POLES.                                          FILTFL1A.285   
+C ---------------------------------------------------------------------    FILTFL1A.286   
+                                                                           FILTFL1A.287   
+C CALCULATE MEAN MASS-WEIGHTED VALUES OF ALL FIELDS AROUND POLAR CAPS      FILTFL1A.288   
+C REMOVE DELTA P FROM RS_SQUARED FIELD.                                    FILTFL1A.289   
+! and calculate mean of pstar in row adjacent to pole                      ADR1F403.199   
+      DO K=1,P_LEVELS                                                      ADR1F403.200   
+        MEAN_MW_NP_THETA(K) = 0.0                                          ADR1F403.201   
+        MEAN_MW_SP_THETA(K) = 0.0                                          ADR1F403.202   
+        IF (K .LE. Q_LEVELS) THEN                                          ADR1F403.203   
+          MEAN_MW_NP_Q(K) = 0.0                                            ADR1F403.204   
+          MEAN_MW_SP_Q(K) = 0.0                                            ADR1F403.205   
+          MEAN_MW_NP_QCL(K) = 0.0                                          ADR1F403.206   
+          MEAN_MW_SP_QCL(K) = 0.0                                          ADR1F403.207   
+          MEAN_MW_NP_QCF(K) = 0.0                                          ADR1F403.208   
+          MEAN_MW_SP_QCF(K) = 0.0                                          ADR1F403.209   
+        ENDIF                                                              ADR1F403.210   
+                                                                           ADR1F403.211   
+*IF DEF,MPP                                                                ADR1F403.212   
+        IF (at_top_of_LPG) THEN                                            ADR1F403.213   
+*ENDIF                                                                     ADR1F403.214   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.215   
+            DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row              ADR1F403.216   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.217   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.218   
+                MEAN_MW_NP_Q(K) = MEAN_MW_NP_Q(K) + Q(I,K)*                ADR1F403.219   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.220   
+                MEAN_MW_NP_QCL(K) = MEAN_MW_NP_QCL(K) + QCL(I,K)*          ADR1F403.221   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.222   
+                MEAN_MW_NP_QCF(K) = MEAN_MW_NP_QCF(K) + QCF(I,K)*          ADR1F403.223   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.224   
+              ENDDO                                                        ADR1F403.225   
+            ENDDO                                                          ADR1F403.226   
+          ENDIF                                                            ADR1F403.227   
+          DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row                ADR1F403.228   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.229   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.230   
+              MEAN_MW_NP_THETA(K) = MEAN_MW_NP_THETA(K) + THETA(I,K)*      ADR1F403.231   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.232   
+              RS_SQUARED_DELTAP(I,K) = RS_SQUARED_DELTAP(I,K)/             ADR1F403.233   
+     &                             (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))      ADR1F403.234   
+            ENDDO                                                          ADR1F403.235   
+          ENDDO                                                            ADR1F403.236   
+          IF (K .EQ. 1) THEN                                               ADR1F403.237   
+            MEAN_RADIUS_NP = 0.0                                           ADR1F403.238   
+            DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row              ADR1F403.239   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.240   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.241   
+                MEAN_RADIUS_NP = MEAN_RADIUS_NP+RS_SQUARED_DELTAP(I,1)     ADR1F403.242   
+              ENDDO                                                        ADR1F403.243   
+            ENDDO                                                          ADR1F403.244   
+            NP_PSTAR=0.0                                                   ADR1F403.245   
+            DO I=TOP_ROW_START+FIRST_ROW_PT-1,                             ADR1F403.246   
+     &           TOP_ROW_START+LAST_ROW_PT-1                               ADR1F403.247   
+              NP_PSTAR=NP_PSTAR+PSTAR(I+ROW_LENGTH)                        ADR1F403.248   
+            ENDDO                                                          ADR1F403.249   
+          ENDIF                                                            ADR1F403.250   
+                                                                           ADR1F403.251   
+                                                                           ADR1F403.252   
+                                                                           ADR1F403.253   
+*IF DEF,MPP                                                                ADR1F403.254   
+        ENDIF                                                              ADR1F403.255   
+                                                                           ADR1F403.256   
+        IF (at_base_of_LPG) THEN                                           ADR1F403.257   
+*ENDIF                                                                     ADR1F403.258   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.259   
+            DO J=P_LAST_ROW,P_LAST_ROW+1  ! SP and adjacent row            ADR1F403.260   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.261   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.262   
+                MEAN_MW_SP_Q(K) = MEAN_MW_SP_Q(K) + Q(I,K)*                ADR1F403.263   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.264   
+                MEAN_MW_SP_QCL(K) = MEAN_MW_SP_QCL(K) + QCL(I,K)*          ADR1F403.265   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.266   
+                MEAN_MW_SP_QCF(K) = MEAN_MW_SP_QCF(K) + QCF(I,K)*          ADR1F403.267   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.268   
+              ENDDO                                                        ADR1F403.269   
+            ENDDO                                                          ADR1F403.270   
+          ENDIF                                                            ADR1F403.271   
+          DO J=P_LAST_ROW,P_LAST_ROW+1  ! SP and adjacent row              ADR1F403.272   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.273   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.274   
+              MEAN_MW_SP_THETA(K) = MEAN_MW_SP_THETA(K) + THETA(I,K)*      ADR1F403.275   
+     &                              RS_SQUARED_DELTAP(I,K)                 ADR1F403.276   
+              RS_SQUARED_DELTAP(I,K) = RS_SQUARED_DELTAP(I,K)/             ADR1F403.277   
+     &                              (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))     ADR1F403.278   
+            ENDDO                                                          ADR1F403.279   
+          ENDDO                                                            ADR1F403.280   
+          IF (K .EQ. 1) THEN                                               ADR1F403.281   
+            MEAN_RADIUS_SP = 0.0                                           ADR1F403.282   
+            DO J=P_LAST_ROW,P_LAST_ROW+1  ! NP and adjacent row            ADR1F403.283   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.284   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.285   
+                MEAN_RADIUS_SP = MEAN_RADIUS_SP+RS_SQUARED_DELTAP(I,1)     ADR1F403.286   
+              ENDDO                                                        ADR1F403.287   
+            ENDDO                                                          ADR1F403.288   
+            SP_PSTAR=0.0                                                   ADR1F403.289   
+            DO I=P_BOT_ROW_START+FIRST_ROW_PT-1,                           ADR1F403.290   
+     &           P_BOT_ROW_START+LAST_ROW_PT-1                             ADR1F403.291   
+              SP_PSTAR=SP_PSTAR+PSTAR(I-ROW_LENGTH)                        ADR1F403.292   
+            ENDDO                                                          ADR1F403.293   
+          ENDIF                                                            ADR1F403.294   
+                                                                           ADR1F403.295   
+*IF DEF,MPP                                                                ADR1F403.296   
+        ENDIF                                                              ADR1F403.297   
+*ENDIF                                                                     ADR1F403.298   
+      ENDDO ! K : loop over levels                                         ADR1F403.299   
+                                                                           ADR1F403.300   
+*IF DEF,MPP                                                                ADR1F403.301   
+! Need to sum the partial sums for the polar rows                          ADR1F403.302   
+! Once again, these sums will give different answers if the number of      ADR1F403.303   
+! processors in the EW direction changes                                   ADR1F403.304   
+                                                                           ADR1F403.305   
+      IF (at_top_of_LPG) THEN                                              ADR1F403.306   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_Q)             ADR1F403.307   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_QCL)           ADR1F403.308   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_QCF)           ADR1F403.309   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_THETA)         ADR1F403.310   
+        CALL GCG_RSUM(1,GC_ROW_GROUP,info,MEAN_RADIUS_NP)                  ADR1F403.311   
+        CALL GCG_RSUM(1,GC_ROW_GROUP,info,NP_PSTAR)                        ADR1F403.312   
+      ENDIF                                                                ADR1F403.313   
+      IF (at_base_of_LPG) THEN                                             ADR1F403.314   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_Q)             ADR1F403.315   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_QCL)           ADR1F403.316   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_QCF)           ADR1F403.317   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_THETA)         ADR1F403.318   
+        CALL GCG_RSUM(1,GC_ROW_GROUP,info,MEAN_RADIUS_SP)                  ADR1F403.319   
+        CALL GCG_RSUM(1,GC_ROW_GROUP,info,SP_PSTAR)                        ADR1F403.320   
+      ENDIF                                                                ADR1F403.321   
+                                                                           ADR1F403.322   
+*ENDIF                                                                     ADR1F403.323   
+                                                                           FILTFL1A.338   
+C ---------------------------------------------------------------------    FILTFL1A.339   
+CL    SECTION 5.2   CORRECT PSTAR VALUES.                                  FILTFL1A.340   
+C ---------------------------------------------------------------------    FILTFL1A.341   
+                                                                           FILTFL1A.342   
+                                                                           ADR1F403.324   
+*IF DEF,MPP                                                                ADR1F403.325   
+      IF (at_top_of_LPG) THEN                                              ADR1F403.326   
+*ENDIF                                                                     ADR1F403.327   
+        NP_PSTAR = NP_PSTAR / GLOBAL_ROW_LENGTH                            ADR1F403.328   
+*IF DEF,MPP                                                                ADR1F403.329   
+        IF (MY_PROC_ID .EQ. 0) THEN                                        ADR1F403.330   
+*ENDIF                                                                     ADR1F403.331   
+          INCREMENT=GLOBAL_ROW_LENGTH*                                     ADR1F403.332   
+     &      RS_SQUARED_DELTAP(TOP_ROW_START+FIRST_ROW_PT-1,1)*             ADR1F403.333   
+     &      (NP_PSTAR-PSTAR(TOP_ROW_START+FIRST_ROW_PT-1))/                ADR1F403.334   
+     &      MEAN_RADIUS_NP                                                 ADR1F403.335   
+                                                                           ADR1F403.336   
+*IF DEF,MPP                                                                ADR1F403.337   
+        ENDIF                                                              ADR1F403.338   
+                                                                           ADR1F403.339   
+! We want all processors in polar row to have same value of                ADR1F403.340   
+! INCREMENT as has been calculated by PE 0                                 ADR1F403.341   
+        CALL GCG_RBCAST(101,1,0,GC_ROW_GROUP,info,INCREMENT)               ADR1F403.342   
+                                                                           ADR1F403.343   
+*ENDIF                                                                     ADR1F403.344   
+        DO I=TOP_ROW_START+FIRST_ROW_PT-1,                                 ADR1F403.345   
+     &       TOP_ROW_START+LAST_ROW_PT-1                                   ADR1F403.346   
+          PSTAR(I)=NP_PSTAR - INCREMENT                                    ADR1F403.347   
+          PSTAR(I+ROW_LENGTH)=PSTAR(I+ROW_LENGTH) - INCREMENT              ADR1F403.348   
+        ENDDO                                                              ADR1F403.349   
+*IF DEF,MPP                                                                ADR1F403.350   
+                                                                           ADR1F403.351   
+      ENDIF                                                                ADR1F403.352   
+                                                                           ADR1F403.353   
+      IF (at_base_of_LPG) THEN                                             ADR1F403.354   
+*ENDIF                                                                     ADR1F403.355   
+        SP_PSTAR = SP_PSTAR / GLOBAL_ROW_LENGTH                            ADR1F403.356   
+*IF DEF,MPP                                                                ADR1F403.357   
+        IF (MY_PROC_ID .EQ. N_PROCS-1) THEN                                ADR1F403.358   
+*ENDIF                                                                     ADR1F403.359   
+          INCREMENT=GLOBAL_ROW_LENGTH*                                     ADR1F403.360   
+     &      RS_SQUARED_DELTAP(P_BOT_ROW_START+LAST_ROW_PT-1,1)*            ADR1F403.361   
+     &      (SP_PSTAR-PSTAR(P_BOT_ROW_START+LAST_ROW_PT-1))/               ADR1F403.362   
+     &      MEAN_RADIUS_SP                                                 ADR1F403.363   
+                                                                           ADR1F403.364   
+*IF DEF,MPP                                                                ADR1F403.365   
+        ENDIF                                                              ADR1F403.366   
+                                                                           ADR1F403.367   
+! We want all processors in polar row to have same value of                ADR1F403.368   
+! INCREMENT as has been calculated by PE 0                                 ADR1F403.369   
+        CALL GCG_RBCAST(101,1,N_PROCS-1,GC_ROW_GROUP,info,INCREMENT)       ADR1F403.370   
+                                                                           ADR1F403.371   
+*ENDIF                                                                     ADR1F403.372   
+        DO I=P_BOT_ROW_START+FIRST_ROW_PT-1,                               ADR1F403.373   
+     &       P_BOT_ROW_START+LAST_ROW_PT-1                                 ADR1F403.374   
+          PSTAR(I)=SP_PSTAR - INCREMENT                                    ADR1F403.375   
+          PSTAR(I-ROW_LENGTH)=PSTAR(I-ROW_LENGTH) - INCREMENT              ADR1F403.376   
+        ENDDO                                                              ADR1F403.377   
+*IF DEF,MPP                                                                ADR1F403.378   
+                                                                           ADR1F403.379   
+      ENDIF                                                                ADR1F403.380   
+*ENDIF                                                                     ADR1F403.381   
+                                                                           ADR1F403.382   
+                                                                           FILTFL1A.373   
+C ---------------------------------------------------------------------    FILTFL1A.374   
+CL    SECTION 5.3   CORRECT VALUES OF OTHER FIELDS.                        FILTFL1A.375   
+C ---------------------------------------------------------------------    FILTFL1A.376   
+                                                                           FILTFL1A.377   
+                                                                           ADR1F403.383   
+      DO K=1,P_LEVELS                                                      ADR1F403.384   
+                                                                           ADR1F403.385   
+*IF DEF,MPP                                                                ADR1F403.386   
+        IF (at_top_of_LPG) THEN                                            ADR1F403.387   
+*ENDIF                                                                     ADR1F403.388   
+          DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row                ADR1F403.389   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.390   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.391   
+              RS_SQUARED_DELTAP(I,K) = RS_SQUARED_DELTAP(I,K)*             ADR1F403.392   
+     &                             (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))      ADR1F403.393   
+            ENDDO                                                          ADR1F403.394   
+          ENDDO                                                            ADR1F403.395   
+                                                                           ADR1F403.396   
+          NP_THETA(K)=0.0                                                  ADR1F403.397   
+                                                                           ADR1F403.398   
+          DO I=TOP_ROW_START+FIRST_ROW_PT-1,                               ADR1F403.399   
+     &         TOP_ROW_START+LAST_ROW_PT-1                                 ADR1F403.400   
+            NP_THETA(K)=NP_THETA(K) + THETA(I+ROW_LENGTH,K)                ADR1F403.401   
+          ENDDO                                                            ADR1F403.402   
+                                                                           ADR1F403.403   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.404   
+                                                                           ADR1F403.405   
+            NP_Q(K)=0.0                                                    ADR1F403.406   
+            NP_QCL(K)=0.0                                                  ADR1F403.407   
+            NP_QCF(K)=0.0                                                  ADR1F403.408   
+                                                                           ADR1F403.409   
+            DO I=TOP_ROW_START+FIRST_ROW_PT-1,                             ADR1F403.410   
+     &           TOP_ROW_START+LAST_ROW_PT-1                               ADR1F403.411   
+              NP_Q(K)=NP_Q(K)+Q(I+ROW_LENGTH,K)                            ADR1F403.412   
+              NP_QCL(K)=NP_QCL(K)+QCL(I+ROW_LENGTH,K)                      ADR1F403.413   
+              NP_QCF(K)=NP_QCF(K)+QCF(I+ROW_LENGTH,K)                      ADR1F403.414   
+            ENDDO                                                          ADR1F403.415   
+          ENDIF                                                            ADR1F403.416   
+*IF DEF,MPP                                                                ADR1F403.417   
+        ENDIF                                                              ADR1F403.418   
+                                                                           ADR1F403.419   
+        IF (at_base_of_LPG) THEN                                           ADR1F403.420   
+*ENDIF                                                                     ADR1F403.421   
+          DO J=P_LAST_ROW,P_LAST_ROW+1  ! SP and adjacent row              ADR1F403.422   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.423   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.424   
+              RS_SQUARED_DELTAP(I,K) = RS_SQUARED_DELTAP(I,K)*             ADR1F403.425   
+     &                             (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))      ADR1F403.426   
+            ENDDO                                                          ADR1F403.427   
+          ENDDO                                                            ADR1F403.428   
+                                                                           ADR1F403.429   
+          SP_THETA(K)=0.0                                                  ADR1F403.430   
+                                                                           ADR1F403.431   
+          DO I=P_BOT_ROW_START+FIRST_ROW_PT-1,                             ADR1F403.432   
+     &         P_BOT_ROW_START+LAST_ROW_PT-1                               ADR1F403.433   
+            SP_THETA(K)=SP_THETA(K) + THETA(I-ROW_LENGTH,K)                ADR1F403.434   
+          ENDDO                                                            ADR1F403.435   
+                                                                           ADR1F403.436   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.437   
+                                                                           ADR1F403.438   
+            SP_Q(K)=0.0                                                    ADR1F403.439   
+            SP_QCL(K)=0.0                                                  ADR1F403.440   
+            SP_QCF(K)=0.0                                                  ADR1F403.441   
+                                                                           ADR1F403.442   
+            DO I=P_BOT_ROW_START+FIRST_ROW_PT-1,                           ADR1F403.443   
+     &           P_BOT_ROW_START+LAST_ROW_PT-1                             ADR1F403.444   
+              SP_Q(K)=SP_Q(K)+Q(I-ROW_LENGTH,K)                            ADR1F403.445   
+              SP_QCL(K)=SP_QCL(K)+QCL(I-ROW_LENGTH,K)                      ADR1F403.446   
+              SP_QCF(K)=SP_QCF(K)+QCF(I-ROW_LENGTH,K)                      ADR1F403.447   
+            ENDDO                                                          ADR1F403.448   
+          ENDIF                                                            ADR1F403.449   
+*IF DEF,MPP                                                                ADR1F403.450   
+        ENDIF                                                              ADR1F403.451   
+*ENDIF                                                                     ADR1F403.452   
+      ENDDO                                                                ADR1F403.453   
+*IF DEF,MPP                                                                ADR1F403.454   
+                                                                           ADR1F403.455   
+! Need to sum the partial sums for the polar rows                          ADR1F403.456   
+! Once again, these sums will give different answers if the number of      ADR1F403.457   
+! processors in the EW direction changes                                   ADR1F403.458   
+      IF (at_top_of_LPG) THEN                                              ADR1F403.459   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,NP_THETA)                 ADR1F403.460   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_Q)                     ADR1F403.461   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_QCL)                   ADR1F403.462   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_QCF)                   ADR1F403.463   
+      ENDIF                                                                ADR1F403.464   
+      IF (at_base_of_LPG) THEN                                             ADR1F403.465   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,SP_THETA)                 ADR1F403.466   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,SP_Q)                     ADR1F403.467   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,SP_QCL)                   ADR1F403.468   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,SP_QCF)                   ADR1F403.469   
+      ENDIF                                                                ADR1F403.470   
+*ENDIF                                                                     ADR1F403.471   
+                                                                           ADR1F403.472   
+      DO K=1,P_LEVELS                                                      ADR1F403.473   
+                                                                           ADR1F403.474   
+*IF DEF,MPP                                                                ADR1F403.475   
+        IF (at_top_of_LPG) THEN                                            ADR1F403.476   
+*ENDIF                                                                     ADR1F403.477   
+          NP_THETA(K)=NP_THETA(K)/GLOBAL_ROW_LENGTH                        ADR1F403.478   
+                                                                           ADR1F403.479   
+          DO I=TOP_ROW_START+FIRST_ROW_PT-1,                               ADR1F403.480   
+     &         TOP_ROW_START+LAST_ROW_PT-1                                 ADR1F403.481   
+            THETA(I,K)=NP_THETA(K)                                         ADR1F403.482   
+          ENDDO                                                            ADR1F403.483   
+                                                                           ADR1F403.484   
+          MEAN_MW_NP_THETA_NEW(K)=0.0                                      ADR1F403.485   
+          MEAN_MASS_NP(K)=0.0                                              ADR1F403.486   
+          DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row                ADR1F403.487   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.488   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.489   
+              MEAN_MW_NP_THETA_NEW(K)=MEAN_MW_NP_THETA_NEW(K)+             ADR1F403.490   
+     &                                THETA(I,K)*                          ADR1F403.491   
+     &                                RS_SQUARED_DELTAP(I,K)               ADR1F403.492   
+              MEAN_MASS_NP(K)=MEAN_MASS_NP(K)+RS_SQUARED_DELTAP(I,K)       ADR1F403.493   
+            ENDDO                                                          ADR1F403.494   
+          ENDDO                                                            ADR1F403.495   
+                                                                           ADR1F403.496   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.497   
+                                                                           ADR1F403.498   
+            NP_Q(K)=NP_Q(K)/GLOBAL_ROW_LENGTH                              ADR1F403.499   
+            NP_QCL(K)=NP_QCL(K)/GLOBAL_ROW_LENGTH                          ADR1F403.500   
+            NP_QCF(K)=NP_QCF(K)/GLOBAL_ROW_LENGTH                          ADR1F403.501   
+                                                                           ADR1F403.502   
+            DO I=TOP_ROW_START+FIRST_ROW_PT-1,                             ADR1F403.503   
+     &           TOP_ROW_START+LAST_ROW_PT-1                               ADR1F403.504   
+              Q(I,K)=NP_Q(K)                                               ADR1F403.505   
+              QCL(I,K)=NP_QCL(K)                                           ADR1F403.506   
+              QCF(I,K)=NP_QCF(K)                                           ADR1F403.507   
+            ENDDO                                                          ADR1F403.508   
+                                                                           ADR1F403.509   
+            MEAN_MW_NP_Q_NEW(K)=0.0                                        ADR1F403.510   
+            MEAN_MW_NP_QCL_NEW(K)=0.0                                      ADR1F403.511   
+            MEAN_MW_NP_QCF_NEW(K)=0.0                                      ADR1F403.512   
+            DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row              ADR1F403.513   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.514   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.515   
+                MEAN_MW_NP_Q_NEW(K)=MEAN_MW_NP_Q_NEW(K)+                   ADR1F403.516   
+     &                                  Q(I,K)*RS_SQUARED_DELTAP(I,K)      ADR1F403.517   
+                MEAN_MW_NP_QCL_NEW(K)=MEAN_MW_NP_QCL_NEW(K)+               ADR1F403.518   
+     &                                  QCL(I,K)*RS_SQUARED_DELTAP(I,K)    ADR1F403.519   
+                MEAN_MW_NP_QCF_NEW(K)=MEAN_MW_NP_QCF_NEW(K)+               ADR1F403.520   
+     &                                  QCF(I,K)*RS_SQUARED_DELTAP(I,K)    ADR1F403.521   
+              ENDDO                                                        ADR1F403.522   
+            ENDDO                                                          ADR1F403.523   
+          ENDIF  ! is this a wet level                                     ADR1F403.524   
+*IF DEF,MPP                                                                ADR1F403.525   
+        ENDIF  ! at_top_of_LPG                                             ADR1F403.526   
+                                                                           ADR1F403.527   
+        IF (at_base_of_LPG) THEN                                           ADR1F403.528   
+*ENDIF                                                                     ADR1F403.529   
+          SP_THETA(K)=SP_THETA(K)/GLOBAL_ROW_LENGTH                        ADR1F403.530   
+                                                                           ADR1F403.531   
+          DO I=P_BOT_ROW_START+FIRST_ROW_PT-1,                             ADR1F403.532   
+     &         P_BOT_ROW_START+LAST_ROW_PT-1                               ADR1F403.533   
+            THETA(I,K)=SP_THETA(K)                                         ADR1F403.534   
+          ENDDO                                                            ADR1F403.535   
+                                                                           ADR1F403.536   
+          MEAN_MW_SP_THETA_NEW(K)=0.0                                      ADR1F403.537   
+          MEAN_MASS_SP(K)=0.0                                              ADR1F403.538   
+          DO J=P_LAST_ROW,P_LAST_ROW+1  ! SP and adjacent row              ADR1F403.539   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.540   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.541   
+              MEAN_MW_SP_THETA_NEW(K)=MEAN_MW_SP_THETA_NEW(K)+             ADR1F403.542   
+     &                                THETA(I,K)*                          ADR1F403.543   
+     &                                RS_SQUARED_DELTAP(I,K)               ADR1F403.544   
+              MEAN_MASS_SP(K)=MEAN_MASS_SP(K)+RS_SQUARED_DELTAP(I,K)       ADR1F403.545   
+            ENDDO                                                          ADR1F403.546   
+          ENDDO                                                            ADR1F403.547   
+                                                                           ADR1F403.548   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.549   
+                                                                           ADR1F403.550   
+            SP_Q(K)=SP_Q(K)/GLOBAL_ROW_LENGTH                              ADR1F403.551   
+            SP_QCL(K)=SP_QCL(K)/GLOBAL_ROW_LENGTH                          ADR1F403.552   
+            SP_QCF(K)=SP_QCF(K)/GLOBAL_ROW_LENGTH                          ADR1F403.553   
+                                                                           ADR1F403.554   
+            DO I=P_BOT_ROW_START+FIRST_ROW_PT-1,                           ADR1F403.555   
+     &         P_BOT_ROW_START+LAST_ROW_PT-1                               ADR1F403.556   
+              Q(I,K)=SP_Q(K)                                               ADR1F403.557   
+              QCL(I,K)=SP_QCL(K)                                           ADR1F403.558   
+              QCF(I,K)=SP_QCF(K)                                           ADR1F403.559   
+            ENDDO                                                          ADR1F403.560   
+                                                                           ADR1F403.561   
+            MEAN_MW_SP_Q_NEW(K)=0.0                                        ADR1F403.562   
+            MEAN_MW_SP_QCL_NEW(K)=0.0                                      ADR1F403.563   
+            MEAN_MW_SP_QCF_NEW(K)=0.0                                      ADR1F403.564   
+            DO J=P_LAST_ROW,P_LAST_ROW+1  ! SP and adjacent row            ADR1F403.565   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.566   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.567   
+                MEAN_MW_SP_Q_NEW(K)=MEAN_MW_SP_Q_NEW(K)+                   ADR1F403.568   
+     &                                  Q(I,K)*RS_SQUARED_DELTAP(I,K)      ADR1F403.569   
+                MEAN_MW_SP_QCL_NEW(K)=MEAN_MW_SP_QCL_NEW(K)+               ADR1F403.570   
+     &                                  QCL(I,K)*RS_SQUARED_DELTAP(I,K)    ADR1F403.571   
+                MEAN_MW_SP_QCF_NEW(K)=MEAN_MW_SP_QCF_NEW(K)+               ADR1F403.572   
+     &                                  QCF(I,K)*RS_SQUARED_DELTAP(I,K)    ADR1F403.573   
+              ENDDO                                                        ADR1F403.574   
+            ENDDO                                                          ADR1F403.575   
+          ENDIF  ! is this a wet level                                     ADR1F403.576   
+*IF DEF,MPP                                                                ADR1F403.577   
+        ENDIF  ! at_base_of_LPG                                            ADR1F403.578   
+*ENDIF                                                                     ADR1F403.579   
+      ENDDO ! K: loop over levels                                          ADR1F403.580   
+*IF DEF,MPP                                                                ADR1F403.581   
+                                                                           ADR1F403.582   
+! Need to sum the partial sums for the polar rows                          ADR1F403.583   
+! Once again, these sums will give different answers if the number of      ADR1F403.584   
+! processors in the EW direction changes                                   ADR1F403.585   
+      IF (at_top_of_LPG) THEN                                              ADR1F403.586   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_THETA_NEW)     ADR1F403.587   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,MEAN_MASS_NP)             ADR1F403.588   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_Q_NEW)         ADR1F403.589   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_QCL_NEW)       ADR1F403.590   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_NP_QCF_NEW)       ADR1F403.591   
+      ENDIF                                                                ADR1F403.592   
+      IF (at_base_of_LPG) THEN                                             ADR1F403.593   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_THETA_NEW)     ADR1F403.594   
+        CALL GCG_RSUM(P_LEVELS,GC_ROW_GROUP,info,MEAN_MASS_SP)             ADR1F403.595   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_Q_NEW)         ADR1F403.596   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_QCL_NEW)       ADR1F403.597   
+        CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,MEAN_MW_SP_QCF_NEW)       ADR1F403.598   
+      ENDIF                                                                ADR1F403.599   
+*ENDIF                                                                     ADR1F403.600   
+                                                                           ADR1F403.601   
+      DO K=1,P_LEVELS                                                      ADR1F403.602   
+                                                                           ADR1F403.603   
+*IF DEF,MPP                                                                ADR1F403.604   
+        IF (at_top_of_LPG) THEN                                            ADR1F403.605   
+*ENDIF                                                                     ADR1F403.606   
+          MEAN_MW_NP_THETA_NEW(K) = (MEAN_MW_NP_THETA_NEW(K) -             ADR1F403.607   
+     &      MEAN_MW_NP_THETA(K)) /MEAN_MASS_NP(K)                          ADR1F403.608   
+                                                                           ADR1F403.609   
+          DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row                ADR1F403.610   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.611   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.612   
+              THETA(I,K) = THETA(I,K) - MEAN_MW_NP_THETA_NEW(K)            ADR1F403.613   
+            ENDDO                                                          ADR1F403.614   
+          ENDDO                                                            ADR1F403.615   
+                                                                           ADR1F403.616   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.617   
+            MEAN_MW_NP_Q_NEW(K) = (MEAN_MW_NP_Q_NEW(K) -                   ADR1F403.618   
+     &        MEAN_MW_NP_Q(K)) /MEAN_MASS_NP(K)                            ADR1F403.619   
+            MEAN_MW_NP_QCL_NEW(K) = (MEAN_MW_NP_QCL_NEW(K) -               ADR1F403.620   
+     &        MEAN_MW_NP_QCL(K)) /MEAN_MASS_NP(K)                          ADR1F403.621   
+            MEAN_MW_NP_QCF_NEW(K) = (MEAN_MW_NP_QCF_NEW(K) -               ADR1F403.622   
+     &        MEAN_MW_NP_QCF(K)) /MEAN_MASS_NP(K)                          ADR1F403.623   
+                                                                           ADR1F403.624   
+            DO J=FIRST_ROW-1,FIRST_ROW  ! NP and adjacent row              ADR1F403.625   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.626   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.627   
+                Q(I,K) = Q(I,K) - MEAN_MW_NP_Q_NEW(K)                      ADR1F403.628   
+                QCL(I,K) = QCL(I,K) - MEAN_MW_NP_QCL_NEW(K)                ADR1F403.629   
+                QCF(I,K) = QCF(I,K) - MEAN_MW_NP_QCF_NEW(K)                ADR1F403.630   
+              ENDDO                                                        ADR1F403.631   
+            ENDDO                                                          ADR1F403.632   
+          ENDIF                                                            ADR1F403.633   
+*IF DEF,MPP                                                                ADR1F403.634   
+        ENDIF                                                              ADR1F403.635   
+                                                                           ADR1F403.636   
+        IF (at_base_of_LPG) THEN                                           ADR1F403.637   
+*ENDIF                                                                     ADR1F403.638   
+          MEAN_MW_SP_THETA_NEW(K) = (MEAN_MW_SP_THETA_NEW(K) -             ADR1F403.639   
+     &      MEAN_MW_SP_THETA(K)) /MEAN_MASS_SP(K)                          ADR1F403.640   
+          DO J=P_LAST_ROW,P_LAST_ROW+1  ! SP and adjacent row              ADR1F403.641   
+            DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                            ADR1F403.642   
+     &           (J-1)*ROW_LENGTH+LAST_ROW_PT                              ADR1F403.643   
+              THETA(I,K) = THETA(I,K) - MEAN_MW_SP_THETA_NEW(K)            ADR1F403.644   
+            ENDDO                                                          ADR1F403.645   
+          ENDDO                                                            ADR1F403.646   
+                                                                           ADR1F403.647   
+          IF (K .LE. Q_LEVELS) THEN                                        ADR1F403.648   
+            MEAN_MW_SP_Q_NEW(K) = (MEAN_MW_SP_Q_NEW(K) -                   ADR1F403.649   
+     &        MEAN_MW_SP_Q(K)) /MEAN_MASS_SP(K)                            ADR1F403.650   
+            MEAN_MW_SP_QCL_NEW(K) = (MEAN_MW_SP_QCL_NEW(K) -               ADR1F403.651   
+     &        MEAN_MW_SP_QCL(K)) /MEAN_MASS_SP(K)                          ADR1F403.652   
+            MEAN_MW_SP_QCF_NEW(K) = (MEAN_MW_SP_QCF_NEW(K) -               ADR1F403.653   
+     &        MEAN_MW_SP_QCF(K)) /MEAN_MASS_SP(K)                          ADR1F403.654   
+                                                                           ADR1F403.655   
+            DO J=P_LAST_ROW,P_LAST_ROW+1  ! SP and adjacent row            ADR1F403.656   
+              DO I=(J-1)*ROW_LENGTH+FIRST_ROW_PT,                          ADR1F403.657   
+     &             (J-1)*ROW_LENGTH+LAST_ROW_PT                            ADR1F403.658   
+                Q(I,K) = Q(I,K) - MEAN_MW_SP_Q_NEW(K)                      ADR1F403.659   
+                QCL(I,K) = QCL(I,K) - MEAN_MW_SP_QCL_NEW(K)                ADR1F403.660   
+                QCF(I,K) = QCF(I,K) - MEAN_MW_SP_QCF_NEW(K)                ADR1F403.661   
+              ENDDO                                                        ADR1F403.662   
+            ENDDO                                                          ADR1F403.663   
+          ENDIF  !  is this a wet level                                    ADR1F403.664   
+*IF DEF,MPP                                                                ADR1F403.665   
+        ENDIF  !  at_base_of_LPG                                           ADR1F403.666   
+*ENDIF                                                                     ADR1F403.667   
+      ENDDO  !  K : loop over levels                                       ADR1F403.668   
+                                                                           FILTFL1A.545   
+CL    END OF ROUTINE FILT_FLD                                              FILTFL1A.546   
+                                                                           FILTFL1A.547   
+      RETURN                                                               FILTFL1A.548   
+      END                                                                  FILTFL1A.549   
+*ENDIF                                                                     FILTFL1A.550   
+*ENDIF                                                                     AJC0F405.266   

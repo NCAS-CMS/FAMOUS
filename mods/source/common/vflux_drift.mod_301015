@@ -1,0 +1,455 @@
+*ID VFLUX_CORR
+*DECLARE CNTLOCN
+*I OJL1F405.80
+     &,L_VFLUX_CORR
+*I OJL1F405.83
+     &,L_VFLUX_CORR
+*I OJL1F405.86
+     &,L_VFLUX_CORR
+*DECLARE TYPPTRO
+*I TYPPTRO.66
+     &, joc_vflux_mask
+     &, joc_vflux_corr
+     &, joc_vflux_Sacc
+     &, joc_vflux_Aacc
+     &, joc_vflux_Cacc
+*I TYPPTRO.87
+     &  joc_vflux_mask,joc_vflux_corr,
+     &  joc_vflux_Sacc,joc_vflux_Aacc,joc_vflux_Cacc,
+*DECLARE STOCNPT1
+*B STOCNPT1.116
+      joc_vflux_mask = SI(400,0,im_index)
+      joc_vflux_corr = SI(401,0,im_index)
+      joc_vflux_Sacc = SI(402,0,im_index)
+      IF (L_OCARBON) THEN
+        joc_vflux_Aacc = SI(403,0,im_index)
+        joc_vflux_Cacc = SI(404,0,im_index)
+      END IF
+*DECLARE ROWCALC
+*B ROWCALC.843
+     &,D1(joc_vflux_corr)
+*DECLARE TRACER
+*B TRACER.31
+     &,vflux_corr
+*B RH011293.192
+      REAL vflux_corr(IMT*jmt)
+*I TRACER.862
+c ***APPLY (LAST YEAR's) VFLUX CONSERVATION CORRECTION
+      IF (L_VFLUX_CORR) THEN
+      do i=1,imt
+      do k=1,kmt(i)
+        ta(i,k,S_TRACER)=   ta(i,k,S_TRACER)+   
+     &                      vflux_corr(imt+S_TRACER)*c2dtts
+        IF (L_OCARBON) THEN
+        ta(i,k,ALK_TRACER)= ta(i,k,ALK_TRACER)+ 
+     &                      vflux_corr(imt+ALK_TRACER)*c2dtts
+
+        ta(i,k,TCO2_TRACER)=ta(i,k,TCO2_TRACER)+
+     &                      vflux_corr(imt+TCO2_TRACER)*c2dtts
+        END IF
+      enddo
+      enddo
+      END IF
+c ********
+*DECLARE SFCADD
+*I OJP0F404.956
+c***include surface water flux adjustment in this calc now
+      IF (L_FLUXCORR) THEN
+        VTCO2_FLUX(i)=VTCO2_FLUX(i)
+     &  + con_salt*fluxcorw(I)*TB(i,1,TCO2_TRACER)/C2DTTS
+      END IF
+
+*I OJP0F404.962
+      IF (L_FLUXCORR) THEN
+        VALK_FLUX(i)=VALK_FLUX(i)
+     &  + con_salt*fluxcorw(I)*TB(i,1,ALK_TRACER)/C2DTTS
+      END IF
+
+c*********
+*DECLARE OCNFRST1
+*I OCNFRST1.173
+        CALL VFLUX_CORR(
+*CALL ARGSIZE
+*CALL ARGD1
+*CALL ARGSTS
+*CALL ARGOINDX
+*CALL ARGOCONE
+*CALL ARGPTRO
+     &           O_FLDDEPC,ICODE,CMESSAGE)
+c ********
+
+*I OCNFRST1.203
+c
+c ***SUBROUTINE VFLUX_CORR
+c
+c ***Gather fields to work out a correction such that the global virtual tracer
+c ***fluxes at the surface (worked out with local tracer values) match the
+c ***global water flux. 
+c ***Once a year, calculate and store the correction
+
+      SUBROUTINE VFLUX_CORR(
+*CALL ARGSIZE
+*CALL ARGD1
+*CALL ARGSTS
+*CALL ARGOINDX
+*CALL ARGOCONE
+*CALL ARGPTRO
+     &           FKMP_G,ICODE,CMESSAGE)
+
+      IMPLICIT NONE
+
+      INTEGER
+     &       ICODE        ! Return code : 0 Normal Exit
+      CHARACTER*(80)
+     &       CMESSAGE     ! Error message if return code >0
+
+*CALL CSUBMODL
+*CALL CMAXSIZE
+*CALL TYPSIZE
+*CALL TYPD1
+*CALL TYPPTRO
+*CALL TYPSTS
+*CALL TYPOINDX
+*CALL TYPOCONE
+
+*CALL UMSCALAR
+*CALL C_MDI
+*CALL CHSUNITS
+*CALL CNTLALL
+*CALL CNTLOCN
+*CALL PARPARM
+*CALL PARCOMM
+*CALL CTIME
+*CALL COMOCFLW
+*CALL C_SOILH
+*CALL C_PERMA
+*CALL OTRACPNT
+
+      INTEGER I,J,K,I_G,INFO,ij,ij_ST,IMT_ST  ! counters. *_ST means -halo
+      REAL DAYSYR
+
+c need global, surface avg. values to convert water fluxes to tracer fluxes.
+c salinity held in psu/1000
+c ALK, TCO2 held in micromoles/litre.Surface avg. values from Sarmiento+Gruber book, WOCE data
+      REAL REF_SAL, REF_ALK, REF_TCO2
+      PARAMETER (REF_SAL=0.035, REF_ALK=2363., REF_TCO2=2075.)
+
+      INTEGER VF_SNOAR,
+     &        VF_ICEAR,
+     &        VF_SFLUX,
+     &        VF_AFLUX,
+     &        VF_CFLUX
+
+      REAL    WATER(imt*jmt), 
+     &        S_ACC(imt*jmt),S_ACC_GLOBAL(imt*jmt_global),S_CORR,
+     &        A_ACC(imt*jmt),A_ACC_GLOBAL(imt*jmt_global),A_CORR,
+     &        C_ACC(imt*jmt),C_ACC_GLOBAL(imt*jmt_global),C_CORR
+
+      REAL    VF_MASK(imt*jmt_global)
+
+      REAL    DYT_G(jmt_global), 
+     &        CST_G(jmt_global), 
+     &        FKMP_G(imt,jmt_global),
+     &        AREA_G, 
+     &        VOL_G
+
+
+c recover fluxes from stash - should have been specified by macro
+c
+      CALL FIND_PTR_ADD(32228,69,VF_ICEAR,  ! change in seaice H (thermd)
+*CALL ARGSIZE
+*CALL ARGSTS
+     &           2,ICODE,CMESSAGE)
+
+      CALL FIND_PTR_ADD(32229,69,VF_SNOAR,  ! change in snow on ice H (thermd)
+*CALL ARGSIZE
+*CALL ARGSTS
+     &           2,ICODE,CMESSAGE)
+
+      CALL FIND_PTR_ADD(30280,69,VF_SFLUX,    ! PMER salt flux applied
+*CALL ARGSIZE
+*CALL ARGSTS
+     &           2,ICODE,CMESSAGE)
+
+      IF (L_OCARBON) THEN
+      CALL FIND_PTR_ADD(30293,69,VF_AFLUX,    ! PMER ALK flux applied
+*CALL ARGSIZE
+*CALL ARGSTS
+     &           2,ICODE,CMESSAGE)
+
+      CALL FIND_PTR_ADD(30292,69,VF_CFLUX,    ! PMER TCO2 flux applied
+*CALL ARGSIZE
+*CALL ARGSTS
+     &           2,ICODE,CMESSAGE)
+      END IF
+
+      IF (L_OCYCLIC) THEN
+        IMT_ST=IMTm2
+      ELSE
+        IMT_ST=IMT
+      END IF
+
+      DO J=1,jmt
+      DO I=1,IMT
+        ij=I+(J-1)*IMT
+        water(ij)=0.
+        s_acc(ij)=0.
+        IF (L_OCARBON) THEN
+          a_acc(ij)=0.
+          c_acc(ij)=0.
+        END IF
+      end do
+      end do
+c
+c this j counting assumes MPI version (not necessarily >1 PE, but an
+c N,S halo per processor. At time of coding, only MPI version works
+c anyway)     
+c
+
+      IF (MOD(stepim(o_im),2)) THEN
+
+      DO J=2,jmt-1
+      DO I=1,IMT_ST
+        ij_ST=I+(J-1)*IMT_ST - 1
+        ij   =I+(J-1)*IMT    - 1
+ 
+c water flux used - "conserved"
+      if (D1(joc_ple+ij).ne.RMDI) 
+     &    water(ij+1)=water(ij+1)+D1(joc_ple+ij)
+
+      if (D1(joc_river+ij).ne.RMDI) 
+     &    water(ij+1)=water(ij+1)+D1(joc_river+ij)
+
+      if (D1(VF_SNOAR+ij_st).ne.RMDI) 
+     &    water(ij+1)=water(ij+1)-D1(VF_SNOAR+ij_st)*RHO_SNOW
+
+      if (D1(VF_ICEAR+ij_st).ne.RMDI) 
+     &    water(ij+1)=water(ij+1)-D1(VF_ICEAR+ij_st)*RHO_ICE
+
+      if (L_FLUXCORR) then
+        if (D1(joc_anom_salt+ij).ne.RMDI) 
+     &        water(ij+1)=water(ij+1)+D1(joc_anom_salt+ij)
+      end if
+
+      water(ij+1)=water(ij+1)/RHO_WATER_SI
+ 
+c salt flux actually applied
+      if (D1(VF_SFLUX+ij_st).ne.RMDI) s_acc(ij+1)=s_acc(ij+1)+
+     &    D1(VF_SFLUX+ij_st)*1e-9
+
+      if (D1(joc_salinc+ij).ne.RMDI) s_acc(ij+1)=s_acc(ij+1)-
+     &    D1(joc_salinc+ij)*0.01*DZ(1)
+
+c biogeo fluxes 
+       IF (L_OCARBON) THEN
+         if (D1(VF_AFLUX+ij_st).ne.RMDI) a_acc(ij+1)=a_acc(ij+1)-
+     &     D1(VF_AFLUX+ij_st)*0.01*DZ(1)
+
+         if (D1(VF_CFLUX+ij_st).ne.RMDI) c_acc(ij+1)=c_acc(ij+1)-
+     &     D1(VF_CFLUX+ij_st)*0.01*DZ(1)
+       END IF
+
+      END DO
+      END DO
+
+      DO i=imt,imt*(jmt-1),imt
+        d1(joc_vflux_corr+i+NT+1)=d1(joc_vflux_corr+i+NT+1)+c2dtts
+      END DO
+
+      DO J=1,jmt
+      DO I=1,IMT
+        ij=I+(J-1)*IMT - 1
+        D1(joc_vflux_Sacc+ij)=D1(joc_vflux_Sacc+ij) +
+     &                      (s_acc(ij+1)-(water(ij+1)*REF_SAL) )*c2dtts
+       IF (L_OCARBON) THEN
+        D1(joc_vflux_Aacc+ij)=D1(joc_vflux_Aacc+ij) +
+     &                      (a_acc(ij+1)-(water(ij+1)*REF_ALK) )*c2dtts
+
+        D1(joc_vflux_Cacc+ij)=D1(joc_vflux_Cacc+ij) +
+     &                      (c_acc(ij+1)-(water(ij+1)*REF_TCO2) )*c2dtts
+       END IF
+      END DO
+      END DO
+
+      END IF
+
+c ***ONCE A YEAR, WORK OUT NEW RATE ADJUSTMENT
+      IF (PREVIOUS_TIME(1).lt.I_YEAR) THEN
+
+c global gather of *_ACC field, metrics
+      CALL GATHER_FIELD(D1(joc_vflux_Sacc),s_acc_global,
+     &                    imt,jmt,imt,jmt_global,
+     &                    0,gc_all_proc_group,ICODE)
+ 
+      IF (L_OCARBON) THEN
+      CALL GATHER_FIELD(D1(joc_vflux_Aacc),a_acc_global,
+     &                    imt,jmt,imt,jmt_global,
+     &                    0,gc_all_proc_group,ICODE)
+
+      CALL GATHER_FIELD(D1(joc_vflux_Cacc),c_acc_global,
+     &                    imt,jmt,imt,jmt_global,
+     &                    0,gc_all_proc_group,ICODE)
+      END IF
+
+      CALL GATHER_FIELD(D1(joc_vflux_mask),vf_mask,
+     &                    imt,jmt,imt,jmt_global,
+     &                    0,gc_all_proc_group,ICODE)
+
+      CALL O_SMARTPASS(1,1,DYT(J_1),DYT_G
+     &                ,jfin-jst+1,jmt_global,jst,2)
+
+      CALL O_SMARTPASS(1,1,CST(J_1),CST_G
+     &                ,jfin-jst+1,jmt_global,jst,2)
+
+c work out correction on PE 0
+      IF (MYPE.eq.0) THEN
+        s_corr=0.
+        a_corr=0.
+        c_corr=0.
+        area_g=0.
+        vol_g=0.
+        do j=1,jmt_global
+        do i=1,imt_st
+          i_g=i+(j-1)*imt
+          if (vf_mask(i_g).gt.0) then
+             s_corr=s_corr+s_acc_global(i_g)*
+     &                CST_G(j)*DYT_G(j)*DXT(i)
+
+      IF (L_OCARBON) THEN
+             a_corr=a_corr+a_acc_global(i_g)*
+     &                CST_G(j)*DYT_G(j)*DXT(i)
+
+             c_corr=c_corr+c_acc_global(i_g)*
+     &                CST_G(j)*DYT_G(j)*DXT(i)
+      END IF
+
+             area_g=area_g+CST_G(j)*DYT_G(j)*DXT(i)
+
+            IF (FKMP_G(I,J).GT.0) THEN
+                vol_g=vol_g+CST_G(j)*DYT_G(j)*DXT(i)*
+     &                ZDZ(INT(FKMP_G(I,J)))*0.01
+            END IF
+          end if
+        end do
+        end do
+
+c surface
+c        s_corr=s_corr/area_g/(DZ(1)*0.01)/d1(joc_vflux_corr+imt+NT+1)
+c        IF (L_OCARBON) THEN
+c          a_corr=a_corr/area_g/(DZ(1)*0.01)/d1(joc_vflux_corr+imt+NT+1)
+c          c_corr=c_corr/area_g/(DZ(1)*0.01)/d1(joc_vflux_corr+imt+NT+1)
+c        END IF
+c whole depth
+         s_corr=s_corr/vol_g/d1(joc_vflux_corr+imt+NT+1)
+         IF (L_OCARBON) THEN
+           a_corr=a_corr/vol_g/d1(joc_vflux_corr+imt+NT+1)
+           c_corr=c_corr/vol_g/d1(joc_vflux_corr+imt+NT+1)
+         END IF
+
+      END IF !MYPE
+
+c broadcast correction to other PEs, store it and 0 the accumulation field
+      call gc_rbcast(1,1,0,nproc,info,s_corr)
+      call gc_rbcast(1,1,0,nproc,info,a_corr)
+      call gc_rbcast(1,1,0,nproc,info,c_corr)
+
+      do i=imt,imt*(jmt-1),imt
+        d1(joc_vflux_corr+i+NT+1)=0.
+        d1(joc_vflux_corr+i+S_TRACER-1)=s_corr
+        IF (L_OCARBON) THEN
+          d1(joc_vflux_corr+i+ALK_TRACER-1)=a_corr
+          d1(joc_vflux_corr+i+TCO2_TRACER-1)=c_corr
+        END IF
+      end do
+
+      do i=1,imt*jmt
+        d1(joc_vflux_Sacc+I-1)=0.
+        IF (L_OCARBON) THEN
+          d1(joc_vflux_Aacc+I-1)=0.
+          d1(joc_vflux_Cacc+I-1)=0.
+        END IF
+      end do
+
+      write(6,'(a)')"****************** VFLUX ****************"
+      write(6,'(a)')"Doing vflux correction"
+      write(6,'(a,e12.5)')"Salinity correction   ",s_corr
+       IF (L_OCARBON) THEN
+      write(6,'(a,e12.5)')"Alkalinity correction ",a_corr
+      write(6,'(a,e12.5)')"TCO2 correction       ",c_corr
+       END IF
+      write(6,'(a)')"*****************************************"
+
+      END IF !LAST_TIMESTEP_OF_YEAR
+
+      RETURN
+
+      END SUBROUTINE VFLUX_CORR
+
+      SUBROUTINE FIND_PTR_ADD (STASHCODE,STASHMACRO_TAG,ADDRESS,
+C  
+C from ~jeff/um/hurrikan/mods/oasis3.0_um4.5_v1.mod
+C
+*CALL ARGSIZE
+*CALL ARGSTS
+     &  INTERNAL_MODEL,ICODE,CMESSAGE)
+C
+      IMPLICIT NONE
+C
+*CALL CSUBMODL
+*CALL TYPSIZE
+*CALL TYPSTS
+C
+      INTEGER STASHCODE         ! IN  - STASH code
+      INTEGER STASHMACRO_TAG    ! IN  - STASHmacro tag number
+      INTEGER ADDRESS           ! OUT - Address in D1
+      INTEGER INTERNAL_MODEL    ! IN  - internal_model id.
+      INTEGER ICODE             ! OUT - Error return code
+      CHARACTER*(*) CMESSAGE    ! OUT - Error return message
+C
+*CALL C_MDI
+C
+C  Subroutines called
+C
+      EXTERNAL FINDPTR
+C
+C     Local variables
+C
+      INTEGER
+     &  SECTION,                ! STASH section number
+     &  ITEM,                   ! STASH item number
+     &  PROCESS_CODE,           ! processing code
+     &  FREQ_CODE,              ! frequency code
+     &  START,END,PERIOD,       ! start, end and period step
+     &  GRIDPT_CODE,WEIGHT_CODE,! gridpt and weighting codes
+     &  BOTTOM_LEVEL,TOP_LEVEL, ! bottom and top input level
+     &  GRID_N,GRID_S,GRID_W,GRID_E  ! grid corner definitions
+C
+      PROCESS_CODE=IMDI
+      FREQ_CODE=IMDI
+      START=IMDI
+      END=IMDI
+      PERIOD=IMDI
+      GRIDPT_CODE=IMDI
+      WEIGHT_CODE=IMDI
+      BOTTOM_LEVEL=IMDI
+      TOP_LEVEL=IMDI
+      GRID_N=IMDI
+      GRID_S=IMDI
+      GRID_E=IMDI
+      GRID_W=IMDI
+      SECTION = STASHCODE / 1000
+      ITEM = STASHCODE - SECTION * 1000
+C
+      CALL FINDPTR(INTERNAL_MODEL,SECTION,ITEM,
+     &             PROCESS_CODE,FREQ_CODE,START,END,PERIOD,
+     &             GRIDPT_CODE,WEIGHT_CODE,
+     &             BOTTOM_LEVEL,TOP_LEVEL,GRID_N,GRID_S,GRID_W,GRID_E,
+     &             STASHMACRO_TAG,IMDI,ADDRESS,
+*CALL ARGSIZE
+*CALL ARGSTS
+     &    ICODE,CMESSAGE)
+C
+      RETURN
+      END
+
+    

@@ -1,0 +1,301 @@
+*IF DEF,C96_1A,OR,DEF,C96_1B                                               GPB3F403.257   
+*IF DEF,MPP                                                                GPB3F403.258   
+C ******************************COPYRIGHT******************************    GTS2F400.12752 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.12753 
+C                                                                          GTS2F400.12754 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.12755 
+C restrictions as set forth in the contract.                               GTS2F400.12756 
+C                                                                          GTS2F400.12757 
+C                Meteorological Office                                     GTS2F400.12758 
+C                London Road                                               GTS2F400.12759 
+C                BRACKNELL                                                 GTS2F400.12760 
+C                Berkshire UK                                              GTS2F400.12761 
+C                RG12 2SZ                                                  GTS2F400.12762 
+C                                                                          GTS2F400.12763 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.12764 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.12765 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.12766 
+C Modelling at the above address.                                          GTS2F400.12767 
+C                                                                          GTS2F400.12768 
+!+ Parallel UM interface to BUFFIN                                         RDMULT1A.3     
+!                                                                          RDMULT1A.4     
+! Subroutine Interface:                                                    RDMULT1A.5     
+      SUBROUTINE READ_MULTI(NFT,D1,ISIZE,LEN_IO,LOCAL_LEN,                 RDMULT1A.6     
+     &                      IOSTAT,LOOKUP,FIXHD12,                         GPB4F403.56    
+     &                      ADDR_INFO,CMESSAGE)                            GPB4F403.57    
+      IMPLICIT NONE                                                        RDMULT1A.8     
+!                                                                          RDMULT1A.9     
+! Description:                                                             RDMULT1A.10    
+!  This routine provides an interface to BUFFIN for the parallel           RDMULT1A.11    
+!  Unified Model. It is used where each process must read in a             RDMULT1A.12    
+!  local section of a global field.                                        RDMULT1A.13    
+!                                                                          RDMULT1A.14    
+! Method:                                                                  RDMULT1A.15    
+!  PE 0 reads in the global field, and then distributes the                RDMULT1A.16    
+!  relevant parts of it to each processor.                                 RDMULT1A.17    
+!  Fields compressed to land points are expanded by PE 0, and              RDMULT1A.18    
+!  recompressed after being received by the relevant processor.            RDMULT1A.19    
+!                                                                          RDMULT1A.20    
+! Current Code Owner: Paul Burton                                          RDMULT1A.21    
+!                                                                          RDMULT1A.22    
+! History:                                                                 RDMULT1A.23    
+!  Model    Date     Modification history from model version 3.5           RDMULT1A.24    
+!  version                                                                 RDMULT1A.25    
+!    3.5    5/1/95   New DECK created for the Parallel Unified             RDMULT1A.26    
+!                    Model. P.Burton + D.Salmond                           RDMULT1A.27    
+!    4.1    18/3/96   Simplified communications    P.Burton                GPB0F401.325   
+!    4.2    18/11/96  Added *CALL AMAXSIZE for IOVARS comdeck              GPB3F402.79    
+!                     Added atmos_ prefix to landmask fields P.Burton      GPB3F402.80    
+!    4.2    17/9/96   Modify send/receive maps and change args to          GPB2F402.190   
+!                     alltoall for GCOM/GCG v1.1     P.Burton              GPB2F402.191   
+!    4.2    12/11/96  Detects non-constant PSTAR on pole rows              APB1F402.64    
+!                     P.Burton                                             APB1F402.65    
+!    4.2    18/10/96  New name for group of processors in scatter_field    GPB0F402.211   
+!                     Allowed reading of LBC files                         GPB0F402.212   
+!                     P.Burton                                             GPB0F402.213   
+!    4.3    18/03/97  Added D1_ADDR argument, and rewrote field            GPB4F403.52    
+!                     recognition tests. Now handles diagnostic            GPB4F403.53    
+!                     fields too.                      P.Burton            GPB4F403.54    
+!                     Fix for reading in packed LBCS   R.Barnes            GPB4F403.55    
+!    4.4    13/06/97  Use GENERAL_SCATTER_FIELD for distributing data      GPB0F404.70    
+!                     and change decomposition depending on model          GPB0F404.71    
+!                     type of field being read in            P.Burton      GPB0F404.72    
+!    4.4    25/04/97  Changes to read well-formed records if the           GBC5F404.220   
+!                     input dumpfile is in that format (almost PP file     GBC5F404.221   
+!                     format)                                              GBC5F404.222   
+!                       Author: Bob Carruthers, Cray Research              GBC5F404.223   
+!    4.5    13/01/98  Replace SHMEM COMMON block with dynamic array        GPB2F405.155   
+!                                                          P.Burton        GPB2F405.156   
+!    4.5    14/05/98  Corrected error messages to say READ_MULTI           GPB0F405.106   
+!                                                       P.Burton           GPB0F405.107   
+!                                                                          RDMULT1A.28    
+! Subroutine Arguments:                                                    RDMULT1A.29    
+                                                                           RDMULT1A.30    
+      INTEGER                                                              RDMULT1A.31    
+     &  NFT          !   IN : FORTRAN unit number                          RDMULT1A.32    
+     & ,ISIZE        !   IN : no. of words to be read in (global field)    RDMULT1A.33    
+     & ,LEN_IO       !  OUT : no. of words read in (global field)          RDMULT1A.34    
+     & ,LOCAL_LEN    !  OUT : no. of words in local field                  RDMULT1A.35    
+     & ,LOOKUP(64)   !   IN : LOOKUP header from dump                      RDMULT1A.36    
+     & ,FIXHD12      !   IN : 12th element of fixed length header          RDMULT1A.37    
+! Required for dimensioning ADDR_INFO                                      GPB4F403.58    
+*CALL D1_ADDR                                                              GPB4F403.59    
+                                                                           GPB4F403.60    
+      INTEGER                                                              GPB4F403.61    
+     &  ADDR_INFO(D1_LIST_LEN)   ! IN addressing info about field          GPB4F403.62    
+                                                                           GPB0F401.326   
+      CHARACTER*(80)                                                       GPB0F401.327   
+     &  CMESSAGE     !  OUT : Error message                                GPB0F401.328   
+                                                                           RDMULT1A.38    
+      REAL                                                                 RDMULT1A.39    
+     &  IOSTAT       !  OUT : Return code                                  RDMULT1A.40    
+     & ,D1(*)        !  OUT : Array to read data in to                     RDMULT1A.41    
+                                                                           RDMULT1A.42    
+! Parameters and Common blocks                                             RDMULT1A.43    
+                                                                           RDMULT1A.44    
+*CALL CLOOKADD                                                             RDMULT1A.45    
+*CALL PARVARS                                                              RDMULT1A.46    
+                                                                           RDMULT1A.48    
+                                                                           GPB0F401.333   
+! Local variables                                                          RDMULT1A.49    
+                                                                           RDMULT1A.50    
+*CALL CPPXREF                                                              GPB4F403.63    
+*CALL DECOMPTP                                                             GPB0F404.73    
+*CALL CSMID                                                                GPB4F403.65    
+      INTEGER                                                              GPB0F404.74    
+     &  ICODE  ! return code from GENERAL_SCATTER_FIELD                    GPB0F404.75    
+     &, info   ! GCOM return code                                          GPB0F404.76    
+     &, I      ! loop counter                                              GPB0F404.77    
+                                                                           GPB0F404.78    
+      INTEGER                                                              GPB0F404.79    
+     &  orig_decomp  ! decomposition on entry                              GPB0F404.80    
+     &, new_decomp   ! decomposition to change to                          GPB0F404.81    
+     &, io_ret_codes(2) ! return code from I/O                             GPB0F404.82    
+*IF DEF,GLOBAL,AND,-DEF,RECON                                              APB1F402.66    
+      REAL pstar_pole_val                                                  GPB0F404.83    
+                                                                           APB1F402.68    
+      INTEGER pstar_const                                                  APB1F402.69    
+      COMMON /RDMULT_SHMEM_COM/ pstar_const                                APB1F402.70    
+*ENDIF                                                                     APB1F402.71    
+                                                                           GPB2F405.157   
+      REAL buf(ISIZE*2)  ! buffer for reading the field into               GPB2F405.158   
+CDIR$ CACHE_ALIGN buf                                                      GPB2F405.159   
+                                                                           RDMULT1A.53    
+! ------------------------------------------------------------------       RDMULT1A.54    
+                                                                           RDMULT1A.55    
+      IOSTAT=-1.0                                                          GPB0F401.343   
+      ICODE=-1                                                             GPB0F401.344   
+      LEN_IO=ISIZE                                                         GPB0F401.345   
+      LOCAL_LEN=0                                                          GPB0F401.346   
+                                                                           GPB0F404.84    
+      orig_decomp=current_decomp_type                                      GPB0F404.85    
+      new_decomp=orig_decomp                                               GPB0F404.86    
+                                                                           GPB0F404.87    
+      IF ((ADDR_INFO(d1_imodl) .EQ. ATMOS_IM) .AND.                        GPB0F404.88    
+     &    (orig_decomp .NE. decomp_standard_atmos)) THEN                   GPB0F404.89    
+                                                                           GPB0F404.90    
+        new_decomp=decomp_standard_atmos                                   GPB0F404.91    
+                                                                           GPB0F404.92    
+      ELSEIF ((ADDR_INFO(d1_imodl) .EQ. OCEAN_IM) .AND.                    GPB0F404.93    
+     &        (ADDR_INFO(d1_object_type) .EQ. prognostic) .AND.            GPB0F404.94    
+     &        (orig_decomp .NE. decomp_standard_ocean)) THEN               GPB0F404.95    
+                                                                           GPB0F404.96    
+        new_decomp=decomp_standard_ocean                                   GPB0F404.97    
+                                                                           GPB0F404.98    
+      ELSEIF ((ADDR_INFO(d1_imodl) .EQ. OCEAN_IM) .AND.                    GPB0F404.99    
+     &        (ADDR_INFO(d1_object_type) .NE. prognostic) .AND.            GPB0F404.100   
+     &        (orig_decomp .NE. decomp_nowrap_ocean)) THEN                 GPB0F404.101   
+                                                                           GPB0F404.102   
+        new_decomp=decomp_nowrap_ocean                                     GPB0F404.103   
+                                                                           GPB0F404.104   
+      ENDIF                                                                GPB0F404.105   
+                                                                           GPB0F404.106   
+      IF (new_decomp .NE. orig_decomp) THEN                                GPB0F404.107   
+                                                                           GPB0F404.108   
+        icode=0                                                            GPB0F404.109   
+        CALL CHANGE_DECOMPOSITION(new_decomp,icode)                        GPB0F404.110   
+                                                                           GPB0F404.111   
+        IF (icode .NE. 0) THEN                                             GPB0F404.112   
+          IF (mype .EQ. 0) THEN                                            GPB0F404.113   
+            WRITE(6,*) 'ERROR : READ_MULTI'                                GPB0F405.108   
+            WRITE(6,*) 'Failed to change decomposition to ',new_decomp     GPB0F404.115   
+            WRITE(6,*) 'Field M,S,I ',                                     GPB0F404.116   
+     &                  ADDR_INFO(d1_imodl),                               GPB0F404.117   
+     &                  ADDR_INFO(d1_section),                             GPB0F404.118   
+     &                  ADDR_INFO(d1_item)                                 GPB0F404.119   
+          ENDIF                                                            GPB0F404.120   
+          IOSTAT=-100                                                      GPB0F404.121   
+          CMESSAGE='READ_MULTI : Failed to change decomposition'           GPB0F405.109   
+          GOTO 9999                                                        GPB0F404.123   
+        ENDIF                                                              GPB0F404.124   
+                                                                           GPB0F404.125   
+      ENDIF                                                                GPB0F404.126   
+                                                                           GPB0F401.347   
+! First thing to do is to read the field in to PE 0                        GPB0F401.348   
+                                                                           GPB0F401.349   
+      IF (mype .EQ. 0) THEN                                                GPB0F401.350   
+                                                                           GPB0F401.351   
+! If lateral boundary data are 32-bit packed,                              GPB4F403.70    
+!  need to halve buffin length,                                            GPB4F403.71    
+        IF (LOOKUP(LBHEM) .EQ. 99 .AND.                                    GPB4F403.72    
+     &      MOD((LOOKUP(LBPACK)),10) .EQ. 2) THEN                          GPB4F403.73    
+          len_io=(isize+1)/2                                               GBC5F404.225   
+          CALL BUFFIN_SINGLE(NFT,buf,(ISIZE+1)/2,LEN_IO,IOSTAT)            GPB4F403.74    
+!   and double LEN_IO to satisfy tests against ISIZE.                      GPB4F403.75    
+          LEN_IO = 2*LEN_IO                                                GPB4F403.76    
+        ELSE                                                               GPB4F403.77    
+          CALL BUFFIN_SINGLE(NFT,buf,ISIZE,LEN_IO,IOSTAT)                  GPB4F403.78    
+        END IF                                                             GPB4F403.79    
+                                                                           GPB0F401.353   
+!       Has the data been read in OK?                                      GPB0F401.354   
+        IF (.NOT.((IOSTAT .NE. -1.0) .OR. (LEN_IO .NE. ISIZE))) THEN       GPB0F401.355   
+                                                                           GPB0F401.356   
+! We must check to see if it is a 32 bit field on disk, and if             GPB0F401.357   
+! so, expand it before doing anything with it.                             GPB0F401.358   
+          IF (MOD((LOOKUP(LBPACK)),10) .EQ. 2) THEN                        GPB0F401.359   
+            IF (LOOKUP(DATA_TYPE) .EQ. 1) THEN                             GPB0F401.360   
+! For special case of lateral boundary data, the length                    GPB4F403.80    
+! is given by ISIZE.                                                       GPB4F403.81    
+              IF (LOOKUP(LBHEM) .EQ. 99) THEN                              GPB4F403.82    
+                CALL EXPAND32B( ISIZE , buf, FIXHD12 )                     GPB4F403.83    
+              ELSE                                                         GPB4F403.84    
+              CALL EXPAND32B( LOOKUP(LBLREC) , buf, FIXHD12 )              GPB0F401.361   
+              ENDIF                                                        GPB4F403.85    
+            ELSE                                                           GPB0F401.362   
+              IOSTAT=100                                                   GPB0F401.363   
+            ENDIF                                                          GPB0F401.364   
+          ENDIF                                                            GPB0F401.365   
+        ENDIF                                                              GPB0F401.366   
+                                                                           GPB0F401.367   
+        io_ret_codes(1)=LEN_IO                                             GPB0F401.368   
+        io_ret_codes(2)=IOSTAT                                             GPB0F401.369   
+      ENDIF  ! IF (mype .EQ. 0)                                            GPB0F401.370   
+                                                                           GPB0F401.371   
+! Broadcast the error codes, so we can check if anything's wrong           GPB0F401.372   
+      CALL GC_IBCAST(333,2,0,nproc,info,io_ret_codes)                      GPB0F401.373   
+      LEN_IO=io_ret_codes(1)                                               GPB0F401.374   
+      IOSTAT=io_ret_codes(2)                                               GPB0F401.375   
+                                                                           GPB0F401.376   
+      IF ((IOSTAT .NE. -1.0) .OR. (LEN_IO .NE. ISIZE)) GOTO 9999           GPB0F401.377   
+                                                                           GPB0F401.378   
+*IF DEF,GLOBAL,AND,-DEF,RECON                                              GPB4F403.86    
+! Check the field for non-constant PSTAR at poles                          GPB4F403.87    
+      IF ((ADDR_INFO(d1_imodl) .EQ. ATMOS_IM) .AND.                        GPB4F403.88    
+     &    (ADDR_INFO(d1_object_type) .EQ. prognostic) .AND.                GPB4F403.89    
+     &    (ADDR_INFO(d1_section) .EQ. 0) .AND.                             GPB4F403.90    
+     &    (ADDR_INFO(d1_item) .EQ. 1)) THEN  ! this is PSTAR               GPB4F403.91    
+                                                                           GPB4F403.92    
+        pstar_const=0                                                      GPB4F403.93    
+        IF (mype .EQ. 0) THEN                                              GPB4F403.94    
+                                                                           GPB4F403.95    
+          pstar_pole_val=buf(1)                                            GPB4F403.96    
+          DO I=2,glsize(1)  ! NP row                                       GPB4F403.97    
+            IF ( buf(I) .NE. pstar_pole_val ) pstar_const=1                GPB4F403.98    
+          ENDDO                                                            GPB4F403.99    
+                                                                           GPB4F403.100   
+          pstar_pole_val=buf((glsize(2)-1)*glsize(1) + 1)                  GPB4F403.101   
+          DO I=2,glsize(1)  ! SP row                                       GPB4F403.102   
+            IF ( buf(I+ (glsize(2)-1)*glsize(1)) .NE. pstar_pole_val )     GPB4F403.103   
+     &        pstar_const=1                                                GPB4F403.104   
+          ENDDO                                                            GPB4F403.105   
+                                                                           GPB4F403.106   
+        ENDIF ! if mype .eq. 0                                             GPB4F403.107   
+                                                                           GPB4F403.108   
+        CALL GC_IMAX(1,nproc,info,pstar_const)                             GPB4F403.109   
+                                                                           GPB4F403.110   
+        IF (pstar_const .EQ. 1) THEN                                       GPB4F403.111   
+          WRITE(6,*) 'Non constant polar PSTAR found in dump'              GPB4F403.112   
+          WRITE(6,*) 'Model run aborted'                                   GPB4F403.113   
+          IOSTAT=1.0                                                       GPB4F403.114   
+          CMESSAGE='Non constant polar PSTAR found in dump'                GPB4F403.115   
+          GOTO 9999                                                        GPB4F403.116   
+        ENDIF                                                              GPB4F403.117   
+                                                                           GPB4F403.118   
+      ENDIF  ! is this a pstar field                                       GPB4F403.119   
+*ENDIF                                                                     GPB4F403.120   
+                                                                           GPB4F403.121   
+! Now we can distribute it out to the other processes                      GPB0F401.379   
+                                                                           GPB0F401.380   
+! For atmosphere zonal ozone fields - set to zonal grid type               GPB0F404.127   
+                                                                           GPB0F404.128   
+      IF (( ADDR_INFO(d1_grid_type) .EQ. ppx_atm_ozone) .AND.              GPB0F404.129   
+     &    ( LOOKUP(LBNPT) .EQ. 1)) THEN                                    GPB0F404.130   
+                                                                           GPB0F404.131   
+        ADDR_INFO(d1_grid_type)=ppx_atm_tzonal                             GPB0F404.132   
+                                                                           GPB0F404.133   
+      ENDIF                                                                GPB0F404.134   
+                                                                           GPB0F404.135   
+! Now decompose the field in buf to the local D1 arrays                    GPB0F404.136   
+                                                                           GPB0F404.137   
+      ICODE=0                                                              GPB0F404.138   
+                                                                           GPB0F404.139   
+      CALL GENERAL_SCATTER_FIELD(                                          GPB0F404.140   
+     &  D1,buf,LOCAL_LEN,LOOKUP(LBLREC),                                   GPB0F404.141   
+     &  ADDR_INFO,0,                                                       GPB0F404.142   
+     &  ICODE,CMESSAGE)                                                    GPB0F404.143   
+                                                                           GPB0F404.144   
+      IF (ICODE .EQ. 1) THEN                                               GPB0F404.145   
+        WRITE(6,*) 'READ_MULTI: Field number ',LOOKUP(ITEM_CODE),          GPB0F404.146   
+     &             'with dimensions ', LOOKUP(LBNPT),' x ',                GPB0F404.147   
+     &             LOOKUP(LBROW),' and gridtype ',                         GPB0F404.148   
+     &             ADDR_INFO(d1_grid_type),                                GPB0F404.149   
+     &             'was unrecognized and not read in.'                     GPB0F404.150   
+        IOSTAT=1.0                                                         GPB0F404.151   
+        CMESSAGE='Unrecognized field on read'                              GPB0F404.152   
+      ELSEIF (ICODE .NE. 0) THEN                                           GPB0F404.153   
+        IOSTAT=2.0                                                         GPB0F404.154   
+      ENDIF                                                                GPB0F404.155   
+                                                                           GPB0F404.156   
+      IF (new_decomp .NE. orig_decomp) THEN  ! change back                 GPB0F404.157   
+                                                                           GPB0F404.158   
+        icode=0                                                            GPB0F404.159   
+        CALL CHANGE_DECOMPOSITION(orig_decomp,icode)                       GPB0F404.160   
+                                                                           GPB0F404.161   
+      ENDIF                                                                GPB0F404.162   
+                                                                           GPB0F401.538   
+9999  CONTINUE                                                             GPB0F401.539   
+                                                                           GPB0F401.540   
+      RETURN                                                               GPB0F401.541   
+      END                                                                  GPB0F401.542   
+*ENDIF                                                                     RDMULT1A.294   
+*ENDIF                                                                     GPB3F403.259   

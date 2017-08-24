@@ -1,0 +1,364 @@
+*IF DEF,A70_1A,OR,DEF,A70_1B                                               APB4F405.123   
+*IF DEF,A01_3A,OR,DEF,A02_3A                                               TROPIN1A.3     
+C *****************************COPYRIGHT******************************     TROPIN1A.4     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    TROPIN1A.5     
+C                                                                          TROPIN1A.6     
+C Use, duplication or disclosure of this code is subject to the            TROPIN1A.7     
+C restrictions as set forth in the contract.                               TROPIN1A.8     
+C                                                                          TROPIN1A.9     
+C                Meteorological Office                                     TROPIN1A.10    
+C                London Road                                               TROPIN1A.11    
+C                BRACKNELL                                                 TROPIN1A.12    
+C                Berkshire UK                                              TROPIN1A.13    
+C                RG12 2SZ                                                  TROPIN1A.14    
+C                                                                          TROPIN1A.15    
+C If no contract has been raised with this copy of the code, the use,      TROPIN1A.16    
+C duplication or disclosure of it is strictly prohibited.  Permission      TROPIN1A.17    
+C to do so must first be obtained in writing from the Head of Numerical    TROPIN1A.18    
+C Modelling at the above address.                                          TROPIN1A.19    
+C ******************************COPYRIGHT******************************    TROPIN1A.20    
+CLL  SUBROUTINE TROPIN------------------------------------------------     TROPIN1A.21    
+CLL                                                                        TROPIN1A.22    
+CLL  Purpose:  Finds the tropopause & returns index of where it is.        TROPIN1A.23    
+CLL      Not suitable for single-column model use, as it does              TROPIN1A.24    
+CLL             horizontal filling-in, & includes dynamical allocation.    TROPIN1A.25    
+CLL                                                                        TROPIN1A.26    
+CLL    Based on routine TROP, but                                          TROPIN1A.27    
+CLL      1) taking temperature rather than theta as input                  TROPIN1A.28    
+CLL      2) rather than returning the temperature, pressure and height     TROPIN1A.29    
+CLL      of a continuously-varying tropopause found by extrapolating       TROPIN1A.30    
+CLL      lapse rates, it returns the index of the adjacent layer           TROPIN1A.31    
+CLL      boundary (N meaning the bottom of the Nth model layer)            TROPIN1A.32    
+CLL      3) "filling in" where no tropopause is found.                     TROPIN1A.33    
+CLL                                                                        TROPIN1A.34    
+CLL        Author:  William Ingram                                         TROPIN1A.35    
+CLL                                                                        TROPIN1A.36    
+CLL  Model                Modification history:                            TROPIN1A.37    
+CLL version  Date                                                          TROPIN1A.38    
+CLL   4.2   23/9/96       New code, based on TROP                          TROPIN1A.39    
+CLL                                                                        TROPIN1A.40    
+CLL    Note that the definition of "tropopause" matches TROP, which        TROPIN1A.41    
+CLL      is not quite the WMO definition, though the same critical         TROPIN1A.42    
+CLL      lapse rate is used (unless comdeck C_LAPSE is altered).           TROPIN1A.43    
+CLL      For details of the interpolation assumptions, see UMDP S1         TROPIN1A.44    
+CLL      section 3.2.2 or Swinbank & Wilson (1990: SRFRTN 48).             TROPIN1A.45    
+CLL      Any physical changes to one routine should be considered for      TROPIN1A.46    
+CLL                                         mirroring in the other.        TROPIN1A.47    
+CLLEND----------------------------------------------------------------     TROPIN1A.48    
+C                                                                          TROPIN1A.49    
+C*L  Arguments:-------------------------------------------------------     TROPIN1A.50    
+      SUBROUTINE TROPIN(PSTAR, T, P_EXNER_HALF, IT, L1, L2, ROW_LENGTH,    TROPIN1A.51    
+     &     P_LEVELS, MIN_TROP_LEVEL, MAX_TROP_LEVEL, AKH, BKH, WRAP)       TROPIN1A.52    
+                                                                           TROPIN1A.53    
+      IMPLICIT NONE                                                        TROPIN1A.54    
+                                                                           TROPIN1A.55    
+      INTEGER!, INTENT (IN)                                                TROPIN1A.56    
+     &     L1,                          !   Number of points in arrays     TROPIN1A.57    
+     &     L2,                          !   Number of points to process    TROPIN1A.58    
+     &     ROW_LENGTH,                  !   Number of points per row       TROPIN1A.59    
+     &     P_LEVELS,                    !   Number of model levels         TROPIN1A.60    
+     &     MIN_TROP_LEVEL,                                                 TROPIN1A.61    
+     &     MAX_TROP_LEVEL                                                  TROPIN1A.62    
+C     ! Limits on where the tropopause may be deemed to be - between       TROPIN1A.63    
+C     !  the MIN_TROP_LEVELth and MAX_TROP_LEVELth layers (with the        TROPIN1A.64    
+C     !  convention used here for layer boundaries, the actual index       TROPIN1A.65    
+C     !  IT returned has MIN_TROP_LEVEL < IT =< MAX_TROP_LEVEL.)           TROPIN1A.66    
+                                                                           TROPIN1A.67    
+      REAL!, INTENT(IN)                                                    TROPIN1A.68    
+     &     PSTAR(L1),                   !  Surface pressure                TROPIN1A.69    
+     &     T(L1,P_LEVELS),              !  Temperature at layer centres    TROPIN1A.70    
+     &     P_EXNER_HALF(L1,P_LEVELS+1), !  Pexner at layer boundaries      TROPIN1A.71    
+     &     AKH(P_LEVELS+1),             !  Hybrid coordinate A & B         TROPIN1A.72    
+     &     BKH(P_LEVELS+1)              !   values for layer boundaries    TROPIN1A.73    
+                                                                           TROPIN1A.74    
+      LOGICAL!, INTENT (IN)                                                TROPIN1A.75    
+     &     WRAP                                                            TROPIN1A.76    
+C     ! Do the rows wrap round (so that the last point of a row is         TROPIN1A.77    
+C     !  geographically beside the first point of the same row) ?          TROPIN1A.78    
+                                                                           TROPIN1A.79    
+      INTEGER!, INTENT (OUT)                                               TROPIN1A.80    
+     &     IT(L1)                                                          TROPIN1A.81    
+C     ! Integer indexing the tropopause, taken to be @ a layer boundary    TROPIN1A.82    
+C     !   with the convention that N means the bottom of layer N.          TROPIN1A.83    
+                                                                           TROPIN1A.84    
+C Workspace usage:-----------------------------------------------------    TROPIN1A.85    
+                                                                           TROPIN1A.86    
+      REAL LAPSE_RATE(L2,                                                  TROPIN1A.87    
+     & MIN_TROP_LEVEL+1:MAX_TROP_LEVEL+1-1/(1+P_LEVELS-MAX_TROP_LEVEL))    TROPIN1A.88    
+C     ! Lapse rate between layer centres (with top level MAX_TROP_LEVEL    TROPIN1A.89    
+C     !    if MAX_TROP_LEVEL = P_LEVELS, MAX_TROP_LEVEL+1 otherwise,       TROPIN1A.90    
+C     !    assuming MAX_TROP_LEVEL =< P_LEVELS as it should be).           TROPIN1A.91    
+                                                                           TROPIN1A.92    
+      LOGICAL LTROP(L2)                                                    TROPIN1A.93    
+C     !  Logical array which indicates whether we are still seeking a      TROPIN1A.94    
+C     !    tropopause (if not, it has already been found lower down)       TROPIN1A.95    
+                                                                           TROPIN1A.96    
+C*---------------------------------------------------------------------    TROPIN1A.97    
+C Define local variables:----------------------------------------------    TROPIN1A.98    
+                                                                           TROPIN1A.99    
+      INTEGER I, J,         ! Loopers over level & point                   TROPIN1A.100   
+     &     POINT,           ! Point counter at ends of rows                TROPIN1A.101   
+     &     JP1,                                                            TROPIN1A.102   
+C     !  J+1, except where this would cause out-of-bounds reference        TROPIN1A.103   
+     &     NNEIGH,          ! Number of well-defined tropopauses among     TROPIN1A.104   
+C     ! the 8 nearest neighbours of a point without one of its own         TROPIN1A.105   
+     &     FILLIN,                                                         TROPIN1A.106   
+C     !  Used to fill in points without a clearly-defined tropopause       TROPIN1A.107   
+     &     DTI              ! Default tropopause index for points where    TROPIN1A.108   
+C     ! not even one nearest neighbour has a well-defined tropopause       TROPIN1A.109   
+                                                                           TROPIN1A.110   
+      REAL PJP1, PJ, PJM1,  ! Pressures at half levels J+1/J/J-1           TROPIN1A.111   
+     &     P_EXNER_FULL_J,  ! Exner pressures at centres of current        TROPIN1A.112   
+     &     P_EXNER_FULL_JM1,!                      layer & one below       TROPIN1A.113   
+     &     DEL_EXNER_J,     ! Differences of Exner pressure across         TROPIN1A.114   
+     &     DEL_EXNER_JM1,   !                           half layers        TROPIN1A.115   
+     &     DENOM            ! Denominator in lapse rate expression         TROPIN1A.116   
+*CALL C_G                                                                  TROPIN1A.117   
+*CALL C_R_CP                                                               TROPIN1A.118   
+*CALL C_LAPSE                                                              TROPIN1A.119   
+                                                                           TROPIN1A.120   
+      REAL CP_OVER_G, P_EXNER_500, P_EXNER_50                              TROPIN1A.121   
+      PARAMETER ( CP_OVER_G = CP / G )                                     TROPIN1A.122   
+                                                                           TROPIN1A.123   
+C----------------------------------------------------------------------    TROPIN1A.124   
+*CALL P_EXNERC                                                             TROPIN1A.125   
+                                                                           TROPIN1A.126   
+C     ! 1.  Set up local constants and initialise arrays                   TROPIN1A.127   
+                                                                           TROPIN1A.128   
+      P_EXNER_500 = (500./1000.)**KAPPA                                    TROPIN1A.129   
+      P_EXNER_50  =  (50./1000.)**KAPPA                                    TROPIN1A.130   
+                                                                           TROPIN1A.131   
+      DTI = ( MIN_TROP_LEVEL + MAX_TROP_LEVEL ) / 2                        TROPIN1A.132   
+                                                                           TROPIN1A.133   
+      DO I=1, L2                                                           TROPIN1A.134   
+        LTROP(I) = .TRUE.                                                  TROPIN1A.135   
+      ENDDO                                                                TROPIN1A.136   
+                                                                           TROPIN1A.137   
+CL    ! Compute lapse rate between full levels: equation 3.16, UMDP S1     TROPIN1A.138   
+                                                                           TROPIN1A.139   
+      DO J=MIN_TROP_LEVEL+1, MIN(MAX_TROP_LEVEL+1,P_LEVELS)                TROPIN1A.140   
+        DO I=1, L2                                                         TROPIN1A.141   
+C         ! Exner pressure at full levels                                  TROPIN1A.142   
+          PJP1 = AKH(J+1) + BKH(J+1) * PSTAR(I)                            TROPIN1A.143   
+          PJ   = AKH(J)   + BKH(J)   * PSTAR(I)                            TROPIN1A.144   
+          PJM1 = AKH(J-1) + BKH(J-1) * PSTAR(I)                            TROPIN1A.145   
+          P_EXNER_FULL_J   = P_EXNER_C                                     TROPIN1A.146   
+     &      (P_EXNER_HALF(I,J+1), P_EXNER_HALF(I,J),  PJP1, PJ, KAPPA)     TROPIN1A.147   
+          P_EXNER_FULL_JM1 = P_EXNER_C                                     TROPIN1A.148   
+     &      (P_EXNER_HALF(I,J),  P_EXNER_HALF(I,J-1), PJ, PJM1, KAPPA)     TROPIN1A.149   
+C         ! Exner pressure difference across half layers                   TROPIN1A.150   
+          DEL_EXNER_J   = P_EXNER_HALF(I,J) - P_EXNER_FULL_J               TROPIN1A.151   
+          DEL_EXNER_JM1 = P_EXNER_FULL_JM1  - P_EXNER_HALF(I,J)            TROPIN1A.152   
+C         ! Denominator                                                    TROPIN1A.153   
+          DENOM = ( T(I,J-1) * DEL_EXNER_JM1 / P_EXNER_FULL_JM1            TROPIN1A.154   
+     &                + T(I,J) * DEL_EXNER_J / P_EXNER_FULL_J )            TROPIN1A.155   
+C         !  Lapse rate between level j-1 and j                            TROPIN1A.156   
+          LAPSE_RATE(I,J) = ( T(I,J-1) - T(I,J) )/( CP_OVER_G * DENOM )    TROPIN1A.157   
+        ENDDO                                                              TROPIN1A.158   
+      ENDDO                                                                TROPIN1A.159   
+                                                                           TROPIN1A.160   
+CL    ! 2.  Find level of tropopause, where it is well defined             TROPIN1A.161   
+                                                                           TROPIN1A.162   
+      DO J=MIN_TROP_LEVEL+1, MAX_TROP_LEVEL                                TROPIN1A.163   
+                                                                           TROPIN1A.164   
+C 'J+1' level for lapse rate test; allows J iteration up to P_LEVELS       TROPIN1A.165   
+        JP1=MIN(J+1,P_LEVELS)                                              TROPIN1A.166   
+                                                                           TROPIN1A.167   
+        DO I=1, L2                                                         TROPIN1A.168   
+C         ! Exner pressure at full levels                                  TROPIN1A.169   
+          PJP1 = AKH(J+1) + BKH(J+1) * PSTAR(I)                            TROPIN1A.170   
+          PJ   = AKH(J)   + BKH(J)   * PSTAR(I)                            TROPIN1A.171   
+          PJM1 = AKH(J-1) + BKH(J-1) * PSTAR(I)                            TROPIN1A.172   
+          P_EXNER_FULL_J = P_EXNER_C                                       TROPIN1A.173   
+     &       (P_EXNER_HALF(I,J+1), P_EXNER_HALF(I,J), PJP1, PJ, KAPPA)     TROPIN1A.174   
+          P_EXNER_FULL_JM1 = P_EXNER_C                                     TROPIN1A.175   
+     &       (P_EXNER_HALF(I,J), P_EXNER_HALF(I,J-1), PJ, PJM1, KAPPA)     TROPIN1A.176   
+                                                                           TROPIN1A.177   
+C         ! Not-quite-WMO criteria for interval containing tropopause      TROPIN1A.178   
+C         ! (where 'interval' stretches between layer centres j and j-1)   TROPIN1A.179   
+                                                                           TROPIN1A.180   
+          IF (  P_EXNER_FULL_JM1 .GT. P_EXNER_50  .AND.                    TROPIN1A.181   
+     &            P_EXNER_FULL_J .LT. P_EXNER_500 .AND.                    TROPIN1A.182   
+     &           LAPSE_RATE(I,J) .LT. LAPSE_TROP  .AND.                    TROPIN1A.183   
+     &         LAPSE_RATE(I,JP1) .LT. LAPSE_TROP  .AND. LTROP(I) )         TROPIN1A.184   
+     &    THEN                                                             TROPIN1A.185   
+            LTROP(I)=.FALSE.                                               TROPIN1A.186   
+            IT(I) = J                                                      TROPIN1A.187   
+          ENDIF                                                            TROPIN1A.188   
+        ENDDO                                                              TROPIN1A.189   
+      ENDDO                                                                TROPIN1A.190   
+                                                                           TROPIN1A.191   
+                                                                           TROPIN1A.192   
+CL    ! 4.  Fill in where the above criteria did not find a tropopause     TROPIN1A.193   
+                                                                           TROPIN1A.194   
+C     !  Run through all internal points and where no tropopause was       TROPIN1A.195   
+C     !   found, set the level to the average of those found at the 8      TROPIN1A.196   
+C     !   surrounding points.  If none of these did find one, then DTI,    TROPIN1A.197   
+C     !   the middle of the permitted range, is set.                       TROPIN1A.198   
+C     !   (Using integers means rounding down - probably the best thing    TROPIN1A.199   
+C     !   overall as the lack of vertical resolution to pick out a         TROPIN1A.200   
+C     !   tropopause precisely is likely to mean they'll be diagnosed      TROPIN1A.201   
+C     !   too high, if anything, at neighbouring points.  Similarly        TROPIN1A.202   
+C     !   it's not worth worrying about level number being non-linear      TROPIN1A.203   
+C     !   in height or pressure at those points where ipso facto the       TROPIN1A.204   
+C     !   result is so arbitrary.)                                         TROPIN1A.205   
+                                                                           TROPIN1A.206   
+      DO J=1, L2/ROW_LENGTH-2                                              TROPIN1A.207   
+        DO I=2, ROW_LENGTH-1                                               TROPIN1A.208   
+          POINT = I+J*ROW_LENGTH                                           TROPIN1A.209   
+          IF ( LTROP(POINT) ) THEN                                         TROPIN1A.210   
+            FILLIN = 0                                                     TROPIN1A.211   
+            NNEIGH = 0                                                     TROPIN1A.212   
+            IF ( .NOT. LTROP(POINT-1-ROW_LENGTH) ) THEN                    TROPIN1A.213   
+              FILLIN = FILLIN + IT(POINT-1-ROW_LENGTH)                     TROPIN1A.214   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.215   
+            ENDIF                                                          TROPIN1A.216   
+            IF ( .NOT. LTROP(POINT+1-ROW_LENGTH) ) THEN                    TROPIN1A.217   
+              FILLIN = FILLIN + IT(POINT+1-ROW_LENGTH)                     TROPIN1A.218   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.219   
+            ENDIF                                                          TROPIN1A.220   
+            IF ( .NOT. LTROP(POINT-1+ROW_LENGTH) ) THEN                    TROPIN1A.221   
+              FILLIN = FILLIN + IT(POINT-1+ROW_LENGTH)                     TROPIN1A.222   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.223   
+            ENDIF                                                          TROPIN1A.224   
+            IF ( .NOT. LTROP(POINT+1+ROW_LENGTH) ) THEN                    TROPIN1A.225   
+              FILLIN = FILLIN + IT(POINT+1+ROW_LENGTH)                     TROPIN1A.226   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.227   
+            ENDIF                                                          TROPIN1A.228   
+            IF ( .NOT. LTROP(POINT-1) ) THEN                               TROPIN1A.229   
+              FILLIN = FILLIN + IT(POINT-1)                                TROPIN1A.230   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.231   
+            ENDIF                                                          TROPIN1A.232   
+            IF ( .NOT. LTROP(POINT+1) ) THEN                               TROPIN1A.233   
+              FILLIN = FILLIN + IT(POINT+1)                                TROPIN1A.234   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.235   
+            ENDIF                                                          TROPIN1A.236   
+            IF ( .NOT. LTROP(POINT-ROW_LENGTH) ) THEN                      TROPIN1A.237   
+              FILLIN = FILLIN + IT(POINT-ROW_LENGTH)                       TROPIN1A.238   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.239   
+            ENDIF                                                          TROPIN1A.240   
+            IF ( .NOT. LTROP(POINT+ROW_LENGTH) ) THEN                      TROPIN1A.241   
+              FILLIN = FILLIN + IT(POINT+ROW_LENGTH)                       TROPIN1A.242   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.243   
+            ENDIF                                                          TROPIN1A.244   
+            IF ( NNEIGH .EQ. 0 ) THEN                                      TROPIN1A.245   
+               IT(POINT) = DTI                                             TROPIN1A.246   
+             ELSE                                                          TROPIN1A.247   
+               IT(POINT) = FILLIN / NNEIGH                                 TROPIN1A.248   
+            ENDIF                                                          TROPIN1A.249   
+          ENDIF                                                            TROPIN1A.250   
+        ENDDO                                                              TROPIN1A.251   
+      ENDDO                                                                TROPIN1A.252   
+                                                                           TROPIN1A.253   
+C     !  If the grid wraps round, the first & last points on each row      TROPIN1A.254   
+C     !    are in fact internal points & can be filled in similarly if     TROPIN1A.255   
+C     !    a few indices are altered.  (Indeed, they must be if the        TROPIN1A.256   
+C     !    model is to give the same answers regardless of                 TROPIN1A.257   
+C     !    decomposition - there may be no physical justification for      TROPIN1A.258   
+C     !    being so scrupulous.)                                           TROPIN1A.259   
+C     !  If not, again such points return DTI if no tropopause was         TROPIN1A.260   
+C     !    found on the WMO criteria.                                      TROPIN1A.261   
+                                                                           TROPIN1A.262   
+      IF ( WRAP ) THEN                                                     TROPIN1A.263   
+         DO J=1, L2/ROW_LENGTH-2                                           TROPIN1A.264   
+           POINT = 1+J*ROW_LENGTH                                          TROPIN1A.265   
+           IF ( LTROP(POINT) ) THEN                                        TROPIN1A.266   
+             FILLIN = 0                                                    TROPIN1A.267   
+             NNEIGH = 0                                                    TROPIN1A.268   
+             IF ( .NOT. LTROP(POINT-1) ) THEN                              TROPIN1A.269   
+               FILLIN = FILLIN + IT(POINT-1)                               TROPIN1A.270   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.271   
+             ENDIF                                                         TROPIN1A.272   
+             IF ( .NOT. LTROP(POINT+1-ROW_LENGTH) ) THEN                   TROPIN1A.273   
+               FILLIN = FILLIN + IT(POINT+1-ROW_LENGTH)                    TROPIN1A.274   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.275   
+             ENDIF                                                         TROPIN1A.276   
+             IF ( .NOT. LTROP(POINT-1+2*ROW_LENGTH) ) THEN                 TROPIN1A.277   
+               FILLIN = FILLIN + IT(POINT-1+2*ROW_LENGTH)                  TROPIN1A.278   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.279   
+             ENDIF                                                         TROPIN1A.280   
+             IF ( .NOT. LTROP(POINT+1+ROW_LENGTH) ) THEN                   TROPIN1A.281   
+               FILLIN = FILLIN + IT(POINT+1+ROW_LENGTH)                    TROPIN1A.282   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.283   
+             ENDIF                                                         TROPIN1A.284   
+             IF ( .NOT. LTROP(POINT-1+ROW_LENGTH) ) THEN                   TROPIN1A.285   
+               FILLIN = FILLIN + IT(POINT-1+ROW_LENGTH)                    TROPIN1A.286   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.287   
+             ENDIF                                                         TROPIN1A.288   
+             IF ( .NOT. LTROP(POINT+1) ) THEN                              TROPIN1A.289   
+               FILLIN = FILLIN + IT(POINT+1)                               TROPIN1A.290   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.291   
+             ENDIF                                                         TROPIN1A.292   
+             IF ( .NOT. LTROP(POINT-ROW_LENGTH) ) THEN                     TROPIN1A.293   
+               FILLIN = FILLIN + IT(POINT-ROW_LENGTH)                      TROPIN1A.294   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.295   
+             ENDIF                                                         TROPIN1A.296   
+             IF ( .NOT. LTROP(POINT+ROW_LENGTH) ) THEN                     TROPIN1A.297   
+               FILLIN = FILLIN + IT(POINT+ROW_LENGTH)                      TROPIN1A.298   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.299   
+             ENDIF                                                         TROPIN1A.300   
+             IF ( NNEIGH .EQ. 0 ) THEN                                     TROPIN1A.301   
+                IT(POINT) = DTI                                            TROPIN1A.302   
+              ELSE                                                         TROPIN1A.303   
+                IT(POINT) = FILLIN / NNEIGH                                TROPIN1A.304   
+             ENDIF                                                         TROPIN1A.305   
+           ENDIF                                                           TROPIN1A.306   
+           POINT = (1+J)*ROW_LENGTH                                        TROPIN1A.307   
+           IF ( LTROP(POINT) ) THEN                                        TROPIN1A.308   
+             FILLIN = 0                                                    TROPIN1A.309   
+             NNEIGH = 0                                                    TROPIN1A.310   
+             IF ( .NOT. LTROP(POINT-1-ROW_LENGTH) ) THEN                   TROPIN1A.311   
+               FILLIN = FILLIN + IT(POINT-1-ROW_LENGTH)                    TROPIN1A.312   
+              NNEIGH = NNEIGH + 1                                          TROPIN1A.313   
+             ENDIF                                                         TROPIN1A.314   
+             IF ( .NOT. LTROP(POINT+1-2*ROW_LENGTH) ) THEN                 TROPIN1A.315   
+               FILLIN = FILLIN + IT(POINT+1-2*ROW_LENGTH)                  TROPIN1A.316   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.317   
+             ENDIF                                                         TROPIN1A.318   
+             IF ( .NOT. LTROP(POINT-1+ROW_LENGTH) ) THEN                   TROPIN1A.319   
+               FILLIN = FILLIN + IT(POINT-1+ROW_LENGTH)                    TROPIN1A.320   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.321   
+             ENDIF                                                         TROPIN1A.322   
+             IF ( .NOT. LTROP(POINT+1) ) THEN                              TROPIN1A.323   
+               FILLIN = FILLIN + IT(POINT+1)                               TROPIN1A.324   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.325   
+             ENDIF                                                         TROPIN1A.326   
+             IF ( .NOT. LTROP(POINT-1) ) THEN                              TROPIN1A.327   
+               FILLIN = FILLIN + IT(POINT-1)                               TROPIN1A.328   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.329   
+             ENDIF                                                         TROPIN1A.330   
+             IF ( .NOT. LTROP(POINT+1-ROW_LENGTH) ) THEN                   TROPIN1A.331   
+               FILLIN = FILLIN + IT(POINT+1-ROW_LENGTH)                    TROPIN1A.332   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.333   
+             ENDIF                                                         TROPIN1A.334   
+             IF ( .NOT. LTROP(POINT-ROW_LENGTH) ) THEN                     TROPIN1A.335   
+               FILLIN = FILLIN + IT(POINT-ROW_LENGTH)                      TROPIN1A.336   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.337   
+             ENDIF                                                         TROPIN1A.338   
+             IF ( .NOT. LTROP(POINT+ROW_LENGTH) ) THEN                     TROPIN1A.339   
+               FILLIN = FILLIN + IT(POINT+ROW_LENGTH)                      TROPIN1A.340   
+               NNEIGH = NNEIGH + 1                                         TROPIN1A.341   
+             ENDIF                                                         TROPIN1A.342   
+             IF ( NNEIGH .EQ. 0 ) THEN                                     TROPIN1A.343   
+                IT(POINT) = DTI                                            TROPIN1A.344   
+              ELSE                                                         TROPIN1A.345   
+                IT(POINT) = FILLIN / NNEIGH                                TROPIN1A.346   
+             ENDIF                                                         TROPIN1A.347   
+           ENDIF                                                           TROPIN1A.348   
+         ENDDO                                                             TROPIN1A.349   
+       ELSE ! if not WRAP                                                  TROPIN1A.350   
+         DO J=1, L2/ROW_LENGTH-2                                           TROPIN1A.351   
+           IF ( LTROP(1+J*ROW_LENGTH) )   IT(1+J*ROW_LENGTH)   = DTI       TROPIN1A.352   
+           IF ( LTROP((1+J)*ROW_LENGTH) ) IT((1+J)*ROW_LENGTH) = DTI       TROPIN1A.353   
+         ENDDO                                                             TROPIN1A.354   
+      ENDIF                                                                TROPIN1A.355   
+C                                                                          TROPIN1A.356   
+      DO J=1, ROW_LENGTH                                                   TROPIN1A.357   
+        IF ( LTROP(J) )      IT(J)      = DTI                              TROPIN1A.358   
+        IF ( LTROP(L2+1-J) ) IT(L2+1-J) = DTI                              TROPIN1A.359   
+      ENDDO                                                                TROPIN1A.360   
+C                                                                          TROPIN1A.361   
+      RETURN                                                               TROPIN1A.362   
+      END                                                                  TROPIN1A.363   
+*ENDIF                                                                     TROPIN1A.364   
+*ENDIF DEF,A70_1A,OR,DEF,A70_1B                                            APB4F405.124   

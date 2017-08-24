@@ -1,0 +1,443 @@
+*IF DEF,MPP,AND,DEF,OCEAN                                                  ORH1F405.830   
+C *****************************COPYRIGHT******************************     TROPFCTL.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    TROPFCTL.4     
+C                                                                          TROPFCTL.5     
+C Use, duplication or disclosure of this code is subject to the            TROPFCTL.6     
+C restrictions as set forth in the contract.                               TROPFCTL.7     
+C                                                                          TROPFCTL.8     
+C                Meteorological Office                                     TROPFCTL.9     
+C                London Road                                               TROPFCTL.10    
+C                BRACKNELL                                                 TROPFCTL.11    
+C                Berkshire UK                                              TROPFCTL.12    
+C                RG12 2SZ                                                  TROPFCTL.13    
+C                                                                          TROPFCTL.14    
+C If no contract has been raised with this copy of the code, the use,      TROPFCTL.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      TROPFCTL.16    
+C to do so must first be obtained in writing from the Head of Numerical    TROPFCTL.17    
+C Modelling at the above address.                                          TROPFCTL.18    
+C ******************************COPYRIGHT******************************    TROPFCTL.19    
+      SUBROUTINE TFILT_CTL(                                                TROPFCTL.20    
+*CALL ARGSIZE                                                              TROPFCTL.21    
+*CALL ARGOCALL                                                             TROPFCTL.22    
+*CALL ARGOINDX                                                             TROPFCTL.23    
+     & UBTA,VBTA,ETAA,                                                     TROPFCTL.24    
+*CALL COCAWRKA                                                             TROPFCTL.25    
+     & )                                                                   TROPFCTL.26    
+                                                                           TROPFCTL.27    
+      IMPLICIT NONE                                                        TROPFCTL.28    
+                                                                           TROPFCTL.29    
+*CALL OARRYSIZ                                                             TROPFCTL.30    
+*CALL TYPSIZE                                                              TROPFCTL.31    
+*CALL TYPOINDX                                                             PXORDER.54    
+*CALL TYPOCALL                                                             TROPFCTL.32    
+*CALL COCTWRKA                                                             TROPFCTL.34    
+*CALL CNTLOCN                                                              TROPFCTL.35    
+*CALL UMSCALAR                                                             TROPFCTL.36    
+*CALL OTIMER                                                               TROPFCTL.37    
+*CALL PARVARS                                                              ORH1F405.831   
+                                                                           TROPFCTL.39    
+      INTEGER  I,J,L                                                       TROPFCTL.40    
+     &        ,SEG_CNT              ! local segment counter                TROPFCTL.41    
+     &        ,FWORK_CNT            ! global segment counter               TROPFCTL.42    
+     &        ,HELP_CNT             ! couter for helper PEs                TROPFCTL.43    
+     &        ,IPROC                ! processor counter                    TROPFCTL.44    
+     &        ,HELP_PE(O_NPROC)     ! label for a helper PE                TROPFCTL.45    
+     &        ,IHELP                ! counter for helper PEs               TROPFCTL.46    
+     &        ,SEG_START            ! starting point for this seg          TROPFCTL.47    
+     &        ,SEG_LENGTH           ! length of this segment               TROPFCTL.48    
+     &        ,ROW_NO(JMT_GLOBAL)   ! global row number                    TROPFCTL.49    
+     &        ,IS,IE,ISAVE          ! \                                    TROPFCTL.50    
+     &        ,IEAVE,IREDO          !   local scalars used in              TROPFCTL.51    
+     &        ,IEA,IEB,ISM1         !   fourier filtering                  TROPFCTL.52    
+     &        ,JJ,IM,M,N,II         ! /                                    TROPFCTL.53    
+                                                                           TROPFCTL.54    
+      REAL     ETAA(IMT,JMT)        ! eta for next timestep                TROPFCTL.55    
+     &        ,UBTA(IMT,JMTM1)      ! x-comp of barot vely next t step     TROPFCTL.56    
+     &        ,VBTA(IMT,JMTM1)      ! y-comp of barot vely next t step     TROPFCTL.57    
+     &        ,UBTDIF(IMT)          ! temp array used in filtering         TROPFCTL.58    
+     &        ,VBTDIF(IMT)          ! temp array used in filtering         TROPFCTL.59    
+     &        ,ETADIF(IMT)          ! temp array used in filtering         TROPFCTL.60    
+     &        ,FTARR(IMTIMT_FLT)    ! coef used in filtering routine       TROPFCTL.61    
+     &        ,FX                   ! local constant                       TROPFCTL.62    
+                                                                           TROPFCTL.63    
+                                                                           ORH1F405.832   
+!---------------------------------------------------------------           ORH1F405.833   
+! Note: The 25 in the following dimensions is the theoretical              ORH1F405.834   
+!       maximum number of rows which can be filtered by this               ORH1F405.835   
+!       routine.                                                           ORH1F405.836   
+!---------------------------------------------------------------           ORH1F405.837   
+                                                                           ORH1F405.838   
+      INTEGER MAX_FS_COLS   ! Max no of E-W points which can be            ORH1F405.839   
+!                             handled                                      ORH1F405.840   
+     &,       MAX_FILT_ROWS ! Max no of rows which can be filtered         ORH1F405.841   
+                                                                           ORH1F405.842   
+                                                                           ORH1F405.843   
+      ! The following parameters may be adjusted to cater for              ORH1F405.844   
+      ! higher resolution models or to save space in lower                 ORH1F405.845   
+      ! resolution models.                                                 ORH1F405.846   
+      PARAMETER (MAX_FS_COLS = 1082)                                       ORH1F405.847   
+      PARAMETER (MAX_FILT_ROWS = 25)                                       ORH1F405.848   
+                                                                           ORH1F405.849   
+      REAL CS_TEMP(MAX_FILT_ROWS), CST_TEMP(MAX_FILT_ROWS), COS_FILT       ORH1F405.850   
+                                                                           ORH1F405.851   
+      REAL U_TEMP(MAX_FS_COLS,MAX_FILT_ROWS)                               ORH1F405.852   
+     &,    V_TEMP(MAX_FS_COLS,MAX_FILT_ROWS)                               ORH1F405.853   
+     &,    U_PART(MAX_FS_COLS,MAX_FILT_ROWS)                               ORH1F405.854   
+     &,    V_PART(MAX_FS_COLS,MAX_FILT_ROWS)                               ORH1F405.855   
+     &,    UV_FILT(MAX_FS_COLS)                                            ORH1F405.856   
+     &,    ETAA_TEMP(MAX_FS_COLS,MAX_FILT_ROWS)                            ORH1F405.857   
+     &,    U_FILT(MAX_FS_COLS)                                             ORH1F405.858   
+     &,    V_FILT(MAX_FS_COLS)                                             ORH1F405.859   
+     &,    ETAA_FILT(MAX_FS_COLS)                                          ORH1F405.860   
+                                                                           TROPFCTL.154   
+      INTEGER U_OR_V                                                       ORH1F405.861   
+     &,       SIZEA                                                        ORH1F405.862   
+     &,       SIZEB                                                        ORH1F405.863   
+     &,       J_GET                                                        ORH1F405.864   
+     &,       IWK                                                          ORH1F405.865   
+     &,       J_TO_FILTER                                                  ORH1F405.866   
+                                                                           ORH1F405.867   
+      COMMON /SHMEM_FC/ U_TEMP, V_TEMP, ETAA_TEMP                          ORH1F405.868   
+     &,                 UV_FILT, ETAA_FILT                                 ORH1F405.869   
+     &,                 U_PART, V_PART                                     ORH1F405.870   
+     &,                 CS_TEMP, CST_TEMP                                  ORH1F405.871   
+                                                                           ORH1F405.872   
+      ! Master PEs must set up values to be filtered in common blocks      ORH1F405.873   
+                                                                           ORH1F405.874   
+      IF (SLAV_CNT_F.GT.0) THEN                                            ORH1F405.875   
+                                                                           ORH1F405.876   
+!----------------------------------------------------------------------    ORH1F405.877   
+!         The *_TEMP arrays have to be in common for SHMEM calls           ORH1F405.878   
+!         We therefore use JJ as the row index for these variables         ORH1F405.879   
+!         to minimise on the amount of space we need to reserve for        ORH1F405.880   
+!         them. This means that provided the 2nd dimension of the          ORH1F405.881   
+!         *_TEMP arrays is at least the same number as the number          ORH1F405.882   
+!         of rows to filter in the model, then things will be ok.          ORH1F405.883   
+!----------------------------------------------------------------------    ORH1F405.884   
+                                                                           ORH1F405.885   
+          DO J = J_1, J_JMT                                                ORH1F405.886   
+                                                                           ORH1F405.887   
+             CS_TEMP(J) = CS(J)                                            ORH1F405.888   
+             JJ=J+J_OFFSET - JFRST+1                                       ORH1F405.889   
+             IF (J+J_OFFSET.GE.JFU2) JJ=JJ-JSKPU+1                         ORH1F405.890   
+                                                                           ORH1F405.891   
+             ! If there's at least one segment in this row                 ORH1F405.892   
+             ! move it to a common block area.                             ORH1F405.893   
+             IF (ISUF(JJ,1,1).GT.0) THEN                                   ORH1F405.894   
+                CS_TEMP(JJ) = CS(J)                                        ORH1F405.895   
+                DO I = 1, IMT                                              ORH1F405.896   
+                   U_TEMP(I,JJ) = UBTA(I,J)                                ORH1F405.897   
+                   V_TEMP(I,JJ) = VBTA(I,J)                                ORH1F405.898   
+                ENDDO                                                      ORH1F405.899   
+             ENDIF                                                         ORH1F405.900   
+                                                                           ORH1F405.901   
+             JJ=J+J_OFFSET - JFRST+1                                       ORH1F405.902   
+             IF (J+J_OFFSET.GE.JFT2) JJ=JJ-JSKPT+1                         ORH1F405.903   
+             ! If there's at least one segment in this row                 ORH1F405.904   
+             ! move it to a common block area.                             ORH1F405.905   
+             IF (ISTF(JJ,1,1).GT.0) THEN                                   ORH1F405.906   
+                CST_TEMP(JJ) = CST(J)                                      ORH1F405.907   
+                DO I = 1, IMT                                              ORH1F405.908   
+                   ETAA_TEMP(I,JJ) = ETAA(I,J)                             ORH1F405.909   
+                ENDDO                                                      ORH1F405.910   
+             ENDIF                                                         ORH1F405.911   
+                                                                           ORH1F405.912   
+          ENDDO                                                            ORH1F405.913   
+                                                                           ORH1F405.914   
+      ENDIF                                                                ORH1F405.915   
+                                                                           ORH1F405.916   
+                                                                           ORH1F405.917   
+      ! Make sure all PES are ready to get involved in the filtering       ORH1F405.918   
+      CALL BARRIER()                                                       ORH1F405.919   
+                                                                           ORH1F405.920   
+      ! For each bit of Free surface filtering work.                       ORH1F405.921   
+      DO IWK = 1, MAST_CNT_F                                               ORH1F405.922   
+                                                                           ORH1F405.923   
+          ! What's the master PE, row and segment                          ORH1F405.924   
+          IPROC = MAST_PE_F(IWK)                                           ORH1F405.925   
+                                                                           ORH1F405.926   
+          ! Row (J) will be a value LOCAL to the master array              ORH1F405.927   
+          ! ie it is an index which tells us where to get data             ORH1F405.928   
+          ! from on the remote PE.                                         ORH1F405.929   
+          J = MAST_ROW_F(IWK)                                              ORH1F405.930   
+                                                                           ORH1F405.931   
+          L = MOD(MAST_SEG_F(IWK),LSEGF)                                   ORH1F405.932   
+                                                                           ORH1F405.933   
+          ! Which row is this in global terms                              ORH1F405.934   
+          J_TO_FILTER = g_datastart(2,IPROC) + J - O_NS_HALO - 1           ORH1F405.935   
+                                                                           ORH1F405.936   
+                                                                           ORH1F405.937   
+          ! Is this a velocity segment we're filtering?                    ORH1F405.938   
+          IF (MAST_SEG_F(IWK).LE.(LSEGF*2)) THEN                           ORH1F405.939   
+                                                                           ORH1F405.940   
+             IF (MAST_SEG_F(IWK).LE.LSEGF) THEN                            ORH1F405.941   
+                U_OR_V = 1   ! We filter U                                 ORH1F405.942   
+             ELSE                                                          ORH1F405.943   
+                U_OR_V = 2   ! We filter V                                 ORH1F405.944   
+             ENDIF                                                         ORH1F405.945   
+                                                                           ORH1F405.946   
+             JJ=J_TO_FILTER-JFRST+1                                        ORH1F405.947   
+             IF (J_TO_FILTER.GE.JFU2) JJ=JJ-JSKPU+1                        ORH1F405.948   
+                                                                           ORH1F405.949   
+             CALL SHMEM_GET(COS_FILT,CS_TEMP(JJ),1,IPROC)                  ORH1F405.950   
+                                                                           ORH1F405.951   
+C                                                                          TROPFCTL.157   
+C CALCULATE FX TO DETERMINE THE HEMISPHERE IN WHICH THE FILTERING IS       TROPFCTL.158   
+C BEING CONDUCTED. NOTE THIS TEST ONLY APPLIES TO FILTERING AREAS AWAY     TROPFCTL.159   
+C FROM THE EQUATOR.                                                        TROPFCTL.160   
+C                                                                          TROPFCTL.161   
+             FX=-1.0                                                       ORH1F405.952   
+             IF (J_TO_FILTER.GT.(0.5*JMT_GLOBAL)) THEN                     ORH1F405.953   
+                FX=1.0                                                     ORH1F405.954   
+             ENDIF                                                         ORH1F405.955   
+C                                                                          TROPFCTL.172   
+C  THE BAROTROPIC VELOCITIES ARE CALCULATED ON THE SAME GRID AS THE        TROPFCTL.173   
+C  BAROCLINIC VELOCITES AND THEREFORE IT IS POSSIBLE TO USE THE SAME       TROPFCTL.174   
+C  INDICIES. FOR THE BT VELYS ONLY THE TOP LEVEL INDICIES ARE REQUIRED.    TROPFCTL.175   
+C                                                                          TROPFCTL.176   
+                                                                           TROPFCTL.177   
+             IS=ISUF(JJ,L,1)                                               ORH1F405.956   
+             IE=IEUF(JJ,L,1)                                               ORH1F405.957   
+             IREDO=0                                                       ORH1F405.958   
+             IM=IE-IS+1                                                    ORH1F405.959   
+C                                                                          TROPFCTL.187   
+C  THE FOLLOWING TEST IS STILL REQUIRED TO CHECK FOR TYPE OF FILTER        TROPFCTL.188   
+C  REQUIRED.                                                               TROPFCTL.189   
+C                                                                          TROPFCTL.190   
+                                                                           TROPFCTL.325   
+                                                                           TROPFCTL.326   
+             IF (.NOT.(L_OCYCLIC)) THEN                                    ORH1F405.960   
+                M=2                                                        ORH1F405.961   
+                N=NINT(IM*COS_FILT*CSR_JFU0)                               ORH1F405.962   
+             ELSE                                                          ORH1F405.963   
+                IF(IM.NE.IMTM2) THEN                                       ORH1F405.964   
+                   M=2                                                     ORH1F405.965   
+                   N=NINT(IM*COS_FILT*CSR_JFU0)                            ORH1F405.966   
+                ELSE                                                       ORH1F405.967   
+                   M=3                                                     ORH1F405.968   
+                   N=NINT(IM*COS_FILT*CSR_JFU0*.5)                         ORH1F405.969   
+                ENDIF                                                      ORH1F405.970   
+             ENDIF                                                         ORH1F405.971   
+                                                                           TROPFCTL.331   
+             ISM1=IS-1                                                     ORH1F405.972   
+             IEA=IE                                                        ORH1F405.973   
+                                                                           ORH1F405.974   
+             ! Annoyingly, even though we only want to filter U or V       ORH1F405.975   
+             ! we need to get hold of both U and V from the master.        ORH1F405.976   
+             ! This adds to the comms. However, the alternative would      ORH1F405.977   
+             ! be to perform the following processing on the master PE     ORH1F405.978   
+             ! before getting the value we end up with in UV_FILT.         ORH1F405.979   
+             ! Since the name of the game is load balancing, we try        ORH1F405.980   
+             ! to do as much work on the slave PEs as possible.            ORH1F405.981   
+             IF (IE.GE.IMU) THEN                                           ORH1F405.982   
+                IEA=IMUM1                                                  ORH1F405.983   
+                IEB=IE-IMUM2                                               ORH1F405.984   
+                II=IMUM1-IS                                                ORH1F405.985   
+                                                                           TROPFCTL.333   
+                SIZEB = IEB -2 + 1                                         ORH1F405.986   
+                CALL SHMEM_GET(U_FILT(2),U_TEMP(2,JJ),SIZEB,IPROC)         ORH1F405.987   
+                CALL SHMEM_GET(V_FILT(2),V_TEMP(2,JJ),SIZEB,IPROC)         ORH1F405.988   
+                                                                           TROPFCTL.339   
+             ENDIF                                                         ORH1F405.989   
+                                                                           TROPFCTL.344   
+             SIZEA = IEA - IS + 1                                          ORH1F405.990   
+             CALL SHMEM_GET(U_FILT(IS),U_TEMP(IS,JJ),SIZEA,IPROC)          ORH1F405.991   
+             CALL SHMEM_GET(V_FILT(IS),V_TEMP(IS,JJ),SIZEA,IPROC)          ORH1F405.992   
+                                                                           TROPFCTL.399   
+                                                                           TROPFCTL.400   
+             ! If U or V is 1 then we are dealing with the U               ORH1F405.993   
+             ! component. Set up values prior to filtering                 ORH1F405.994   
+             ! accordingly.                                                ORH1F405.995   
+             IF (U_OR_V.EQ.1) THEN                                         ORH1F405.996   
+                                                                           TROPFCTL.405   
+                DO I=IS,IEA                                                ORH1F405.997   
+                   UV_FILT(I-ISM1)=-FX*U_FILT(I)*SPSIN(I)                  ORH1F405.998   
+     &                     -V_FILT(I)*SPCOS(I)                             ORH1F405.999   
+                ENDDO                                                      ORH1F405.1000  
+                                                                           TROPFCTL.410   
+                IF (IE.GE.IMU)THEN                                         ORH1F405.1001  
+                   DO I=2,IEB                                              ORH1F405.1002  
+                      UV_FILT(I+II)=-FX*U_FILT(I)*SPSIN(I)                 ORH1F405.1003  
+     &                     -V_FILT(I)*SPCOS(I)                             ORH1F405.1004  
+                   ENDDO                                                   ORH1F405.1005  
+                ENDIF                                                      ORH1F405.1006  
+                                                                           TROPFCTL.413   
+             ELSE ! Set up the V component values to filter                ORH1F405.1007  
+                                                                           TROPFCTL.417   
+                DO I=IS,IEA                                                ORH1F405.1008  
+                   UV_FILT(I-ISM1)= FX*U_FILT(I)*SPCOS(I)                  ORH1F405.1009  
+     &                     -V_FILT(I)*SPSIN(I)                             ORH1F405.1010  
+                ENDDO                                                      ORH1F405.1011  
+                                                                           TROPFCTL.420   
+                IF (IE.GE.IMU)THEN                                         ORH1F405.1012  
+                   DO I=2,IEB                                              ORH1F405.1013  
+                      UV_FILT(I+II)= FX*U_FILT(I)*SPCOS(I)                 ORH1F405.1014  
+     &                     -V_FILT(I)*SPSIN(I)                             ORH1F405.1015  
+                   ENDDO                                                   ORH1F405.1016  
+                ENDIF                                                      ORH1F405.1017  
+             ENDIF                                                         ORH1F405.1018  
+C                                                                          ORH1F405.1019  
+          CALL FILTR(                                                      ORH1F405.1020  
+*CALL ARGSIZE                                                              ORH1F405.1021  
+*CALL ARGOCFIL                                                             ORH1F405.1022  
+     &    FTARR,UV_FILT,IM,M,N,IREDO)                                      ORH1F405.1023  
+                                                                           TROPFCTL.422   
+                                                                           TROPFCTL.424   
+             ! Having filtered, we must pass this segment back to          ORH1F405.1024  
+             ! the master PE ready for some further processing.            ORH1F405.1025  
+             IF (U_OR_V.EQ.1) THEN                                         ORH1F405.1026  
+                                                                           TROPFCTL.426   
+                CALL SHMEM_PUT(U_PART(IS,JJ)                               ORH1F405.1027  
+     &                                  ,UV_FILT(1),SIZEA,IPROC)           ORH1F405.1028  
+                                                                           TROPFCTL.428   
+                IF (IE.GE.IMU) THEN                                        ORH1F405.1029  
+                                                                           TROPFCTL.430   
+                                                                           TROPFCTL.435   
+                   CALL SHMEM_PUT(U_PART(2,JJ)                             ORH1F405.1030  
+     &                        ,UV_FILT(SIZEA+1),SIZEB,IPROC)               ORH1F405.1031  
+                ENDIF                                                      ORH1F405.1032  
+             ELSE                                                          ORH1F405.1033  
+                                                                           TROPFCTL.441   
+                CALL SHMEM_PUT(V_PART(IS,JJ)                               ORH1F405.1034  
+     &                                  ,UV_FILT(1),SIZEA,IPROC)           ORH1F405.1035  
+                                                                           TROPFCTL.450   
+                                                                           ORH1F405.1036  
+                IF (IE.GE.IMU) THEN                                        ORH1F405.1037  
+                                                                           ORH1F405.1038  
+                   CALL SHMEM_PUT(V_PART(2,JJ)                             ORH1F405.1039  
+     &                            ,UV_FILT(SIZEA+1),SIZEB,IPROC)           ORH1F405.1040  
+                ENDIF                                                      ORH1F405.1041  
+             ENDIF                                                         ORH1F405.1042  
+                                                                           ORH1F405.1043  
+          ELSE  ! Filter the ETA values                                    ORH1F405.1044  
+                                                                           ORH1F405.1045  
+!-----------------------------------------------------------------------   ORH1F405.1046  
+! FOURIER FILTER ETA AT HIGH LATITUDES                                     ORH1F405.1047  
+! FOURIER FILTERING INDEXES TAKE ACCOUNT OF LAND WHEN L_OSKIPLND = t.      ORH1F405.1048  
+!-----------------------------------------------------------------------   ORH1F405.1049  
+                                                                           ORH1F405.1050  
+C                                                                          TROPFCTL.458   
+C  SINCE ETA IS CALCULATED ON THE TOP TRACER GRID IT IS THEREFORE          TROPFCTL.459   
+C  POSSIBLE TO USE THE START AND END INDICIES ALREADY CREATED FOR THE      TROPFCTL.460   
+C  TRACERS IN FINDEX. NOTE ONLY THE TOP LEVEL VALUES ARE REQUIRED.         TROPFCTL.461   
+C                                                                          TROPFCTL.462   
+             JJ=J_TO_FILTER-JFRST+1                                        ORH1F405.1051  
+             IF (J_TO_FILTER.GE.JFT2) JJ=JJ-JSKPT+1                        ORH1F405.1052  
+                                                                           ORH1F405.1053  
+             CALL SHMEM_GET(COS_FILT,CST_TEMP(JJ),1,IPROC)                 ORH1F405.1054  
+            IS=ISTF(JJ,L,1)                                                TROPFCTL.464   
+            IE=IETF(JJ,L,1)                                                TROPFCTL.465   
+            IREDO=0                                                        ORH1F405.1055  
+               IM=IE-IS+1                                                  TROPFCTL.471   
+C                                                                          TROPFCTL.473   
+C  IT IS REQUIRED THAT ETA IS ALWAYS FILTERED USING THE COS SOLUTION       TROPFCTL.474   
+C  AND THEREFORE THIS REQUIRES THE VALUE FOR M TO BE SET TO 1.             TROPFCTL.475   
+C                                                                          TROPFCTL.476   
+                                                                           TROPFCTL.477   
+            M=1                                                            TROPFCTL.478   
+           N=NINT(IM*COS_FILT*CSTR_JFT0)                                   ORH1F405.1056  
+                                                                           TROPFCTL.480   
+C                                                                          TROPFCTL.481   
+C   SET UP INDICES AND ARRAYS                                              TROPFCTL.482   
+           IEA=IE                                                          ORH1F405.1057  
+           IF (IE.GE.IMT) THEN                                             ORH1F405.1058  
+              IEA=IMTM1                                                    TROPFCTL.487   
+              IEB=IE-IMTM2                                                 ORH1F405.1059  
+              II=IMTM1-IS                                                  ORH1F405.1060  
+              SIZEB = IEB - 2 + 1                                          ORH1F405.1061  
+              SIZEA = IEA - IS + 1                                         ORH1F405.1062  
+              CALL SHMEM_GET(ETAA_FILT(SIZEA+1)                            ORH1F405.1063  
+     &           ,ETAA_TEMP(2,JJ),SIZEB,IPROC)                             ORH1F405.1064  
+           ENDIF                                                           ORH1F405.1065  
+                                                                           TROPFCTL.489   
+           SIZEA = IEA - IS + 1                                            ORH1F405.1066  
+           CALL SHMEM_GET(ETAA_FILT(1)                                     ORH1F405.1067  
+     &              ,ETAA_TEMP(IS,JJ),SIZEA,IPROC)                         ORH1F405.1068  
+                                                                           TROPFCTL.497   
+                                                                           TROPFCTL.510   
+            CALL FILTR(                                                    TROPFCTL.511   
+*CALL ARGSIZE                                                              ORH1F405.1069  
+*CALL ARGOCFIL                                                             ORH1F405.1070  
+     &           FTARR,ETAA_FILT,IM,M,N,IREDO)                             ORH1F405.1071  
+C                                                                          TROPFCTL.515   
+                                                                           TROPFCTL.516   
+                                                                           TROPFCTL.521   
+                                                                           TROPFCTL.529   
+             CALL SHMEM_PUT(ETAA_TEMP(IS,JJ)                               ORH1F405.1072  
+     &           ,ETAA_FILT(1),SIZEA,IPROC)                                ORH1F405.1073  
+                                                                           TROPFCTL.531   
+             IF (IE.GE.IMU) THEN                                           ORH1F405.1074  
+                 CALL SHMEM_PUT(ETAA_TEMP(2,JJ)                            ORH1F405.1075  
+     &           ,ETAA_FILT(SIZEA+1),SIZEB,IPROC)                          ORH1F405.1076  
+             ENDIF                                                         ORH1F405.1077  
+                                                                           TROPFCTL.534   
+          ENDIF                                                            ORH1F405.1078  
+      ENDDO ! Over IWK                                                     ORH1F405.1079  
+                                                                           TROPFCTL.546   
+      CALL BARRIER()                                                       ORH1F405.1080  
+                                                                           TROPFCTL.548   
+      ! Now all results will have been returned to masters.                ORH1F405.1081  
+      ! The masters still have some further velocity processing            ORH1F405.1082  
+      ! to do before continuing.                                           ORH1F405.1083  
+      IF (SLAV_CNT_F.GT.0) THEN                                            ORH1F405.1084  
+                                                                           TROPFCTL.554   
+          DO J = J_1, J_JMT                                                ORH1F405.1085  
+             JJ=J+J_OFFSET - JFRST+1                                       ORH1F405.1086  
+             IF (J+J_OFFSET.GE.JFU2) JJ=JJ-JSKPU+1                         ORH1F405.1087  
+                                                                           TROPFCTL.557   
+             FX = -1.0                                                     ORH1F405.1088  
+             IF (J+J_OFFSET.GT.(0.5*JMT_GLOBAL)) FX=1.0                    ORH1F405.1089  
+             DO L = 1, LSEGF                                               ORH1F405.1090  
+                IF ((ISUF(JJ,1,1).GT.0).AND.                               ORH1F405.1091  
+                                                                           TROPFCTL.561   
+     &              (ISUF(JJ,L,1).GT.0)) THEN                              ORH1F405.1092  
+                   IS=ISUF(JJ,L,1)                                         ORH1F405.1093  
+                   IE=IEUF(JJ,L,1)                                         ORH1F405.1094  
+                                                                           TROPFCTL.565   
+                   ISM1=IS-1                                               ORH1F405.1095  
+                   IEA=IE                                                  ORH1F405.1096  
+                   IF (IE.GE.IMU) THEN                                     ORH1F405.1097  
+                      IEA=IMUM1                                            ORH1F405.1098  
+                   ENDIF                                                   ORH1F405.1099  
+                                                                           TROPFCTL.570   
+                                                                           TROPFCTL.575   
+                                                                           TROPFCTL.577   
+                   DO I = IS, IEA                                          ORH1F405.1100  
+                      UBTA(I,J)=FX*(-U_PART(I,JJ)*SPSIN(I)                 ORH1F405.1101  
+     *                       +V_PART(I,JJ)*SPCOS(I))                       ORH1F405.1102  
+                      VBTA(I,J)=-U_PART(I,JJ)*SPCOS(I)                     ORH1F405.1103  
+     *                   -V_PART(I,JJ)*SPSIN(I)                            ORH1F405.1104  
+                   ENDDO                                                   ORH1F405.1105  
+                                                                           TROPFCTL.583   
+                   IF (IE.GE.IMU) THEN                                     ORH1F405.1106  
+                       IEB=IE-IMUM2                                        ORH1F405.1107  
+                       DO I = 2, IEB                                       ORH1F405.1108  
+                          UBTA(I,J)=FX*(-U_PART(I,JJ)*SPSIN(I)             ORH1F405.1109  
+     *                         +V_PART(I,JJ)*SPCOS(I))                     ORH1F405.1110  
+                          VBTA(I,J)=-U_PART(I,JJ)*SPCOS(I)                 ORH1F405.1111  
+     *                     -V_PART(I,JJ)*SPSIN(I)                          ORH1F405.1112  
+                      ENDDO                                                ORH1F405.1113  
+                   ENDIF                                                   ORH1F405.1114  
+                                                                           TROPFCTL.588   
+                                                                           TROPFCTL.592   
+                                                                           ORH1F405.1115  
+                ENDIF                                                      ORH1F405.1116  
+             ENDDO   ! Over L                                              ORH1F405.1117  
+                                                                           TROPFCTL.594   
+                                                                           ORH1F405.1118  
+             JJ=J+J_OFFSET - JFRST+1                                       ORH1F405.1119  
+             IF (J+J_OFFSET.GE.JFT2) JJ=JJ-JSKPT+1                         ORH1F405.1120  
+             ! If there's at least one segment in this row                 ORH1F405.1121  
+             ! move it to a common block area.                             ORH1F405.1122  
+             IF (ISTF(JJ,1,1).GT.0) THEN                                   ORH1F405.1123  
+                DO I = 1, IMT                                              ORH1F405.1124  
+                   ETAA(I,J) = ETAA_TEMP(I,JJ)                             ORH1F405.1125  
+                ENDDO                                                      ORH1F405.1126  
+             ENDIF                                                         ORH1F405.1127  
+                                                                           ORH1F405.1128  
+          ENDDO  ! Over J                                                  ORH1F405.1129  
+      ENDIF                                                                ORH1F405.1130  
+                                                                           ORH1F405.1131  
+      RETURN                                                               TROPFCTL.602   
+      END                                                                  TROPFCTL.603   
+*ENDIF                                                                     TROPFCTL.604   

@@ -1,0 +1,347 @@
+*IF DEF,C92_1A                                                             VINTZ1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.11701 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.11702 
+C                                                                          GTS2F400.11703 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.11704 
+C restrictions as set forth in the contract.                               GTS2F400.11705 
+C                                                                          GTS2F400.11706 
+C                Meteorological Office                                     GTS2F400.11707 
+C                London Road                                               GTS2F400.11708 
+C                BRACKNELL                                                 GTS2F400.11709 
+C                Berkshire UK                                              GTS2F400.11710 
+C                RG12 2SZ                                                  GTS2F400.11711 
+C                                                                          GTS2F400.11712 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.11713 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.11714 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.11715 
+C Modelling at the above address.                                          GTS2F400.11716 
+C ******************************COPYRIGHT******************************    GTS2F400.11717 
+C                                                                          GTS2F400.11718 
+CLL  SUBROUTINE V_INT_Z-----------------------------------------------     VINTZ1A.3     
+CLL                                                                        VINTZ1A.4     
+CLL  Purpose:  Calculates the height of an arbitrary pressure              VINTZ1A.5     
+CLL            surface. Since version 2, the top model level is            VINTZ1A.6     
+CLL            ignored in making the calculation.                          VINTZ1A.7     
+CLL                                                                        VINTZ1A.8     
+CLL  28/04/92 calculation of P_EXNER_FULL consistent with                  VINTZ1A.9     
+CLL     the geopotential eqn. New arguments AKH and BKH.                   VINTZ1A.10    
+CLL                                                                        VINTZ1A.11    
+CLL RR, DR, AD  <- programmer of some or all of previous code or changes   VINTZ1A.12    
+CLL                                                                        VINTZ1A.13    
+CLL  Model            Modification history from model version 3.0:         VINTZ1A.14    
+CLL version  Date                                                          VINTZ1A.15    
+CLL                                                                        VINTZ1A.16    
+CLL  4.2    01/08/96                                                       GSS5F402.282   
+CLL              : *DEF CRAY removed. alogh and exph 32-bit functions      GSS5F402.283   
+CLL              : no longer required.                                     GSS5F402.284   
+CLL              : New arguments START and END introduced to               GSS5F402.285   
+CLL              : facilitate the removal of duplicate calculations        GSS5F402.286   
+CLL              : when using domain decomposition in MPP mode.            GSS5F402.287   
+CLL              : New variable IC introduced to remove superfluous        GSS5F402.288   
+CLL              : tests over levels.                                      GSS5F402.289   
+CLL                                                                        GSS5F402.290   
+CLL                   Author: A. Dickinson   Reviewer: R. Rawlins          GSS5F402.291   
+!LL 4.5     15/07/98                                                       GSM1F405.208   
+!LL                Use assumption that neighbouring points are             GSM1F405.209   
+!LL                likely to be on or near same level. Jump out            GSM1F405.210   
+!LL                of loop-over-levels once level found. Results           GSM1F405.211   
+!LL                in a 30 percent speedup on 19 levels for                GSM1F405.212   
+!LL                non-vector machines. S.D.Mullerworth                    GSM1F405.213   
+CLL  4.5    09/01/98  CRAY T3E optimisation: replace rtor_v by powr_v      GDR8F405.26    
+CLL                                                    Deborah Salmond     GDR8F405.27    
+CLL                                                                        GSS5F402.292   
+CLL Programming standard :                                                 VINTZ1A.17    
+CLL                                                                        VINTZ1A.18    
+CLL Logical components covered : D471                                      VINTZ1A.19    
+CLL                                                                        VINTZ1A.20    
+CLL Project task :                                                         VINTZ1A.21    
+CLL                                                                        VINTZ1A.22    
+CLL  Documentation: The interpolation formulae are described in            VINTZ1A.23    
+CLL                 unified model on-line documentation paper S1.          VINTZ1A.24    
+CLL                                                                        VINTZ1A.25    
+CLLEND----------------------------------------------------------------     VINTZ1A.26    
+C                                                                          VINTZ1A.27    
+C*L  Arguments:-------------------------------------------------------     VINTZ1A.28    
+      SUBROUTINE V_INT_Z(P,PL,PSTAR,P_EXNER_HALF,THETA,Q,ZH,Z,POINTS       VINTZ1A.29    
+     *  ,P_LEVELS_MODEL,Q_LEVELS_MODEL,L,AKH,BKH                           GSM1F405.214   
+     &  ,START,END)                                                        GSM1F405.215   
+                                                                           VINTZ1A.31    
+      IMPLICIT NONE                                                        VINTZ1A.32    
+                                                                           VINTZ1A.33    
+      INTEGER                                                              VINTZ1A.34    
+     * POINTS          !IN Number of points to be processed                VINTZ1A.35    
+     *,P_LEVELS_MODEL  !IN Number of model levels                          VINTZ1A.36    
+     *,Q_LEVELS_MODEL  !IN Number of model wet levels                      VINTZ1A.37    
+     *,L         !IN Reference level for below surface T extrapolation.    VINTZ1A.38    
+     *           ! = No of B.L. levels plus one                            VINTZ1A.39    
+     *,START     !IN First point to be processed in POINTS dimension       GSS5F402.295   
+     *,END       !IN Last point to be processed in POINTS dimension        GSS5F402.296   
+                                                                           GSS5F402.297   
+                                                                           VINTZ1A.40    
+      REAL                                                                 VINTZ1A.41    
+     * P(POINTS)     !IN Pressure surface on which results required        VINTZ1A.42    
+     *,PL(POINTS)    !IN Pressure at reference level L                     VINTZ1A.43    
+     *,PSTAR(POINTS) !IN Surface pressure                                  VINTZ1A.44    
+     *,P_EXNER_HALF(POINTS,P_LEVELS_MODEL+1) !IN Exner pressure at         VINTZ1A.45    
+     *                                       !   model half levels         VINTZ1A.46    
+     *,Z(POINTS)                   !OUT Height of pressure surface P       VINTZ1A.47    
+     *,ZH(POINTS,P_LEVELS_MODEL)   !IN Height of model half levels         VINTZ1A.48    
+     *,THETA(POINTS,P_LEVELS_MODEL)!IN Potential temp at full levels       VINTZ1A.49    
+     *,Q(POINTS,Q_LEVELS_MODEL)    !IN Specific humidity at full levels    VINTZ1A.50    
+     *,AKH(P_LEVELS_MODEL+1)       !IN Hybrid coord. A at half levels      VINTZ1A.51    
+     *,BKH(P_LEVELS_MODEL+1)       !IN Hybrid coord. B at half levels      VINTZ1A.52    
+                                                                           VINTZ1A.53    
+C Local arrays:--------------------------------------------------------    VINTZ1A.54    
+      REAL P_EXNER(POINTS) ! Exner pressure at required pressure level     VINTZ1A.55    
+C ---------------------------------------------------------------------    VINTZ1A.56    
+C External subroutines called:-----------------------------------------    VINTZ1A.57    
+C None                                                                     GSS5F402.299   
+C*---------------------------------------------------------------------    VINTZ1A.59    
+C Define local variables:----------------------------------------------    VINTZ1A.60    
+      INTEGER I,K    !DO loop indices                                      VINTZ1A.61    
+     *,K_BELOW       !K-1 or bottom level                                  VINTZ1A.62    
+     *,P_LEVELS      !No of model levels minus one                         VINTZ1A.63    
+     *,Q_LEVELS      !No of wet levels (minus one if same as P_LEVELS)     VINTZ1A.64    
+     *,LAST          !Stores level of preceding point                      GSM1F405.216   
+                                                                           GSM1F405.217   
+                                                                           VINTZ1A.65    
+      REAL                                                                 VINTZ1A.66    
+     * P_EXNER_FULL      ! Exner pressure on full level nearest P          VINTZ1A.67    
+     *,P_EXNER_FULL_UP   ! Exner pressure on full level above              VINTZ1A.68    
+     *,P_EXNER_FULL_LOW  ! Exner pressure on full level below              VINTZ1A.69    
+     *,DEL_EXNER         ! Vertical difference of exner pressure           VINTZ1A.70    
+     *,THETAV            ! Virtual potential temperature                   VINTZ1A.71    
+     *,LOCAL_GRADIENT    ! Local potential temperature gradient            VINTZ1A.72    
+     *,T_GRADIENT        ! Temperature gradient                            VINTZ1A.73    
+     *,SECOND_ORDER_TERM ! 2nd order correction to hydrostatic integral    VINTZ1A.74    
+     *,P_EXNER_FULL_L    ! Full level exner on level L                     VINTZ1A.75    
+     *,TS                ! Surface temperature                             VINTZ1A.76    
+C----------------------------------------------------------------------    VINTZ1A.80    
+C Constants from comdecks:---------------------------------------------    VINTZ1A.81    
+*CALL C_EPSLON                                                             VINTZ1A.82    
+*CALL C_G                                                                  VINTZ1A.83    
+*CALL C_R_CP                                                               VINTZ1A.84    
+*CALL C_LAPSE                                                              VINTZ1A.85    
+C----------------------------------------------------------------------    VINTZ1A.86    
+                                                                           VINTZ1A.87    
+CL 1. Define local constants                                               VINTZ1A.88    
+                                                                           VINTZ1A.89    
+      REAL LAPSE_R_OVER_G,CP_OVER_G                                        VINTZ1A.90    
+      PARAMETER(LAPSE_R_OVER_G=LAPSE*R/G)                                  VINTZ1A.91    
+      PARAMETER(CP_OVER_G=CP/G)                                            VINTZ1A.92    
+                                                                           VINTZ1A.93    
+      REAL                                                                 VINTZ1A.94    
+     &    PUP1,PUP,PLOW,PLOW11,PLOW1                                       VINTZ1A.95    
+                                                                           VINTZ1A.96    
+*CALL P_EXNERC                                                             VINTZ1A.97    
+                                                                           VINTZ1A.98    
+C SET TOP LEVEL FOR INTERPOLATION EQUAL TO TOP MODEL LAYER                 VINTZ1A.99    
+C (CAUTION! THIS HAS BEEN OF DOUBTFUL QUALITY IN THE PAST FOR 20-LEV M)    VINTZ1A.100   
+      P_LEVELS=P_LEVELS_MODEL                                              VINTZ1A.101   
+      Q_LEVELS=MIN(P_LEVELS,Q_LEVELS_MODEL)                                VINTZ1A.102   
+                                                                           VINTZ1A.103   
+!L 2. Special cases   (i) Below ground                                     GSM1F405.218   
+!L                   (ii) Top layer                                        GSM1F405.219   
+                                                                           VINTZ1A.106   
+      DO I=START,END                                                       GSS5F402.306   
+                                                                           VINTZ1A.108   
+! Convert target pressure to Exner pressure                                GSM1F405.220   
+! ie  P_EXNER(I)=(P(I)/PREF)**KAPPA                                        GSM1F405.221   
+                                                                           VINTZ1A.111   
+        P_EXNER(I)=P(I)/PREF                                               GSM1F405.222   
+*IF -DEF,VECTLIB                                                           PXVECTLB.157   
+        P_EXNER(I)=P_EXNER(I)**KAPPA                                       GSM1F405.224   
+*ENDIF                                                                     GSM1F405.225   
+                                                                           VINTZ1A.117   
+      ENDDO                                                                GSS5F402.310   
+                                                                           GSS5F402.311   
+*IF DEF,VECTLIB                                                            PXVECTLB.158   
+      CALL POWR_V(END-START+1,P_EXNER(START),KAPPA,P_EXNER(START))         GDR8F405.28    
+*ENDIF                                                                     GSS5F402.314   
+                                                                           GSS5F402.315   
+      LAST=2 ! Arbitrary initialisation                                    GSM1F405.226   
+      DO I=START,END                                                       GSM1F405.227   
+! Start from level of last point. First check whether this point           GSM1F405.228   
+! is above or below, then continue search in appropriate direction         GSM1F405.229   
+        IF(P_EXNER(I).LT.P_EXNER_HALF(I,LAST))THEN                         GSM1F405.230   
+          DO K=LAST,P_LEVELS-1                                             GSM1F405.231   
+            IF(P_EXNER(I).GE.P_EXNER_HALF(I,K+1))THEN                      GSM1F405.232   
+              GOTO 210                                                     GSM1F405.233   
+            ENDIF                                                          GSM1F405.234   
+          ENDDO                                                            GSM1F405.235   
+        ELSE                                                               GSM1F405.236   
+          DO K=LAST-1,1,-1                                                 GSM1F405.237   
+            IF(P_EXNER(I).LT.P_EXNER_HALF(I,K))THEN                        GSM1F405.238   
+              GOTO 210                                                     GSM1F405.239   
+            ENDIF                                                          GSM1F405.240   
+          ENDDO                                                            GSM1F405.241   
+        ENDIF                                                              GSM1F405.242   
+ 210    CONTINUE                                                           GSM1F405.243   
+! Here, K=0 for below level 1. K=P_LEVELS for above top level              GSM1F405.244   
+! Otherwise K is set to level in range 1 to P_LEVELS-1 just below point.   GSM1F405.245   
+                                                                           VINTZ1A.118   
+        IF (K.EQ.0)THEN                                                    GSM1F405.246   
+!L (i) Below ground: equation (3.11).                                      GSM1F405.247   
+!L A lapse rate of 6.5 deg/km is assumed. L is a                           GSM1F405.248   
+!L reference level - usually the first level above the model               GSM1F405.249   
+!L boundary layer.                                                         GSM1F405.250   
+! Test for P>P* using Exner, for consistency with other sections           GSM1F405.251   
+          IF(P_EXNER(I).GE.P_EXNER_HALF(I,1))THEN                          GSM1F405.252   
+            PUP=PSTAR(I)*BKH(L+1) + AKH(L+1)                               GSM1F405.253   
+            PLOW=PSTAR(I)*BKH(L) + AKH(L)                                  GSM1F405.254   
+            P_EXNER_FULL_L= P_EXNER_C(                                     GSM1F405.255   
+     &        P_EXNER_HALF(I,L+1),P_EXNER_HALF(I,L),PUP,PLOW,KAPPA)        GSM1F405.256   
+            TS=THETA(I,L)*P_EXNER_FULL_L                                   GSM1F405.257   
+     &        *(PSTAR(I)/PL(I))**LAPSE_R_OVER_G                            GSM1F405.258   
+            TS=TS*(1.0+C_VIRTUAL*Q(I,1))                                   GSM1F405.259   
+            Z(I)=ZH(I,1)+(TS/LAPSE)                                        GSM1F405.260   
+     &        *(1.-(P(I)/PSTAR(I))**LAPSE_R_OVER_G)                        GSM1F405.261   
+                                                                           GSM1F405.262   
+          ENDIF                                                            GSM1F405.263   
+                                                                           VINTZ1A.123   
+                                                                           VINTZ1A.124   
+          LAST=1 ! Start from bottom level next time                       GSM1F405.264   
+                                                                           GSS5F402.318   
+        ELSEIF(K.EQ.P_LEVELS)THEN                                          GSM1F405.265   
+!L (iii) Top layer and above: equation (3.6) with local gradient of        GSM1F405.266   
+!L theta given by equation (3.7) with k=top.                               GSM1F405.267   
+          IF(P_LEVELS.GT.Q_LEVELS)THEN                                     GSM1F405.268   
+                                                                           VINTZ1A.144   
+            PUP1=PSTAR(I)*BKH(P_LEVELS+1) + AKH(P_LEVELS+1)                GSM1F405.269   
+            PUP =PSTAR(I)*BKH(P_LEVELS)   + AKH(P_LEVELS)                  GSM1F405.270   
+            PLOW=PSTAR(I)*BKH(P_LEVELS-1) + AKH(P_LEVELS-1)                GSM1F405.271   
+            P_EXNER_FULL_UP= P_EXNER_C(                                    GSM1F405.272   
+     &        P_EXNER_HALF(I,P_LEVELS+1),P_EXNER_HALF(I,P_LEVELS),         GSM1F405.273   
+     &        PUP1,PUP,KAPPA)                                              GSM1F405.274   
+            P_EXNER_FULL= P_EXNER_C(                                       GSM1F405.275   
+     &        P_EXNER_HALF(I,P_LEVELS),P_EXNER_HALF(I,P_LEVELS-1),         GSM1F405.276   
+     &        PUP,PLOW,KAPPA)                                              GSM1F405.277   
+                                                                           GSM1F405.278   
+            T_GRADIENT=( THETA(I,P_LEVELS)*P_EXNER_FULL_UP                 GSM1F405.279   
+     &        -THETA(I,P_LEVELS-1)*P_EXNER_FULL )/                         GSM1F405.280   
+     &        ( P_EXNER_FULL_UP-P_EXNER_FULL )                             GSM1F405.281   
+                                                                           GSM1F405.282   
+            LOCAL_GRADIENT=(T_GRADIENT-THETA(I,P_LEVELS))/                 GSM1F405.283   
+     &        P_EXNER_FULL_UP                                              GSM1F405.284   
+                                                                           GSM1F405.285   
+            SECOND_ORDER_TERM=.5*LOCAL_GRADIENT*( P_EXNER(I)*(P_EXNER(I)   GSM1F405.286   
+     &        -2.*P_EXNER_FULL_UP)                                         GSM1F405.287   
+     &        -P_EXNER_HALF(I,P_LEVELS)*(P_EXNER_HALF(I,P_LEVELS)          GSM1F405.288   
+     &        -2.*P_EXNER_FULL_UP) )                                       GSM1F405.289   
+                                                                           GSM1F405.290   
+            DEL_EXNER=P_EXNER_HALF(I,P_LEVELS)-P_EXNER(I)                  GSM1F405.291   
+            THETAV=THETA(I,P_LEVELS)                                       GSM1F405.292   
+            Z(I)=ZH(I,P_LEVELS)+                                           GSM1F405.293   
+     &        CP_OVER_G*(THETAV*DEL_EXNER-SECOND_ORDER_TERM)               GSM1F405.294   
+                                                                           GSM1F405.295   
+          ELSE                                                             GSM1F405.296   
+                                                                           GSM1F405.297   
+            PUP1=PSTAR(I)*BKH(P_LEVELS+1) + AKH(P_LEVELS+1)                GSM1F405.298   
+            PUP =PSTAR(I)*BKH(P_LEVELS) + AKH(P_LEVELS)                    GSM1F405.299   
+            PLOW=PSTAR(I)*BKH(P_LEVELS-1) + AKH(P_LEVELS-1)                GSM1F405.300   
+            P_EXNER_FULL_UP= P_EXNER_C(                                    GSM1F405.301   
+     &        P_EXNER_HALF(I,P_LEVELS+1),P_EXNER_HALF(I,P_LEVELS),         GSM1F405.302   
+     &        PUP1,PUP,KAPPA)                                              GSM1F405.303   
+            P_EXNER_FULL= P_EXNER_C(                                       GSM1F405.304   
+     &        P_EXNER_HALF(I,P_LEVELS),P_EXNER_HALF(I,P_LEVELS-1),         GSM1F405.305   
+     &        PUP,PLOW,KAPPA)                                              GSM1F405.306   
+                                                                           GSM1F405.307   
+            T_GRADIENT=( THETA(I,P_LEVELS)*P_EXNER_FULL_UP                 GSM1F405.308   
+     &        -THETA(I,P_LEVELS-1)*P_EXNER_FULL )/                         GSM1F405.309   
+     &        ( P_EXNER_FULL_UP-P_EXNER_FULL )                             GSM1F405.310   
+                                                                           GSM1F405.311   
+            LOCAL_GRADIENT=(T_GRADIENT-THETA(I,P_LEVELS))/                 GSM1F405.312   
+     &        P_EXNER_FULL_UP                                              GSM1F405.313   
+                                                                           GSM1F405.314   
+            SECOND_ORDER_TERM=.5*LOCAL_GRADIENT*(P_EXNER(I)*(P_EXNER(I)    GSM1F405.315   
+     &        -2.*P_EXNER_FULL_UP)                                         GSM1F405.316   
+     &        -P_EXNER_HALF(I,P_LEVELS)*(P_EXNER_HALF(I,P_LEVELS)          GSM1F405.317   
+     &        -2.*P_EXNER_FULL_UP) )                                       GSM1F405.318   
+                                                                           GSM1F405.319   
+            DEL_EXNER=P_EXNER_HALF(I,P_LEVELS)-P_EXNER(I)                  GSM1F405.320   
+            THETAV=THETA(I,P_LEVELS)*(1.0+C_VIRTUAL*Q(I,P_LEVELS))         GSM1F405.321   
+            Z(I)=ZH(I,P_LEVELS)+                                           GSM1F405.322   
+     &        CP_OVER_G*(THETAV*DEL_EXNER-SECOND_ORDER_TERM)               GSM1F405.323   
+                                                                           GSM1F405.324   
+          ENDIF                                                            GSM1F405.325   
+                                                                           GSM1F405.326   
+          LAST=P_LEVELS         ! Start from top level next point          GSM1F405.327   
+        ELSE                                                               GSM1F405.328   
+!L 3. Middle layers: equation (3.6) with local theta gradient given by     GSM1F405.329   
+!L    equation (3.7) with 1 <= k < top.                                    GSM1F405.330   
+          K_BELOW=MAX(1,K-1)                                               GSM1F405.331   
+                                                                           GSM1F405.332   
+          IF(K.GT.Q_LEVELS)THEN                                            GSM1F405.333   
+                                                                           GSM1F405.334   
+            PUP1   = PSTAR(I)*BKH(K+2) + AKH(K+2)                          GSM1F405.335   
+            PUP    = PSTAR(I)*BKH(K+1) + AKH(K+1)                          GSM1F405.336   
+            PLOW   = PSTAR(I)*BKH(K)   + AKH(K)                            GSM1F405.337   
+            PLOW11 = PSTAR(I)*BKH(K_BELOW+1) + AKH(K_BELOW+1)              GSM1F405.338   
+            PLOW1  = PSTAR(I)*BKH(K_BELOW)   + AKH(K_BELOW)                GSM1F405.339   
+                                                                           GSM1F405.340   
+            P_EXNER_FULL_UP= P_EXNER_C(                                    GSM1F405.341   
+     &        P_EXNER_HALF(I,K+2),P_EXNER_HALF(I,K+1),                     GSM1F405.342   
+     &        PUP1,PUP,KAPPA)                                              GSM1F405.343   
+            P_EXNER_FULL= P_EXNER_C(                                       GSM1F405.344   
+     &        P_EXNER_HALF(I,K+1),P_EXNER_HALF(I,K),                       GSM1F405.345   
+     &        PUP,PLOW,KAPPA)                                              GSM1F405.346   
+            P_EXNER_FULL_LOW= P_EXNER_C(                                   GSM1F405.347   
+     &        P_EXNER_HALF(I,K_BELOW+1),P_EXNER_HALF(I,K_BELOW),           GSM1F405.348   
+     &        PLOW11,PLOW1,KAPPA)                                          GSM1F405.349   
+                                                                           GSM1F405.350   
+            T_GRADIENT=( THETA(I,K+1)*P_EXNER_FULL_UP                      GSM1F405.351   
+     &        -THETA(I,K_BELOW)*P_EXNER_FULL_LOW )/                        GSM1F405.352   
+     &        ( P_EXNER_FULL_UP-P_EXNER_FULL_LOW )                         GSM1F405.353   
+                                                                           GSM1F405.354   
+            LOCAL_GRADIENT=(T_GRADIENT-THETA(I,K))/P_EXNER_FULL            GSM1F405.355   
+                                                                           GSM1F405.356   
+            SECOND_ORDER_TERM=0.5*LOCAL_GRADIENT                           GSM1F405.357   
+     &        *( P_EXNER(I)*(P_EXNER(I)-2.*P_EXNER_FULL)                   GSM1F405.358   
+     &        -P_EXNER_HALF(I,K)*(P_EXNER_HALF(I,K)-2.*P_EXNER_FULL))      GSM1F405.359   
+                                                                           GSM1F405.360   
+            DEL_EXNER=P_EXNER_HALF(I,K)-P_EXNER(I)                         GSM1F405.361   
+            THETAV=THETA(I,K)                                              GSM1F405.362   
+            Z(I)=ZH(I,K)+CP_OVER_G*(THETAV*DEL_EXNER-SECOND_ORDER_TERM)    GSM1F405.363   
+                                                                           GSM1F405.364   
+          ELSE                                                             GSM1F405.365   
+                                                                           GSM1F405.366   
+! Calculation using virtual potential temperature                          GSM1F405.367   
+                                                                           GSM1F405.368   
+            PUP1   = PSTAR(I)*BKH(K+2) + AKH(K+2)                          GSM1F405.369   
+            PUP    = PSTAR(I)*BKH(K+1) + AKH(K+1)                          GSM1F405.370   
+            PLOW   = PSTAR(I)*BKH(K)   + AKH(K)                            GSM1F405.371   
+            PLOW11 = PSTAR(I)*BKH(K_BELOW+1) + AKH(K_BELOW+1)              GSM1F405.372   
+            PLOW1  = PSTAR(I)*BKH(K_BELOW)   + AKH(K_BELOW)                GSM1F405.373   
+                                                                           GSM1F405.374   
+            P_EXNER_FULL_UP= P_EXNER_C(                                    GSM1F405.375   
+     &        P_EXNER_HALF(I,K+2),P_EXNER_HALF(I,K+1),                     GSM1F405.376   
+     &        PUP1,PUP,KAPPA)                                              GSM1F405.377   
+            P_EXNER_FULL= P_EXNER_C(                                       GSM1F405.378   
+     &        P_EXNER_HALF(I,K+1),P_EXNER_HALF(I,K),                       GSM1F405.379   
+     &        PUP,PLOW,KAPPA)                                              GSM1F405.380   
+            P_EXNER_FULL_LOW= P_EXNER_C(                                   GSM1F405.381   
+     &        P_EXNER_HALF(I,K_BELOW+1),P_EXNER_HALF(I,K_BELOW),           GSM1F405.382   
+     &        PLOW11,PLOW1,KAPPA)                                          GSM1F405.383   
+                                                                           GSM1F405.384   
+            T_GRADIENT=( THETA(I,K+1)*P_EXNER_FULL_UP                      GSM1F405.385   
+     &        -THETA(I,K_BELOW)*P_EXNER_FULL_LOW )/                        GSM1F405.386   
+     &        ( P_EXNER_FULL_UP-P_EXNER_FULL_LOW )                         GSM1F405.387   
+                                                                           GSM1F405.388   
+            LOCAL_GRADIENT=(T_GRADIENT-THETA(I,K))/P_EXNER_FULL            GSM1F405.389   
+                                                                           GSM1F405.390   
+            SECOND_ORDER_TERM=0.5*LOCAL_GRADIENT                           GSM1F405.391   
+     &        *(P_EXNER(I)*(P_EXNER(I)-2.*P_EXNER_FULL)                    GSM1F405.392   
+     &        -P_EXNER_HALF(I,K)*(P_EXNER_HALF(I,K)-2.*P_EXNER_FULL) )     GSM1F405.393   
+                                                                           GSM1F405.394   
+            DEL_EXNER=P_EXNER_HALF(I,K)-P_EXNER(I)                         GSM1F405.395   
+            THETAV=THETA(I,K)*(1.0+C_VIRTUAL*Q(I,K))                       GSM1F405.396   
+            Z(I)=ZH(I,K)+CP_OVER_G*(THETAV*DEL_EXNER-SECOND_ORDER_TERM)    GSM1F405.397   
+                                                                           GSM1F405.398   
+          ENDIF                                                            GSM1F405.399   
+          LAST=K                ! Start from level K next point            GSM1F405.400   
+        ENDIF                                                              VINTZ1A.145   
+      ENDDO                     ! DO I=START,END                           GSM1F405.401   
+                                                                           VINTZ1A.320   
+      RETURN                                                               VINTZ1A.321   
+      END                                                                  VINTZ1A.322   
+*ENDIF                                                                     VINTZ1A.323   

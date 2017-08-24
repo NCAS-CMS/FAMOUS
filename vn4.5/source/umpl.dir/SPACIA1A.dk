@@ -1,0 +1,473 @@
+*IF DEF,C84_1A                                                             SPACIA1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.9379  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9380  
+C                                                                          GTS2F400.9381  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9382  
+C restrictions as set forth in the contract.                               GTS2F400.9383  
+C                                                                          GTS2F400.9384  
+C                Meteorological Office                                     GTS2F400.9385  
+C                London Road                                               GTS2F400.9386  
+C                BRACKNELL                                                 GTS2F400.9387  
+C                Berkshire UK                                              GTS2F400.9388  
+C                RG12 2SZ                                                  GTS2F400.9389  
+C                                                                          GTS2F400.9390  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9391  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9392  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9393  
+C Modelling at the above address.                                          GTS2F400.9394  
+C ******************************COPYRIGHT******************************    GTS2F400.9395  
+C                                                                          GTS2F400.9396  
+CLL  Routine: SPATIAL --------------------------------------------------   SPACIA1A.3     
+CLL                                                                        SPACIA1A.4     
+CLL  Purpose: Performs general spatial processing on an input field to     SPACIA1A.5     
+CLL           produce an output field or scalar within STASH.  Lower-      SPACIA1A.6     
+CLL           level routines are called to perform the various spatial     SPACIA1A.7     
+CLL           processing options.                                          SPACIA1A.8     
+CLL                                                                        SPACIA1A.9     
+CLL  Author:   T.Johns/S.Tett                                              SPACIA1A.10    
+CLL                                                                        SPACIA1A.11    
+CLL  Tested under compiler:   cft77                                        SPACIA1A.12    
+CLL  Tested under OS version: UNICOS 5.1                                   SPACIA1A.13    
+CLL                                                                        SPACIA1A.14    
+CLL  Model            Modification history from model version 3.0:         SPACIA1A.15    
+CLL version  Date                                                          SPACIA1A.16    
+CLL   3.3  30/03/94  Explicitly declare (sub-addressed) output field       TJ300394.40    
+CLL                  fieldout using 'lenout' dimension.  Tim Johns.        TJ300394.41    
+CLL   3.3  16/09/93  Pass LOGICAL lmasswt to processing routines to        TJ170993.61    
+CLL                  denote that level-by-level mass-weights exist.        TJ170993.62    
+!LL   4.3   9/12/96  Added MPP code.                                       GPB0F403.1816  
+!LL                  Moved calculation of weighting and masking terms      GPB0F403.1817  
+!LL                  up from processing routines.            P.Burton      GPB0F403.1818  
+!LL   4.4   13/06/97 MPP : Where reduction spatial meaning takes place     GPB0F404.257   
+!LL                  processors not getting results should set             GPB0F404.258   
+!LL                  their diagnostic space to zeros.          P.Burton    GPB0F404.259   
+!LL   4.4   22/10/97 MPP : Prevent uninitialised points when               GSM1F404.49    
+!LL                  pstar_weight on U or C grid S.D.Mullerworth           GSM1F404.50    
+CLL                                                                        SPACIA1A.17    
+CLL  Programming standard: UM Doc Paper 3, version 2 (7/9/90)              SPACIA1A.18    
+CLL                                                                        SPACIA1A.19    
+CLL  Logical components covered: D71                                       SPACIA1A.20    
+CLL                                                                        SPACIA1A.21    
+CLL  Project task: D7                                                      SPACIA1A.22    
+CLL                                                                        SPACIA1A.23    
+CLL  External documentation:                                               SPACIA1A.24    
+CLL    Unified Model Doc Paper C4 - Storage handling and diagnostic        SPACIA1A.25    
+CLL                                 system (STASH)                         SPACIA1A.26    
+CLL                                                                        SPACIA1A.27    
+CLL-----------------------------------------------------------------       SPACIA1A.28    
+C*L  Interface and arguments: ------------------------------------------   SPACIA1A.29    
+      SUBROUTINE SPATIAL(fieldin,vx,vy,vz,GR,st_grid,lcyclic,lmasswt,      GPB0F403.1819  
+     +      n_cols_out,n_rows_out,                                         SPACIA1A.31    
+     +      base_level,level_list,index_lev,no_of_levels,                  SPACIA1A.32    
+     +      pexner,pstar,delta_ak,delta_bk,                                SPACIA1A.33    
+     +      cos_p_latitude,cos_u_latitude,land,                            SPACIA1A.34    
+     +      row_length,p_rows,u_rows,p_levels,                             SPACIA1A.35    
+     +      fieldout,lenout,                                               TJ300394.42    
+     +      control,control_size,rmdi,                                     SPACIA1A.37    
+     +      icode,cmessage)                                                SPACIA1A.38    
+C                                                                          SPACIA1A.39    
+      IMPLICIT NONE                                                        SPACIA1A.40    
+C                                                                          SPACIA1A.41    
+      INTEGER                                                              SPACIA1A.42    
+     &    vx,vy,vz,                         ! IN size of fieldin           SPACIA1A.43    
+     &    lenout,                           ! IN size of fieldout          TJ300394.43    
+     &    GR,                               ! IN ppxref gridtype code      GPB0F403.1820  
+     &    st_grid,                          ! IN STASH gridtype code       SPACIA1A.44    
+     &    n_rows_out,                       ! OUT no. of output rows       SPACIA1A.45    
+     &    n_cols_out,                       ! OUT no. of output cols       SPACIA1A.46    
+     &    base_level,                       ! IN reference model level     SPACIA1A.47    
+     &    row_length,p_rows,u_rows,p_levels,! IN size parameters           SPACIA1A.48    
+     &    control_size,                     ! IN size of control record    SPACIA1A.49    
+     &    control(control_size),            ! IN control record            SPACIA1A.50    
+     &    icode,                            ! OUT error code 0 if ok       SPACIA1A.51    
+     &    no_of_levels,                     ! IN no of levels              SPACIA1A.52    
+     &    index_lev(no_of_levels),          ! IN index to levels           SPACIA1A.53    
+     &    level_list(no_of_levels)          ! IN model level list          SPACIA1A.54    
+      REAL                                                                 SPACIA1A.55    
+     &    fieldin(vx,vy,vz), ! IN fieldin which is to be acted on          SPACIA1A.56    
+     &    pexner(row_length,p_rows,p_levels+1), ! IN exner pressure        SPACIA1A.57    
+     &    pstar(row_length,p_rows),             ! IN surf pressure         SPACIA1A.58    
+     &    delta_ak(p_levels),                   ! IN hybrid coords         SPACIA1A.59    
+     &    delta_bk(p_levels),                   ! IN hybrid coords         SPACIA1A.60    
+     &    cos_p_latitude(row_length,p_rows),    ! IN p-grid area fn        SPACIA1A.61    
+     &    cos_u_latitude(row_length,u_rows),    ! IN u-grid area fn        SPACIA1A.62    
+     &    fieldout(lenout),                     ! OUT output field         TJ300394.44    
+     &    rmdi                                  ! IN  missing data indic   SPACIA1A.64    
+      LOGICAL                                                              SPACIA1A.65    
+     &    lcyclic,                              ! IN .true. if cyclic EW   SPACIA1A.66    
+     &    lmasswt,                              ! IN  TRUE if masswts OK   TJ170993.64    
+     &    land(row_length,p_rows)               ! IN land mask             SPACIA1A.67    
+      CHARACTER*(*) cmessage                    ! OUT error message        SPACIA1A.68    
+                                                                           SPACIA1A.69    
+C*----------------------------------------------------------------------   SPACIA1A.70    
+C                                                                          SPACIA1A.71    
+*CALL STPARAM                                                              SPACIA1A.72    
+*CALL STERR                                                                SPACIA1A.73    
+*IF DEF,MPP                                                                GPB0F403.1821  
+*CALL PARVARS                                                              GPB0F403.1822  
+*CALL CPPXREF                                                              GPB0F403.1823  
+*ENDIF                                                                     GPB0F403.1824  
+CL                                                                         SPACIA1A.74    
+CL external routines                                                       SPACIA1A.75    
+CL                                                                         SPACIA1A.76    
+      EXTERNAL stextc ! extracts the field                                 SPACIA1A.77    
+      EXTERNAL stcolm ! computes the column mean                           SPACIA1A.78    
+      EXTERNAL stzonm ! computes the zonal mean                            SPACIA1A.79    
+      EXTERNAL stmerm ! computes the meridional mean                       SPACIA1A.80    
+      EXTERNAL stglom ! computes the global mean                           SPACIA1A.81    
+      EXTERNAL stfieldm ! computes the field mean                          SPACIA1A.82    
+CL                                                                         SPACIA1A.83    
+CL local variables                                                         SPACIA1A.84    
+CL                                                                         SPACIA1A.85    
+      LOGICAL lwrap                ! TRUE if output field wraparound EW    SPACIA1A.86    
+      LOGICAL lmasswt_strict       ! copy of lmasswt - but set to false    GPB0F403.1825  
+!                                  ! if mass weighting is not requested    GPB0F403.1826  
+      INTEGER xstart,ystart        ! lower left hand corner coords         SPACIA1A.87    
+      INTEGER xend,yend            ! upper right hand corner coords        SPACIA1A.88    
+      INTEGER processing_code      ! what kind of mean  will be done       SPACIA1A.89    
+      INTEGER what_level           ! what type of input level              SPACIA1A.90    
+      INTEGER what_mask            ! what mask is used                     SPACIA1A.91    
+      INTEGER what_weight          ! what weighting is used                SPACIA1A.92    
+                                                                           GPB0F403.1827  
+      INTEGER i,j  ! loop counters                                         GPB0F403.1828  
+     &,       n_rows  ! number of rows to loop over                        GPB0F403.1829  
+                                                                           GPB0F403.1830  
+*IF DEF,MPP                                                                GPB0F403.1831  
+      INTEGER                                                              GPB0F403.1832  
+! global versions of the extracted area domain limits                      GPB0F403.1833  
+     &  global_xstart,global_xend,global_ystart,global_yend                GPB0F403.1834  
+*ENDIF                                                                     GPB0F403.1835  
+                                                                           GPB0F403.1836  
+! workspace arrays containining weighting factors and masks.               GPB0F403.1837  
+      REAL                                                                 GPB0F403.1838  
+     &  area_weight(row_length,p_rows)                                     GPB0F403.1839  
+     &, pstar_weight(row_length,p_rows)                                    GPB0F403.1840  
+      LOGICAL                                                              GPB0F403.1841  
+     &  mask(row_length,p_rows)                                            GPB0F403.1842  
+                                                                           GPB0F403.1843  
+                                                                           GPB0F403.1844  
+CL----------------------------------------------------------------------   SPACIA1A.93    
+CL 1. Set up local variables                                               SPACIA1A.94    
+CL                                                                         SPACIA1A.95    
+      xstart=control(st_west_code)                                         SPACIA1A.96    
+      xend=control(st_east_code)                                           SPACIA1A.97    
+      ystart=control(st_north_code)  ! NOTE: Grid is assumed to be         SPACIA1A.98    
+      yend=control(st_south_code)    !       oriented north-to-south       SPACIA1A.99    
+*IF DEF,MPP                                                                GPB0F403.1845  
+                                                                           GPB0F403.1846  
+      global_xstart=xstart                                                 GPB0F403.1847  
+      global_ystart=ystart                                                 GPB0F403.1848  
+      global_xend=xend                                                     GPB0F403.1849  
+      global_yend=yend                                                     GPB0F403.1850  
+                                                                           GPB0F403.1851  
+! and calculate what the local subdomain limits are:                       GPB0F403.1852  
+        CALL GLOBAL_TO_LOCAL_SUBDOMAIN( .TRUE.,.TRUE.,                     GPB0F403.1853  
+     &                                  GR,mype,                           GPB0F403.1854  
+     &                                  global_ystart,global_xend,         GPB0F403.1855  
+     &                                  global_yend,global_xstart,         GPB0F403.1856  
+     &                                  ystart,xend,yend,xstart)           GPB0F403.1857  
+                                                                           GPB0F403.1858  
+*ENDIF                                                                     GPB0F403.1859  
+C Check if wraparound field                                                SPACIA1A.100   
+      IF (xstart.GT.xend) THEN                                             SPACIA1A.101   
+        IF (lcyclic) THEN                                                  SPACIA1A.102   
+*IF -DEF,MPP                                                               GPB0F403.1860  
+          xend=xend+row_length                                             SPACIA1A.103   
+*ELSE                                                                      GPB0F403.1861  
+          xend=xend+row_length-2*Offx                                      GPB0F403.1862  
+! subtract two halos as we don't wish to include halos at the end          GPB0F403.1863  
+! and start of the row within the wrap around domain                       GPB0F403.1864  
+*ENDIF                                                                     GPB0F403.1865  
+          lwrap=.TRUE.                                                     SPACIA1A.104   
+        ELSE                                                               SPACIA1A.105   
+          icode=st_bad_wraparound    ! wraparound illegal unless cyclic    SPACIA1A.106   
+          GOTO 999                                                         SPACIA1A.107   
+        ENDIF                                                              SPACIA1A.108   
+      ELSE                                                                 SPACIA1A.109   
+        lwrap=.FALSE.                                                      SPACIA1A.110   
+      ENDIF                                                                SPACIA1A.111   
+*IF DEF,MPP                                                                GPB0F403.1866  
+      IF (global_xstart .GT. global_xend) THEN                             GPB0F403.1867  
+        IF (lcyclic) THEN                                                  GPB0F403.1868  
+          global_xend=global_xend+glsize(1)                                GPB0F403.1869  
+        ELSE                                                               GPB0F403.1870  
+          icode=st_bad_wraparound  ! wraparound illegal unless cyclic      GPB0F403.1871  
+          GOTO 999                                                         GPB0F403.1872  
+        ENDIF                                                              GPB0F403.1873  
+      ENDIF                                                                GPB0F403.1874  
+*ENDIF                                                                     GPB0F403.1875  
+      processing_code=control(st_gridpoint_code)                           SPACIA1A.112   
+      what_level=control(st_input_bottom)                                  SPACIA1A.113   
+      what_mask=mod(processing_code,block_size)                            SPACIA1A.114   
+      what_weight=control(st_weight_code)                                  SPACIA1A.115   
+CL                                                                         SPACIA1A.116   
+CL 1.1 Prevent masking or weighting if input field is not 2D in extent     SPACIA1A.117   
+CL     - weighting and masking is assumed to have been done outside.       SPACIA1A.118   
+CL                                                                         SPACIA1A.119   
+      IF ( (.NOT.(st_grid.EQ.st_tp_grid.OR.st_grid.EQ.st_uv_grid.OR.       SPACIA1A.120   
+     *            st_grid.EQ.st_cu_grid.OR.st_grid.EQ.st_cv_grid))         SPACIA1A.121   
+     *      .AND.(what_mask  .NE.stash_null_mask_code   .OR.               SPACIA1A.122   
+     *            what_weight.NE.stash_weight_null_code) ) THEN            SPACIA1A.123   
+       icode=st_not_supported                                              SPACIA1A.124   
+       cmessage='SPATIAL : Masking/weighting unsupported - non 2D field'   SPACIA1A.125   
+       GOTO 999                                                            SPACIA1A.126   
+      ENDIF                                                                SPACIA1A.127   
+                                                                           GPB0F403.1876  
+! Check for supported weighting and masking options                        GPB0F403.1877  
+                                                                           GPB0F403.1878  
+      IF (.NOT. ((what_weight .EQ. stash_weight_null_code) .OR.            GPB0F403.1879  
+     &           (what_weight .EQ. stash_weight_area_code) .OR.            GPB0F403.1880  
+     &           (what_weight .EQ. stash_weight_volume_code) .OR.          GPB0F403.1881  
+     &           (what_weight .EQ. stash_weight_mass_code) ) ) THEN        GPB0F403.1882  
+        cmessage='SPATIAL : Unrecognized weighting option'                 GPB0F403.1883  
+        icode=unknown_weight                                               GPB0F403.1884  
+        GOTO 999                                                           GPB0F403.1885  
+      ENDIF                                                                GPB0F403.1886  
+                                                                           GPB0F403.1887  
+      IF (.NOT. ((what_mask .EQ. stash_null_mask_code) .OR.                GPB0F403.1888  
+     &           (what_mask .EQ. stash_land_mask_code) .OR.                GPB0F403.1889  
+     &           (what_mask .EQ. stash_sea_mask_code ) ) ) THEN            GPB0F403.1890  
+        cmessage='SPATIAL : Unrecognized masking option'                   GPB0F403.1891  
+        icode=unknown_mask                                                 GPB0F403.1892  
+        GOTO 999                                                           GPB0F403.1893  
+      ENDIF                                                                GPB0F403.1894  
+                                                                           GPB0F403.1895  
+      IF (what_weight .EQ. stash_weight_volume_code) THEN                  GPB0F403.1896  
+        cmessage='SPATIAL : Volume-weighting not supported'                GPB0F403.1897  
+        icode=st_illegal_weight                                            GPB0F403.1898  
+        GOTO 999                                                           GPB0F403.1899  
+      ENDIF                                                                GPB0F403.1900  
+                                                                           GPB0F403.1901  
+! Set lmasswt_strict - copy of lmasswt, but set to false is mass           GPB0F403.1902  
+! weighting not requested                                                  GPB0F403.1903  
+                                                                           GPB0F403.1904  
+      lmasswt_strict=                                                      GPB0F403.1905  
+     &  (lmasswt .AND. (what_weight .EQ. stash_weight_mass_code))          GPB0F403.1906  
+                                                                           GPB0F403.1907  
+! Precalculate weighting and masking arrays                                GPB0F403.1908  
+! I've used IF tests inside the loops, but since the logical               GPB0F403.1909  
+! expressions are invariant wrt i and j, the compiler will                 GPB0F403.1910  
+! move them outside the DO loops. It makes the code a lot shorter!         GPB0F403.1911  
+                                                                           GPB0F403.1912  
+      IF (.NOT. ((st_grid .EQ. st_tp_grid) .OR.                            GPB0F403.1913  
+     &         (st_grid .EQ. st_cu_grid))) THEN                            GPB0F403.1914  
+        n_rows=u_rows                                                      GPB0F403.1915  
+      ELSE                                                                 GPB0F403.1916  
+        n_rows=p_rows                                                      GPB0F403.1917  
+      ENDIF                                                                GPB0F403.1918  
+                                                                           GPB0F403.1919  
+! area weighting                                                           GPB0F403.1920  
+      DO j=1,n_rows                                                        GPB0F403.1921  
+        DO i=1,row_length                                                  GPB0F403.1922  
+          IF (what_weight .EQ. stash_weight_null_code) THEN                GPB0F403.1923  
+            area_weight(i,j)=1.0  ! no area weighting                      GPB0F403.1924  
+          ELSE ! some form of area weighting will be required              GPB0F403.1925  
+            IF (st_grid .EQ. st_tp_grid .OR.                               GPB0F403.1926  
+     &          st_grid .EQ. st_cu_grid) THEN                              GPB0F403.1927  
+              area_weight(i,j)=cos_p_latitude(i,j)                         GPB0F403.1928  
+            ELSE                                                           GPB0F403.1929  
+              area_weight(i,j)=cos_u_latitude(i,j)                         GPB0F403.1930  
+            ENDIF                                                          GPB0F403.1931  
+          ENDIF                                                            GPB0F403.1932  
+        ENDDO                                                              GPB0F403.1933  
+      ENDDO                                                                GPB0F403.1934  
+                                                                           GPB0F403.1935  
+*IF DEF,MPP                                                                GSM1F404.51    
+C Ensure halos are initialised                                             GSM1F404.52    
+      DO I=n_rows-1,n_rows                                                 GSM1F404.53    
+        DO J=1,row_length                                                  GSM1F404.54    
+          pstar_weight(j,i)=1.0                                            GSM1F404.55    
+        ENDDO                                                              GSM1F404.56    
+      ENDDO                                                                GSM1F404.57    
+*ENDIF                                                                     GSM1F404.58    
+! mass weighting                                                           GPB0F403.1936  
+      IF ((what_weight .EQ. stash_weight_null_code) .OR.                   GPB0F403.1937  
+     &    (what_weight .EQ. stash_weight_area_code)) THEN                  GPB0F403.1938  
+! No mass weighting is required                                            GPB0F403.1939  
+        DO j=1,n_rows                                                      GPB0F403.1940  
+          DO i=1,row_length                                                GPB0F403.1941  
+            pstar_weight(i,j)=1.0                                          GPB0F403.1942  
+          ENDDO                                                            GPB0F403.1943  
+        ENDDO                                                              GPB0F403.1944  
+      ELSE                                                                 GPB0F403.1945  
+        IF (st_grid .EQ. st_uv_grid) THEN                                  GPB0F403.1946  
+          CALL P_TO_UV(pstar,pstar_weight,row_length*p_rows,               GPB0F403.1947  
+     &                 row_length*u_rows,row_length,p_rows)                GPB0F403.1948  
+        ELSEIF (st_grid .EQ. st_cu_grid) THEN                              GPB0F403.1949  
+          CALL P_TO_CU(pstar,pstar_weight,row_length*p_rows,               GPB0F403.1950  
+     &                 row_length*p_rows,row_length,p_rows)                GPB0F403.1951  
+        ELSEIF (st_grid .EQ. st_cv_grid) THEN                              GPB0F403.1952  
+          CALL P_TO_CV(pstar,pstar_weight,row_length*p_rows,               GPB0F403.1953  
+     &                 row_length*u_rows,row_length,p_rows)                GPB0F403.1954  
+        ELSE                                                               GPB0F403.1955  
+          DO j=1,n_rows                                                    GPB0F403.1956  
+            DO i=1,row_length                                              GPB0F403.1957  
+              pstar_weight(i,j)=pstar(i,j)                                 GPB0F403.1958  
+            ENDDO                                                          GPB0F403.1959  
+          ENDDO                                                            GPB0F403.1960  
+        ENDIF                                                              GPB0F403.1961  
+      ENDIF                                                                GPB0F403.1962  
+                                                                           GPB0F403.1963  
+! masking                                                                  GPB0F403.1964  
+                                                                           GPB0F403.1965  
+      DO j=1,p_rows                                                        GPB0F403.1966  
+        DO i=1,row_length                                                  GPB0F403.1967  
+          IF (what_mask .EQ. stash_land_mask_code) THEN                    GPB0F403.1968  
+            mask(i,j)=land(i,j)                                            GPB0F403.1969  
+          ELSEIF (what_mask .EQ. stash_sea_mask_code) THEN                 GPB0F403.1970  
+            mask(i,j)=.NOT. land(i,j)                                      GPB0F403.1971  
+          ELSE                                                             GPB0F403.1972  
+            mask(i,j)=.TRUE.                                               GPB0F403.1973  
+          ENDIF                                                            GPB0F403.1974  
+        ENDDO                                                              GPB0F403.1975  
+      ENDDO                                                                GPB0F403.1976  
+                                                                           GPB0F403.1977  
+CL----------------------------------------------------------------------   SPACIA1A.128   
+CL 2. Call service routine to perform required processing                  SPACIA1A.129   
+CL                                                                         SPACIA1A.130   
+CL 2.1 Extract sub field (single level at a time)                          SPACIA1A.131   
+CL                                                                         SPACIA1A.132   
+      IF (processing_code.lt.extract_top.and.                              SPACIA1A.133   
+     +    processing_code.gt.extract_base) THEN                            SPACIA1A.134   
+        n_rows_out=(yend+1)-ystart                                         SPACIA1A.135   
+        n_cols_out=(xend+1)-xstart                                         SPACIA1A.136   
+*IF DEF,MPP                                                                GPB0F403.1978  
+        IF (                                                               GPB0F403.1979  
+     &   (xstart .NE. st_no_data) .AND. (xend .NE. st_no_data) .AND.       GPB0F403.1980  
+     &   (ystart .NE. st_no_data) .AND. (yend .NE. st_no_data)) THEN       GPB0F403.1981  
+*ENDIF                                                                     GPB0F403.1982  
+        CALL STEXTC(fieldin,vx,vy,st_grid,lwrap,lmasswt_strict,            GPB0F403.1983  
+     &              xstart,ystart,xend,yend,                               SPACIA1A.138   
+     &              fieldout,                                              SPACIA1A.139   
+     &              pstar_weight,                                          GPB0F403.1984  
+     &              delta_ak(base_level),delta_bk(base_level),             SPACIA1A.141   
+     &              area_weight,mask,                                      GPB0F403.1985  
+     &              row_length,p_rows,                                     GPB0F403.1986  
+     &              what_level,what_mask,what_weight,rmdi,                 SPACIA1A.144   
+     &              icode,cmessage)                                        SPACIA1A.145   
+*IF DEF,MPP                                                                GPB0F403.1987  
+        ELSE  ! just set values to non NaN                                 GPB0F404.260   
+          DO i=1,lenout                                                    GPB0F404.261   
+            fieldout(i)=0.0                                                GPB0F404.262   
+          ENDDO                                                            GPB0F404.263   
+        ENDIF                                                              GPB0F403.1988  
+*ENDIF                                                                     GPB0F403.1989  
+CL                                                                         SPACIA1A.146   
+CL 2.2 Calculate column mean (over multiple levels indexed by index_lev)   SPACIA1A.147   
+CL                                                                         SPACIA1A.148   
+      ELSEIF (processing_code.lt.vert_mean_top.and.                        SPACIA1A.149   
+     +        processing_code.gt.vert_mean_base) THEN                      SPACIA1A.150   
+        n_rows_out=yend+1-ystart                                           SPACIA1A.151   
+        n_cols_out=xend+1-xstart                                           SPACIA1A.152   
+*IF DEF,MPP                                                                GPB0F403.1990  
+        IF (                                                               GPB0F403.1991  
+     &   (xstart .NE. st_no_data) .AND. (xend .NE. st_no_data) .AND.       GPB0F403.1992  
+     &   (ystart .NE. st_no_data) .AND. (yend .NE. st_no_data)) THEN       GPB0F403.1993  
+*ENDIF                                                                     GPB0F403.1994  
+        CALL STCOLM(fieldin,vx,vy,vz,st_grid,lwrap,lmasswt_strict,         GPB0F403.1995  
+     &              xstart,ystart,xend,yend,                               SPACIA1A.154   
+     &              fieldout,index_lev,level_list,no_of_levels,            SPACIA1A.155   
+     &              pstar_weight,                                          GPB0F403.1996  
+     &              delta_ak,delta_bk,                                     SPACIA1A.157   
+     &              area_weight,mask,                                      GPB0F403.1997  
+     &              row_length,p_rows,                                     GPB0F403.1998  
+     &              what_level,what_mask,what_weight,rmdi,                 SPACIA1A.160   
+     &              icode,cmessage)                                        SPACIA1A.161   
+*IF DEF,MPP                                                                GPB0F403.1999  
+        ELSE  ! just set values to non NaN                                 GPB0F404.264   
+          DO i=1,lenout                                                    GPB0F404.265   
+            fieldout(i)=0.0                                                GPB0F404.266   
+          ENDDO                                                            GPB0F404.267   
+        ENDIF                                                              GPB0F403.2000  
+*ENDIF                                                                     GPB0F403.2001  
+CL                                                                         SPACIA1A.162   
+CL 2.3 Calculate zonal mean (single level at a time)                       SPACIA1A.163   
+CL                                                                         SPACIA1A.164   
+      ELSEIF (processing_code.lt.zonal_mean_top.and.                       SPACIA1A.165   
+     +        processing_code.gt.zonal_mean_base) THEN                     SPACIA1A.166   
+        n_rows_out=yend+1-ystart                                           SPACIA1A.167   
+        n_cols_out=1                                                       SPACIA1A.168   
+        CALL STZONM(fieldin,vx,vy,st_grid,gr,lwrap,lmasswt_strict,         GPB0F403.2002  
+     &              xstart,ystart,xend,yend,                               SPACIA1A.170   
+*IF DEF,MPP                                                                GPB0F403.2003  
+     &              global_xstart,global_ystart,global_xend,global_yend,   GPB0F403.2004  
+*ENDIF                                                                     GPB0F403.2005  
+     &              fieldout,                                              SPACIA1A.171   
+     &              pstar_weight,                                          GPB0F403.2006  
+     &              delta_ak(base_level),delta_bk(base_level),             SPACIA1A.173   
+     &              area_weight,mask,                                      GPB0F403.2007  
+     &              row_length,p_rows,                                     GPB0F403.2008  
+     &              what_level,what_mask,what_weight,rmdi,                 SPACIA1A.176   
+     &              icode,cmessage)                                        SPACIA1A.177   
+CL                                                                         SPACIA1A.178   
+CL 2.4 Calculate meridional mean (single level at a time)                  SPACIA1A.179   
+CL                                                                         SPACIA1A.180   
+      ELSEIF (processing_code.lt.merid_mean_top.and.                       SPACIA1A.181   
+     +        processing_code.gt.merid_mean_base) THEN                     SPACIA1A.182   
+        n_rows_out=1                                                       SPACIA1A.183   
+        n_cols_out=xend+1-xstart                                           SPACIA1A.184   
+        CALL STMERM(fieldin,vx,vy,st_grid,gr,lwrap,lmasswt_strict,         GPB0F403.2009  
+     &              xstart,ystart,xend,yend,                               SPACIA1A.186   
+*IF DEF,MPP                                                                GPB0F403.2010  
+     &              global_xstart,global_ystart,global_xend,global_yend,   GPB0F403.2011  
+*ENDIF                                                                     GPB0F403.2012  
+     &              fieldout,                                              SPACIA1A.187   
+     &              pstar_weight,                                          GPB0F403.2013  
+     &              delta_ak(base_level),delta_bk(base_level),             SPACIA1A.189   
+     &              area_weight,mask,                                      GPB0F403.2014  
+     &              row_length,p_rows,                                     GPB0F403.2015  
+     &              what_level,what_mask,what_weight,rmdi,                 SPACIA1A.192   
+     &              icode,cmessage)                                        SPACIA1A.193   
+CL                                                                         SPACIA1A.194   
+CL 2.5 Calculate field mean (single level at a time)                       SPACIA1A.195   
+CL                                                                         SPACIA1A.196   
+      ELSEIF (processing_code.lt.field_mean_top.and.                       SPACIA1A.197   
+     +        processing_code.gt.field_mean_base) THEN                     SPACIA1A.198   
+        n_rows_out=1                                                       SPACIA1A.199   
+        n_cols_out=1                                                       SPACIA1A.200   
+        CALL STFIELDM(fieldin,vx,vy,st_grid,gr,lwrap,lmasswt_strict,       GPB0F403.2016  
+     &              xstart,ystart,xend,yend,                               SPACIA1A.202   
+*IF DEF,MPP                                                                GPB0F403.2017  
+     &              global_xstart,global_ystart,global_xend,global_yend,   GPB0F403.2018  
+*ENDIF                                                                     GPB0F403.2019  
+     &              fieldout,                                              SPACIA1A.203   
+     &              pstar_weight,                                          GPB0F403.2020  
+     &              delta_ak(base_level),delta_bk(base_level),             SPACIA1A.205   
+     &              area_weight,mask,                                      GPB0F403.2021  
+     &              row_length,p_rows,                                     GPB0F403.2022  
+     &              what_level,what_mask,what_weight,rmdi,                 SPACIA1A.208   
+     &              icode,cmessage)                                        SPACIA1A.209   
+CL                                                                         SPACIA1A.210   
+CL 2.6 Calculate global mean (over multiple levels)                        SPACIA1A.211   
+CL                                                                         SPACIA1A.212   
+      ELSEIF (processing_code.lt.global_mean_top.and.                      SPACIA1A.213   
+     +        processing_code.gt.global_mean_base) THEN                    SPACIA1A.214   
+        n_rows_out=1                                                       SPACIA1A.215   
+        n_cols_out=1                                                       SPACIA1A.216   
+        CALL STGLOM(fieldin,vx,vy,vz,st_grid,gr,lwrap,lmasswt_strict,      GPB0F403.2023  
+     &              xstart,ystart,xend,yend,                               SPACIA1A.218   
+*IF DEF,MPP                                                                GPB0F403.2024  
+     &              global_xstart,global_ystart,global_xend,global_yend,   GPB0F403.2025  
+*ENDIF                                                                     GPB0F403.2026  
+     &              fieldout,index_lev,level_list,no_of_levels,            SPACIA1A.219   
+     &              pstar_weight,                                          GPB0F403.2027  
+     &              delta_ak,delta_bk,                                     SPACIA1A.221   
+     &              area_weight,mask,                                      GPB0F403.2028  
+     &              row_length,p_rows,                                     GPB0F403.2029  
+     &              what_level,what_mask,what_weight,rmdi,                 SPACIA1A.224   
+     &              icode,cmessage)                                        SPACIA1A.225   
+CL                                                                         SPACIA1A.226   
+CL 2.7 Invalid processing option                                           SPACIA1A.227   
+CL                                                                         SPACIA1A.228   
+      ELSE                                                                 SPACIA1A.229   
+        icode=unknown_processing                                           SPACIA1A.230   
+        write(cmessage,111)'unknown processing option',                    SPACIA1A.231   
+     +    processing_code                                                  SPACIA1A.232   
+      ENDIF                                                                SPACIA1A.233   
+CL                                                                         SPACIA1A.234   
+  999 CONTINUE                                                             SPACIA1A.235   
+111   format('SPATIAL : >>FATAL ERROR <<',a40,i5)                          SPACIA1A.236   
+C                                                                          SPACIA1A.237   
+      RETURN                                                               SPACIA1A.238   
+      END                                                                  SPACIA1A.239   
+*ENDIF                                                                     SPACIA1A.240   

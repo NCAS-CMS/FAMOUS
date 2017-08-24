@@ -1,0 +1,670 @@
+*IF DEF,C96_1A,OR,DEF,C96_1B                                               GPB3F403.284   
+*IF DEF,MPP                                                                GPB3F403.285   
+C *****************************COPYRIGHT******************************     GTALBC1A.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    GTALBC1A.4     
+C                                                                          GTALBC1A.5     
+C Use, duplication or disclosure of this code is subject to the            GTALBC1A.6     
+C restrictions as set forth in the contract.                               GTALBC1A.7     
+C                                                                          GTALBC1A.8     
+C                Meteorological Office                                     GTALBC1A.9     
+C                London Road                                               GTALBC1A.10    
+C                BRACKNELL                                                 GTALBC1A.11    
+C                Berkshire UK                                              GTALBC1A.12    
+C                RG12 2SZ                                                  GTALBC1A.13    
+C                                                                          GTALBC1A.14    
+C If no contract has been raised with this copy of the code, the use,      GTALBC1A.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      GTALBC1A.16    
+C to do so must first be obtained in writing from the Head of Numerical    GTALBC1A.17    
+C Modelling at the above address.                                          GTALBC1A.18    
+C ******************************COPYRIGHT******************************    GTALBC1A.19    
+!+ Gathers in atmosphere partial LBCs from boundaries to create            GTALBC1A.20    
+!  global LBC                                                              GTALBC1A.21    
+!                                                                          GTALBC1A.22    
+! Subroutine Interface                                                     GTALBC1A.23    
+      SUBROUTINE GATHER_ATMOS_LBCS(FULL_LBC,FULL_LENRIMDATA,               GTALBC1A.24    
+     &                             PART_LBC,PART_LENRIMDATA,               GTALBC1A.25    
+     &                             GATHER_PE,                              GTALBC1A.26    
+     &                             ICODE,CMESSAGE)                         GTALBC1A.27    
+      IMPLICIT NONE                                                        GTALBC1A.28    
+!                                                                          GTALBC1A.29    
+! Description:                                                             GTALBC1A.30    
+! Gathers atmosphere LBCs from relevant processors and assembles           GTALBC1A.31    
+! a global LBC on processor GATHER_PE                                      GTALBC1A.32    
+!                                                                          GTALBC1A.33    
+! Method:                                                                  GTALBC1A.34    
+! The code loops around over all the processors.  For each                 GTALBC1A.35    
+! processor there is then a loop over the four boundaries                  GTALBC1A.36    
+! (North, East, South and West) and if the processor is on                 GTALBC1A.37    
+! that particular boundary region, the appropriate data                    GTALBC1A.38    
+! is sent from that processor's PART_LBC array to                          GTALBC1A.39    
+! GATHER_PE's FULL_LBC array.                                              GTALBC1A.40    
+! The data is transferred via two arrays, buf (the data to be              GTALBC1A.41    
+! sent) and buf_expand (the data being received) which are both            GTALBC1A.42    
+! on COMMON, to make the comms work with CRAY shmem correctly.             GTALBC1A.43    
+!                                                                          GTALBC1A.44    
+! The data structure of the PART_LBC array is a little different           GTALBC1A.45    
+! from the "standard" LBC data structure as described in                   GTALBC1A.46    
+! documentation paper C7. The East and West boundarys are both             GTALBC1A.47    
+! dimensioned to have P_ROWS of data on all grids. Not all                 GTALBC1A.48    
+! of the rows are used (rows are used starting from the top, so            GTALBC1A.49    
+! some of the lower rows may not contain meaningful data on                GTALBC1A.50    
+! some processors)                                                         GTALBC1A.51    
+!                                                                          GTALBC1A.52    
+! Current code owner : Paul Burton                                         GTALBC1A.53    
+!                                                                          GTALBC1A.54    
+! History                                                                  GTALBC1A.55    
+!  Model    Date       Modification history from model version 4.1         GTALBC1A.56    
+!  version                                                                 GTALBC1A.57    
+!    4.1    3/1/96     New Deck for MPP code   P.Burton                    GTALBC1A.58    
+!    4.2    18/11/96   Tidy up use of COMMON blocks.  P.Burton             GPB3F402.24    
+!    4.2    23/10/96   Use GC_SETOPT to use PUTs under GCOM_shmem          GPB2F402.343   
+!                      P.Burton                                            GPB2F402.344   
+!    4.4    08/12/97   Extend to cope with QCF prognostic if mixed         ARB1F404.161   
+!                      phase precip scheme in use.  R.T.H.Barnes.          ARB1F404.162   
+!    4.5    13/01/98   Removed SHMEM COMMON block and replaced by          GPB2F405.65    
+!                      dynamic arrays.                   P.Burton          GPB2F405.66    
+!    4.5    26/05/98   Corrected routine name in error message             GPB0F405.110   
+!                                                    P. Burton             GPB0F405.111   
+!    4.5    27/08/98   Corrected indexing for tracer variable              GPB0F405.112   
+!                                                    P.Burton              GPB0F405.113   
+!    4.5    15/09/98   Replaced L_LSPICE by L_LSPICE_BDY to correct        GPB0F405.114   
+!                      sizes for non-mixed phase boundary condition        GPB0F405.115   
+!                      fields in mixed phase dump.   R.Rawlins             GPB0F405.116   
+!                                                                          GTALBC1A.59    
+! Subroutine Arguments:                                                    GTALBC1A.60    
+                                                                           GTALBC1A.61    
+      INTEGER                                                              GTALBC1A.62    
+     &  FULL_LENRIMDATA   ! IN size of the FULL_LBC array                  GTALBC1A.63    
+     &, PART_LENRIMDATA   ! IN size of the PART_LBC array                  GTALBC1A.64    
+     &, GATHER_PE         ! IN processor to scatter data from              GTALBC1A.65    
+     &, ICODE             ! OUT error code                                 GTALBC1A.66    
+                                                                           GTALBC1A.67    
+      CHARACTER*(80)                                                       GTALBC1A.68    
+     &  CMESSAGE          ! OUT error message                              GTALBC1A.69    
+                                                                           GTALBC1A.70    
+      REAL                                                                 GTALBC1A.71    
+     &  FULL_LBC(FULL_LENRIMDATA)  ! IN full LBC (only on GATHER-_PE)      GTALBC1A.72    
+     &, PART_LBC(PART_LENRIMDATA)  ! OUT local part of LBC                 GTALBC1A.73    
+                                                                           GTALBC1A.74    
+! Parameters and COMMON                                                    GTALBC1A.75    
+                                                                           GTALBC1A.76    
+*CALL PARVARS                                                              GTALBC1A.77    
+*CALL GCCOM                                                                GPB2F402.345   
+                                                                           GTALBC1A.78    
+      REAL                                                                 GPB2F405.67    
+     &  local_buf(FULL_LENRIMDATA)                                         GPB2F405.68    
+     &, buf_expand(FULL_LENRIMDATA)                                        GPB2F405.69    
+                                                                           GTALBC1A.81    
+! TYPESIZE contains information about the tracers, and also                GTALBC1A.82    
+! P_LEVELS, Q_LEVELS and RIMWIDTHA which we require                        GTALBC1A.83    
+*CALL TYPSIZE                                                              GTALBC1A.84    
+! CNTLATM contains L_LSPICE to say whether LBC file needs QCF              ARB1F404.163   
+*CALL CNTLATM                                                              ARB1F404.164   
+                                                                           GTALBC1A.85    
+! Local variables                                                          GTALBC1A.86    
+                                                                           GTALBC1A.87    
+      INTEGER                                                              GTALBC1A.88    
+     &  global_ROW_LENGTH ! length of row on global P grid                 GTALBC1A.89    
+     &, global_P_ROWS     ! number of rows on global P grid                GTALBC1A.90    
+     &, local_ROW_LENGTH  ! length of row on local P grid (no halos)       GTALBC1A.91    
+     &, local_U_ROW_LENGTH ! length of row on local U grid (no halos)      GTALBC1A.92    
+     &, local_P_ROWS      ! number of rows on local P grid (no halos)      GTALBC1A.93    
+     &, global_P_LENRIM   ! size of boundary data for single               GTALBC1A.94    
+!                         !   level on P grid for global data              GTALBC1A.95    
+     &, global_U_LENRIM   ! size of boundary data for single               GTALBC1A.96    
+!                         !   level on U grid for global data              GTALBC1A.97    
+     &, local_P_LENRIM    ! size of boundary data for single               GTALBC1A.98    
+!                         !    level on P grid for local data              GTALBC1A.99    
+     &, local_U_LENRIM    ! size of boundary data for single               GTALBC1A.100   
+!                         !    level on U grid for local data              GTALBC1A.101   
+                                                                           GTALBC1A.102   
+     &, global_FIRST_SIDE_ROW  ! first row for side LBC section            GTALBC1A.103   
+     &, global_LAST_P_SIDE_ROW ! last row for side LBC section             GTALBC1A.104   
+     &, global_LAST_U_SIDE_ROW ! last row for side LBC section             GTALBC1A.105   
+                                                                           GTALBC1A.106   
+     &, global_START_ROW       ! first row in global data in boundary      GTALBC1A.107   
+     &, local_START_ROW        ! first row in local data in boundary       GTALBC1A.108   
+     &, global_START_POINT     ! first point in row in global boundary     GTALBC1A.109   
+     &, local_START_POINT      ! first point in row in local boundary      GTALBC1A.110   
+     &, N_P_ROWS               ! number of rows on P grid in boundary      GTALBC1A.111   
+     &, N_P_POINTS             ! number of points in row on P grid         GTALBC1A.112   
+     &, N_U_ROWS               ! number of rows on U grid in boundary      GTALBC1A.113   
+     &, N_U_POINTS             ! number of points in row on U grid         GTALBC1A.114   
+     &, global_P_ROW_LEN       ! length of row on P grid in boundary       GTALBC1A.115   
+     &, global_U_ROW_LEN       ! length of row on U grid in boundary       GTALBC1A.116   
+     &, local_P_ROW_LEN        ! length of row on P grid in boundary       GTALBC1A.117   
+     &, local_U_ROW_LEN        ! length of row on U grid in boundary       GTALBC1A.118   
+     &, global_P_bound_off     ! offset of a P grid boundary               GTALBC1A.119   
+     &, local_P_bound_off      ! offset of a P grid boundary               GTALBC1A.120   
+     &, global_U_bound_off     ! offset of a U grid boundary               GTALBC1A.121   
+     &, local_U_bound_off      ! offset of a U grid boundary               GTALBC1A.122   
+                                                                           GTALBC1A.123   
+                                                                           GTALBC1A.124   
+     &, global_PSTAR_START      ! Start addresses of variables             GTALBC1A.125   
+     &, global_U_START          ! in the global LBC data                   GTALBC1A.126   
+     &, global_V_START          !                                          GTALBC1A.127   
+     &, global_THETA_START      !                                          GTALBC1A.128   
+     &, global_Q_START          !                                          GTALBC1A.129   
+     &, global_TR_START         ! (Tracer variables)                       GTALBC1A.130   
+     &, global_QCF_START        ! cloud ice if mixed phase scheme          ARB1F404.165   
+     &, global_P_EAST_DATA_off  ! offset of East P data in global LBC      GTALBC1A.131   
+     &, global_U_EAST_DATA_off  ! offset of East U data in global LBC      GTALBC1A.132   
+     &, global_P_SOUTH_DATA_off ! offset of South P data in global LBC     GTALBC1A.133   
+     &, global_U_SOUTH_DATA_off ! offset of South U data in global LBC     GTALBC1A.134   
+     &, global_P_WEST_DATA_off  ! offset of West P data in global LBC      GTALBC1A.135   
+     &, global_U_WEST_DATA_off  ! offset of West U data in global LBC      GTALBC1A.136   
+                                                                           GTALBC1A.137   
+     &, local_PSTAR_START       ! Start addresses of variables             GTALBC1A.138   
+     &, local_U_START           ! in the local LBC data                    GTALBC1A.139   
+     &, local_V_START           !                                          GTALBC1A.140   
+     &, local_THETA_START       !                                          GTALBC1A.141   
+     &, local_Q_START           !                                          GTALBC1A.142   
+     &, local_TR_START          ! (Tracer variables)                       GTALBC1A.143   
+     &, local_QCF_START         ! cloud ice if mixed phase scheme          ARB1F404.166   
+     &, local_P_EAST_DATA_off   ! offset of East P data in local LBC       GTALBC1A.144   
+     &, local_U_EAST_DATA_off   ! offset of East U data in local LBC       GTALBC1A.145   
+     &, local_P_SOUTH_DATA_off  ! offset of South P data in local LBC      GTALBC1A.146   
+     &, local_U_SOUTH_DATA_off  ! offset of South U data in local LBC      GTALBC1A.147   
+     &, local_P_WEST_DATA_off   ! offset of West P data in local LBC       GTALBC1A.148   
+     &, local_U_WEST_DATA_off   ! offset of West U data in local LBC       GTALBC1A.149   
+                                                                           GTALBC1A.150   
+      INTEGER                                                              GTALBC1A.151   
+     &  iproc  ! processor index                                           GTALBC1A.152   
+     &, bound_type ! loop index for loop over boundary types               GTALBC1A.153   
+     &, data_size  ! size of message to be sent                            GTALBC1A.154   
+     &, buf_pt     ! pointer to position in buffer array                   GTALBC1A.155   
+     &, ROW        ! loop index indicating row number                      GTALBC1A.156   
+     &, POINT      ! loop index indicating point along row                 GTALBC1A.157   
+     &, LEVEL      ! loop index indicating level                           GTALBC1A.158   
+     &, TVAR       ! loop index indicating tracer variable                 GTALBC1A.159   
+     &, info       ! return code from communications routines              GTALBC1A.160   
+                                                                           GTALBC1A.161   
+      INTEGER  ! magic numbers for boundary types                          GTALBC1A.162   
+     &  bt_top   ! top boundary                                            GTALBC1A.163   
+     &, bt_right ! right boundary                                          GTALBC1A.164   
+     &, bt_base  ! bottom boundary                                         GTALBC1A.165   
+     &, bt_left  ! left boundary                                           GTALBC1A.166   
+      PARAMETER(bt_top=1,bt_right=2,bt_base=3,bt_left=4)                   GTALBC1A.167   
+                                                                           GTALBC1A.168   
+      LOGICAL                                                              GTALBC1A.169   
+     &  iproc_at_left  ! processor at left of LPG                          GTALBC1A.170   
+     &, iproc_at_right ! processor at right of LPG                         GTALBC1A.171   
+     &, iproc_at_top   ! processor at top of LPG                           GTALBC1A.172   
+     &, iproc_at_base  ! processor at base of LPG                          GTALBC1A.173   
+                                                                           GTALBC1A.174   
+!--------------------------------------------------------------------      GTALBC1A.175   
+!--------------------------------------------------------------------      GTALBC1A.176   
+                                                                           GTALBC1A.177   
+! 1.0 Set up sizes and addresses for global data                           GTALBC1A.178   
+                                                                           GTALBC1A.179   
+! Set up some sizes for the global data                                    GTALBC1A.180   
+                                                                           GTALBC1A.181   
+      global_ROW_LENGTH=glsize(1)                                          GTALBC1A.182   
+      global_P_ROWS=glsize(2)                                              GTALBC1A.183   
+      global_P_LENRIM=(global_ROW_LENGTH+global_P_ROWS-2*RIMWIDTHA)*       GTALBC1A.184   
+     &              2*RIMWIDTHA                                            GTALBC1A.185   
+      global_U_LENRIM=global_P_LENRIM-4*RIMWIDTHA                          GTALBC1A.186   
+                                                                           GTALBC1A.187   
+! Set up some addresses                                                    GTALBC1A.188   
+                                                                           GTALBC1A.189   
+      global_PSTAR_START=1                                                 GTALBC1A.190   
+      global_U_START=global_P_LENRIM+1                                     GTALBC1A.191   
+      global_V_START=global_U_START+global_U_LENRIM*P_LEVELS               GTALBC1A.192   
+      global_THETA_START=global_V_START+global_U_LENRIM*P_LEVELS           GTALBC1A.193   
+      global_Q_START=global_THETA_START+global_P_LENRIM*P_LEVELS           GTALBC1A.194   
+      global_TR_START=global_Q_START+global_P_LENRIM*Q_LEVELS              GTALBC1A.195   
+      global_QCF_START=                                                    ARB1F404.167   
+     & global_TR_START+global_P_LENRIM*TR_LEVELS*TR_VARS                   ARB1F404.168   
+                                                                           GTALBC1A.196   
+      global_P_EAST_DATA_off=global_ROW_LENGTH*RIMWIDTHA                   GTALBC1A.197   
+      global_U_EAST_DATA_off=(global_ROW_LENGTH-1)*RIMWIDTHA               GTALBC1A.198   
+      global_P_SOUTH_DATA_off=global_P_EAST_DATA_off+                      GTALBC1A.199   
+     &                        (global_P_ROWS-2*RIMWIDTHA)*RIMWIDTHA        GTALBC1A.200   
+      global_U_SOUTH_DATA_off=global_U_EAST_DATA_off+                      GTALBC1A.201   
+     &                        (global_P_ROWS-2*RIMWIDTHA-1)*RIMWIDTHA      GTALBC1A.202   
+      global_P_WEST_DATA_off=global_P_SOUTH_DATA_off+                      GTALBC1A.203   
+     &                       global_ROW_LENGTH*RIMWIDTHA                   GTALBC1A.204   
+      global_U_WEST_DATA_off=global_U_SOUTH_DATA_off+                      GTALBC1A.205   
+     &                       (global_ROW_LENGTH-1)*RIMWIDTHA               GTALBC1A.206   
+                                                                           GTALBC1A.207   
+      global_FIRST_SIDE_ROW=RIMWIDTHA+1                                    GTALBC1A.208   
+      global_LAST_P_SIDE_ROW=global_P_ROWS-RIMWIDTHA                       GTALBC1A.209   
+      global_LAST_U_SIDE_ROW=global_LAST_P_SIDE_ROW-1                      GTALBC1A.210   
+                                                                           GTALBC1A.211   
+!--------------------------------------------------------------------      GTALBC1A.212   
+                                                                           GTALBC1A.213   
+! 2.0 Loop over processors                                                 GTALBC1A.214   
+                                                                           GTALBC1A.215   
+      DO iproc=first_comp_pe,last_comp_pe  ! loop over all processors      GTALBC1A.216   
+                                                                           GTALBC1A.217   
+                                                                           GTALBC1A.218   
+!   2.1 Set up logicals, sizes and addresses for local data                GTALBC1A.219   
+                                                                           GTALBC1A.220   
+! set up logicals indicating position on LPG                               GTALBC1A.221   
+        iproc_at_left=.FALSE.                                              GTALBC1A.222   
+        iproc_at_right=.FALSE.                                             GTALBC1A.223   
+        iproc_at_top=.FALSE.                                               GTALBC1A.224   
+        iproc_at_base=.FALSE.                                              GTALBC1A.225   
+        IF (g_gridpos(1,iproc) .EQ. 0) iproc_at_left=.TRUE.                GTALBC1A.226   
+        IF (g_gridpos(1,iproc) .EQ. nproc_x-1) iproc_at_right=.TRUE.       GTALBC1A.227   
+        IF (g_gridpos(2,iproc) .EQ. 0) iproc_at_top=.TRUE.                 GTALBC1A.228   
+        IF (g_gridpos(2,iproc) .EQ. nproc_y-1) iproc_at_base=.TRUE.        GTALBC1A.229   
+                                                                           GTALBC1A.230   
+! Set up the local data for this processor                                 GTALBC1A.231   
+        local_ROW_LENGTH=g_blsizep(1,iproc)  ! no halos                    GTALBC1A.232   
+        IF (iproc_at_right) THEN                                           GTALBC1A.233   
+!        ! This processor at right of LPG so one less point on             GTALBC1A.234   
+!        ! U grid                                                          GTALBC1A.235   
+          local_U_ROW_LENGTH=local_ROW_LENGTH-1                            GTALBC1A.236   
+        ELSE                                                               GTALBC1A.237   
+          local_U_ROW_LENGTH=local_ROW_LENGTH                              GTALBC1A.238   
+        ENDIF                                                              GTALBC1A.239   
+                                                                           GTALBC1A.240   
+        local_P_ROWS=g_blsizep(2,iproc)      ! again, no halos             GTALBC1A.241   
+        local_P_LENRIM=(local_ROW_LENGTH+local_P_ROWS)*                    GTALBC1A.242   
+     &                  2*RIMWIDTHA                                        GTALBC1A.243   
+        local_U_LENRIM=(local_U_ROW_LENGTH+local_P_ROWS)*                  GTALBC1A.244   
+     &                  2*RIMWIDTHA                                        GTALBC1A.245   
+                                                                           GTALBC1A.246   
+! Set up some addresses                                                    GTALBC1A.247   
+        local_PSTAR_START=1                                                GTALBC1A.248   
+        local_U_START=local_P_LENRIM+1                                     GTALBC1A.249   
+        local_V_START=local_U_START+local_U_LENRIM*P_LEVELS                GTALBC1A.250   
+        local_THETA_START=local_V_START+local_U_LENRIM*P_LEVELS            GTALBC1A.251   
+        local_Q_START=local_THETA_START+local_P_LENRIM*P_LEVELS            GTALBC1A.252   
+        local_TR_START=local_Q_START+local_P_LENRIM*Q_LEVELS               GTALBC1A.253   
+        local_QCF_START=                                                   ARB1F404.169   
+     &   local_TR_START+local_P_LENRIM*TR_LEVELS*TR_VARS                   ARB1F404.170   
+                                                                           GTALBC1A.254   
+        local_P_EAST_DATA_off=local_ROW_LENGTH*RIMWIDTHA                   GTALBC1A.255   
+        local_U_EAST_DATA_off=local_U_ROW_LENGTH*RIMWIDTHA                 GTALBC1A.256   
+        local_P_SOUTH_DATA_off=local_P_EAST_DATA_off+                      GTALBC1A.257   
+     &                         local_P_ROWS*RIMWIDTHA                      GTALBC1A.258   
+        local_U_SOUTH_DATA_off=local_U_EAST_DATA_off+                      GTALBC1A.259   
+     &                         local_P_ROWS*RIMWIDTHA                      GTALBC1A.260   
+        local_P_WEST_DATA_off=local_P_SOUTH_DATA_off+                      GTALBC1A.261   
+     &                        local_ROW_LENGTH*RIMWIDTHA                   GTALBC1A.262   
+        local_U_WEST_DATA_off=local_U_SOUTH_DATA_off+                      GTALBC1A.263   
+     &                        local_U_ROW_LENGTH*RIMWIDTHA                 GTALBC1A.264   
+                                                                           GTALBC1A.265   
+                                                                           GTALBC1A.266   
+!--------------------------------------------------------------------      GTALBC1A.267   
+                                                                           GTALBC1A.268   
+!   2.2 Loop over boundaries: North, East, South and West                  GTALBC1A.269   
+                                                                           GTALBC1A.270   
+        DO bound_type=bt_top,bt_left  ! loop over all boundaries           GTALBC1A.271   
+                                                                           GTALBC1A.272   
+          IF (((bound_type .EQ. bt_top) .AND. (iproc_at_top)) .OR.         GTALBC1A.273   
+     &       ((bound_type .EQ. bt_right) .AND. (iproc_at_right)) .OR.      GTALBC1A.274   
+     &        ((bound_type .EQ. bt_base) .AND. (iproc_at_base)) .OR.       GTALBC1A.275   
+     &        ((bound_type .EQ. bt_left) .AND. (iproc_at_left))) THEN      GTALBC1A.276   
+!             Processor iproc has a boundary of type bound_type            GTALBC1A.277   
+                                                                           GTALBC1A.278   
+                                                                           GTALBC1A.279   
+!      2.2.1 Set up data pointers and sizes for this boundary              GTALBC1A.280   
+                                                                           GTALBC1A.281   
+            IF ((bound_type .EQ. bt_top) .OR.   ! What type of             GTALBC1A.282   
+     &          (bound_type .EQ. bt_base)) THEN ! boundary is it?          GTALBC1A.283   
+                                                                           GTALBC1A.284   
+!             Northern or Southern boundary                                GTALBC1A.285   
+                                                                           GTALBC1A.286   
+              global_START_ROW=1                                           GTALBC1A.287   
+              local_START_ROW=1                                            GTALBC1A.288   
+                                                                           GTALBC1A.289   
+              global_START_POINT=g_datastart(1,iproc)                      GTALBC1A.290   
+              local_START_POINT=1                                          GTALBC1A.291   
+                                                                           GTALBC1A.292   
+              N_P_ROWS=RIMWIDTHA                                           GTALBC1A.293   
+              N_P_POINTS=local_ROW_LENGTH                                  GTALBC1A.294   
+              N_U_ROWS=RIMWIDTHA                                           GTALBC1A.295   
+              N_U_POINTS=local_U_ROW_LENGTH                                GTALBC1A.296   
+                                                                           GTALBC1A.297   
+              global_P_ROW_LEN=global_ROW_LENGTH                           GTALBC1A.298   
+              global_U_ROW_LEN=global_ROW_LENGTH-1                         GTALBC1A.299   
+              local_P_ROW_LEN=local_ROW_LENGTH                             GTALBC1A.300   
+              local_U_ROW_LEN=local_U_ROW_LENGTH                           GTALBC1A.301   
+                                                                           GTALBC1A.302   
+              IF (bound_type .EQ. bt_top) THEN  ! Northern boundary        GTALBC1A.303   
+                global_P_bound_off=0                                       GTALBC1A.304   
+                local_P_bound_off=0                                        GTALBC1A.305   
+                global_U_bound_off=0                                       GTALBC1A.306   
+                local_U_bound_off=0                                        GTALBC1A.307   
+              ELSE  ! Southern boundary                                    GTALBC1A.308   
+                global_P_bound_off=global_P_SOUTH_DATA_off                 GTALBC1A.309   
+                local_P_bound_off=local_P_SOUTH_DATA_off                   GTALBC1A.310   
+                global_U_bound_off=global_U_SOUTH_DATA_off                 GTALBC1A.311   
+                local_U_bound_off=local_U_SOUTH_DATA_off                   GTALBC1A.312   
+              ENDIF                                                        GTALBC1A.313   
+                                                                           GTALBC1A.314   
+            ELSE  ! Eastern or Western boundary                            GTALBC1A.315   
+                                                                           GTALBC1A.316   
+              global_START_ROW=MAX(g_datastart(2,iproc),                   GTALBC1A.317   
+     &                             global_FIRST_SIDE_ROW)-                 GTALBC1A.318   
+     &                         RIMWIDTHA                                   GTALBC1A.319   
+              local_START_ROW=1                                            GTALBC1A.320   
+                                                                           GTALBC1A.321   
+              global_START_POINT=1                                         GTALBC1A.322   
+              local_START_POINT=1                                          GTALBC1A.323   
+                                                                           GTALBC1A.324   
+              N_P_ROWS=MIN(g_datastart(2,iproc)+local_P_ROWS-1,            GTALBC1A.325   
+     &                     global_LAST_P_SIDE_ROW) -                       GTALBC1A.326   
+     &                 (global_START_ROW+RIMWIDTHA) + 1                    GTALBC1A.327   
+              N_P_POINTS=RIMWIDTHA                                         GTALBC1A.328   
+              N_U_ROWS=MIN(g_datastart(2,iproc)+local_P_ROWS-1,            GTALBC1A.329   
+     &                     global_LAST_U_SIDE_ROW) -                       GTALBC1A.330   
+     &                 (global_START_ROW+RIMWIDTHA) + 1                    GTALBC1A.331   
+              N_U_POINTS=RIMWIDTHA                                         GTALBC1A.332   
+                                                                           GTALBC1A.333   
+              global_P_ROW_LEN=RIMWIDTHA                                   GTALBC1A.334   
+              global_U_ROW_LEN=RIMWIDTHA                                   GTALBC1A.335   
+              local_P_ROW_LEN=RIMWIDTHA                                    GTALBC1A.336   
+              local_U_ROW_LEN=RIMWIDTHA                                    GTALBC1A.337   
+                                                                           GTALBC1A.338   
+              IF (bound_type .EQ. bt_right) THEN ! Eastern boundary        GTALBC1A.339   
+                global_P_bound_off=global_P_EAST_DATA_off                  GTALBC1A.340   
+                local_P_bound_off=local_P_EAST_DATA_off                    GTALBC1A.341   
+                global_U_bound_off=global_U_EAST_DATA_off                  GTALBC1A.342   
+                local_U_bound_off=local_U_EAST_DATA_off                    GTALBC1A.343   
+              ELSE ! Western boundary                                      GTALBC1A.344   
+                global_P_bound_off=global_P_WEST_DATA_off                  GTALBC1A.345   
+                local_P_bound_off=local_P_WEST_DATA_off                    GTALBC1A.346   
+                global_U_bound_off=global_U_WEST_DATA_off                  GTALBC1A.347   
+                local_U_bound_off=local_U_WEST_DATA_off                    GTALBC1A.348   
+              ENDIF                                                        GTALBC1A.349   
+                                                                           GTALBC1A.350   
+            ENDIF ! What type of boundary is it?                           GTALBC1A.351   
+                                                                           GTALBC1A.352   
+            data_size=(1+P_LEVELS+Q_LEVELS+(TR_VARS*TR_LEVELS))*           GTALBC1A.353   
+     &                   N_P_ROWS*N_P_POINTS +                             GTALBC1A.354   
+     &                 2*P_LEVELS*N_U_ROWS*N_U_POINTS                      GTALBC1A.355   
+            if (L_LSPICE_BDY) then ! Mixed phase boundary conds. in        GPB0F405.119   
+              data_size=data_size+Q_LEVELS*N_P_ROWS*N_P_POINTS             ARB1F404.172   
+            end if                                                         ARB1F404.173   
+!           the size of the data to be sent from processor iproc           GTALBC1A.356   
+                                                                           GTALBC1A.357   
+!           Check the buffer is big enough                                 GTALBC1A.358   
+            IF (FULL_LENRIMDATA .LT.                                       GPB2F405.70    
+     &          data_size) THEN                                            GTALBC1A.360   
+              WRITE(6,*) 'ERROR Buffer not big enough in GATHER_LBCS'      GTALBC1A.361   
+              WRITE(6,*) 'Buffer size is ',FULL_LENRIMDATA                 GPB2F405.71    
+              WRITE(6,*) 'Required size is ',data_size                     GTALBC1A.363   
+              ICODE=1                                                      GTALBC1A.364   
+              CMESSAGE='GATHER_LBCS BUFFER TOO SMALL'                      GPB0F405.117   
+              GOTO 9999                                                    GTALBC1A.366   
+            ENDIF                                                          GTALBC1A.367   
+                                                                           GTALBC1A.368   
+                                                                           GTALBC1A.369   
+!      2.2.2 Pack all the data for this boundary into the buf array        GTALBC1A.370   
+                                                                           GTALBC1A.371   
+              CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! gather         GPB2F402.346   
+              info=GC_NONE                                                 GPB2F402.347   
+                                                                           GPB2F402.348   
+            IF (mype .EQ. iproc) THEN  ! I'm processor iproc               GTALBC1A.372   
+                                                                           GTALBC1A.373   
+              buf_pt=1                                                     GTALBC1A.374   
+                                                                           GTALBC1A.375   
+!             --- PSTAR ---                                                GTALBC1A.376   
+                                                                           GTALBC1A.377   
+              DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1            GTALBC1A.378   
+                DO POINT=local_START_POINT,                                GTALBC1A.379   
+     &                   local_START_POINT+N_P_POINTS-1                    GTALBC1A.380   
+                  local_buf(buf_pt)=PART_LBC(local_PSTAR_START-1+          GPB3F402.28    
+     &                                  local_P_bound_off+                 GTALBC1A.382   
+     &                                  POINT+                             GTALBC1A.383   
+     &                                  (ROW-1)*local_P_ROW_LEN)           GTALBC1A.384   
+                  buf_pt=buf_pt+1                                          GTALBC1A.385   
+                ENDDO                                                      GTALBC1A.386   
+              ENDDO                                                        GTALBC1A.387   
+                                                                           GTALBC1A.388   
+                                                                           GTALBC1A.389   
+!             --- U and V winds ---                                        GTALBC1A.390   
+                                                                           GTALBC1A.391   
+              DO LEVEL=1,P_LEVELS                                          GTALBC1A.392   
+                DO ROW=local_START_ROW,local_START_ROW+N_U_ROWS-1          GTALBC1A.393   
+                  DO POINT=local_START_POINT,                              GTALBC1A.394   
+     &                     local_START_POINT+N_U_POINTS-1                  GTALBC1A.395   
+                    local_buf(buf_pt)=PART_LBC(local_U_START-1+            GPB3F402.29    
+     &                                   local_U_bound_off+                GTALBC1A.397   
+     &                                   POINT+                            GTALBC1A.398   
+     &                                   (ROW-1)*local_U_ROW_LEN+          GTALBC1A.399   
+     &                                   (LEVEL-1)*local_U_LENRIM)         GTALBC1A.400   
+                    buf_pt=buf_pt+1                                        GTALBC1A.401   
+                    local_buf(buf_pt)=PART_LBC(local_V_START-1+            GPB3F402.30    
+     &                                   local_U_bound_off+                GTALBC1A.403   
+     &                                   POINT+                            GTALBC1A.404   
+     &                                   (ROW-1)*local_U_ROW_LEN+          GTALBC1A.405   
+     &                                   (LEVEL-1)*local_U_LENRIM)         GTALBC1A.406   
+                    buf_pt=buf_pt+1                                        GTALBC1A.407   
+                  ENDDO                                                    GTALBC1A.408   
+                ENDDO                                                      GTALBC1A.409   
+              ENDDO                                                        GTALBC1A.410   
+                                                                           GTALBC1A.411   
+                                                                           GTALBC1A.412   
+!             --- Theta ---                                                GTALBC1A.413   
+                                                                           GTALBC1A.414   
+              DO LEVEL=1,P_LEVELS                                          GTALBC1A.415   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          GTALBC1A.416   
+                  DO POINT=local_START_POINT,                              GTALBC1A.417   
+     &                     local_START_POINT+N_P_POINTS-1                  GTALBC1A.418   
+                    local_buf(buf_pt)=PART_LBC(local_THETA_START-1+        GPB3F402.31    
+     &                                   local_P_bound_off+                GTALBC1A.420   
+     &                                   POINT+                            GTALBC1A.421   
+     &                                   (ROW-1)*local_P_ROW_LEN+          GTALBC1A.422   
+     &                                   (LEVEL-1)*local_P_LENRIM)         GTALBC1A.423   
+                    buf_pt=buf_pt+1                                        GTALBC1A.424   
+                  ENDDO                                                    GTALBC1A.425   
+                ENDDO                                                      GTALBC1A.426   
+              ENDDO                                                        GTALBC1A.427   
+                                                                           GTALBC1A.428   
+                                                                           GTALBC1A.429   
+!             --- Q ---                                                    GTALBC1A.430   
+                                                                           GTALBC1A.431   
+              DO LEVEL=1,Q_LEVELS                                          GTALBC1A.432   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          GTALBC1A.433   
+                  DO POINT=local_START_POINT,                              GTALBC1A.434   
+     &                     local_START_POINT+N_P_POINTS-1                  GTALBC1A.435   
+                    local_buf(buf_pt)=PART_LBC(local_Q_START-1+            GPB3F402.32    
+     &                                   local_P_bound_off+                GTALBC1A.437   
+     &                                   POINT+                            GTALBC1A.438   
+     &                                   (ROW-1)*local_P_ROW_LEN+          GTALBC1A.439   
+     &                                   (LEVEL-1)*local_P_LENRIM)         GTALBC1A.440   
+                    buf_pt=buf_pt+1                                        GTALBC1A.441   
+                  ENDDO                                                    GTALBC1A.442   
+                ENDDO                                                      GTALBC1A.443   
+              ENDDO                                                        GTALBC1A.444   
+                                                                           GTALBC1A.445   
+!             --- Tracer Variables ---                                     GTALBC1A.446   
+                                                                           GTALBC1A.447   
+              DO TVAR=1,TR_VARS                                            GTALBC1A.448   
+                DO LEVEL=1,TR_LEVELS                                       GTALBC1A.449   
+                  DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1        GTALBC1A.450   
+                    DO POINT=local_START_POINT,                            GTALBC1A.451   
+     &                       local_START_POINT+N_P_POINTS-1                GTALBC1A.452   
+                      local_buf(buf_pt)=PART_LBC(local_TR_START-1+         GPB0F405.118   
+     &                              local_P_bound_off+                     GTALBC1A.454   
+     &                              POINT+                                 GTALBC1A.455   
+     &                              (ROW-1)*local_P_ROW_LEN+               GTALBC1A.456   
+     &                              (LEVEL-1)*local_P_LENRIM+              GTALBC1A.457   
+     &                              (TVAR-1)*TR_LEVELS*local_P_LENRIM)     GTALBC1A.458   
+                      buf_pt=buf_pt+1                                      GTALBC1A.459   
+                     ENDDO                                                 GTALBC1A.460   
+                   ENDDO                                                   GTALBC1A.461   
+                 ENDDO                                                     GTALBC1A.462   
+               ENDDO                                                       GTALBC1A.463   
+                                                                           ARB1F404.174   
+            IF (L_LSPICE_BDY) THEN ! Mixed phase boundary conds. in        GPB0F405.120   
+!             --- QCF ---                                                  ARB1F404.176   
+                                                                           ARB1F404.177   
+              DO LEVEL=1,Q_LEVELS                                          ARB1F404.178   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          ARB1F404.179   
+                  DO POINT=local_START_POINT,                              ARB1F404.180   
+     &                     local_START_POINT+N_P_POINTS-1                  ARB1F404.181   
+                    local_buf(buf_pt)=PART_LBC(local_QCF_START-1+          ARB1F404.182   
+     &                                   local_P_bound_off+                ARB1F404.183   
+     &                                   POINT+                            ARB1F404.184   
+     &                                   (ROW-1)*local_P_ROW_LEN+          ARB1F404.185   
+     &                                   (LEVEL-1)*local_P_LENRIM)         ARB1F404.186   
+                   buf_pt=buf_pt+1                                         ARB1F404.187   
+                  ENDDO                                                    ARB1F404.188   
+                ENDDO                                                      ARB1F404.189   
+              ENDDO                                                        ARB1F404.190   
+            END IF                                                         ARB1F404.191   
+                                                                           GTALBC1A.464   
+                                                                           GTALBC1A.465   
+!      2.2.3 Send local_buf array to processor GATHER_PE                   GPB3F402.34    
+!            into array buf_expand                                         GPB3F402.35    
+                                                                           GTALBC1A.467   
+              CALL GC_RSEND(iproc+1000*bound_type,data_size,               GTALBC1A.468   
+     &                      GATHER_PE,info,buf_expand,local_buf)           GPB3F402.36    
+                                                                           GTALBC1A.470   
+            ENDIF  ! If I'm processor iproc                                GTALBC1A.471   
+                                                                           GTALBC1A.472   
+            CALL GC_SSYNC(nproc,info)                                      GTALBC1A.473   
+                                                                           GTALBC1A.474   
+                                                                           GTALBC1A.475   
+                                                                           GPB2F402.349   
+              CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! gather         GPB2F402.350   
+              info=GC_NONE                                                 GPB2F402.351   
+            IF (mype .EQ. GATHER_PE) THEN                                  GTALBC1A.476   
+!             I'm the processor who will gather together all the local     GTALBC1A.477   
+!             LBCs and assemble them into a global version                 GTALBC1A.478   
+                                                                           GTALBC1A.479   
+              CALL GC_RRECV(iproc+1000*bound_type,data_size,               GTALBC1A.480   
+     &                      iproc,info,buf_expand,local_buf)               GPB3F402.37    
+                                                                           GTALBC1A.482   
+!      2.2.5 Unpack buf_expand into the FULL_LBC array                     GTALBC1A.483   
+                                                                           GTALBC1A.484   
+              buf_pt=1                                                     GTALBC1A.485   
+                                                                           GTALBC1A.486   
+!             --- PSTAR ---                                                GTALBC1A.487   
+                                                                           GTALBC1A.488   
+              DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1          GTALBC1A.489   
+                DO POINT=global_START_POINT,                               GTALBC1A.490   
+     &                   global_START_POINT+N_P_POINTS-1                   GTALBC1A.491   
+                  FULL_LBC(global_PSTAR_START-1+                           GTALBC1A.492   
+     &                     global_P_bound_off+                             GTALBC1A.493   
+     &                     POINT+                                          GTALBC1A.494   
+     &                     (ROW-1)*global_P_ROW_LEN)=                      GTALBC1A.495   
+     &              buf_expand(buf_pt)                                     GTALBC1A.496   
+                  buf_pt=buf_pt+1                                          GTALBC1A.497   
+                ENDDO                                                      GTALBC1A.498   
+              ENDDO                                                        GTALBC1A.499   
+                                                                           GTALBC1A.500   
+                                                                           GTALBC1A.501   
+!             --- U and V winds ---                                        GTALBC1A.502   
+                                                                           GTALBC1A.503   
+              DO LEVEL=1,P_LEVELS                                          GTALBC1A.504   
+                DO ROW=global_START_ROW,global_START_ROW+N_U_ROWS-1        GTALBC1A.505   
+                  DO POINT=global_START_POINT,                             GTALBC1A.506   
+     &                     global_START_POINT+N_U_POINTS-1                 GTALBC1A.507   
+                    FULL_LBC(global_U_START-1+                             GTALBC1A.508   
+     &                       global_U_bound_off+                           GTALBC1A.509   
+     &                       POINT+                                        GTALBC1A.510   
+     &                       (ROW-1)*global_U_ROW_LEN+                     GTALBC1A.511   
+     &                       (LEVEL-1)*global_U_LENRIM)=                   GTALBC1A.512   
+     &                buf_expand(buf_pt)                                   GTALBC1A.513   
+                    buf_pt=buf_pt+1                                        GTALBC1A.514   
+                    FULL_LBC(global_V_START-1+                             GTALBC1A.515   
+     &                       global_U_bound_off+                           GTALBC1A.516   
+     &                       POINT+                                        GTALBC1A.517   
+     &                       (ROW-1)*global_U_ROW_LEN+                     GTALBC1A.518   
+     &                       (LEVEL-1)*global_U_LENRIM)=                   GTALBC1A.519   
+     &                buf_expand(buf_pt)                                   GTALBC1A.520   
+                    buf_pt=buf_pt+1                                        GTALBC1A.521   
+                  ENDDO                                                    GTALBC1A.522   
+                ENDDO                                                      GTALBC1A.523   
+              ENDDO                                                        GTALBC1A.524   
+                                                                           GTALBC1A.525   
+                                                                           GTALBC1A.526   
+!             -- Theta ---                                                 GTALBC1A.527   
+                                                                           GTALBC1A.528   
+              DO LEVEL=1,P_LEVELS                                          GTALBC1A.529   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        GTALBC1A.530   
+                  DO POINT=global_START_POINT,                             GTALBC1A.531   
+     &                     global_START_POINT+N_P_POINTS-1                 GTALBC1A.532   
+                    FULL_LBC(global_THETA_START-1+                         GTALBC1A.533   
+     &                       global_P_bound_off+                           GTALBC1A.534   
+     &                       POINT+                                        GTALBC1A.535   
+     &                       (ROW-1)*global_P_ROW_LEN+                     GTALBC1A.536   
+     &                       (LEVEL-1)*global_P_LENRIM)=                   GTALBC1A.537   
+     &                buf_expand(buf_pt)                                   GTALBC1A.538   
+                    buf_pt=buf_pt+1                                        GTALBC1A.539   
+                  ENDDO                                                    GTALBC1A.540   
+                ENDDO                                                      GTALBC1A.541   
+              ENDDO                                                        GTALBC1A.542   
+                                                                           GTALBC1A.543   
+                                                                           GTALBC1A.544   
+!           --- Q ---                                                      GTALBC1A.545   
+                                                                           GTALBC1A.546   
+              DO LEVEL=1,Q_LEVELS                                          GTALBC1A.547   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        GTALBC1A.548   
+                  DO POINT=global_START_POINT,                             GTALBC1A.549   
+     &                     global_START_POINT+N_P_POINTS-1                 GTALBC1A.550   
+                    FULL_LBC(global_Q_START-1+                             GTALBC1A.551   
+     &                       global_P_bound_off+                           GTALBC1A.552   
+     &                       POINT+                                        GTALBC1A.553   
+     &                       (ROW-1)*global_P_ROW_LEN+                     GTALBC1A.554   
+     &                       (LEVEL-1)*global_P_LENRIM)=                   GTALBC1A.555   
+     &                buf_expand(buf_pt)                                   GTALBC1A.556   
+                    buf_pt=buf_pt+1                                        GTALBC1A.557   
+                  ENDDO                                                    GTALBC1A.558   
+                ENDDO                                                      GTALBC1A.559   
+              ENDDO                                                        GTALBC1A.560   
+                                                                           GTALBC1A.561   
+                                                                           GTALBC1A.562   
+!             --- Tracer Variables ---                                     GTALBC1A.563   
+                                                                           GTALBC1A.564   
+              DO TVAR=1,TR_VARS                                            GTALBC1A.565   
+                DO LEVEL=1,TR_LEVELS                                       GTALBC1A.566   
+                  DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1      GTALBC1A.567   
+                    DO POINT=global_START_POINT,                           GTALBC1A.568   
+     &                       global_START_POINT+N_P_POINTS-1               GTALBC1A.569   
+                      FULL_LBC(global_TR_START-1+                          GTALBC1A.570   
+     &                         global_P_bound_off+                         GTALBC1A.571   
+     &                         POINT+                                      GTALBC1A.572   
+     &                         (ROW-1)*global_P_ROW_LEN+                   GTALBC1A.573   
+     &                         (LEVEL-1)*global_P_LENRIM+                  GTALBC1A.574   
+     &                         (TVAR-1)*TR_LEVELS*global_P_LENRIM)=        GTALBC1A.575   
+     &                   buf_expand(buf_pt)                                GTALBC1A.576   
+                       buf_pt=buf_pt+1                                     GTALBC1A.577   
+                     ENDDO                                                 GTALBC1A.578   
+                   ENDDO                                                   GTALBC1A.579   
+                 ENDDO                                                     GTALBC1A.580   
+               ENDDO                                                       GTALBC1A.581   
+                                                                           ARB1F404.192   
+            IF (L_LSPICE_BDY) THEN ! Mixed phase boundary conds. in        GPB0F405.121   
+!           --- QCF ---                                                    ARB1F404.194   
+                                                                           ARB1F404.195   
+              DO LEVEL=1,Q_LEVELS                                          ARB1F404.196   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        ARB1F404.197   
+                  DO POINT=global_START_POINT,                             ARB1F404.198   
+     &                     global_START_POINT+N_P_POINTS-1                 ARB1F404.199   
+                    FULL_LBC(global_QCF_START-1+                           ARB1F404.200   
+     &                       global_P_bound_off+                           ARB1F404.201   
+     &                       POINT+                                        ARB1F404.202   
+     &                       (ROW-1)*global_P_ROW_LEN+                     ARB1F404.203   
+     &                       (LEVEL-1)*global_P_LENRIM)=                   ARB1F404.204   
+     &                buf_expand(buf_pt)                                   ARB1F404.205   
+                    buf_pt=buf_pt+1                                        ARB1F404.206   
+                  ENDDO                                                    ARB1F404.207   
+                ENDDO                                                      ARB1F404.208   
+              ENDDO                                                        ARB1F404.209   
+            END IF                                                         ARB1F404.210   
+                                                                           ARB1F404.211   
+            ENDIF  ! If I'm processor GATHER_PE                            GTALBC1A.582   
+                                                                           GTALBC1A.583   
+            CALL GC_SSYNC(nproc,info)                                      GTALBC1A.584   
+                                                                           GTALBC1A.585   
+          ENDIF ! If this processor has boundary type bound_type           GTALBC1A.586   
+                                                                           GTALBC1A.587   
+        ENDDO ! bound_type: loop over boundary types                       GTALBC1A.588   
+                                                                           GTALBC1A.589   
+      ENDDO ! iproc : loop over processors                                 GTALBC1A.590   
+                                                                           GTALBC1A.591   
+                                                                           GTALBC1A.592   
+ 9999 CONTINUE  ! point to jump to if failure                              GTALBC1A.593   
+                                                                           GTALBC1A.594   
+      RETURN                                                               GTALBC1A.595   
+      END                                                                  GTALBC1A.596   
+*ENDIF                                                                     GTALBC1A.597   
+*ENDIF                                                                     GPB3F403.286   

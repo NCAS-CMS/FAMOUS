@@ -1,0 +1,882 @@
+*IF DEF,C98_1A,OR,DEF,FLDMOD                                               UIE3F404.9     
+C ******************************COPYRIGHT******************************    GTS2F400.2773  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.2774  
+C                                                                          GTS2F400.2775  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.2776  
+C restrictions as set forth in the contract.                               GTS2F400.2777  
+C                                                                          GTS2F400.2778  
+C                Meteorological Office                                     GTS2F400.2779  
+C                London Road                                               GTS2F400.2780  
+C                BRACKNELL                                                 GTS2F400.2781  
+C                Berkshire UK                                              GTS2F400.2782  
+C                RG12 2SZ                                                  GTS2F400.2783  
+C                                                                          GTS2F400.2784  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.2785  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.2786  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.2787  
+C Modelling at the above address.                                          GTS2F400.2788  
+C ******************************COPYRIGHT******************************    GTS2F400.2789  
+C                                                                          GTS2F400.2790  
+CLL  Routine: FFREAD and others (see below) ----------------------------   FFREAD1A.3     
+CLL                                                                        FFREAD1A.4     
+CLL  Purpose: To read a   direct access PP file  and convert it to a       FFREAD1A.5     
+CLL  sequential file read to be passed across to the IBM                   FFREAD1A.6     
+CLL                                                                        FFREAD1A.7     
+CLL  Tested under compiler:   cft77                                        FFREAD1A.8     
+CLL  Tested under OS version: UNICOS 5.1                                   FFREAD1A.9     
+CLL                                                                        FFREAD1A.10    
+CLL  Model            Modification history from model version 3.0:         FFREAD1A.11    
+CLL version  Date                                                          FFREAD1A.12    
+CLL   3.1  19/02/93  Use FIXHD(12) not FIXHD(1) as Version no in P21BITS   TJ190293.21    
+CLL  3.1     22/01/93 revert to using Standard CRAY BUFFER IN              PS220193.1     
+CLL  3.2     08/07/93 code to use MDI from pp-header                       PS080793.1     
+CLL  3.4     09/09/94 add GRIB decode interface                            APS2F304.1     
+CLL  4.1     12/12/96 Int lookup dimensioned by 45 (real part by 19)       UIE2F402.1     
+CLL                                                                        FFREAD1A.13    
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FFREAD1A.14    
+CLL                                                                        FFREAD1A.15    
+CLL  Logical components covered:                                           FFREAD1A.16    
+CLL                                                                        FFREAD1A.17    
+CLL  Project task:                                                         FFREAD1A.18    
+CLL                                                                        FFREAD1A.19    
+CLL  External documentation:                                               FFREAD1A.20    
+CLL                                                                        FFREAD1A.21    
+CLL  -------------------------------------------------------------------   FFREAD1A.22    
+C*L  Interface and arguments: ------------------------------------------   FFREAD1A.23    
+C                                                                          FFREAD1A.24    
+C    IEXTRA(1).EQ.0  ! unpacking is required                               FFREAD1A.25    
+C    IEXTRA(2).EQ.0  ! lookup table entry deleted after access.            FFREAD1A.26    
+C                                                                          FFREAD1A.27    
+      SUBROUTINE FFREAD(IPROJ,FCT,ITYPE,INT_LEVEL,PPUNIT,FIELD,IDIM,       FFREAD1A.28    
+     *ILABEL,RLABEL,IEXTRA,ICODE,CMESSAGE)                                 FFREAD1A.29    
+      IMPLICIT NONE                                                        FFREAD1A.30    
+      EXTERNAL SETPOS,READ_REC,IOERROR,COEX                                FFREAD1A.31    
+                                                                           FFREAD1A.32    
+      CHARACTER CMESSAGE*(*)                                               FFREAD1A.33    
+      INTEGER                                                              FFREAD1A.34    
+     &     MAXFF                  !OUT Max number of opened files          FFREAD1A.35    
+     &    ,LEN1_LOOKUP            !IN  first dimension of the lookup       FFREAD1A.36    
+     &    ,PP_LEN2_LOOKUP         !OUT secnd dimension of the lookup       FFREAD1A.37    
+     &    ,LEN1_RECORD            !OUT First dimension of record           FFREAD1A.38    
+     &    ,RECLEN                 !OUT Total length of record.             FFREAD1A.39    
+     &    ,IPROJ                  !IN  map projection of data to read      FFREAD1A.40    
+     &    ,FCT                    !IN  forecast period in hours            FFREAD1A.41    
+     &    ,ITYPE                  !IN  M08 FIELD field type                FFREAD1A.42    
+     &    ,INT_LEVEL              !IN  LEVEL code (could be real)          FFREAD1A.43    
+     &    ,PPUNIT                 !IN  unit no of required fieldsfile      FFREAD1A.44    
+     &    ,IDIM                   !IN  dimension of FIELD                  FFREAD1A.45    
+     &    ,ILABEL(45)             !OUT holds integer part of LOOKUP        UIE2F402.3     
+     &    ,IEXTRA(10)             !INOUT Controls certain functions.       FFREAD1A.47    
+     &    ,ICODE                  !OUT return code                         FFREAD1A.48    
+     &    ,MAXPP                  !    maximum number of unit number       FFREAD1A.49    
+     &    ,DATA_ADD               !OUT The word address of the data.       FFREAD1A.50    
+     &    ,PFNO                   !OUT No of fields files opened           FFREAD1A.51    
+      PARAMETER(MAXFF=10)                                                  UIE1F403.1     
+      PARAMETER(MAXPP=100)                                                 FFREAD1A.53    
+      PARAMETER(LEN1_LOOKUP=64)                                            FFREAD1A.54    
+      PARAMETER(LEN1_RECORD=10000)!Max size of a lookup table allowed      FFREAD1A.55    
+      PARAMETER(RECLEN=LEN1_RECORD*MAXFF) ! Total length of RECORD         FFREAD1A.56    
+      REAL                                                                 FFREAD1A.57    
+     &     FIELD(IDIM)            !OUT array holding final output data.    FFREAD1A.58    
+     &    ,RLABEL(19)             !OUT holds real part of LOOKUP           UIE2F402.6     
+     &    ,REAL_LEVEL             !IN  LEVEL code (could be real)          FFREAD1A.60    
+                                                                           FFREAD1A.61    
+C*-------------------------------------------------------------------      FFREAD1A.62    
+C     LOCAL VARIABLES                                                      FFREAD1A.63    
+      INTEGER                                                              FFREAD1A.64    
+     &     TABLE(MAXPP)           ! associates unit no and file no         FFREAD1A.65    
+     &    ,PREV_PPUNIT(MAXFF)     ! a record of unit nos already used      FFREAD1A.66    
+     &    ,I                      ! local counter                          FFREAD1A.67    
+     &    ,J                      ! local counter                          FFREAD1A.68    
+      INTEGER                                                              FFREAD1A.69    
+     &     IX                     ! used as a dummy variable in UNIT       FFREAD1A.70    
+     &    ,IWA                    ! Word address in call SETPOS            FFREAD1A.71    
+     &    ,IK                     ! Word address in call SETPOS            FFREAD1A.72    
+     &    ,ICOUNT                 ! Counter                                FFREAD1A.73    
+     &    ,LEN_IO                 ! Length of data transferred from BUF    FFREAD1A.74    
+     &    ,LEN_FIXHD              ! Length of Fixed length header          FFREAD1A.75    
+     &    ,PP_FIXHD(256)          ! Fixed length header                    FFREAD1A.76    
+     &    ,IN_LBVC                ! Local copy of LBVC required to searc   FFREAD1A.77    
+      real                                                                 FFREAD1A.78    
+     &     A_IO                   ! OUTPUT from UNIT command               FFREAD1A.79    
+      LOGICAL                                                              FFREAD1A.80    
+     &     TEST                                                            FFREAD1A.81    
+     &    ,RECORD(LEN1_RECORD,MAXFF)                                       FFREAD1A.82    
+      SAVE PREV_PPUNIT                                                     FFREAD1A.83    
+      SAVE PFNO                                                            FFREAD1A.84    
+      SAVE TABLE                                                           FFREAD1A.85    
+      SAVE RECORD                                                          FFREAD1A.86    
+C                                                                          FFREAD1A.87    
+      PARAMETER(LEN_FIXHD=256)                                             FFREAD1A.88    
+      DATA PREV_PPUNIT/MAXFF*0/                                            FFREAD1A.89    
+      DATA TABLE/MAXPP*0/                                                  FFREAD1A.90    
+      DATA PFNO/0/                                                         FFREAD1A.91    
+      DATA RECORD/RECLEN*.FALSE./                                          FFREAD1A.92    
+C    Remember that BUFFER OUT starts at address 0                          FFREAD1A.93    
+      IF(PPUNIT.GT.MAXPP) THEN                                             FFREAD1A.94    
+        ICODE=1                                                            FFREAD1A.95    
+        CMESSAGE=' FFREAD   the unit number is too large'                  FFREAD1A.96    
+        RETURN                                                             FFREAD1A.97    
+      ENDIF                                                                FFREAD1A.98    
+      TEST=.TRUE.                                                          FFREAD1A.99    
+CL Establish if a completely new FF is being read.                         FFREAD1A.100   
+      DO 1 I=1,MAXFF                                                       FFREAD1A.101   
+      IF(PPUNIT.EQ.PREV_PPUNIT(I)) THEN                                    FFREAD1A.102   
+        TEST=.FALSE.                                                       FFREAD1A.103   
+      ENDIF                                                                FFREAD1A.104   
+    1 CONTINUE                                                             FFREAD1A.105   
+CL  A TABLE is set up associating FIELDS_FILE NO (1 to MAXFF) with a       FFREAD1A.106   
+CL  PP unit number. On succesive calls to the FF this table is used        FFREAD1A.107   
+CL  help record which LOOKUP table belongs to which FF (PPUNIT)            FFREAD1A.108   
+      IF(TEST) THEN   ! A FF never read in before.                         FFREAD1A.109   
+        PFNO=PFNO+1                                                        FFREAD1A.110   
+        PREV_PPUNIT(PFNO)=PPUNIT                                           FFREAD1A.111   
+        TABLE(PPUNIT)=PFNO                                                 FFREAD1A.112   
+      ENDIF                                                                FFREAD1A.113   
+CL  Read in the word address of the LOOKUP table (IWA), the length of      FFREAD1A.114   
+CL  the LOOKUP table (PP_LEN2_LOOKUP) and the start address of the data    FFREAD1A.115   
+CL  DATA_ADD                                                               FFREAD1A.116   
+      PFNO=TABLE(PPUNIT)                                                   FFREAD1A.117   
+      IWA=0                                                                FFREAD1A.118   
+      CALL SETPOS(PPUNIT,IWA,ICODE) ! C coded routine                      GTD0F400.57    
+      CALL BUFFIN(PPUNIT,PP_FIXHD,LEN_FIXHD,LEN_IO,A_IO)                   UVB0F400.3     
+      IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_FIXHD) THEN                         FFREAD1A.121   
+        CALL IOERROR('Buffer in fixed length header',A_IO,LEN_IO,          FFREAD1A.122   
+     &                LEN_FIXHD)                                           FFREAD1A.123   
+        CMESSAGE='  FFREAD : I/O error reading FIXED LENGTH HEADER'        FFREAD1A.124   
+        ICODE=2                                                            FFREAD1A.125   
+        RETURN                                                             FFREAD1A.126   
+      ENDIF                                                                FFREAD1A.127   
+      IWA= PP_FIXHD(150)-1  ! NOTE for BUFFER IN the start address         FFREAD1A.128   
+C                             ! is zero for word 1                         FFREAD1A.129   
+      DATA_ADD= PP_FIXHD(160)  ! The start address of the data             FFREAD1A.130   
+      PP_LEN2_LOOKUP=PP_FIXHD(152)                                         FFREAD1A.131   
+      CALL FFREADA(IPROJ,FCT,ITYPE,INT_LEVEL,PPUNIT,FIELD,IDIM,            FFREAD1A.132   
+     *ILABEL,RLABEL,IEXTRA,TEST,PP_LEN2_LOOKUP,LEN1_LOOKUP,PP_FIXHD,       FFREAD1A.133   
+     *IWA,LEN1_RECORD,MAXFF,RECORD,PFNO,DATA_ADD,ICODE,CMESSAGE)           FFREAD1A.134   
+C                                                                          FFREAD1A.135   
+ 9999 CONTINUE                                                             FFREAD1A.136   
+      RETURN                                                               FFREAD1A.137   
+      END                                                                  FFREAD1A.138   
+      SUBROUTINE FFREADA(IPROJ,FCT,ITYPE,INT_LEVEL,PPUNIT,FIELD,IDIM,      FFREAD1A.139   
+     *ILABEL,RLABEL,IEXTRA,TEST,PP_LEN2_LOOKUP,LEN1_LOOKUP,PP_FIXHD,       FFREAD1A.140   
+     *IWA,LEN1_RECORD,MAXFF,RECORD,PFNO,DATA_ADD,ICODE,CMESSAGE)           FFREAD1A.141   
+      IMPLICIT NONE                                                        FFREAD1A.142   
+      EXTERNAL SETPOS,READ_REC,IOERROR,COEX                                FFREAD1A.143   
+                                                                           FFREAD1A.144   
+      CHARACTER CMESSAGE*(*)                                               FFREAD1A.145   
+      INTEGER                                                              FFREAD1A.146   
+     &     MAXFF                  !IN  Max number of opened files          FFREAD1A.147   
+     &    ,LEN1_LOOKUP            !IN  first dimension of the lookup       FFREAD1A.148   
+     &    ,LEN1_RECORD            !INOUT First dimension of record         FFREAD1A.149   
+     &    ,PP_LEN2_LOOKUP         !IN  secnd dimension of the lookup       FFREAD1A.150   
+     &    ,IPROJ                  !IN  map projection of data to read      FFREAD1A.151   
+     &    ,FCT                    !IN  forecast period in hours            FFREAD1A.152   
+     &    ,ITYPE                  !IN  M08 FIELD field type                FFREAD1A.153   
+     &    ,INT_LEVEL              !IN  LEVEL code (could be real)          FFREAD1A.154   
+     &    ,PPUNIT                 !IN  unit no of required fieldsfile      FFREAD1A.155   
+     &    ,IDIM                   !IN  dimension of FIELD                  FFREAD1A.156   
+     &    ,ILABEL(45)             !OUT holds integer part of LOOKUP        UIE2F402.4     
+     &    ,IEXTRA(10)             !IN  spare for future use                FFREAD1A.158   
+     &    ,ICODE                  !OUT return code                         FFREAD1A.159   
+     &    ,MAXPP                  !    maximum number of unit number       FFREAD1A.160   
+     &    ,DATA_ADD               !IN  The word address of the data.       FFREAD1A.161   
+     &    ,PFNO                   !INOUT No of fields files opened         FFREAD1A.162   
+      INTEGER                                                              FFREAD1A.163   
+     &     PP_FIXHD(*),                       !IN PPfile fixed header      FFREAD1A.164   
+     &     LOOKUP(LEN1_LOOKUP,PP_LEN2_LOOKUP) !OUTinteger lookup           FFREAD1A.165   
+      REAL                                                                 FFREAD1A.166   
+     &     FIELD(IDIM)            !OUT array holding final output data.    FFREAD1A.167   
+     &    ,RLABEL(19)             !OUT holds real part of LOOKUP           UIE2F402.7     
+     &    ,REAL_LEVEL             !IN  LEVEL code (could be real)          FFREAD1A.169   
+      LOGICAL                                                              FFREAD1A.170   
+     &     RECORD(LEN1_RECORD,MAXFF) !INOUT Record of the field no read    FFREAD1A.171   
+C     LOCAL VARIABLES                                                      FFREAD1A.172   
+      INTEGER                                                              FFREAD1A.175   
+     &     I                      ! local counter                          FFREAD1A.176   
+     &    ,J                      ! local counter                          FFREAD1A.177   
+      INTEGER                                                              FFREAD1A.178   
+     &     IX                     ! used as a dummy variable in UNIT       FFREAD1A.179   
+     &    ,IWA                    ! Word address in call SETPOS            FFREAD1A.180   
+     &    ,IK                     ! Word address in call SETPOS            FFREAD1A.181   
+     &    ,ICOUNT                 ! Counter                                FFREAD1A.182   
+     &    ,LEN_IO                 ! Length of data transferred from BUF    FFREAD1A.183   
+     &    ,LEN_IO_EXPECTED        ! Length od data expected in transfer    FFREAD1A.184   
+     &    ,LENGTH_OF_DATA         ! Length of a particular field           FFREAD1A.185   
+     &    ,ADDR                   ! Address of a field in the data store   FFREAD1A.186   
+     &    ,IN_LBVC                ! Local copy of LBVC required to searc   FFREAD1A.187   
+      real                                                                 FFREAD1A.188   
+     &     A_IO                   ! OUTPUT from UNIT command               FFREAD1A.189   
+      LOGICAL                                                              FFREAD1A.190   
+     &     TEST                                                            FFREAD1A.191   
+C                                                                          FFREAD1A.192   
+C                                                                          FFREAD1A.194   
+C    REMEMBER THAT BUFFER OUT STARTS AT ADDRESS 0 THUS LOOKUP GOES         FFREAD1A.195   
+C    FROM 0 to 262143 ie THE NEXT ADDRESS SHOULD BE IWA=262144 to          FFREAD1A.196   
+C    IWA=325119 then IWA=325120 to 388095 then 388096 etc                  FFREAD1A.197   
+C     READ IN LOOKUP TABLE  IF FIRST TIME THRO                             FFREAD1A.198   
+C                                                                          FFREAD1A.199   
+C     Read in the LOOKUP table.                                            FFREAD1A.200   
+C                                                                          FFREAD1A.201   
+        CALL SETPOS(PPUNIT,IWA,ICODE) ! C coded routine                    GTD0F400.62    
+        LEN_IO_EXPECTED=PP_LEN2_LOOKUP*LEN1_LOOKUP                         FFREAD1A.203   
+        CALL BUFFIN(PPUNIT,LOOKUP,LEN_IO_EXPECTED,LEN_IO,A_IO)             UVB0F400.7     
+        IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN_IO_EXPECTED) THEN                 FFREAD1A.205   
+          CALL IOERROR('Buffer in lookup table   ',A_IO,LEN_IO,            FFREAD1A.206   
+     &    LEN_IO_EXPECTED)                                                 FFREAD1A.207   
+          CMESSAGE='FFREADA: I/O error reading LOOKUP TABLE  '             FFREAD1A.208   
+          ICODE=3                                                          FFREAD1A.209   
+          RETURN                                                           FFREAD1A.210   
+        ENDIF                                                              FFREAD1A.211   
+      IF(IEXTRA(2).EQ.0) THEN  ! Allows duplicate entries to be read       FFREAD1A.212   
+        IF(PP_LEN2_LOOKUP.GT.LEN1_RECORD) THEN                             FFREAD1A.213   
+          CMESSAGE='FFREADA: LEN1_RECORD NOT LARGE ENOUGH    '             FFREAD1A.214   
+          ICODE=4                                                          FFREAD1A.215   
+          RETURN                                                           FFREAD1A.216   
+        ENDIF                                                              FFREAD1A.217   
+         DO I=1,LEN1_RECORD                                                FFREAD1A.218   
+         IF(RECORD(I,PFNO)) THEN                                           FFREAD1A.219   
+            LOOKUP(14,I)=-99                                               FFREAD1A.220   
+          ENDIF                                                            FFREAD1A.221   
+        ENDDO                                                              FFREAD1A.222   
+      ENDIF                                                                FFREAD1A.223   
+      CALL FFREADB      (IPROJ,FCT,ITYPE,INT_LEVEL,PPUNIT,FIELD,IDIM,      FFREAD1A.224   
+     *ILABEL,RLABEL,IEXTRA,PP_LEN2_LOOKUP,LEN1_LOOKUP,                     FFREAD1A.225   
+     *IWA,LEN1_RECORD,MAXFF,RECORD,PFNO,PP_FIXHD,LOOKUP,LOOKUP,DATA_ADD,   FFREAD1A.226   
+     *ICODE,CMESSAGE)                                                      FFREAD1A.227   
+      RETURN                                                               FFREAD1A.228   
+      END                                                                  FFREAD1A.229   
+      SUBROUTINE FFREADB(IPROJ,FCT,ITYPE,INT_LEVEL,PPUNIT,FIELD,IDIM,      FFREAD1A.230   
+     *ILABEL,RLABEL,IEXTRA,PP_LEN2_LOOKUP,LEN1_LOOKUP,                     FFREAD1A.231   
+     *IWA,LEN1_RECORD,MAXFF,RECORD,PFNO,PP_FIXHD,LOOKUP,ROOKUP,DATA_ADD,   FFREAD1A.232   
+     *ICODE,CMESSAGE)                                                      FFREAD1A.233   
+      IMPLICIT NONE                                                        FFREAD1A.234   
+      EXTERNAL SETPOS,READ_REC,IOERROR,COEX                                FFREAD1A.235   
+*CALL CLOOKADD                                                             FFREAD1A.236   
+                                                                           FFREAD1A.237   
+      CHARACTER CMESSAGE*(*)                                               FFREAD1A.238   
+      INTEGER                                                              FFREAD1A.239   
+     &     MAXFF                  !IN  Max number of opened files          FFREAD1A.240   
+     &    ,LEN1_LOOKUP            !IN  first dimension of the lookup       FFREAD1A.241   
+     &    ,LEN1_RECORD            !IN  First dimension of record           FFREAD1A.242   
+     &    ,PFNO                   !IN  No of fields files opened           FFREAD1A.243   
+     &    ,PP_LEN2_LOOKUP         !IN  secnd dimension of the lookup       FFREAD1A.244   
+     &    ,IPROJ                  !IN  map projection of data to read      FFREAD1A.245   
+     &    ,FCT                    !IN  forecast period in hours            FFREAD1A.246   
+     &    ,ITYPE                  !IN  M08 FIELD field type                FFREAD1A.247   
+     &    ,INT_LEVEL              !IN  LEVEL code (could be real)          FFREAD1A.248   
+     &    ,PPUNIT                 !IN  unit no of required fieldsfile      FFREAD1A.249   
+     &    ,IDIM                   !IN  dimension of FIELD                  FFREAD1A.250   
+     &    ,ILABEL(45)             !OUT holds integer part of LOOKUP        UIE2F402.5     
+     &    ,IEXTRA(10)             !IN  spare for future use                FFREAD1A.252   
+     &    ,ICODE                  !OUT return code                         FFREAD1A.253   
+     &    ,LENBUF                 !OUT input buffer length for data        FFREAD1A.254   
+     &    ,NUM_CRAY_WORDS         !OUT no of values in an input field      FFREAD1A.255   
+     &    ,DATA_ADD               !IN  The word address of the data.       FFREAD1A.256   
+     &    ,NVALS                  !OUT The num of points in a data field   FFREAD1A.257   
+      INTEGER                                                              FFREAD1A.258   
+     &     PP_FIXHD(*),                       !IN  PPfile fixed header     FFREAD1A.259   
+     &     LOOKUP(LEN1_LOOKUP,PP_LEN2_LOOKUP) !OUT integer lookup          FFREAD1A.260   
+      REAL                                                                 FFREAD1A.261   
+     &     FIELD(IDIM)            !OUT array holding final output data.    FFREAD1A.262   
+     &    ,ROOKUP(LEN1_LOOKUP,PP_LEN2_LOOKUP)   !OUT real lookup           FFREAD1A.263   
+     &    ,RLABEL(19)             !OUT holds real part of LOOKUP           UIE2F402.8     
+     &    ,REAL_LEVEL             !IN  LEVEL code (could be real)          FFREAD1A.265   
+      LOGICAL                                                              FFREAD1A.266   
+     &     RECORD(LEN1_RECORD,MAXFF) !IN Record of the field no read       FFREAD1A.267   
+C     LOCAL VARIABLES                                                      FFREAD1A.268   
+      REAL                                                                 FFREAD1A.269   
+     &     AMDI                   ! Missing data indicator                 FFREAD1A.270   
+      INTEGER                                                              FFREAD1A.271   
+     &     I                      ! local counter                          FFREAD1A.272   
+     &    ,J                      ! local counter                          FFREAD1A.273   
+      INTEGER                                                              FFREAD1A.274   
+     &     IX                     ! used as a dummy variable in UNIT       FFREAD1A.275   
+     &    ,IWA                    ! Word address in call SETPOS            FFREAD1A.276   
+     &    ,IK                     ! Word address in call SETPOS            FFREAD1A.277   
+     &    ,LENGTH_OF_DATA         ! Length of a particular field           FFREAD1A.278   
+     &    ,ADDR                   ! Address of a field in the data store   FFREAD1A.279   
+     &    ,IN_LBVC                ! Local copy of LBVC required to searc   FFREAD1A.280   
+     &    ,PACK_TYPE              ! Packing type N1 of LBPACK              FFREAD1A.281   
+     &    ,PACK_TYPE_I            ! Packing type N1 of LBPACK in loop      FFREAD1A.282   
+     &    ,DATA_COMP              ! Data compression N2 of LBPACK          FFREAD1A.283   
+     &    ,DATA_COMP_DEF          ! Compression definition N3 of LBPACK    FFREAD1A.284   
+     &    ,NUMBER_FORMAT          ! Number representation N4 of LBPACK     FFREAD1A.285   
+C                                                                          FFREAD1A.286   
+*CALL C_MDI                                                                PS080793.2     
+C                                                                          FFREAD1A.288   
+C     DO I=112,112                                                         FFREAD1A.289   
+C       CALL PR_LOOK(LOOKUP(1,1),ROOKUP(1,1),I)                            FFREAD1A.290   
+C     ENDDO                                                                FFREAD1A.291   
+C                                                                          FFREAD1A.292   
+C----------------------------------------------------------------------    FFREAD1A.293   
+CL  Search for the required FIELD                                          FFREAD1A.294   
+C----------------------------------------------------------------------    FFREAD1A.295   
+      IF(IEXTRA(3).EQ.0) THEN ! Search on LBTYP/LBLEV/LBPROJ/LBFT          FFREAD1A.296   
+        DO  I=1,PP_LEN2_LOOKUP                                             FFREAD1A.297   
+          IF(ITYPE.EQ.LOOKUP(LBTYP,I)) THEN                                FFREAD1A.298   
+            IF(INT_LEVEL.EQ.LOOKUP(LBLEV,I)) THEN                          FFREAD1A.299   
+              IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                           FFREAD1A.300   
+                IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                             FFREAD1A.301   
+                  IK=I                                                     FFREAD1A.302   
+                  GOTO 3                                                   FFREAD1A.303   
+                ENDIF                                                      FFREAD1A.304   
+              ENDIF                                                        FFREAD1A.305   
+            ENDIF                                                          FFREAD1A.306   
+          ENDIF                                                            FFREAD1A.307   
+        ENDDO                                                              FFREAD1A.308   
+      ELSE                                                                 FFREAD1A.309   
+        IN_LBVC=IEXTRA(3)                                                  FFREAD1A.310   
+        IF(IEXTRA(4).EQ.0) THEN  !  IEXTRA(3) HAS LBVC so search on LBVC   FFREAD1A.311   
+          IF(INT_LEVEL.EQ.8888.OR.INT_LEVEL.EQ.9999) THEN ! special lev    FFREAD1A.312   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.313   
+              IF(ITYPE.EQ.LOOKUP(LBTYP,I)) THEN                            FFREAD1A.314   
+                IF(INT_LEVEL.EQ.LOOKUP(LBLEV,I)) THEN                      FFREAD1A.315   
+                  IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                       FFREAD1A.316   
+                    IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                         FFREAD1A.317   
+                      IK=I                                                 FFREAD1A.318   
+                      GOTO 3                                               FFREAD1A.319   
+                    ENDIF                                                  FFREAD1A.320   
+                  ENDIF                                                    FFREAD1A.321   
+                ENDIF                                                      FFREAD1A.322   
+              ENDIF                                                        FFREAD1A.323   
+            ENDDO                                                          FFREAD1A.324   
+          ELSE  ! Not a special level so additional search on LBVC         FFREAD1A.325   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.326   
+              IF(ITYPE.EQ.LOOKUP(LBTYP,I)) THEN                            FFREAD1A.327   
+                IF(INT_LEVEL.EQ.LOOKUP(LBLEV,I)) THEN                      FFREAD1A.328   
+                  IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                       FFREAD1A.329   
+                    IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                         FFREAD1A.330   
+                      IF(IN_LBVC.EQ.LOOKUP(LBVC,I)) THEN                   FFREAD1A.331   
+                        IK=I                                               FFREAD1A.332   
+                        GOTO 3                                             FFREAD1A.333   
+                      ENDIF                                                FFREAD1A.334   
+                    ENDIF                                                  FFREAD1A.335   
+                  ENDIF                                                    FFREAD1A.336   
+                ENDIF                                                      FFREAD1A.337   
+              ENDIF                                                        FFREAD1A.338   
+            ENDDO                                                          FFREAD1A.339   
+          ENDIF   ! End of special level block                             FFREAD1A.340   
+C----------------------------------------------------------------------    FFREAD1A.341   
+C     Search now on BLEV ie REAL_LEVEL except for special levels      C    FFREAD1A.342   
+C     and Data on model levels (BLEV would contain BK so would need   C    FFREAD1A.343   
+C     to search in this case on LBLEV).For special level search on    C    FFREAD1A.344   
+C     just LBVC LBFT LBPROJ and LBTYP.For model level convert the     C    FFREAD1A.345   
+C     real input value to integer and search as above plus LBLEV.     C    FFREAD1A.346   
+C     Note a special level cannot have an LBVC of 9                   C    FFREAD1A.347   
+C----------------------------------------------------------------------    FFREAD1A.348   
+        ELSE IF(IEXTRA(4).EQ.1) THEN !  IEXTRA(4) is not zero.             FFREAD1A.349   
+          CALL LEVEL_RLEVEL(INT_LEVEL,INT_LEVEL,REAL_LEVEL)                FFREAD1A.350   
+          IF(REAL_LEVEL.LE.0.0) THEN !  Special level indicated.           FFREAD1A.351   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.352   
+              IF(ITYPE.EQ.LOOKUP(LBTYP,I)) THEN                            FFREAD1A.353   
+                IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                         FFREAD1A.354   
+                  IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                           FFREAD1A.355   
+                    IF(IN_LBVC.EQ.LOOKUP(LBVC,I)) THEN                     FFREAD1A.356   
+                      IK=I                                                 FFREAD1A.357   
+                      GOTO 3                                               FFREAD1A.358   
+                    ENDIF                                                  FFREAD1A.359   
+                  ENDIF                                                    FFREAD1A.360   
+                ENDIF                                                      FFREAD1A.361   
+              ENDIF                                                        FFREAD1A.362   
+            ENDDO                                                          FFREAD1A.363   
+          ELSE IF(IN_LBVC.EQ.9) THEN  ! model level data                   FFREAD1A.364   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.365   
+              IF(ITYPE.EQ.LOOKUP(LBTYP,I)) THEN                            FFREAD1A.366   
+                INT_LEVEL=REAL_LEVEL+0.0000001  !                          FFREAD1A.367   
+C               IF(REAL_LEVEL.LE.(ROOKUP(BLEV,I)+0.0001).AND.              FFREAD1A.368   
+C    *          REAL_LEVEL.GE.(ROOKUP(BLEV,I)-0.0001)) THEN                FFREAD1A.369   
+C That MOD is only for un-corrected model dumps                            FFREAD1A.370   
+                IF(INT_LEVEL.EQ.LOOKUP(LBLEV,I)) THEN                      FFREAD1A.371   
+                  IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                       FFREAD1A.372   
+                    IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                         FFREAD1A.373   
+                      IF(IN_LBVC.EQ.LOOKUP(LBVC,I)) THEN                   FFREAD1A.374   
+                        IK=I                                               FFREAD1A.375   
+                        GOTO 3                                             FFREAD1A.376   
+                      ENDIF                                                FFREAD1A.377   
+                    ENDIF                                                  FFREAD1A.378   
+                  ENDIF                                                    FFREAD1A.379   
+                ENDIF                                                      FFREAD1A.380   
+              ENDIF                                                        FFREAD1A.381   
+            ENDDO                                                          FFREAD1A.382   
+          ELSE        ! not model level data or a special level            FFREAD1A.383   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.384   
+              IF(ITYPE.EQ.LOOKUP(LBTYP,I)) THEN                            FFREAD1A.385   
+                IF(REAL_LEVEL.LE.(ROOKUP(BLEV,I)+0.0001).AND.              FFREAD1A.386   
+     *          REAL_LEVEL.GE.(ROOKUP(BLEV,I)-0.0001)) THEN                FFREAD1A.387   
+                  IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                       FFREAD1A.388   
+                    IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                         FFREAD1A.389   
+                      IF(IN_LBVC.EQ.LOOKUP(LBVC,I)) THEN                   FFREAD1A.390   
+                        IK=I                                               FFREAD1A.391   
+                        GOTO 3                                             FFREAD1A.392   
+                      ENDIF                                                FFREAD1A.393   
+                    ENDIF                                                  FFREAD1A.394   
+                  ENDIF                                                    FFREAD1A.395   
+                ENDIF                                                      FFREAD1A.396   
+              ENDIF                                                        FFREAD1A.397   
+            ENDDO                                                          FFREAD1A.398   
+          ENDIF                                                            FFREAD1A.399   
+C----------------------------------------------------------------------    FFREAD1A.400   
+C     Search now on BLEV ie REAL_LEVEL except for special levels      C    FFREAD1A.401   
+C     and Data on model levels (BLEV would contain BK so would need   C    FFREAD1A.402   
+C     to search in this case on LBLEV).For special level search on    C    FFREAD1A.403   
+C     just LBVC LBFT LBPROJ and LBTYP.For model level convert the     C    FFREAD1A.404   
+C     real input value to integer and search as above plus LBLEV.     C    FFREAD1A.405   
+C     Note a special level cannot have an LBVC of 9                   C    FFREAD1A.406   
+C----------------------------------------------------------------------    FFREAD1A.407   
+        ELSE IF(IEXTRA(4).EQ.2) THEN !  IEXTRA(4) is not zero.             FFREAD1A.408   
+          CALL LEVEL_RLEVEL(INT_LEVEL,INT_LEVEL,REAL_LEVEL)                FFREAD1A.409   
+          IF(REAL_LEVEL.LE.0.0) THEN !  Special level indicated.           FFREAD1A.410   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.411   
+              IF(ITYPE.EQ.LOOKUP(LBFC,I)) THEN                             FFREAD1A.412   
+                IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                         FFREAD1A.413   
+                  IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                           FFREAD1A.414   
+                    IF(IN_LBVC.EQ.LOOKUP(LBVC,I)) THEN                     FFREAD1A.415   
+                      IK=I                                                 FFREAD1A.416   
+                      GOTO 3                                               FFREAD1A.417   
+                    ENDIF                                                  FFREAD1A.418   
+                  ENDIF                                                    FFREAD1A.419   
+                ENDIF                                                      FFREAD1A.420   
+              ENDIF                                                        FFREAD1A.421   
+            ENDDO                                                          FFREAD1A.422   
+          ELSE IF(IN_LBVC.EQ.9) THEN  ! model level data                   FFREAD1A.423   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.424   
+              IF(ITYPE.EQ.LOOKUP(LBFC,I)) THEN                             FFREAD1A.425   
+                INT_LEVEL=REAL_LEVEL+0.0000001  !                          FFREAD1A.426   
+                IF(INT_LEVEL.EQ.LOOKUP(LBLEV,I)) THEN                      FFREAD1A.427   
+                  IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                       FFREAD1A.428   
+                    IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                         FFREAD1A.429   
+                      IF(IN_LBVC.EQ.LOOKUP(LBVC,I)) THEN                   FFREAD1A.430   
+                        IK=I                                               FFREAD1A.431   
+                        GOTO 3                                             FFREAD1A.432   
+                      ENDIF                                                FFREAD1A.433   
+                    ENDIF                                                  FFREAD1A.434   
+                  ENDIF                                                    FFREAD1A.435   
+                ENDIF                                                      FFREAD1A.436   
+              ENDIF                                                        FFREAD1A.437   
+            ENDDO                                                          FFREAD1A.438   
+          ELSE        ! not model level data or a special level            FFREAD1A.439   
+            DO  I=1,PP_LEN2_LOOKUP                                         FFREAD1A.440   
+              IF(ITYPE.EQ.LOOKUP(LBFC,I)) THEN                             FFREAD1A.441   
+                IF(REAL_LEVEL.EQ.ROOKUP(BLEV,I)) THEN                      FFREAD1A.442   
+                  IF(IPROJ.EQ.LOOKUP(LBPROJ,I)) THEN                       FFREAD1A.443   
+                    IF(FCT.EQ.LOOKUP(LBFT,I)) THEN                         FFREAD1A.444   
+                      IF(IN_LBVC.EQ.LOOKUP(LBVC,I)) THEN                   FFREAD1A.445   
+                        IK=I                                               FFREAD1A.446   
+                        GOTO 3                                             FFREAD1A.447   
+                      ENDIF                                                FFREAD1A.448   
+                    ENDIF                                                  FFREAD1A.449   
+                  ENDIF                                                    FFREAD1A.450   
+                ENDIF                                                      FFREAD1A.451   
+              ENDIF                                                        FFREAD1A.452   
+            ENDDO                                                          FFREAD1A.453   
+          ENDIF                                                            FFREAD1A.454   
+        ENDIF    ! IEXTRA(3).EQ.0 IF block                                 FFREAD1A.455   
+      ENDIF      ! IEXTRA(4).EQ.0 IF block                                 FFREAD1A.456   
+                                                                           FFREAD1A.457   
+ 108  FORMAT('  FIELD FOUND FOR ITYPE,LEVEL,IPROJ,FCT',4I5)                FFREAD1A.458   
+      IF (IEXTRA(4).GE.1.AND.IEXTRA(3).NE.0) THEN                          FFREAD1A.459   
+        WRITE(6,112) ITYPE,REAL_LEVEL,IPROJ,FCT                            FFREAD1A.460   
+      ELSE                                                                 FFREAD1A.461   
+        WRITE(6,104) ITYPE,INT_LEVEL,IPROJ,FCT                             FFREAD1A.462   
+      END IF                                                               FFREAD1A.463   
+ 104  FORMAT('  FIELD NOT FOUND FOR ITYPE,INT_LEVEL,IPROJ,FCT',4I5)        FFREAD1A.464   
+ 112  FORMAT('  FIELD NOT FOUND FOR ITYPE,REAL_LEVEL,IPROJ,FCT',I5,        FFREAD1A.465   
+     +      F7.1,2I5)                                                      FFREAD1A.466   
+      ICODE=1                                                              FFREAD1A.467   
+      CMESSAGE=' FFREAD  field not found'                                  FFREAD1A.468   
+      GOTO 9999                                                            FFREAD1A.469   
+    3 CONTINUE                                                             FFREAD1A.470   
+c=== Decode LBPACK code                                                    FFREAD1A.471   
+      PACK_TYPE = MOD(LOOKUP(LBPACK,IK),10)                                FFREAD1A.472   
+      DATA_COMP = MOD(LOOKUP(LBPACK,IK),100) - PACK_TYPE                   FFREAD1A.473   
+      DATA_COMP_DEF = MOD(LOOKUP(LBPACK,IK),1000) -DATA_COMP -PACK_TYPE    FFREAD1A.474   
+      NUMBER_FORMAT = LOOKUP(LBPACK,IK)/1000                               FFREAD1A.475   
+C=== Reading a model type dump =======================================     FFREAD1A.476   
+C    A model dump has no direct addressing only relative.                  FFREAD1A.477   
+      IF(LOOKUP(LBNREC,IK).EQ.0) THEN ! A model dump                       FFREAD1A.478   
+        IF(PACK_TYPE.EQ.2) THEN          ! Is the field packed.            FFREAD1A.479   
+          NUM_CRAY_WORDS=LOOKUP(LBLREC,IK)/2                               FFREAD1A.480   
+        ELSE                                                               FFREAD1A.481   
+          NUM_CRAY_WORDS=LOOKUP(LBLREC,IK)                                 FFREAD1A.482   
+        ENDIF                                                              FFREAD1A.483   
+        NVALS=LOOKUP(LBLREC,IK) ! No of data points                        FFREAD1A.484   
+        ADDR=DATA_ADD                                                      FFREAD1A.485   
+        DO I=1,IK-1                                                        FFREAD1A.486   
+          PACK_TYPE_I = MOD(LOOKUP(LBPACK,I),10)                           FFREAD1A.487   
+          IF(PACK_TYPE_I.EQ.2) THEN ! 32 Bit packed                        FFREAD1A.488   
+            LENGTH_OF_DATA=LOOKUP(LBLREC,I)/2                              FFREAD1A.489   
+          ELSE                                                             FFREAD1A.490   
+            LENGTH_OF_DATA=LOOKUP(LBLREC,I)                                FFREAD1A.491   
+          ENDIF                                                            FFREAD1A.492   
+          ADDR=ADDR+LENGTH_OF_DATA                                         FFREAD1A.493   
+        ENDDO                                                              FFREAD1A.494   
+        IWA=ADDR-1                                                         FFREAD1A.495   
+      ELSE                                                                 FFREAD1A.496   
+C=== Reading a PP type file.==========================================     FFREAD1A.497   
+        NUM_CRAY_WORDS=LOOKUP(LBLREC,IK) ! PP type file                    FFREAD1A.498   
+        IWA=LOOKUP(29,IK)                                                  FFREAD1A.499   
+        NVALS=LOOKUP(44,IK)                                                FFREAD1A.500   
+      ENDIF                                                                FFREAD1A.501   
+      RECORD(IK,PFNO)=.TRUE.   ! Record which the no of the field read     FFREAD1A.502   
+      LENBUF=LOOKUP(LBNREC,IK) !                                           FFREAD1A.503   
+C==============================================================            FFREAD1A.504   
+      IF (IEXTRA(4).GE.1.AND.IEXTRA(3).NE.0) THEN                          FFREAD1A.505   
+        WRITE(7,110) ITYPE,REAL_LEVEL,IPROJ,FCT,IK,NUM_CRAY_WORDS,NVALS    FFREAD1A.506   
+      ELSE                                                                 FFREAD1A.507   
+        WRITE(7,106) ITYPE,INT_LEVEL,IPROJ,FCT,IK,NUM_CRAY_WORDS,NVALS     FFREAD1A.508   
+      END IF                                                               FFREAD1A.509   
+  106 FORMAT(' FIELD ','ITYPE=',I3,' LEVEL=',I5,' PROJ=',I4,' FCST=',      FFREAD1A.510   
+     &I5,' FIELD NO',I4,' NWORDS=',I5,' NVALS=',I5)                        FFREAD1A.511   
+  110 FORMAT(' FIELD FOUND','ITYPE=',I4,'LEVEL=',F7.1,'PROJ=',I4,'FCST='   FFREAD1A.512   
+     &,I5,'FIELD NO',I4,'NWORDS=',I5,'NVALS=',I5)                          FFREAD1A.513   
+        IF(IDIM.LT.NUM_CRAY_WORDS) THEN                                    FFREAD1A.514   
+          ICODE=NUM_CRAY_WORDS                                             FFREAD1A.515   
+          CMESSAGE='FFREAD  Idim to small ICODE holds correct value'       FFREAD1A.516   
+          GOTO 9999                                                        FFREAD1A.517   
+        ENDIF                                                              FFREAD1A.518   
+      ICODE=0                                                              FFREAD1A.519   
+C     RETURN                                                               FFREAD1A.520   
+      CALL READ_REC(FIELD,NUM_CRAY_WORDS,IWA,PPUNIT,ICODE,CMESSAGE)        FFREAD1A.521   
+ 2212 FORMAT('  FIELDS FILE NUMBER ',I2,'  ON UNIT',I2,2X,'BEING READ')    FFREAD1A.522   
+CL    CLOSE(PPUNIT)                                                        FFREAD1A.523   
+        IF(ICODE.EQ.0) THEN                                                FFREAD1A.524   
+          DO 5 I=1,45                                                      UIE2F402.9     
+          ILABEL(I)=LOOKUP(I,IK)                                           FFREAD1A.526   
+    5     CONTINUE                                                         FFREAD1A.527   
+          DO 6 I=1,19                                                      UIE2F402.10    
+           RLABEL(I)=ROOKUP(I+45,IK)                                       UIE2F402.11    
+    6     CONTINUE                                                         FFREAD1A.530   
+        ENDIF                                                              FFREAD1A.531   
+C=======================================================================   FFREAD1A.532   
+C At this point FIELD holds the data either PACKED or UN-PACKED            FFREAD1A.533   
+C Is the packing indicator set and is un-packing required? If so then      FFREAD1A.534   
+C the data is temp un-packed into a work ARRAY of length IDIM              FFREAD1A.535   
+        IF(PACK_TYPE.GT.0) THEN               ! Is the field packed.       FFREAD1A.536   
+          IF(IEXTRA(1).EQ.0) THEN  ! unpacking is required                 FFREAD1A.537   
+C           get missing data indicator from pp header                      PS080793.3     
+            AMDI = ROOKUP(BMDI,IK)                                         PS080793.4     
+C           compare with MDI from COMDECK                                  PS080793.5     
+      IF(AMDI.NE.RMDI) WRITE(6,*)' WARNING non-standard MDI in use'        GIE0F403.150   
+            CALL UN_PACK(PACK_TYPE,IDIM,FIELD,NUM_CRAY_WORDS               FFREAD1A.538   
+     &                  ,ILABEL,AMDI,PP_FIXHD,ICODE,CMESSAGE)              FFREAD1A.539   
+          ENDIF                                                            FFREAD1A.540   
+        ELSEIF(LOOKUP(DATA_TYPE,IK).EQ.3) THEN   !Fld is logical           FFREAD1A.541   
+          CALL LOGICAL_TO_REAL(IDIM,FIELD,FIELD,NVALS,                     FFREAD1A.542   
+     &                         ILABEL,ICODE,CMESSAGE)                      FFREAD1A.543   
+        ELSEIF(LOOKUP(DATA_TYPE,IK).EQ.2) THEN   !Fld is integer           FFREAD1A.544   
+          CALL INTEGER_TO_REAL(IDIM,FIELD,FIELD,NVALS,                     FFREAD1A.545   
+     &                         ILABEL,ICODE,CMESSAGE)                      FFREAD1A.546   
+        ENDIF                                                              FFREAD1A.547   
+C=======================================================================   FFREAD1A.548   
+ 9999 CONTINUE                                                             FFREAD1A.549   
+  100 FORMAT(//,32X,'   ARRAY        ',//,32(16F5.0/))                     FFREAD1A.550   
+  101 FORMAT(//,32X,'   LOOKUP       ',//,32(16I5/))                       FFREAD1A.551   
+  103 FORMAT('   LENIN  ',I12)                                             FFREAD1A.552   
+      RETURN                                                               FFREAD1A.553   
+      END                                                                  FFREAD1A.554   
+CLL  Routine: READ_REC--------------------------------------------------   FFREAD1A.555   
+CLL                                                                        FFREAD1A.556   
+CLL  Purpose: To read a data record from a  pp file                        FFREAD1A.557   
+CLL                                                                        FFREAD1A.558   
+CLL  Tested under compiler:   cft77                                        FFREAD1A.559   
+CLL  Tested under OS version: UNICOS 5.1                                   FFREAD1A.560   
+CLL                                                                        FFREAD1A.561   
+CLL  Model            Modification history from model version 3.0:         FFREAD1A.562   
+CLL version  Date                                                          FFREAD1A.563   
+CLL                                                                        FFREAD1A.564   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FFREAD1A.565   
+CLL                                                                        FFREAD1A.566   
+CLL  Logical components covered:                                           FFREAD1A.567   
+CLL                                                                        FFREAD1A.568   
+CLL  Project task:                                                         FFREAD1A.569   
+CLL                                                                        FFREAD1A.570   
+CLL  External documentation:                                               FFREAD1A.571   
+CLL                                                                        FFREAD1A.572   
+CLL  -------------------------------------------------------------------   FFREAD1A.573   
+C*L  Interface and arguments: ------------------------------------------   FFREAD1A.574   
+C                                                                          FFREAD1A.575   
+      SUBROUTINE READ_REC(FIELD,NUM_CRAY_WORDS,IWA,PPUNIT,                 FFREAD1A.576   
+     &                    ICODE,CMESSAGE)                                  FFREAD1A.577   
+      IMPLICIT NONE                                                        FFREAD1A.578   
+      EXTERNAL SETPOS                                                      FFREAD1A.579   
+      CHARACTER CMESSAGE*(*)                                               FFREAD1A.580   
+      INTEGER                                                              FFREAD1A.581   
+     &     ICODE                  !OUT return code                         FFREAD1A.582   
+     &    ,NUM_CRAY_WORDS         !IN  No of CRAY words holding the data   FFREAD1A.583   
+     &    ,PPUNIT                 !IN  FT no of the PP FILE                FFREAD1A.584   
+     &    ,IWA                    !IN  WORD address of field to be read    FFREAD1A.585   
+      REAL                                                                 FFREAD1A.586   
+     &     FIELD(NUM_CRAY_WORDS)  !OUT array holding data                  FFREAD1A.587   
+C    LOCAL VARIABLES                                                       FFREAD1A.588   
+      INTEGER                                                              FFREAD1A.589   
+     &     I                      ! local counter                          FFREAD1A.590   
+     &    ,J                      ! local counter                          FFREAD1A.591   
+     &    ,IX                     ! used in the UNIT command               FFREAD1A.592   
+     &    ,LEN_IO                 ! used for call to BUFFIN                FFREAD1A.593   
+      REAL                                                                 FFREAD1A.594   
+     &     A_IO                   ! used for call to BUFFIN                FFREAD1A.595   
+C     IX=UNIT(PPUNIT)                                                      FFREAD1A.596   
+      CALL SETPOS(PPUNIT,IWA,ICODE) ! C coded routine                      GTD0F400.67    
+      CALL BUFFIN(PPUNIT,FIELD,NUM_CRAY_WORDS,LEN_IO,A_IO)                 UVB0F400.11    
+      IX=UNIT(PPUNIT)                                                      FFREAD1A.599   
+      RETURN                                                               FFREAD1A.600   
+      END                                                                  FFREAD1A.601   
+CLL  Routine: LEVEL_RLEVEL ------------------------------------------      FFREAD1A.602   
+CLL                                                                        FFREAD1A.603   
+CLL  Purpose: To return a real value even though the routine is called     FFREAD1A.604   
+CLL  with integer arguments.                                               FFREAD1A.605   
+CLL                                                                        FFREAD1A.606   
+CLL  Tested under compiler:   cft77                                        FFREAD1A.607   
+CLL  Tested under OS version: UNICOS 5.1                                   FFREAD1A.608   
+CLL                                                                        FFREAD1A.609   
+CLL  Model            Modification history from model version 3.0:         FFREAD1A.610   
+CLL version  Date                                                          FFREAD1A.611   
+CLL                                                                        FFREAD1A.612   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FFREAD1A.613   
+CLL                                                                        FFREAD1A.614   
+CLL  Logical components covered: ...                                       FFREAD1A.615   
+CLL                                                                        FFREAD1A.616   
+CLL  Project task: ...                                                     FFREAD1A.617   
+CLL                                                                        FFREAD1A.618   
+CLL  External documentation:                                               FFREAD1A.619   
+CLL                                                                        FFREAD1A.620   
+CLL  -------------------------------------------------------------------   FFREAD1A.621   
+C*L  Interface and arguments: ------------------------------------------   FFREAD1A.622   
+      SUBROUTINE LEVEL_RLEVEL(INT_LEVEL,REAL_LEVEL,REAL_LEVEL_OUT)         FFREAD1A.623   
+      INTEGER                                                              FFREAD1A.624   
+     &     INT_LEVEL              !    first dimension of the lookup       FFREAD1A.625   
+      REAL                                                                 FFREAD1A.626   
+     &     REAL_LEVEL             !    secnd dimension of the lookup       FFREAD1A.627   
+     &     REAL_LEVEL_OUT         !    secnd dimension of the lookup       FFREAD1A.628   
+C*                                                                         FFREAD1A.629   
+      REAL_LEVEL_OUT=REAL_LEVEL                                            FFREAD1A.630   
+                                                                           FFREAD1A.631   
+                                                                           FFREAD1A.632   
+      RETURN                                                               FFREAD1A.633   
+      END                                                                  FFREAD1A.634   
+CLL  Routine: UN_PACK  -------------------------------------------------   FFREAD1A.635   
+CLL                                                                        FFREAD1A.636   
+CLL  Purpose: To unpack data from the input array FIELD and return         FFREAD1A.637   
+CLL  the data in FIELD.                                                    FFREAD1A.638   
+CLL                                                                        FFREAD1A.639   
+CLL  Tested under compiler:   cft77                                        FFREAD1A.640   
+CLL  Tested under OS version: UNICOS 5.1                                   FFREAD1A.641   
+CLL                                                                        FFREAD1A.642   
+CLL  Model            Modification history from model version 3.0:         FFREAD1A.643   
+CLL version  Date                                                          FFREAD1A.644   
+CLL                                                                        FFREAD1A.645   
+CLL                                                                        FFREAD1A.646   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FFREAD1A.647   
+CLL                                                                        FFREAD1A.648   
+CLL  Logical components covered: ...                                       FFREAD1A.649   
+CLL                                                                        FFREAD1A.650   
+CLL  Project task: ...                                                     FFREAD1A.651   
+CLL                                                                        FFREAD1A.652   
+CLL  External documentation:                                               FFREAD1A.653   
+CLL                                                                        FFREAD1A.654   
+CLL  -------------------------------------------------------------------   FFREAD1A.655   
+C*L  Interface and arguments: ------------------------------------------   FFREAD1A.656   
+      SUBROUTINE UN_PACK(PACK_TYPE,IDIM,FIELD,NUM_CRAY_WORDS,              FFREAD1A.657   
+     &                   ILABEL,AMDI,PP_FIXHD,ICODE,CMESSAGE)              FFREAD1A.658   
+      INTEGER                                                              FFREAD1A.659   
+     &     PACK_TYPE            !IN  The type of packing used              FFREAD1A.660   
+     &    ,IDIM                 !IN  The full unpacked size of a field     FFREAD1A.661   
+     &    ,ILABEL(45)           !OUT holds integer part of LOOKUP          UIE2F402.14    
+     &    ,ICODE                !OUT Non zero for any error                FFREAD1A.663   
+     &    ,PP_FIXHD(*)          !IN  PPfile fixed length header            FFREAD1A.664   
+      REAL                                                                 FFREAD1A.665   
+     &     FIELD(IDIM)          !INOUT On Input contains data.On output    FFREAD1A.666   
+     &    ,AMDI                 !IN  Missing data indicator.               FFREAD1A.667   
+C                               ! contains the un-packed data.             FFREAD1A.668   
+      CHARACTER CMESSAGE*(*)    !OUT Will contain any error mesages.       FFREAD1A.669   
+C*                                                                         FFREAD1A.670   
+C EXTERNAL SUBROUTINES CALLED                                              FFREAD1A.671   
+C                                                                          FFREAD1A.672   
+      EXTERNAL COEX,P21BITS                                                UIE2F402.2     
+      INTEGER  P21BITS                                                     FFREAD1A.674   
+C                                                                          FFREAD1A.675   
+C     LOCAL  VARIABLES                                                     FFREAD1A.676   
+      REAL                                                                 FFREAD1A.677   
+     &     WORK_ARRAY(IDIM)       !WORK array used for un_packing          FFREAD1A.678   
+      INTEGER                                                              FFREAD1A.679   
+     &     LEN_FULL_WORD          ! The length of a FULL_WORD              FFREAD1A.680   
+     &    ,IXX                    ! Returned X dimension from COEX         FFREAD1A.681   
+     &    ,IYY                    ! Returned Y dimension from COEX         FFREAD1A.682   
+     &    ,IDUM                   ! Dummy variable                         FFREAD1A.683   
+     &    ,NUM_CRAY_WORDS         ! IN no of values in an input field      FFREAD1A.684   
+     &    ,NUM_UNPACK_VALUES      ! Number of numbers originally packed    FFREAD1A.685   
+C                                                                          FFREAD1A.686   
+*CALL CLOOKADD                                                             FFREAD1A.687   
+C                                                                          FFREAD1A.688   
+      DATA LEN_FULL_WORD/64/                                               FFREAD1A.689   
+C                                                                          FFREAD1A.690   
+      IF(PACK_TYPE.EQ.1) THEN     ! WGDOS packing                          FFREAD1A.691   
+        CALL COEX(WORK_ARRAY,IDIM,FIELD,NUM_CRAY_WORDS,IXX,IYY,            FFREAD1A.692   
+     &  IDUM,IDUM,.FALSE.,AMDI,LEN_FULL_WORD)                              FFREAD1A.693   
+        NUM_UNPACK_VALUES=IXX*IYY                                          FFREAD1A.694   
+      ELSEIF(PACK_TYPE.EQ.3) THEN !  GRIB packing                          APS2F304.2     
+        CALL DEGRIB(FIELD,WORK_ARRAY,IDIM,NUM_CRAY_WORDS,                  APS2F304.3     
+     &              ILABEL,AMDI,NUM_UNPACK_VALUES,LEN_FULL_WORD)           APS2F304.4     
+      ELSE                                                                 FFREAD1A.700   
+        ICODE=6                                                            FFREAD1A.701   
+        CMESSAGE=' UNPACK - packing type not yet supported'                FFREAD1A.702   
+      ENDIF                                                                FFREAD1A.703   
+      DO 8 I=1,NUM_UNPACK_VALUES                                           FFREAD1A.704   
+      FIELD(I)=WORK_ARRAY(I)                                               FFREAD1A.705   
+   8  CONTINUE                                                             FFREAD1A.706   
+      ILABEL(DATA_TYPE)=1  ! The data type must now be real                FFREAD1A.707   
+      ILABEL(LBPACK)=ILABEL(LBPACK)-PACK_TYPE ! data no longer packed      FFREAD1A.708   
+      RETURN                                                               FFREAD1A.709   
+      END                                                                  FFREAD1A.710   
+CLL  Routine: LOGICAL_TO_REAL ------------------------------------------   FFREAD1A.711   
+CLL                                                                        FFREAD1A.712   
+CLL  Purpose: To convert logical data within FIELD to real data.           FFREAD1A.713   
+CLL  the data in FIELD.                                                    FFREAD1A.714   
+CLL                                                                        FFREAD1A.715   
+CLL  Tested under compiler:   cft77                                        FFREAD1A.716   
+CLL  Tested under OS version: UNICOS 5.1                                   FFREAD1A.717   
+CLL                                                                        FFREAD1A.718   
+CLL  Model            Modification history from model version 3.0:         FFREAD1A.719   
+CLL version  Date                                                          FFREAD1A.720   
+CLL                                                                        FFREAD1A.721   
+CLL                                                                        FFREAD1A.722   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FFREAD1A.723   
+CLL                                                                        FFREAD1A.724   
+CLL  Logical components covered: ...                                       FFREAD1A.725   
+CLL                                                                        FFREAD1A.726   
+CLL  Project task: ...                                                     FFREAD1A.727   
+CLL                                                                        FFREAD1A.728   
+CLL  External documentation:                                               FFREAD1A.729   
+CLL                                                                        FFREAD1A.730   
+CLL  -------------------------------------------------------------------   FFREAD1A.731   
+C*L  Interface and arguments: ------------------------------------------   FFREAD1A.732   
+      SUBROUTINE LOGICAL_TO_REAL(IDIM,LOGICAL_FIELD,FIELD,NVALS,           FFREAD1A.733   
+     &                           ILABEL,ICODE,CMESSAGE)                    FFREAD1A.734   
+      INTEGER                                                              FFREAD1A.735   
+     &     IDIM                 !IN  The full unpacked size of a field     FFREAD1A.736   
+     &    ,ILABEL(45)           !OUT holds integer part of LOOKUP          UIE2F402.13    
+     &    ,ICODE                !OUT Non zero for any error                FFREAD1A.738   
+      REAL                                                                 FFREAD1A.739   
+     &     FIELD(IDIM)          !OUT On Input contains Real data.          FFREAD1A.740   
+      LOGICAL                                                              FFREAD1A.741   
+     &     LOGICAL_FIELD(IDIM)  !INOUT On Input contains logical data.     FFREAD1A.742   
+C                               ! contains the un-packed data.             FFREAD1A.743   
+      CHARACTER CMESSAGE*(*)    !OUT Will contain any error mesages.       FFREAD1A.744   
+C*                                                                         FFREAD1A.745   
+C     LOCAL  VARIABLES                                                     FFREAD1A.746   
+      INTEGER                                                              FFREAD1A.747   
+     &     NVALS                  ! IN no of values in an input field      FFREAD1A.748   
+C                                                                          FFREAD1A.749   
+*CALL CLOOKADD                                                             FFREAD1A.750   
+C                                                                          FFREAD1A.751   
+      DO  I=1,NVALS                                                        FFREAD1A.752   
+        IF(LOGICAL_FIELD(I))THEN                                           FFREAD1A.753   
+          FIELD(I)=1.0                                                     FFREAD1A.754   
+        ELSE                                                               FFREAD1A.755   
+          FIELD(I)=0.0                                                     FFREAD1A.756   
+        ENDIF                                                              FFREAD1A.757   
+      ENDDO                                                                FFREAD1A.758   
+      ILABEL(DATA_TYPE)=1     ! The data type must now be real             FFREAD1A.759   
+      ICODE=0                                                              FFREAD1A.760   
+      RETURN                                                               FFREAD1A.761   
+      END                                                                  FFREAD1A.762   
+CLL  Routine: INTEGER_TO_REAL ------------------------------------------   FFREAD1A.763   
+CLL                                                                        FFREAD1A.764   
+CLL  Purpose: To convert logical data within FIELD to real data.           FFREAD1A.765   
+CLL  the data in FIELD.                                                    FFREAD1A.766   
+CLL                                                                        FFREAD1A.767   
+CLL  Tested under compiler:   cft77                                        FFREAD1A.768   
+CLL  Tested under OS version: UNICOS 5.1                                   FFREAD1A.769   
+CLL                                                                        FFREAD1A.770   
+CLL  Model            Modification history from model version 3.0:         FFREAD1A.771   
+CLL version  Date                                                          FFREAD1A.772   
+CLL                                                                        FFREAD1A.773   
+CLL  Programming standard: UM Doc Paper 3, version 1 (15/1/90)             FFREAD1A.774   
+CLL                                                                        FFREAD1A.775   
+CLL  Logical components covered: ...                                       FFREAD1A.776   
+CLL                                                                        FFREAD1A.777   
+CLL  Project task: ...                                                     FFREAD1A.778   
+CLL                                                                        FFREAD1A.779   
+CLL  External documentation:                                               FFREAD1A.780   
+CLL                                                                        FFREAD1A.781   
+CLL  -------------------------------------------------------------------   FFREAD1A.782   
+C*L  Interface and arguments: ------------------------------------------   FFREAD1A.783   
+      SUBROUTINE INTEGER_TO_REAL(IDIM,INTEGER_FIELD,FIELD,NVALS,           FFREAD1A.784   
+     &                           ILABEL,ICODE,CMESSAGE)                    FFREAD1A.785   
+      INTEGER                                                              FFREAD1A.786   
+     &     IDIM                 !IN  The full unpacked size of a field     FFREAD1A.787   
+     &    ,ILABEL(45)           !OUT holds integer part of LOOKUP          UIE2F402.12    
+     &    ,ICODE                !OUT Non zero for any error                FFREAD1A.789   
+     &    ,INTEGER_FIELD(IDIM)  !IN  On input contains integer data.       FFREAD1A.790   
+      REAL                                                                 FFREAD1A.791   
+     &     FIELD(IDIM)          !OUT On Input contains Real data.          FFREAD1A.792   
+C                               ! contains the un-packed data.             FFREAD1A.793   
+      CHARACTER CMESSAGE*(*)    !OUT Will contain any error mesages.       FFREAD1A.794   
+C*                                                                         FFREAD1A.795   
+C     LOCAL  VARIABLES                                                     FFREAD1A.796   
+      INTEGER                                                              FFREAD1A.797   
+     &     NVALS                  ! IN no of values in an input field      FFREAD1A.798   
+C                                                                          FFREAD1A.799   
+*CALL CLOOKADD                                                             FFREAD1A.800   
+C                                                                          FFREAD1A.801   
+      DO  I=1,NVALS                                                        FFREAD1A.802   
+        FIELD(I)=INTEGER_FIELD(I)                                          FFREAD1A.803   
+      ENDDO                                                                FFREAD1A.804   
+      ILABEL(DATA_TYPE)=1     ! The data type must now be real             FFREAD1A.805   
+      ICODE=0                                                              FFREAD1A.806   
+      RETURN                                                               PS220193.5     
+      END                                                                  PS220193.6     
+CLL  SUBROUTINE BUFFIN_207---------------------------------------------    PS220193.7     
+CLL                                                                        PS220193.8     
+CLL  Purpose:                                                              PS220193.9     
+CLL          Buffers in NUMBER_OF_WORDS words from unit NFTIN into         PS220193.10    
+CLL          array ARRAY. The status and actual number of words            PS220193.11    
+CLL          transferred are returned.                                     PS220193.12    
+CLL          UM2.7 version non-C compatible                                PS220193.13    
+CLL                                                                        PS220193.14    
+CLL  Model            Modification history:                                PS220193.15    
+CLL version  Date                                                          PS220193.16    
+CLL   3.1   04/10/91  Written by A. Dickinson                              PS220193.17    
+CLL                                                                        PS220193.18    
+CLL  Programming standard:                                                 PS220193.19    
+CLL           Unified Model Documentation Paper No 3                       PS220193.20    
+CLL                                                                        PS220193.21    
+CLL  System component: C25                                                 PS220193.22    
+CLL                                                                        PS220193.23    
+CLL  System task: F3                                                       PS220193.24    
+CLL                                                                        PS220193.25    
+CLL  Documentation:   Cray Fortran Manual.                                 PS220193.26    
+CLL                                                                        PS220193.27    
+CLL------------------------------------------------------------            PS220193.28    
+C*L Arguments:-------------------------------------------------            PS220193.29    
+      SUBROUTINE BUFFIN_207(NFTIN,ARRAY,NUMBER_OF_WORDS,LEN_IO,STATUS)     PS220193.30    
+                                                                           PS220193.31    
+      IMPLICIT NONE                                                        PS220193.32    
+                                                                           PS220193.33    
+      INTEGER                                                              PS220193.34    
+     * NFTIN        !IN Unit number for I/O                                PS220193.35    
+     *,NUMBER_OF_WORDS !IN No of words to be read from NFTIN               PS220193.36    
+     *,LEN_IO       !OUT No of words actually transferred from NFTIN       PS220193.37    
+                                                                           PS220193.38    
+      REAL                                                                 PS220193.39    
+     * ARRAY(*)     !OUT Address to which transferred data is written      PS220193.40    
+     *,STATUS       !OUT Status returned by BUFFER IN                      PS220193.41    
+                                                                           PS220193.42    
+C -------------------------------------------------------------            PS220193.43    
+C Local arrays:------------------------------------------------            PS220193.44    
+C None                                                                     PS220193.45    
+C -------------------------------------------------------------            PS220193.46    
+C External subroutines called:---------------------------------            PS220193.47    
+C none                                                                     PS220193.48    
+C*-------------------------------------------------------------            PS220193.49    
+                                                                           PS220193.50    
+CL 1. BUFFER IN data                                                       PS220193.51    
+                                                                           PS220193.52    
+      BUFFER IN(NFTIN,0)(ARRAY(1),ARRAY(NUMBER_OF_WORDS))                  PS220193.53    
+      STATUS=UNIT(NFTIN)                                                   PS220193.54    
+      LEN_IO=LENGTH(NFTIN)                                                 PS220193.55    
+                                                                           PS220193.56    
+      RETURN                                                               FFREAD1A.807   
+      END                                                                  FFREAD1A.808   
+*ENDIF                                                                     FFREAD1A.809   

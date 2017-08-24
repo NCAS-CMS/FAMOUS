@@ -1,0 +1,270 @@
+*IF DEF,C92_1A                                                             VINTTP1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.11683 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.11684 
+C                                                                          GTS2F400.11685 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.11686 
+C restrictions as set forth in the contract.                               GTS2F400.11687 
+C                                                                          GTS2F400.11688 
+C                Meteorological Office                                     GTS2F400.11689 
+C                London Road                                               GTS2F400.11690 
+C                BRACKNELL                                                 GTS2F400.11691 
+C                Berkshire UK                                              GTS2F400.11692 
+C                RG12 2SZ                                                  GTS2F400.11693 
+C                                                                          GTS2F400.11694 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.11695 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.11696 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.11697 
+C Modelling at the above address.                                          GTS2F400.11698 
+C ******************************COPYRIGHT******************************    GTS2F400.11699 
+C                                                                          GTS2F400.11700 
+CLL  SUBROUTINE V_INT_TP----------------------------------------------     VINTTP1A.3     
+CLL                                                                        VINTTP1A.4     
+CLL  Purpose:  To calculate the temperature along an                       VINTTP1A.5     
+CLL            arbitrary pressure level. Assumes input data is             VINTTP1A.6     
+CLL            on model levels.                                            VINTTP1A.7     
+CLL                                                                        VINTTP1A.8     
+CLL A.Dickinson <- programmer of some or all of previous code or changes   VINTTP1A.9     
+CLL D.Robinson  <- programmer of some or all of previous code or changes   VINTTP1A.10    
+CLL                                                                        VINTTP1A.11    
+CLL  Model            Modification history from model version 3.0:         VINTTP1A.12    
+CLL version  Date                                                          VINTTP1A.13    
+CLL 3.1     09/02/93                                                       VINTTP1A.14    
+CLL              : NEW ALternative routine for OUTPUT temperatures         VINTTP1A.15    
+CLL              : on pressure levels. Defines EXNER at full levels        VINTTP1A.16    
+CLL              : so as to minimise errors for isothermal atmosphere      VINTTP1A.17    
+CLL              : Reduces large biases above 100hPA in stratosphere       VINTTP1A.18    
+CLL              : C Wilson 08/02/93                                       VINTTP1A.19    
+CLL 4.2     01/07/96                                                       GSS5F402.216   
+CLL              : Revised for CRAY T3E. Faster version of P_EXNER_C       GSS5F402.217   
+CLL              : introduced. Unneccessary calculation of pressure        GSS5F402.218   
+CLL              : removed.                                                GSS5F402.219   
+CLL              : New arguments START and END introduced to               GSS5F402.220   
+CLL              : facilitate the removal of duplicate calculations        GSS5F402.221   
+CLL              : when using domain decomposition in MPP mode.            GSS5F402.222   
+CLL              : Author: A. Dickinson    Reviewer: F. Rawlins            GSS5F402.223   
+CLL  4.5    09/01/98  CRAY T3E optimisation: replace rtor_v by powr_v      GDR8F405.22    
+CLL                                                    Deborah Salmond     GDR8F405.23    
+CLL                                                                        GSS5F402.224   
+CLL                                                                        VINTTP1A.20    
+CLL  Documentation: The interpolation formulae are described in            VINTTP1A.21    
+CLL                 unified model on-line documentation paper S1.          VINTTP1A.22    
+CLL                                                                        VINTTP1A.23    
+CLL  -----------------------------------------------------------------     VINTTP1A.24    
+C                                                                          VINTTP1A.25    
+C*L  Arguments:-------------------------------------------------------     VINTTP1A.26    
+      SUBROUTINE V_INT_TP                                                  VINTTP1A.27    
+     *(T,P,PL,PSTAR,P_EXNER_HALF,THETA,POINTS,P_LEVELS,L,AKH,BKH)          GSS5F402.225   
+!     *,START,END)                                                         GSS5F402.226   
+                                                                           VINTTP1A.29    
+      IMPLICIT NONE                                                        VINTTP1A.30    
+                                                                           VINTTP1A.31    
+      INTEGER                                                              VINTTP1A.32    
+     * POINTS    !IN Number of points per level                            GSS5F402.227   
+     *,P_LEVELS  !IN Number of model levels                                VINTTP1A.34    
+     *,L         !IN Reference level for below-surface T extrapolation     VINTTP1A.35    
+                 ! Use L=2                                                 VINTTP1A.36    
+     *,START     !IN First point to be processed in POINTS dimension       GSS5F402.228   
+     *,END       !IN Last point to be processed in POINTS dimension        GSS5F402.229   
+                                                                           GSS5F402.230   
+      REAL                                                                 VINTTP1A.37    
+     * T(POINTS)     !OUT Temperature along input pressure surface         VINTTP1A.38    
+     *,P(POINTS)     !IN Pressure surface on which results required        VINTTP1A.39    
+     *,PL(POINTS)    !IN Pressure at reference level L                     VINTTP1A.40    
+     *,PSTAR(POINTS) !IN Surface pressure                                  VINTTP1A.41    
+     *,P_EXNER_HALF(POINTS,P_LEVELS+1) !IN Exner pressure at model         VINTTP1A.42    
+     *                                 !   half levels                     VINTTP1A.43    
+     *,THETA(POINTS,P_LEVELS) !IN Potential temperature at full levels     VINTTP1A.44    
+     *,AKH(P_LEVELS+1) !IN Hybrid coords. A values at half levels.         VINTTP1A.45    
+     *,BKH(P_LEVELS+1) !IN Hybrid coords. B values at half levels.         VINTTP1A.46    
+                                                                           VINTTP1A.47    
+C Workspace usage:-----------------------------------------------------    VINTTP1A.48    
+C                                                                          VINTTP1A.49    
+      REAL                                                                 GSS5F402.231   
+     * P_EXNER(POINTS)                                                     GSS5F402.232   
+C External subroutines called:-----------------------------------------    VINTTP1A.51    
+C None                                                                     GSS5F402.234   
+C*---------------------------------------------------------------------    VINTTP1A.53    
+C Define local variables:----------------------------------------------    VINTTP1A.54    
+      REAL PTOP,PBOT,PKP2,PKP1,PK,PKM1,PPP1,PP,PPM1,P1,P2,P3               VINTTP1A.55    
+      INTEGER I,K,IC                                                       GSS5F402.235   
+      REAL P_EXNER_FULL_1,P_EXNER_FULL_2,TK,TERM1,TERM2,                   VINTTP1A.57    
+     * P_EXNER_FULL_K,P_EXNER_FULL_KP1,P_EXNER_FULL_KM1                    VINTTP1A.58    
+     *,P_EXNER_FULL_L,P_EXNER_FULL_LM1                                     VINTTP1A.59    
+C----------------------------------------------------------------------    VINTTP1A.63    
+C Constants from comdecks:---------------------------------------------    VINTTP1A.64    
+*CALL C_EPSLON                                                             VINTTP1A.65    
+*CALL C_G                                                                  VINTTP1A.66    
+*CALL C_R_CP                                                               VINTTP1A.67    
+*CALL C_LAPSE                                                              VINTTP1A.68    
+C----------------------------------------------------------------------    VINTTP1A.69    
+                                                                           VINTTP1A.70    
+CL 1. Define local constants                                               VINTTP1A.71    
+                                                                           VINTTP1A.72    
+      REAL CP_OVER_G,LAPSE_R_OVER_G                                        VINTTP1A.73    
+      PARAMETER(CP_OVER_G=CP/G)                                            VINTTP1A.74    
+      PARAMETER(LAPSE_R_OVER_G=LAPSE*R/G)                                  VINTTP1A.75    
+                                                                           VINTTP1A.76    
+*CALL P_EXNRC2                                                             VINTTP1A.77    
+                                                                           VINTTP1A.78    
+                                                                           GSS5F402.236   
+      IC=0                                                                 GSS5F402.237   
+      START=1                                                              GSS5F402.238   
+      END  =POINTS                                                         GSS5F402.239   
+CL 2. Special cases   (i) Below ground                                     VINTTP1A.79    
+CL                   (ii) Bottom of bottom layer                           VINTTP1A.80    
+CL                  (iii) Top of top layer and above                       VINTTP1A.81    
+                                                                           VINTTP1A.82    
+*IF DEF,VECTLIB                                                            PXVECTLB.155   
+C Convert target pressure to Exner pressure                                GSS5F402.241   
+                                                                           VINTTP1A.84    
+      DO I=START,END                                                       GSS5F402.242   
+        P_EXNER(I)=P(I)/PREF                                               GSS5F402.244   
+      ENDDO                                                                GSS5F402.245   
+      CALL POWR_V                                                          GDR8F405.24    
+     &(END-START+1,P_EXNER(START),KAPPA,P_EXNER(START))                    GDR8F405.25    
+*ENDIF                                                                     GSS5F402.248   
+      DO 200 I=START,END                                                   GSS5F402.249   
+                                                                           GSS5F402.250   
+*IF -DEF,VECTLIB                                                           PXVECTLB.156   
+C Convert target pressure to Exner pressure                                VINTTP1A.85    
+                                                                           GSS5F402.252   
+      P_EXNER(I)=(P(I)/PREF)**KAPPA                                        VINTTP1A.91    
+*ENDIF                                                                     VINTTP1A.92    
+                                                                           VINTTP1A.93    
+CL (i) Below ground: equation (3.15)                                       VINTTP1A.94    
+CL A lapse rate of 6.5 deg/km is assumed. L is a                           VINTTP1A.95    
+CL reference level - usually the first level above the model's             VINTTP1A.96    
+CL boundary layer.                                                         VINTTP1A.97    
+                                                                           VINTTP1A.98    
+      IF(P(I).GT.PSTAR(I))THEN                                             VINTTP1A.99    
+                                                                           VINTTP1A.100   
+        P_EXNER_FULL_L = P_EXNER_C                                         VINTTP1A.103   
+     +  (P_EXNER_HALF(I,L+1),P_EXNER_HALF(I,L),                            GSS5F402.253   
+     +   dummy1,dummy2,dummy3)                                             GSS5F402.254   
+        T(I)=THETA(I,L)*P_EXNER_FULL_L                                     VINTTP1A.105   
+     *  *(P(I)/PL(I))**LAPSE_R_OVER_G                                      VINTTP1A.109   
+        IC=IC+1                                                            GSS5F402.255   
+                                                                           VINTTP1A.111   
+CL (ii) Bottom layer: equation (3.14)                                      VINTTP1A.112   
+                                                                           VINTTP1A.113   
+      ELSE IF(P_EXNER(I).GT.P_EXNER_HALF(I,2)) THEN                        VINTTP1A.114   
+                                                                           VINTTP1A.115   
+        P_EXNER_FULL_1 = P_EXNER_C                                         VINTTP1A.119   
+     +  (P_EXNER_HALF(I,2),P_EXNER_HALF(I,1),                              GSS5F402.256   
+     +   dummy1,dummy2,dummy3)                                             GSS5F402.257   
+        P_EXNER_FULL_2 = P_EXNER_C                                         VINTTP1A.121   
+     +  (P_EXNER_HALF(I,3),P_EXNER_HALF(I,2),                              GSS5F402.258   
+     +   dummy1,dummy2,dummy3)                                             GSS5F402.259   
+                                                                           VINTTP1A.123   
+        TK=THETA(I,1)*P_EXNER_FULL_1                                       VINTTP1A.124   
+                                                                           VINTTP1A.125   
+        TERM1=(TK-THETA(I,2)*P_EXNER_FULL_2)                               VINTTP1A.126   
+     *       *THETA(I,1)*(P_EXNER(I)-P_EXNER_FULL_1)                       VINTTP1A.127   
+                                                                           VINTTP1A.128   
+        TERM2=THETA(I,2)*(P_EXNER_HALF(I,2)-P_EXNER_FULL_2)                VINTTP1A.129   
+     *   +THETA(I,1)*(P_EXNER_FULL_1-P_EXNER_HALF(I,2))                    VINTTP1A.130   
+                                                                           VINTTP1A.131   
+       T(I)=TK+TERM1/TERM2                                                 VINTTP1A.132   
+       IC=IC+1                                                             GSS5F402.260   
+                                                                           VINTTP1A.133   
+      ENDIF                                                                VINTTP1A.134   
+                                                                           VINTTP1A.135   
+                                                                           VINTTP1A.136   
+CL (iii) Top layer and above: equation (3.13)                              VINTTP1A.137   
+                                                                           VINTTP1A.138   
+      IF(P_EXNER(I).LE.P_EXNER_HALF(I,P_LEVELS))THEN                       VINTTP1A.139   
+                                                                           VINTTP1A.140   
+       P_EXNER_FULL_L   = P_EXNER_C (P_EXNER_HALF(I,P_LEVELS+1),           VINTTP1A.145   
+     +                    P_EXNER_HALF(I,P_LEVELS),                        GSS5F402.261   
+     +                    dummy1,dummy2,dummy3)                            GSS5F402.262   
+       P_EXNER_FULL_LM1 = P_EXNER_C (P_EXNER_HALF(I,P_LEVELS),             VINTTP1A.147   
+     +                    P_EXNER_HALF(I,P_LEVELS-1),                      GSS5F402.263   
+     +                    dummy1,dummy2,dummy3)                            GSS5F402.264   
+                                                                           VINTTP1A.149   
+       TK=THETA(I,P_LEVELS)*P_EXNER_FULL_L                                 VINTTP1A.150   
+                                                                           VINTTP1A.151   
+       TERM1=(TK-THETA(I,P_LEVELS-1)*P_EXNER_FULL_LM1)                     VINTTP1A.152   
+     *       *THETA(I,P_LEVELS)*(P_EXNER_FULL_L-P_EXNER(I))                VINTTP1A.153   
+                                                                           VINTTP1A.154   
+       TERM2=THETA(I,P_LEVELS)*(P_EXNER_HALF(I,P_LEVELS)-P_EXNER_FULL_L)   VINTTP1A.155   
+     * +THETA(I,P_LEVELS-1)*(P_EXNER_FULL_LM1-P_EXNER_HALF(I,P_LEVELS))    VINTTP1A.156   
+                                                                           VINTTP1A.157   
+       T(I)=TK+TERM1/TERM2                                                 VINTTP1A.158   
+       IC=IC+1                                                             GSS5F402.265   
+                                                                           VINTTP1A.159   
+      ENDIF                                                                VINTTP1A.160   
+                                                                           VINTTP1A.161   
+200   CONTINUE                                                             VINTTP1A.162   
+                                                                           VINTTP1A.163   
+C Loop over levels                                                         VINTTP1A.164   
+                                                                           VINTTP1A.165   
+      DO 300 K=2,P_LEVELS-1                                                VINTTP1A.166   
+                                                                           VINTTP1A.167   
+      IF(IC.EQ.END-START+1)GOTO 400                                        GSS5F402.266   
+                                                                           GSS5F402.267   
+                                                                           GSS5F402.268   
+CL 3. Middle levels: equation (3.12)                                       VINTTP1A.168   
+CL Two alternatives are used depending on whether P_EXNER(I) falls in      VINTTP1A.169   
+CL the top or bottom half of layer k.                                      VINTTP1A.170   
+                                                                           VINTTP1A.171   
+      DO 310 I=1,POINTS                                                    VINTTP1A.172   
+                                                                           VINTTP1A.173   
+                                                                           VINTTP1A.174   
+      P_EXNER_FULL_K   = P_EXNER_C (P_EXNER_HALF(I,K+1),                   VINTTP1A.178   
+     +                   P_EXNER_HALF(I,K),dummy1,dummy2,dummy3)           GSS5F402.269   
+                                                                           VINTTP1A.180   
+C Top half of layer k.                                                     VINTTP1A.181   
+                                                                           VINTTP1A.182   
+      IF(P_EXNER(I).GT.P_EXNER_HALF(I,K+1))THEN                            GSS5F402.270   
+        IF(P_EXNER(I).LE.P_EXNER_FULL_K)THEN                               GSS5F402.271   
+                                                                           VINTTP1A.185   
+       P_EXNER_FULL_KP1 = P_EXNER_C (P_EXNER_HALF(I,K+2),                  VINTTP1A.187   
+     +                    P_EXNER_HALF(I,K+1),dummy1,dummy2,dummy3)        GSS5F402.272   
+                                                                           VINTTP1A.189   
+       TK=THETA(I,K)*P_EXNER_FULL_K                                        VINTTP1A.190   
+                                                                           VINTTP1A.191   
+       TERM1=(THETA(I,K+1)*P_EXNER_FULL_KP1-TK)                            VINTTP1A.192   
+     *       *THETA(I,K)*(P_EXNER_FULL_K-P_EXNER(I))                       VINTTP1A.193   
+                                                                           VINTTP1A.194   
+       TERM2=THETA(I,K)*(P_EXNER_FULL_K-P_EXNER_HALF(I,K+1))               VINTTP1A.195   
+     *   +THETA(I,K+1)*(P_EXNER_HALF(I,K+1)-P_EXNER_FULL_KP1)              VINTTP1A.196   
+                                                                           VINTTP1A.197   
+       T(I)=TK+TERM1/TERM2                                                 VINTTP1A.198   
+       IC=IC+1                                                             GSS5F402.273   
+                                                                           VINTTP1A.199   
+       ENDIF                                                               GSS5F402.274   
+      ENDIF                                                                VINTTP1A.200   
+                                                                           VINTTP1A.201   
+C Bottom half of layer k.                                                  VINTTP1A.202   
+                                                                           VINTTP1A.203   
+                                                                           VINTTP1A.204   
+      IF(P_EXNER(I).GT.P_EXNER_FULL_K)THEN                                 GSS5F402.275   
+       IF(P_EXNER(I).LE.P_EXNER_HALF(I,K))THEN                             GSS5F402.276   
+                                                                           VINTTP1A.207   
+       P_EXNER_FULL_KM1 = P_EXNER_C (P_EXNER_HALF(I,K),                    VINTTP1A.209   
+     +                    P_EXNER_HALF(I,K-1),dummy1,dummy2,dummy3)        GSS5F402.277   
+                                                                           VINTTP1A.211   
+       TK=THETA(I,K)*P_EXNER_FULL_K                                        VINTTP1A.212   
+                                                                           VINTTP1A.213   
+       TERM1=(THETA(I,K-1)*P_EXNER_FULL_KM1-TK)                            VINTTP1A.214   
+     *       *THETA(I,K)*(P_EXNER(I)-P_EXNER_FULL_K)                       VINTTP1A.215   
+                                                                           VINTTP1A.216   
+       TERM2=THETA(I,K)*(P_EXNER_HALF(I,K)-P_EXNER_FULL_K)                 VINTTP1A.217   
+     *   +THETA(I,K-1)*(P_EXNER_FULL_KM1-P_EXNER_HALF(I,K))                VINTTP1A.218   
+                                                                           VINTTP1A.219   
+       T(I)=TK+TERM1/TERM2                                                 VINTTP1A.220   
+       IC=IC+1                                                             GSS5F402.278   
+                                                                           VINTTP1A.221   
+       ENDIF                                                               GSS5F402.279   
+      ENDIF                                                                VINTTP1A.222   
+                                                                           VINTTP1A.223   
+310   CONTINUE                                                             VINTTP1A.224   
+                                                                           VINTTP1A.225   
+300   CONTINUE                                                             VINTTP1A.226   
+                                                                           GSS5F402.280   
+400   CONTINUE                                                             GSS5F402.281   
+                                                                           VINTTP1A.227   
+      RETURN                                                               VINTTP1A.228   
+      END                                                                  VINTTP1A.229   
+                                                                           VINTTP1A.230   
+*ENDIF                                                                     VINTTP1A.231   

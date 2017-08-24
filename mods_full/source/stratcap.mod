@@ -1,0 +1,1 @@
+../../mods/source/MOSESI/stratcap.mod

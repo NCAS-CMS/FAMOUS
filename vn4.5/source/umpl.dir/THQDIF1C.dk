@@ -1,0 +1,330 @@
+*IF DEF,A13_1C                                                             THQDIF1C.2     
+C ******************************COPYRIGHT******************************    THQDIF1C.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    THQDIF1C.4     
+C                                                                          THQDIF1C.5     
+C Use, duplication or disclosure of this code is subject to the            THQDIF1C.6     
+C restrictions as set forth in the contract.                               THQDIF1C.7     
+C                                                                          THQDIF1C.8     
+C                Meteorological Office                                     THQDIF1C.9     
+C                London Road                                               THQDIF1C.10    
+C                BRACKNELL                                                 THQDIF1C.11    
+C                Berkshire UK                                              THQDIF1C.12    
+C                RG12 2SZ                                                  THQDIF1C.13    
+C                                                                          THQDIF1C.14    
+C If no contract has been raised with this copy of the code, the use,      THQDIF1C.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      THQDIF1C.16    
+C to do so must first be obtained in writing from the Head of Numerical    THQDIF1C.17    
+C Modelling at the above address.                                          THQDIF1C.18    
+C ******************************COPYRIGHT******************************    THQDIF1C.19    
+C                                                                          THQDIF1C.20    
+CLL   SUBROUTINE TH_Q_DIF -----------------------------------------        THQDIF1C.21    
+CLL                                                                        THQDIF1C.22    
+CLL   PURPOSE:  CALCULATES DIFFUSION INCREMENTS FOR THETAL OR QT           THQDIF1C.23    
+CLL              IF STEEP SLOPE THEN EFFECTIVE DIFFUSION IS ZERO.          THQDIF1C.24    
+CLL                                                                        THQDIF1C.25    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  THQDIF1C.26    
+CLL                                                                        THQDIF1C.27    
+CLL   WAS VERSION FOR CRAY Y-MP                                            THQDIF1C.28    
+CLL                                                                        THQDIF1C.29    
+CLL MM, TJ      <- PROGRAMMER OF SOME OR ALL OF PREVIOUS CODE OR CHANGES   THQDIF1C.30    
+CLL                                                                        THQDIF1C.31    
+CLL  MODEL            MODIFICATION HISTORY:                                THQDIF1C.32    
+CLL VERSION  DATE                                                          THQDIF1C.33    
+!LL   4.4   11/08/97  New version optimised for T3E.                       THQDIF1C.34    
+!LL                   Not bit-reproducible with THQDIF1A.                  THQDIF1C.35    
+!     4.4    17/07/97 SCALAR calculated using SEC_P_LATITUDE at both       THQDIF1C.36    
+!                     poles for non MPP code to enable bit comparison      THQDIF1C.37    
+!                     with MPP code.   I Edmond                            THQDIF1C.38    
+CLL   4.4    25/07/97 Calling sequence changed from once per diffusion     THQDIF1C.39    
+CLL                   sweep per level to once per dynamics sweep, in       THQDIF1C.40    
+CLL                   order to improve MPP scalability.                    THQDIF1C.41    
+CLL                   A. Dickinson                                         THQDIF1C.42    
+CLL                                                                        THQDIF1C.43    
+CLL                                                                        THQDIF1C.44    
+CLL   PROGRAMMING STANDARD:                                                THQDIF1C.45    
+CLL                                                                        THQDIF1C.46    
+CLL   SYSTEM COMPONENTS COVERED: P131                                      THQDIF1C.47    
+CLL                                                                        THQDIF1C.48    
+CLL   SYSTEM TASK: P1                                                      THQDIF1C.49    
+CLL                                                                        THQDIF1C.50    
+CLL   DOCUMENTATION:       THE EQUATION USED IS (47)                       THQDIF1C.51    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER            THQDIF1C.52    
+CLL                        NO. 10 M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON    THQDIF1C.53    
+CLL                        VERSION 16, DATED 09/01/91.                     THQDIF1C.54    
+CLLEND-------------------------------------------------------------        THQDIF1C.55    
+                                                                           THQDIF1C.56    
+C*L   ARGUMENTS:---------------------------------------------------        THQDIF1C.57    
+      SUBROUTINE TH_Q_DIF                                                  THQDIF1C.58    
+     1                  (TH_Q,RECIP_RS_SQUARED_DELTAP,                     THQDIF1C.59    
+     2                   SEC_P_LATITUDE,ROW_LENGTH,                        THQDIF1C.60    
+*CALL ARGFLDPT                                                             THQDIF1C.61    
+     5                   LEVEL_BASE,LEVELS,                                THQDIF1C.62    
+     6                   KEXP_K1,ADVECTION_TIMESTEP,                       THQDIF1C.63    
+     4                   P_FIELD,U_FIELD,                                  THQDIF1C.64    
+     5                   DIFFUSION_EW,DIFFUSION_NS)                        THQDIF1C.65    
+                                                                           THQDIF1C.66    
+                                                                           THQDIF1C.67    
+      IMPLICIT NONE                                                        THQDIF1C.68    
+                                                                           THQDIF1C.69    
+      INTEGER                                                              THQDIF1C.70    
+     *  U_FIELD            !IN DIMENSION OF FIELDS ON VELOCITY GRID        THQDIF1C.71    
+     *, P_FIELD            !IN DIMENSION OF FIELDS ON PRESSURE GRID        THQDIF1C.72    
+     *, ROW_LENGTH         !IN NUMBER OF POINTS PER ROW                    THQDIF1C.73    
+     *, LEVELS             !IN NUMBER OF LEVELS                            THQDIF1C.74    
+     *, LEVEL_BASE         !IN BOTTOM LEVEL AT WHICH DIFFUSION APPLIES     THQDIF1C.75    
+     *, KEXP_K1(LEVELS)    !IN ORDER OF DIFFUSION                          THQDIF1C.76    
+                                                                           THQDIF1C.77    
+! All TYPFLDPT arguments are intent IN                                     THQDIF1C.78    
+*CALL TYPFLDPT                                                             THQDIF1C.79    
+                                                                           THQDIF1C.80    
+      REAL                                                                 THQDIF1C.81    
+     *  TH_Q(P_FIELD,LEVELS)    !IN. THETAL OR QT FIELD.                   THQDIF1C.82    
+     *, RECIP_RS_SQUARED_DELTAP(P_FIELD,LEVELS) !IN  1/RS**2*DELTAP        THQDIF1C.83    
+     *,ADVECTION_TIMESTEP    !IN                                           THQDIF1C.84    
+                                                                           THQDIF1C.85    
+      REAL                                                                 THQDIF1C.86    
+     * DIFFUSION_EW(P_FIELD,LEVELS) !IN EAST-WEST EFFECTIVE DIFFUSION      THQDIF1C.87    
+     *,DIFFUSION_NS(P_FIELD,LEVELS) !IN NORTH-SOUTH EFFECTIVE DIFFUSION    THQDIF1C.88    
+     *,SEC_P_LATITUDE(P_FIELD)         !IN 1/COS(LAT) AT P POINTS          THQDIF1C.89    
+                                                                           THQDIF1C.90    
+C*---------------------------------------------------------------------    THQDIF1C.91    
+                                                                           THQDIF1C.92    
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    THQDIF1C.93    
+C DEFINE LOCAL ARRAYS: 5 ARE REQUIRED                                      THQDIF1C.94    
+                                                                           THQDIF1C.95    
+      REAL                                                                 THQDIF1C.96    
+     * FIELD1(P_FIELD)      ! GENERAL WORKSPACE                            THQDIF1C.97    
+     *,FIELD2(P_FIELD)      ! GENERAL WORKSPACE                            THQDIF1C.98    
+     *,FIELD3(P_FIELD)      ! GENERAL WORKSPACE                            THQDIF1C.99    
+     *,FIELD(P_FIELD)       ! GENERAL WORKSPACE                            THQDIF1C.100   
+     *,FIELD_INC(P_FIELD)   ! GENERAL WORKSPACE                            THQDIF1C.101   
+     *,NP_FLUX(ROW_LENGTH)  ! HOLDS NORTH POLAR FLUX                       THQDIF1C.102   
+     *,SP_FLUX(ROW_LENGTH)  ! HOLDS SOUTH POLAR FLUX                       THQDIF1C.103   
+C*---------------------------------------------------------------------    THQDIF1C.104   
+C DEFINE LOCAL VARIABLES                                                   THQDIF1C.105   
+                                                                           THQDIF1C.106   
+C LOCAL REALS.                                                             THQDIF1C.107   
+      REAL                                                                 THQDIF1C.108   
+     *  SCALAR                                                             THQDIF1C.109   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        THQDIF1C.110   
+      INTEGER                                                              THQDIF1C.111   
+     *  I,J,IJ,K,JJ                                                        THQDIF1C.112   
+                                                                           THQDIF1C.113   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    THQDIF1C.114   
+      EXTERNAL                                                             THQDIF1C.115   
+     *  POLAR                                                              THQDIF1C.116   
+C*---------------------------------------------------------------------    THQDIF1C.117   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS END_P_UPDATE-START_P_UPDATE+1       THQDIF1C.118   
+CL---------------------------------------------------------------------    THQDIF1C.119   
+CL    INTERNAL STRUCTURE.                                                  THQDIF1C.120   
+CL---------------------------------------------------------------------    THQDIF1C.121   
+CL                                                                         THQDIF1C.122   
+                                                                           THQDIF1C.123   
+      DO K=LEVEL_BASE,LEVELS                                               THQDIF1C.124   
+                                                                           THQDIF1C.125   
+        DO  I=FIRST_VALID_PT,LAST_P_VALID_PT                               THQDIF1C.126   
+          FIELD(I) = TH_Q(I,K)                                             THQDIF1C.127   
+        END DO                                                             THQDIF1C.128   
+                                                                           THQDIF1C.129   
+C LOOP THROUGH CODE KEXP_K1 TIMES. THE ORDER OF THE DIFFUSION SCHEME IS    THQDIF1C.130   
+C DEL TO THE POWER 2*KEXP_K1.                                              THQDIF1C.131   
+        DO  JJ=1,KEXP_K1(K)                                                THQDIF1C.132   
+                                                                           THQDIF1C.133   
+*IF -DEF,GLOBAL                                                            THQDIF1C.134   
+CL   ZERO INCREMENTS FOR FIRST AND LAST ROW                                THQDIF1C.135   
+CL   OVERWRITTEN BY POLAR IN GLOBAL MODELS                                 THQDIF1C.136   
+*IF DEF,MPP                                                                THQDIF1C.137   
+          IF (at_top_of_LPG) THEN                                          THQDIF1C.138   
+*ENDIF                                                                     THQDIF1C.139   
+            DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                  THQDIF1C.140   
+              FIELD_INC(I)=0.0                                             THQDIF1C.141   
+            ENDDO                                                          THQDIF1C.142   
+*IF DEF,MPP                                                                THQDIF1C.143   
+          ENDIF                                                            THQDIF1C.144   
+          IF (at_base_of_LPG) THEN                                         THQDIF1C.145   
+*ENDIF                                                                     THQDIF1C.146   
+            DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1              THQDIF1C.147   
+              FIELD_INC(I)=0.0                                             THQDIF1C.148   
+            ENDDO                                                          THQDIF1C.149   
+*IF DEF,MPP                                                                THQDIF1C.150   
+          ENDIF                                                            THQDIF1C.151   
+*ENDIF                                                                     THQDIF1C.152   
+*ENDIF                                                                     THQDIF1C.153   
+                                                                           THQDIF1C.154   
+                                                                           THQDIF1C.155   
+CL---------------------------------------------------------------------    THQDIF1C.156   
+CL    SECTION 1.    DELTA LAMBDA TERMS                                     THQDIF1C.157   
+CL---------------------------------------------------------------------    THQDIF1C.158   
+C----------------------------------------------------------------------    THQDIF1C.159   
+CL    SECTION 1.1    CALCULATE DELTAPHILAMBDA*1/(DELTALAMBDA)SQUARED       THQDIF1C.160   
+C----------------------------------------------------------------------    THQDIF1C.161   
+                                                                           THQDIF1C.162   
+                                                                           THQDIF1C.163   
+      DO  I=START_POINT_NO_HALO,END_P_POINT_NO_HALO-1                      THQDIF1C.164   
+       FIELD1(I)=FIELD(I+1)-FIELD(I)                                       THQDIF1C.165   
+      END DO                                                               THQDIF1C.166   
+                                                                           THQDIF1C.167   
+                                                                           THQDIF1C.168   
+*IF -DEF,MPP                                                               THQDIF1C.169   
+C     RECALCULATE END-POINTS                                               THQDIF1C.170   
+                                                                           THQDIF1C.171   
+      DO  I=START_POINT_NO_HALO-1,END_P_POINT_NO_HALO,ROW_LENGTH           THQDIF1C.172   
+       IJ=I-ROW_LENGTH+1                                                   THQDIF1C.173   
+       FIELD1(I)=FIELD(IJ)-FIELD(I)                                        THQDIF1C.174   
+      END DO                                                               THQDIF1C.175   
+*ELSE                                                                      THQDIF1C.176   
+! Set last point of field                                                  THQDIF1C.177   
+      FIELD1(END_P_POINT_NO_HALO)=FIELD1(END_P_POINT_NO_HALO-1)            THQDIF1C.178   
+*ENDIF                                                                     THQDIF1C.179   
+                                                                           THQDIF1C.180   
+C----------------------------------------------------------------------    THQDIF1C.181   
+CL    SECTION 1.2    CALCULATE DELTA LAMBDA TERM                           THQDIF1C.182   
+C----------------------------------------------------------------------    THQDIF1C.183   
+                                                                           THQDIF1C.184   
+      DO I= START_POINT_NO_HALO+1,END_P_POINT_NO_HALO                      THQDIF1C.185   
+       FIELD2(I)=(DIFFUSION_EW(I,K)*FIELD1(I)-                             THQDIF1C.186   
+     &            DIFFUSION_EW(I-1,K)*FIELD1(I-1))*                        THQDIF1C.187   
+     &            SEC_P_LATITUDE(I)                                        THQDIF1C.188   
+      END DO                                                               THQDIF1C.189   
+                                                                           THQDIF1C.190   
+                                                                           THQDIF1C.191   
+*IF -DEF,MPP                                                               THQDIF1C.192   
+C     RECALCULATE END-POINTS                                               THQDIF1C.193   
+      DO  I= START_POINT_NO_HALO,END_P_POINT_NO_HALO,ROW_LENGTH            THQDIF1C.194   
+       IJ=I+ROW_LENGTH-1                                                   THQDIF1C.195   
+       FIELD2(I)=(DIFFUSION_EW(I,K)*FIELD1(I)-                             THQDIF1C.196   
+     &            DIFFUSION_EW(IJ,K)*FIELD1(IJ))*                          THQDIF1C.197   
+     &            SEC_P_LATITUDE(I)                                        THQDIF1C.198   
+      END DO                                                               THQDIF1C.199   
+*ELSE                                                                      THQDIF1C.200   
+      FIELD2(START_POINT_NO_HALO)=FIELD2(START_POINT_NO_HALO+1)            THQDIF1C.201   
+*ENDIF                                                                     THQDIF1C.202   
+                                                                           THQDIF1C.203   
+C----------------------------------------------------------------------    THQDIF1C.204   
+CL    SECTION 2    CALCULATE PHI DIRECTION TERM AND ADD                    THQDIF1C.205   
+CL                   ONTO FIRST TERM TO GET TOTAL CORRECTION.              THQDIF1C.206   
+C----------------------------------------------------------------------    THQDIF1C.207   
+                                                                           THQDIF1C.208   
+C   CALCULATE DELTA PHI TERMS                                              THQDIF1C.209   
+                                                                           THQDIF1C.210   
+      DO  I=START_POINT_NO_HALO-ROW_LENGTH,END_P_POINT_NO_HALO             THQDIF1C.211   
+       FIELD1(I)=FIELD(I)-FIELD(I+ROW_LENGTH)                              THQDIF1C.212   
+      END DO                                                               THQDIF1C.213   
+                                                                           THQDIF1C.214   
+C----------------------------------------------------------------------    THQDIF1C.215   
+CL    SECTION 2.3  CALCULATE DELTAPHI TERM AND ADD ONTO DELTALAMBDA TERM   THQDIF1C.216   
+C----------------------------------------------------------------------    THQDIF1C.217   
+cdir$ nosplit                                                              THQDIF1C.218   
+      DO  I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                        THQDIF1C.219   
+       FIELD_INC(I)= (FIELD2(I)+                                           THQDIF1C.220   
+     &            DIFFUSION_NS(I-ROW_LENGTH,K)*FIELD1(I-ROW_LENGTH)-       THQDIF1C.221   
+     &            DIFFUSION_NS(I,K)*FIELD1(I))*SEC_P_LATITUDE(I)           THQDIF1C.222   
+      END DO                                                               THQDIF1C.223   
+                                                                           THQDIF1C.224   
+C----------------------------------------------------------------------    THQDIF1C.225   
+CL    SECTION 3  CALCULATE DIFFUSION AT POLES                              THQDIF1C.226   
+C----------------------------------------------------------------------    THQDIF1C.227   
+                                                                           THQDIF1C.228   
+*IF DEF,GLOBAL                                                             THQDIF1C.229   
+                                                                           THQDIF1C.230   
+C GLOBAL MODEL CALCULATES POLAR DEL-SQUARED USING ACROSS-POLE DIFFERENCE   THQDIF1C.231   
+C ASSUMING FLUX=0 AT HALF-GRID-LENGTH ON OTHER SIDE OF POLE                THQDIF1C.232   
+                                                                           THQDIF1C.233   
+                                                                           THQDIF1C.234   
+      SCALAR=SEC_P_LATITUDE(TOP_ROW_START)                                 THQDIF1C.235   
+                                                                           THQDIF1C.236   
+! Do North Pole                                                            THQDIF1C.237   
+*IF DEF,MPP                                                                THQDIF1C.238   
+      IF (at_top_of_LPG) THEN                                              THQDIF1C.239   
+*ENDIF                                                                     THQDIF1C.240   
+        DO I=1,ROW_LENGTH                                                  THQDIF1C.241   
+          J=TOP_ROW_START+I-1                                              THQDIF1C.242   
+          FIELD3(J)=-DIFFUSION_NS(J,K)*FIELD1(J)*SCALAR                    THQDIF1C.243   
+          NP_FLUX(I)=FIELD3(J)                                             THQDIF1C.244   
+          FIELD_INC(J)=0.0                                                 THQDIF1C.245   
+        ENDDO                                                              THQDIF1C.246   
+*IF DEF,MPP                                                                THQDIF1C.247   
+      ENDIF                                                                THQDIF1C.248   
+*ENDIF                                                                     THQDIF1C.249   
+                                                                           THQDIF1C.250   
+! And South Pole                                                           THQDIF1C.251   
+      SCALAR=SEC_P_LATITUDE(P_BOT_ROW_START)                               THQDIF1C.252   
+*IF DEF,MPP                                                                THQDIF1C.253   
+                                                                           THQDIF1C.254   
+      IF (at_base_of_LPG) THEN                                             THQDIF1C.255   
+*ENDIF                                                                     THQDIF1C.256   
+        DO I=1,ROW_LENGTH                                                  THQDIF1C.257   
+          J=I+P_BOT_ROW_START-1                                            THQDIF1C.258   
+          FIELD3(J)=DIFFUSION_NS(J-ROW_LENGTH,K)*FIELD1(J-ROW_LENGTH)*     THQDIF1C.259   
+     &              SCALAR                                                 THQDIF1C.260   
+          SP_FLUX(I)=FIELD3(J)                                             THQDIF1C.261   
+          FIELD_INC(J)=0.0                                                 THQDIF1C.262   
+        ENDDO                                                              THQDIF1C.263   
+*IF DEF,MPP                                                                THQDIF1C.264   
+      ENDIF                                                                THQDIF1C.265   
+*ENDIF                                                                     THQDIF1C.266   
+                                                                           THQDIF1C.267   
+CL    CALL POLAR TO UPDATE POLAR VALUES                                    THQDIF1C.268   
+                                                                           THQDIF1C.269   
+      CALL POLAR(FIELD_INC,NP_FLUX,SP_FLUX,                                THQDIF1C.270   
+*CALL ARGFLDPT                                                             THQDIF1C.271   
+     &           P_FIELD,ROW_LENGTH,ROW_LENGTH,                            THQDIF1C.272   
+     &           1,1,ROW_LENGTH,1)                                         THQDIF1C.273   
+                                                                           THQDIF1C.274   
+*ELSE                                                                      THQDIF1C.275   
+CL    LIMITED AREA MODEL ZEROES DEL-SQUARED ON BOUNDARIES.                 THQDIF1C.276   
+*IF DEF,MPP                                                                THQDIF1C.277   
+      IF (at_left_of_LPG) THEN                                             THQDIF1C.278   
+*ENDIF                                                                     THQDIF1C.279   
+        DO I=START_POINT_NO_HALO+FIRST_ROW_PT-1,                           THQDIF1C.280   
+     &       END_P_POINT_NO_HALO,ROW_LENGTH                                THQDIF1C.281   
+          FIELD_INC(I)=0.0                                                 THQDIF1C.282   
+        ENDDO                                                              THQDIF1C.283   
+*IF DEF,MPP                                                                THQDIF1C.284   
+      ENDIF                                                                THQDIF1C.285   
+                                                                           THQDIF1C.286   
+      IF (at_right_of_LPG) THEN                                            THQDIF1C.287   
+*ENDIF                                                                     THQDIF1C.288   
+        DO I=START_POINT_NO_HALO+LAST_ROW_PT-1,                            THQDIF1C.289   
+     &       END_P_POINT_NO_HALO,ROW_LENGTH                                THQDIF1C.290   
+          FIELD_INC(I)=0.0                                                 THQDIF1C.291   
+        ENDDO                                                              THQDIF1C.292   
+*IF DEF,MPP                                                                THQDIF1C.293   
+      ENDIF                                                                THQDIF1C.294   
+*ENDIF                                                                     THQDIF1C.295   
+*ENDIF                                                                     THQDIF1C.296   
+                                                                           THQDIF1C.297   
+C DE-MASS-WEIGHT INCREMENT AND COPY INTO FIELD1                            THQDIF1C.298   
+         DO I=FIRST_FLD_PT,LAST_P_FLD_PT                                   THQDIF1C.299   
+            FIELD(I) = FIELD_INC(I)*RECIP_RS_SQUARED_DELTAP(I,K)           THQDIF1C.300   
+         END DO                                                            THQDIF1C.301   
+                                                                           THQDIF1C.302   
+*IF DEF,MPP                                                                THQDIF1C.303   
+         if(jj.ne.KEXP_K1(K))then                                          THQDIF1C.304   
+         CALL SWAPBOUNDS(FIELD,ROW_LENGTH,tot_P_ROWS,                      THQDIF1C.305   
+     &                   EW_Halo,NS_Halo,1)                                THQDIF1C.306   
+         endif                                                             THQDIF1C.307   
+*ENDIF                                                                     THQDIF1C.308   
+                                                                           THQDIF1C.309   
+C  END OF DIFFUSION SWEEPS                                                 THQDIF1C.310   
+      END DO                                                               THQDIF1C.311   
+                                                                           THQDIF1C.312   
+CL ADD FINAL INCREMENT ONTO THETAL FIELD.                                  THQDIF1C.313   
+        SCALAR = (-1)**KEXP_K1(K)                                          THQDIF1C.314   
+        DO  I=FIRST_VALID_PT,LAST_P_VALID_PT                               THQDIF1C.315   
+          TH_Q(I,K) = TH_Q(I,K) - FIELD(I) * ADVECTION_TIMESTEP            THQDIF1C.316   
+     &                   *SCALAR                                           THQDIF1C.317   
+        END DO                                                             THQDIF1C.318   
+                                                                           THQDIF1C.319   
+CL END LOOP OVER P_LEVELS FOR THETAL                                       THQDIF1C.320   
+      END DO                                                               THQDIF1C.321   
+*IF DEF,MPP                                                                THQDIF1C.322   
+         CALL SWAPBOUNDS                                                   THQDIF1C.323   
+     1  (TH_Q,ROW_LENGTH,tot_P_ROWS,                                       THQDIF1C.324   
+     &                   EW_Halo,NS_Halo,LEVELS)                           THQDIF1C.325   
+*ENDIF                                                                     THQDIF1C.326   
+CL    END OF ROUTINE TH_Q_DIF                                              THQDIF1C.327   
+                                                                           THQDIF1C.328   
+      RETURN                                                               THQDIF1C.329   
+      END                                                                  THQDIF1C.330   
+*ENDIF                                                                     THQDIF1C.331   

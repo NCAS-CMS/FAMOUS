@@ -1,0 +1,232 @@
+*IF DEF,C96_1A,OR,DEF,C96_1B                                               GPB3F403.266   
+*IF DEF,MPP                                                                GPB3F403.267   
+C ******************************COPYRIGHT******************************    GTS2F400.12990 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.12991 
+C                                                                          GTS2F400.12992 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.12993 
+C restrictions as set forth in the contract.                               GTS2F400.12994 
+C                                                                          GTS2F400.12995 
+C                Meteorological Office                                     GTS2F400.12996 
+C                London Road                                               GTS2F400.12997 
+C                BRACKNELL                                                 GTS2F400.12998 
+C                Berkshire UK                                              GTS2F400.12999 
+C                RG12 2SZ                                                  GTS2F400.13000 
+C                                                                          GTS2F400.13001 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.13002 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.13003 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.13004 
+C Modelling at the above address.                                          GTS2F400.13005 
+C ******************************COPYRIGHT******************************    GTS2F400.13006 
+C                                                                          GTS2F400.13007 
+!+ Parallel UM interface to BUFFOUT                                        WTMULT1A.3     
+!                                                                          WTMULT1A.4     
+! Subroutine Interface:                                                    WTMULT1A.5     
+      SUBROUTINE WRITE_MULTI(NFT,D1,ISIZE,LEN_IO,LOCAL_LEN,                WTMULT1A.6     
+     &                       IOSTAT,LOOKUP,FIXHD12,COMPBUF,                GPB0F401.755   
+     &                       ADDR_INFO,CMESSAGE)                           GPB4F403.1086  
+      IMPLICIT NONE                                                        WTMULT1A.8     
+!                                                                          WTMULT1A.9     
+! Description:                                                             WTMULT1A.10    
+!  This routine provides an interface to BUFFOUT for the parallel          WTMULT1A.11    
+!  Unified Model. It is used where each process must write out a           WTMULT1A.12    
+!  local section of a global field.                                        WTMULT1A.13    
+!                                                                          WTMULT1A.14    
+! Method:                                                                  WTMULT1A.15    
+!  Each processor sends its local part of the global field to PE 0         WTMULT1A.16    
+!  which assembles all the parts, and then writes them to disk.            WTMULT1A.17    
+!  Fields which are compressed to land points are expanded before          WTMULT1A.18    
+!  sending to PE 0, PE 0 then compresses the global field before           WTMULT1A.19    
+!  writing it to disk.                                                     WTMULT1A.20    
+!                                                                          WTMULT1A.21    
+! Current Code Owner: Paul Burton                                          WTMULT1A.22    
+!                                                                          WTMULT1A.23    
+! History:                                                                 WTMULT1A.24    
+!  Model    Date     Modification history from model version 3.5           WTMULT1A.25    
+!  version                                                                 WTMULT1A.26    
+!    3.5    5/1/95   New DECK created for the Parallel Unified             WTMULT1A.27    
+!                    Model. P.Burton + D.Salmond                           WTMULT1A.28    
+!    4.1    18/3/96   Simplified communications    P.Burton                GPB0F401.757   
+!    4.2    18/11/96  Added *CALL AMAXSIZE for IOVARS comdeck              GPB3F402.109   
+!                     Added atmos_ prefix to landmask fields P.Burton      GPB3F402.110   
+!    4.2    18/9/96   Modify send/receive maps and change args to          GPB2F402.311   
+!                     alltoall for GCOM/GCG v1.1     P.Burton              GPB2F402.312   
+!    4.2    18/10/96  New name for group of processors in scatter_field    GPB0F402.283   
+!                     P.Burton                                             GPB0F402.284   
+!    4.3    18/03/97  Added D1_ADDR argument, and rewrote field            GPB4F403.1083  
+!                     recognition tests. Now handles diagnostic            GPB4F403.1084  
+!                     fields too.                         P.Burton         GPB4F403.1085  
+!    4.4    13/06/97  Use GENERAL_GATHER_FIELD for collecting data         GPB0F404.169   
+!                     and change decomposition depending on model          GPB0F404.170   
+!                     type of field being read in            P.Burton      GPB0F404.171   
+!    4.5    13/01/98  Replace SHMEM COMMON block with dynamic array        GPB2F405.317   
+!                                                          P.Burton        GPB2F405.318   
+!                                                                          WTMULT1A.29    
+! Subroutine Arguments:                                                    WTMULT1A.30    
+                                                                           WTMULT1A.31    
+      INTEGER                                                              WTMULT1A.32    
+     &  NFT          !   IN : FORTRAN unit number                          WTMULT1A.33    
+     & ,ISIZE        !   IN : no. of words to write out                    WTMULT1A.34    
+     & ,LEN_IO       !  OUT : no. of words written out                     WTMULT1A.35    
+     & ,LOCAL_LEN    !  OUT : size of the local field written out          WTMULT1A.36    
+     & ,LOOKUP(64)   !   IN : LOOKUP header from dump                      WTMULT1A.37    
+     & ,FIXHD12      !   IN : 12th. element of fixed length header         WTMULT1A.38    
+     &               !        required for packing fields                  WTMULT1A.39    
+                                                                           WTMULT1A.40    
+! Required for dimensioning ADDR_INFO                                      GPB4F403.1087  
+*CALL D1_ADDR                                                              GPB4F403.1088  
+                                                                           GPB4F403.1089  
+      INTEGER                                                              GPB4F403.1090  
+     &  ADDR_INFO(D1_LIST_LEN)   ! IN addressing info about field          GPB4F403.1091  
+      REAL                                                                 WTMULT1A.41    
+     &  IOSTAT       !  OUT : Return code                                  WTMULT1A.42    
+     & ,D1(*)        !   IN : Array to write out                           WTMULT1A.43    
+     & ,COMPBUF(*)   !   IN : Workspace for compressing field              WTMULT1A.44    
+                                                                           GPB0F401.758   
+      CHARACTER*(80)                                                       GPB0F401.759   
+     &  CMESSAGE     !  OUT : Error message                                GPB0F401.760   
+                                                                           WTMULT1A.45    
+! Parameters and Common blocks                                             WTMULT1A.46    
+                                                                           WTMULT1A.47    
+*CALL CLOOKADD                                                             WTMULT1A.48    
+*CALL PARVARS                                                              WTMULT1A.49    
+*CALL CSMID                                                                GPB0F404.172   
+*CALL DECOMPTP                                                             GPB0F404.173   
+                                                                           GPB0F404.174   
+      REAL buf(ISIZE*2)  ! Buffer for holding data to be written.          GPB2F405.319   
+!                        ! Factor of two is incase the data is             GPB2F405.320   
+!                        ! packed (ISIZE is the size on disk)              GPB2F405.321   
+CDIR$ CACHE_ALIGN buf                                                      GPB2F405.322   
+      INTEGER                                                              GPB0F404.175   
+     &  ICODE ! return code from GENERAL_GATHER_FIELD                      GPB0F404.176   
+     &, I      ! loop counter                                              GPB0F404.177   
+                                                                           GPB0F404.178   
+      INTEGER                                                              GPB0F404.179   
+     &  orig_decomp  ! decomposition on entry                              GPB0F404.180   
+     &, new_decomp   ! decomposition to change to                          GPB0F404.181   
+                                                                           GPB0F404.182   
+      EXTERNAL CHANGE_DECOMPOSITION,GENERAL_GATHER_FIELD,                  GPB0F404.183   
+     &         BUFFOUT_SINGLE,                                             GPB0F404.184   
+     &         PACK21,EXPAND21,P21BITS                                     GPB0F401.775   
+      INTEGER P21BITS                                                      WTMULT1A.60    
+                                                                           WTMULT1A.61    
+! ------------------------------------------------------------------       WTMULT1A.62    
+      IOSTAT=-1.0                                                          GPB0F401.776   
+      ICODE=-1                                                             GPB0F401.777   
+      LEN_IO=ISIZE                                                         GPB0F401.778   
+      LOCAL_LEN=0                                                          GPB0F401.779   
+                                                                           GPB0F401.780   
+      orig_decomp=current_decomp_type                                      GPB0F404.185   
+      new_decomp=orig_decomp                                               GPB0F404.186   
+                                                                           GPB0F404.187   
+      IF ((ADDR_INFO(d1_imodl) .EQ. ATMOS_IM) .AND.                        GPB0F404.188   
+     &    (orig_decomp .NE. decomp_standard_atmos)) THEN                   GPB0F404.189   
+                                                                           GPB0F404.190   
+        new_decomp=decomp_standard_atmos                                   GPB0F404.191   
+                                                                           GPB0F404.192   
+      ELSEIF ((ADDR_INFO(d1_imodl) .EQ. OCEAN_IM) .AND.                    GPB0F404.193   
+     &        (ADDR_INFO(d1_object_type) .EQ. prognostic) .AND.            GPB0F404.194   
+     &        (orig_decomp .NE. decomp_standard_ocean)) THEN               GPB0F404.195   
+                                                                           GPB0F404.196   
+        new_decomp=decomp_standard_ocean                                   GPB0F404.197   
+                                                                           GPB0F404.198   
+      ELSEIF ((ADDR_INFO(d1_imodl) .EQ. OCEAN_IM) .AND.                    GPB0F404.199   
+     &        (ADDR_INFO(d1_object_type) .NE. prognostic) .AND.            GPB0F404.200   
+     &        (orig_decomp .NE. decomp_nowrap_ocean)) THEN                 GPB0F404.201   
+                                                                           GPB0F404.202   
+        new_decomp=decomp_nowrap_ocean                                     GPB0F404.203   
+                                                                           GPB0F404.204   
+      ENDIF                                                                GPB0F404.205   
+                                                                           GPB0F404.206   
+      IF (new_decomp .NE. orig_decomp) THEN                                GPB0F404.207   
+                                                                           GPB0F404.208   
+        icode=0                                                            GPB0F404.209   
+        CALL CHANGE_DECOMPOSITION(new_decomp,icode)                        GPB0F404.210   
+                                                                           GPB0F404.211   
+        IF (icode .NE. 0) THEN                                             GPB0F404.212   
+          IF (mype .EQ. 0) THEN                                            GPB0F404.213   
+            WRITE(6,*) 'ERROR : WRITE_MULTI'                               GPB0F404.214   
+            WRITE(6,*) 'Failed to change decomposition to ',new_decomp     GPB0F404.215   
+            WRITE(6,*) 'Field M,S,I ',                                     GPB0F404.216   
+     &                  ADDR_INFO(d1_imodl),                               GPB0F404.217   
+     &                  ADDR_INFO(d1_section),                             GPB0F404.218   
+     &                  ADDR_INFO(d1_item)                                 GPB0F404.219   
+          ENDIF                                                            GPB0F404.220   
+          IOSTAT=-100                                                      GPB0F404.221   
+          CMESSAGE='WRITE_MULTI : Failed to change decomposition'          GPB0F404.222   
+          GOTO 9999                                                        GPB0F404.223   
+        ENDIF                                                              GPB0F404.224   
+                                                                           GPB0F404.225   
+      ENDIF                                                                GPB0F404.226   
+                                                                           GPB0F404.227   
+! Gather the field from the local D1 array to buf                          GPB0F404.228   
+                                                                           GPB0F404.229   
+      ICODE=0                                                              GPB0F404.230   
+                                                                           GPB0F404.231   
+      CALL GENERAL_GATHER_FIELD(                                           GPB0F404.232   
+     &  D1,buf,LOCAL_LEN,LOOKUP(LBLREC),                                   GPB0F404.233   
+     &  ADDR_INFO,0,                                                       GPB0F404.234   
+     &  ICODE,CMESSAGE)                                                    GPB0F404.235   
+                                                                           GPB0F404.236   
+      IF (ICODE .EQ. 1) THEN                                               GPB0F404.237   
+        WRITE(6,*) 'WRITE_MULTI: Field number ',LOOKUP(ITEM_CODE),         GPB0F404.238   
+     &             'with dimensions ', LOOKUP(LBNPT),' x ',                GPB0F404.239   
+     &             LOOKUP(LBROW),' and gridtype ',                         GPB0F404.240   
+     &             ADDR_INFO(d1_grid_type),                                GPB0F404.241   
+     &             'was unrecognized and not written out.'                 GPB0F404.242   
+        IOSTAT=1.0                                                         GPB0F404.243   
+        CMESSAGE='Unrecognized field on write'                             GPB0F404.244   
+        GOTO 9999                                                          GPB0F404.245   
+      ELSEIF (ICODE .NE. 0) THEN                                           GPB0F404.246   
+        IOSTAT=2.0                                                         GPB0F404.247   
+        GOTO 9999                                                          GPB0F404.248   
+      ENDIF                                                                GPB0F404.249   
+                                                                           GPB0F404.250   
+! ------------------------------------------------------------------       GPB0F401.937   
+! ------------------------------------------------------------------       GPB0F401.938   
+! And finally the code to write the global field in array buf              GPB0F401.939   
+! out to disk.                                                             GPB0F401.940   
+                                                                           GPB0F401.941   
+      IF (mype .EQ. 0) THEN                                                GPB0F401.942   
+!       Does this field need to be compressed?                             GPB0F401.943   
+        IF(MOD((LOOKUP(LBPACK)),10) .EQ. 2) THEN                           GPB0F401.944   
+          IF(LOOKUP(DATA_TYPE) .EQ. 1) THEN                                GPB0F401.945   
+            CALL PACK21(LOOKUP(LBLREC),buf,                                GPB0F401.946   
+     &                  COMPBUF,P21BITS(FIXHD12))                          GPB0F401.947   
+          ENDIF                                                            GPB0F401.948   
+        ELSE ! no compression required - just do a copy                    GPB0F401.949   
+          DO i=1,LOOKUP(LBLREC)                                            GPB0F401.950   
+            COMPBUF(i)=buf(i)                                              GPB0F401.951   
+          ENDDO                                                            GPB0F401.952   
+        ENDIF                                                              GPB0F401.953   
+                                                                           GPB0F401.954   
+! Now write out the global field                                           GPB0F401.955   
+                                                                           GPB0F401.956   
+        CALL buffout_single(NFT,COMPBUF,ISIZE,LEN_IO,IOSTAT)               GPB0F401.957   
+                                                                           GPB0F401.958   
+      ENDIF ! am I PE 0 ?                                                  GPB0F401.959   
+                                                                           GPB0F401.960   
+!     CALL GC_GSYNC(nproc,info)                                            GPB0F401.961   
+                                                                           GPB0F401.962   
+! If the field was compressed for writing on disk, we need to compress     GPB0F401.963   
+! and expand the field in memory. This ensures the same field exists in    GPB0F401.964   
+! memory that would exist if this dump was read back in.                   GPB0F401.965   
+                                                                           GPB0F401.966   
+      IF(MOD((LOOKUP(LBPACK)),10) .EQ. 2) THEN                             GPB0F401.967   
+        IF(LOOKUP(DATA_TYPE) .EQ. 1) THEN                                  GPB0F401.968   
+          CALL PACK21(LOCAL_LEN,D1,COMPBUF,P21BITS(FIXHD12))               GPB0F401.969   
+          CALL EXPAND21(LOCAL_LEN,COMPBUF,D1,P21BITS(FIXHD12))             GPB0F401.970   
+        ENDIF                                                              GPB0F401.971   
+      ENDIF                                                                GPB0F401.972   
+                                                                           GPB0F401.973   
+      IF (new_decomp .NE. orig_decomp) THEN  ! change back                 GPB0F404.251   
+                                                                           GPB0F404.252   
+        icode=0                                                            GPB0F404.253   
+        CALL CHANGE_DECOMPOSITION(orig_decomp,icode)                       GPB0F404.254   
+                                                                           GPB0F404.255   
+      ENDIF                                                                GPB0F404.256   
+ 9999 CONTINUE  ! point to jump to if there is a failure                   GPB0F401.974   
+                                                                           GPB0F401.975   
+      RETURN                                                               GPB0F401.976   
+      END                                                                  GPB0F401.977   
+*ENDIF                                                                     WTMULT1A.288   
+*ENDIF                                                                     GPB3F403.268   

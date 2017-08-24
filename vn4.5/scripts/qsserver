@@ -1,0 +1,853 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script: qsserver
+#LL---------------------------------------------------------------------
+#LL  Purpose: Top level script for server process which runs in parallel
+#LL           to the model run, archives data to another machine and, if
+#LL           necessary, calls the routine that produces data for the
+#LL           Camelot database.
+#LL  14/08/95 4.0  K Rogers  Added variable ARCHTAPE
+#LL           The server reads archive requests by a pipe connected
+#LL           to the model. Data files are transferred to the front-end
+#LL           along with trigger files, which are text files detailing
+#LL           archive requirements.
+#LL
+#LL  Author: C D Perks                   Date: September 1994
+#LL
+#LL  Code version no: 3.4
+#LL  Modification History:
+#LL  Date     Vn   Name      Change
+#LL  25/11/94 3.4  C D Perks Original Version
+#LL  05/04/95 4.0  C D Perks Check for null or non-existent file
+#LL  07/06/95 4.0  C D Perks Included RUN_FLAG variables for NRUNs and
+#LL                          CRUNs so that #new# occurs for first TF
+#LL                          in stream for NRUNs
+#LL  08/06/95 4.0  C D Perks Included *) in MNFIELDS case statement.
+#LL  15/06/95 4.0  C D Perks Swapped 'percent = %%%' test with test on
+#LL                          CURRENT_RQST_NAME to eliminate problems
+#LL                          linked with non '%%%' requests from model
+#LL  14/08/95 4.0  K Rogers  Added variable ARCHTAPE
+#LL  26/03/96 4.1  L Wiles   Removed redundant ARCHTAPE in final
+#LL                          section since covered in copy2dest.
+#LL  02/04/96 4.1  L Wiles   Put non-portable trap command in if block.
+#LL  24/05/96 4.1  L Wiles   Changes for CRACER
+#LL                          Set up new variables for trigger file flags
+#LL                          Check duplex backup authority if necessary
+#LL                          Write reviewdate file if review system.
+#LL 18/04/97  4.3  L Wiles  Add crackercheck directory
+#LL                         Add new flag checks for trigger file entries
+#LL 22/08/97  4.4  L Wiles  Add test for stoprun and exit to archfail.
+#LL 25/02/98  4.5  I Edmond  Omit test for stoprun and call to archfail
+#LL                          if operational run. Initialise variable
+#LL                          F_END_TF_COPY.
+#LL 17/08/98  4.5  I Edmond   Optimisation changes and warning
+#LL                           if partial archiving.
+#LL
+#LL  Programming Standard: UM Tech Doc Paper on
+#LL                        Automated Post Processing System
+#LL
+#LL  Project Task: Y1
+#LL---------------------------------------------------------------------
+#LL  Called by : qsmain
+#LL  Files used: $PPCNTL (front end control file)
+#LL              $PPHIST
+#LL              $ERRFLAG
+#LL  Scripts called:
+#LL              newpphist  -creates history file - pphist
+#LL              qscasedisp -function to take action on each request
+#LL              copy2dest  -function to transfer data and trigger files
+#LL              getarchdate (calculates absolute date relative to today
+#LL                           from period given)
+#LL  Variables:
+#LL  Imports:
+#LL  OPERATIONAL         # Operational flag
+#LL  SETOPT              # Shell options
+#LL  TYPE                # Type of run either new or continuation
+#LL  LOCKFILE            # The existence of this file indicates whether
+#LL                        the model is still executing
+#LL  PPHIST              # Post processing history file
+#LL  PERCENT             # Code to indicate type of request in pipe
+#LL  F_END_JOB_PROGID    # Programmer letters for front-end jobs
+#LL  ERRFLAG             # File containing error flag to close down
+#LL                        model process
+#LL  ARCHTAPE            # True if archiving to tape.
+#LL                        False if only copying data to disk
+#LL  BKUP_AUTH           # File listing all runs authorised for duplex
+#LL                        copies
+#LL  BKUP_DUMP           # Y if dumps requested to have duplex copy
+#LL  BKUP_PP             # Y if pp files requested to have duplex copy
+#LL  BKUP_MEANPP         # Y meanpp files requested to have duplex copy
+#LL  BKUP_BNDY           # Y bndry files requested to have duplex copy
+#LL  DM_METHOD           # REVIEW/EXPIRY/MGMTCLASS date type for archive
+#LL  DM_REVIEW           # Name of review date system
+#LL                        currently only one (HADLEY)
+#LL  DM_REVIEW_FILE      # File of listing information about each review
+#LL                        date system
+#LL  DATE_FORMAT         # 1=absolute date,2=retention period,3=UABRF
+#LL  DM_DATE             # Review Date if using a review system such as
+#LL                        HADLEY, Expiry date otherwise.
+#LL  DM_PERIOD           # Relative period in days used to calculate
+#LL                        absolute review or expiry date
+#LL  SCRATCH             # Delete from IBM disk after archiving to
+#LL                        tape(S is default)  N if not scratched
+#LL  MAIL                # Mail errors in archiving to user (M)
+#LL                        N if user not mailed
+#LL  ARCH_CNTL           # File of MAXBYTES + MAXFILES for each system
+#LL  IBM_ARCHNAME        # Name of archiving system used on IBM
+#LL                        valid values CRACER, UABRF
+#LL  F_END_DSN_PREFIX    # High level qualifier for IBM data file names
+#LL  ARCHSYS             # System archiveing required = true
+#LL                        Delete superceded dumps and script release
+#LL                        only = false
+#LL
+#LL  Exports:
+#LL  CURRENT_RQST_NAME   # Name of current model output file processing
+#LL  CURRENT_RQST_ACTION # Request current action (archive/delete)
+#LL  CURRENT_RQST_TYPE   # Data stream type: dump;pp;mean pp;bndy
+#LL  CURRENT_RQST_TYPE_TF                       :CRACER_RQST_TYPE
+#LL          Trigger file stream type:
+#LL          dump                        :DMP   : D
+#LL          pp                          :PP    : P
+#LL          mean pp                     :MPP   : M
+#LL          bndy                        :BF    : B
+#LL          pp + mean pp together, dump :PMP   : N
+#LL          and bndy separately
+#LL          dump + bndy together,       :DB    : C
+#LL          pp and mean pp separately
+#LL          all types together          :MIX   : X
+#LL  DMP_FILECOUNT       # Number of entries in dump TF
+#LL  DMP_RQST_LIMIT      # Max. no. of entries in dump TF
+#LL  DMP_RETPD           # Retention period in days for dump files
+#LL  DMP_EXPIRE_DATE     # Expiry date (year + julian day)dump files
+#LL  DMP_LAST_FILE       # Last dump file archived
+#LL  DMP_RUN_FLAG        # First dump file of NRUN/CRUN? (T/F)
+#LL  DMP_F_END_TF        # Current dump trigger file
+#LL  DMP_LAST_TF         # Last dump trigger file for current run
+#LL  MPP_FILECOUNT       # Number of entries in mean pp TF
+#LL  MPP_RQST_LIMIT      # Max. no. of entries in mean pp TF
+#LL  MPP_RETPD           # Retention period in days for mean pp files
+#LL  MPP_EXPIRE_DATE     # Expiry date (year + julian day) mn pp files
+#LL  MPP_LAST_FILE       # Last mean pp file archived
+#LL  MPP_RUN_FLAG        # First mean pp file of NRUN/CRUN? (T/F)
+#LL  MPP_F_END_TF        # Current mean pp trigger file
+#LL  MPP_LAST_TF         # Last mean pp trigger file for current run
+#LL  PP_FILECOUNT        # Number of entries in pp TF
+#LL  PP_RQST_LIMIT       # Max. no. of entries in pp TF
+#LL  PP_RETPD            # Retention period in days for pp files
+#LL  PP_EXPIRE_DATE      # Expiry date (year + julian day) pp files
+#LL  PP_LAST_FILE        # Last pp file archived
+#LL  PP_RUN_FLAG         # First pp file of NRUN/CRUN? (T/F)
+#LL  PP_F_END_TF         # Current pp trigger file
+#LL  PP_LAST_TF          # Last pp trigger file for current run
+#LL  BF_FILECOUNT        # Number of entries in boundary data TF
+#LL  BF_RQST_LIMIT       # Max. no. of entries in boundary data TF
+#LL  BF_RETPD            # Retention period in days for bndy files
+#LL  BF_EXPIRE_DATE      # Expiry date (year julian day) bndy files
+#LL  BF_LAST_FILE        # Last boundary data file archived
+#LL  BF_RUN_FLAG         # First boundary file of NRUN/CRUN? (T/F)
+#LL  BF_F_END_TF         # Current boundary data trigger file
+#LL  BF_LAST_TF          # Last boundary trigger file for current run
+#LL  MIX_FILECOUNT       # Number of entries in mixed TF
+#LL  MIX_RQST_LIMIT      # Max. no. of entries in mixed TF
+#LL  MIX_RETPD           # Retention period in days for mixed files
+#LL  MIX_EXPIRE_DATE     # Expiry date (year + julian day) mixed files
+#LL  MIX_LAST_FILE       # Last mixed file archived
+#LL  MIX_RUN_FLAG        # First mixed file of NRUN/CRUN? (T/F)
+#LL  MIX_F_END_TF        # Current mixed trigger file
+#LL  MIX_LAST_TF         # Last mixed trigger file for current run
+#LL  DB_FILECOUNT        # Number of entries in dump/bndy TF
+#LL  DB_RQST_LIMIT       # Max. no. of entries in dump/bndy TF
+#LL  DB_RETPD            # Retention period in days - dump/bndy files
+#LL  DB_EXPIRE_DATE      # Expiry date (year + julian day) dump/bndy
+#LL  DB_LAST_FILE        # Last dump/bndy file archived
+#LL  DB_RUN_FLAG         # First dump/bndy file of NRUN/CRUN? (T/F)
+#LL  DB_F_END_TF         # Current dump/bndy trigger file
+#LL  DB_LAST_TF          # Last dump/bndy trigger file for current run
+#LL  PMP_FILECOUNT       # Number of entries in pp and mean pp data TF
+#LL  PMP_RQST_LIMIT      # Max no of entries in pp and mean pp data TF
+#LL  PMP_RETPD           # Retention period in days for pp and mean pp
+#LL  PMP_EXPIRE_DATE     # Expiry date (year + julian day) pp and mean
+#LL  PMP_LAST_FILE       # Last pp and mean pp  file archived
+#LL  PMP_RUN_FLAG        # First pp and mean pp file of NRUN/CRUN? (T/F)
+#LL  PMP_F_END_TF        # Current pp and mean pp trigger file
+#LL  PMP_LAST_TF         # Last pp and mean pp trigger file, current run
+#LL  F_END_TF            # Trigger file to be defined
+#LL  AUTH_BKUP           # 'true' if duplex backup is authorised,
+#LL                      # 'false' ,otherwise
+#LL  MAXBYTES            # Max total number of bytes per trigger file
+#LL  PPCNTL_ERR          # Flag for archfail if there is an error in any
+#LL                        of the ppcntl variable settings
+#LL  SUMBYTES            # The sum of the bytes, of the files in a TF
+#LL  MAXFILES            # Maximum number of files per trigger file.
+#LL
+#LL  Local variables:
+#LL
+#LL  RC                  # Return code from model input pipe
+#LL  RC1, RC2            # Return codes from grep commands
+#LL  CNTR1               # Counter used for sending final trigger files
+#LL  TEST_AUTH           # Used to test if duplex backup is authorised.
+#LL  REVIEW_PATH         # path for directory for review system dates.
+#LL
+#LL
+#LL---------------------------------------------------------------------
+set -$SETOPT
+echo -e "qsserver: Starting..."
+#L----------------------------------------------------------------------
+#L Step 0:Set shell options
+#L        Send message to model if server process dies
+#L----------------------------------------------------------------------
+if [[ $UMMACHINE = METOCRAY ]]
+then
+   trap 'echo -e "T   Trapped server failure" >$ERRFLAG; exit'\
+ 1 2 3 4 5 6 7 8 10 12 13 14 15 24 25 26
+fi
+PPCNTL_ERR='false'
+if [[ $RUNID = UABRF ]]
+then
+  PPCNTL_ERR='true'
+  echo -e "==================================================="
+  echo -e "qsserver: $RUNID is invalid. This is a reserved  "
+  echo -e "word for CRACER post processing                   "
+  echo -e "==================================================="
+  . archfail
+  exit
+
+fi
+
+#L----------------------------------------------------------------------
+#L Step 1 :Initialisation
+#L      1a:Set environment variables for data and trigger file transfer
+#L       by calling post processing control script
+#L----------------------------------------------------------------------
+. $PPCNTL
+#L----------------------------------------------------------------------
+#L Step 1b: Test if Operational - no further set up required
+#L----------------------------------------------------------------------
+if [[ $OPERATIONAL = true || $ARCHSYS = false ]]
+then
+  :
+else
+#L----------------------------------------------------------------------
+#L Step 1c:Initialize and execute history file
+#L----------------------------------------------------------------------
+#
+# If not operational -
+# Build post processing control variables from pphist file
+#
+  if [[ $TYPE = NRUN ]]        # New run
+  then
+    . newpphist                # Initialises the pphist file
+  fi
+  . $PPHIST                    # Execute post-processing history file
+
+#L----------------------------------------------------------------------
+#L Step 1d:Initialize variables that are required at start of run
+#L----------------------------------------------------------------------
+
+  DMP_RUN_FLAG='true'
+  DMP_FILECOUNT=0
+  DMP_LAST_TF='false'
+  MPP_RUN_FLAG='true'
+  MPP_FILECOUNT=0
+  MPP_LAST_TF='false'
+  PP_RUN_FLAG='true'
+  PP_FILECOUNT=0
+  PP_LAST_TF='false'
+  BF_RUN_FLAG='true'
+  BF_FILECOUNT=0
+  BF_LAST_TF='false'
+  MIX_RUN_FLAG='true'
+  MIX_FILECOUNT=0
+  MIX_LAST_TF='false'
+  DB_RUN_FLAG='true'
+  DB_FILECOUNT=0
+  DB_LAST_TF='false'
+  PMP_RUN_FLAG='true'
+  PMP_FILECOUNT=0
+  PMP_LAST_TF='false'
+  F_END_TF_COPY='off'
+
+  VERSION=`echo -e $VN | $UM_SED 's/\./0/'`
+  typeset -u IDRUN=$RUNID
+  CNTR1=0
+  SUMBYTES=${SUMBYTES:-0}
+
+  if [[ $UMMACHINE = METOCRAY ]]
+  then
+    if [[ $IBM_ARCHNAME = CRACER || $IBM_ARCHNAME = UABRF ]]
+    then
+#L--------------------------------------------------------------------
+#L Step 1e: Set up CRACER and UABRF variables
+#L--------------------------------------------------------------------
+
+      # set flags needed in trigger file
+      SCRATCH=${SCRATCH:-S}
+      MAIL=${MAIL:-M}
+      if [[ $SCRATCH != N && $SCRATCH != S ]]
+      then
+        SCRATCH='S'        #set to default -scratch when archived
+      fi
+      if [[ $MAIL != N && $MAIL != M ]]
+      then
+        MAIL='M'           #set to default -mail archiving errors
+      fi
+      TAPE=${TAPE:-N}
+      if [[ $TAPE != N && $TAPE != R ]]
+      then
+        TAPE='N'        #set to default normal tape
+      fi
+      CRACERCHECK=${CRACERCHECK:-"/u/m20/cprod/cracercheck"}
+
+# check correct high level qualifier for IBM file names
+      typeset -L4 CRACER_HLQ_FLAG=$F_END_DSN_PREFIX
+      if [[ $DM_REVIEW = HADLEY ]]
+      then
+        if [[ $CRACER_HLQ_FLAG != CRAC ]]
+        then
+          PPCNTL_ERR='true'
+          echo -e "==================================================="
+          echo -e "qsserver: $F_END_DSN_PREFIX is invalid for CRACER"
+          echo -e "The prefix should be CRAC followed by group letter"
+          echo -e "eg CRACZ"
+          echo -e "==================================================="
+          . archfail
+          exit
+
+        fi
+      fi
+# Warn user if partial archiving selected.
+      if [[ $STORCLAS = SCCLMPRK ]]; then
+        echo -e "========================================"
+        echo -e " WARNING:  Partial Archiving selected,"
+        echo -e "           with files left on IBM disk"
+        echo -e "========================================"
+      fi
+    fi     #end of code for CRACER and UABRF only
+
+# set variables to default of 'N' if not specified
+# needed for backward compatability
+
+    BKUP_DUMP=${BKUP_DUMP:-N}
+    BKUP_PP=${BKUP_PP:-N}
+    BKUP_MEANPP=${BKUP_MEANPP:-N}
+    BKUP_BNDY=${BKUP_BNDY:-N}
+
+    if [[ $IBM_ARCHNAME = CRACER ]]
+    then
+      # check for backup authorisation
+      BKUP_AUTH=`eval echo -e $BKUP_AUTH`
+      if [[ -s $BKUP_AUTH ]]
+      then
+
+        TEST_AUTH=`$UM_GREP $RUNID $BKUP_AUTH`
+        if (( $? == 0 ))
+        then
+          AUTH_BKUP='true'
+        else
+          AUTH_BKUP='false'
+        fi
+      else
+        PPCNTL_ERR='true'
+        echo -e "================================================="
+        echo -e "qsserver: Duplex backup authorisation file error "
+        echo -e "================================================="
+        . archfail
+        exit
+
+      fi
+
+      if [[ $BKUP_DUMP = Y || $BKUP_PP = Y || \
+            $BKUP_MEANPP = Y || $BKUP_BNDY = Y ]]
+      then
+        if [[ $AUTH_BKUP = false ]]
+        then
+          PPCNTL_ERR='true'
+          echo -e "==================================================="
+          echo -e "qsserver: Duplex backup not authorised for $RUNID"
+          echo -e "==================================================="
+          . archfail
+          exit
+
+        fi
+      fi
+    fi    # End of code for CRACER only
+
+# if NRUN and REVIEW, get the path to the review date file and write
+# a file containing the review date (calculated from ret period)
+
+    if [[ $TYPE = NRUN && $DM_REVIEW != NONE ]]
+    then
+      DM_REVIEW_FILE=`eval echo -e $DM_REVIEW_FILE`
+      if [[ -s $DM_REVIEW_FILE ]]
+      then
+
+        REVIEW_PATH=`$UM_GREP $DM_REVIEW $DM_REVIEW_FILE | cut -f2 -d:`
+        if (( $? == 0 ))
+        then
+          REVIEW_PATH=`eval echo -e $REVIEW_PATH`
+        else
+          PPCNTL_ERR='true'
+          echo -e "==================================================="
+          echo -e "qsserver: No entry in $DM_REVIEW_FILE"
+          echo -e "for your system"
+          echo -e "==================================================="
+          . archfail
+          exit
+
+        fi
+      else
+        PPCNTL_ERR='true'
+        echo -e "==================================================="
+        echo -e "qsserver: Review System Date Directory $DM_REVIEW_FILE"
+        echo -e "does not exist or is empty "
+        echo -e "==================================================="
+        . archfail
+        exit
+
+      fi
+      DATE_FORMAT=${DATE_FORMAT:-0}
+      if (( $DATE_FORMAT == 0 ))
+      then
+        PPCNTL_ERR='true'
+        echo -e "==================================================="
+        echo -e "qsserver: DATE FORMAT not set up in PPCNTL       "
+        echo -e "==================================================="
+        . archfail
+        exit
+
+      fi
+      if (( $DATE_FORMAT == 2 ))
+      then
+        . getarchdate
+      fi
+      echo -e $DM_DATE > $REVIEW_PATH/$RUNID
+    fi
+  fi   # End of code for Met Office Cray only
+
+  if [[ $IBM_ARCHNAME = CRACER || $IBM_ARCHNAME = UABRF ]]
+  then
+    ARCH_CNTL=`eval echo -e $ARCH_CNTL`
+    if [[ -s $ARCH_CNTL ]]
+    then
+
+    # This is used when trigger file limits are set to 0
+      MAXBYTES=`$UM_GREP $IBM_ARCHNAME'_MAXBYTES' $ARCH_CNTL |\
+                cut -f2 -d:`
+      MAXFILES=`$UM_GREP $IBM_ARCHNAME'_MAXFILES' $ARCH_CNTL |\
+                cut -f2 -d:`
+      if [[ -n $MAXBYTES && -n $MAXFILES ]]
+      then
+        echo -e " MAXIMUM BYTE SIZE for trigger files is $MAXBYTES"
+        echo -e " MAXIMUM NUMBER OF FILES in trigger files is $MAXFILES"
+      else
+        PPCNTL_ERR='true'
+        echo -e "==================================================="
+        echo -e "qsserver: Archive control file error."
+        echo -e "==================================================="
+        echo -e " MAXIMUM BYTE SIZE for trigger files is $MAXBYTES"
+        echo -e " MAXIMUM NUMBER OF FILES in trigger files is $MAXFILES"
+        . archfail
+        exit
+
+      fi
+    else
+      PPCNTL_ERR='true'
+      echo -e "==================================================="
+      echo -e "qsserver: Archive control file not found "
+      echo -e "==================================================="
+      . archfail
+      exit
+    fi
+  else
+    # set default MAXBYTES and MAXFILES for other archiving systems
+    MAXBYTES=100000000
+    MAXFILES=10
+  fi
+fi  # end of code for non OPERATIONAL variables
+
+
+#L----------------------------------------------------------------------
+#L Step 2:Remove any old versions of DATAM/RUNID.requests
+#L        Start reading a line at a time from the input pipe
+#L        Nb: first read is a dummy (PERCENT not set to '%%%')
+#L----------------------------------------------------------------------
+
+rm $DATAM/$RUNID.requests
+RC=0
+while (( $RC == 0 ))
+do
+if test $OPERATIONAL = 'false'
+then
+# Test for operator stoprun and call archfail if job has been stopped
+  $UM_GREP "stoprun: Operator" $ERRFLAG > $TEMP/$RUNID.stopped
+  if [[ -s $TEMP/$RUNID.stopped ]]
+  then
+    . archfail
+    exit
+  fi
+fi
+  read PERCENT CURRENT_RQST_NAME CURRENT_RQST_ACTION CURRENT_RQST_TYPE \
+  DATA_TYPE
+  RC=$?
+
+# Copy the input request to a file in case data remains on cray disk
+
+  echo -e "$PERCENT $CURRENT_RQST_NAME $CURRENT_RQST_ACTION \
+  $CURRENT_RQST_TYPE" >> $DATAM/$RUNID.requests
+  RQST_TYPE=$CURRENT_RQST_TYPE
+  RQST_ACTION=$CURRENT_RQST_ACTION
+
+#L----------------------------------------------------------------------
+#L Step 3a:Deal with each request from the input pipe
+#L----------------------------------------------------------------------
+
+  if (( $RC == 0 ))
+  then
+    if [[ $PERCENT = %%% ]]
+    then
+      echo -e "qsserver: `date`: "\
+      $CURRENT_RQST_NAME $CURRENT_RQST_ACTION $CURRENT_RQST_TYPE
+      if [[ $OPERATIONAL = false ]]
+      then
+        if [[ $CURRENT_RQST_ACTION = REL ]]
+        then
+          . qscasedisp
+        elif [[ -s $CURRENT_RQST_NAME ]]
+        then
+          case $CURRENT_RQST_TYPE in
+            DUMP)
+              CURRENT_RQST_TYPE='DMP'
+              ;;
+            PPCHART|PPNOCHART)
+              ct -c9 $CURRENT_RQST_NAME; MNFIELDS_TYPE=$__ct
+              case $MNFIELDS_TYPE in
+                a|b|c|d|e|f|g|h|i|j)CURRENT_RQST_TYPE='PP'
+                ;;
+                1|2|3|4|m|s|t|p|w|r|l|u|x|y|z)CURRENT_RQST_TYPE='MPP'
+                ;;
+                *)CURRENT_RQST_TYPE='MPP'
+                ;;
+              esac
+              ;;
+            BNDY)
+              CURRENT_RQST_TYPE='BF'
+              if [[ ${CURRENT_RQST_NAME##'$P'} != $CURRENT_RQST_NAME ]]
+              then
+                CURRENT_RQST_ACTION='DELETE'
+              fi
+              ;;
+          esac
+
+#L----------------------------------------------------------------------
+#L Step 3b:Set trigger file types and reset $CURRENT_RQST_TYPE
+#L----------------------------------------------------------------------
+
+          case $STREAM_OPTION in
+            1)CURRENT_RQST_TYPE_TF=$CURRENT_RQST_TYPE
+              ;;
+            2)CURRENT_RQST_TYPE_TF='MIX'
+              ;;
+            3)case $CURRENT_RQST_TYPE in
+                DMP|BF)CURRENT_RQST_TYPE_TF='DB'
+                ;;
+                MPP|PP)CURRENT_RQST_TYPE_TF=$CURRENT_RQST_TYPE
+                ;;
+              esac
+              ;;
+            4)case $CURRENT_RQST_TYPE in
+                MPP|PP)CURRENT_RQST_TYPE_TF='PMP'
+                ;;
+                DMP|BF)CURRENT_RQST_TYPE_TF=$CURRENT_RQST_TYPE
+                ;;
+              esac
+              ;;
+            5)case $CURRENT_RQST_TYPE in
+                DMP|BF)CURRENT_RQST_TYPE_TF='DB'
+                ;;
+                MPP|PP)CURRENT_RQST_TYPE_TF='PMP'
+                ;;
+              esac
+              ;;
+          esac
+
+#L----------------------------------------------------------------------
+#L Step 3c:Initialize variables before calling camelot and qscasedisp
+#L----------------------------------------------------------------------
+
+          case $CURRENT_RQST_TYPE_TF in
+            DMP)FILECOUNT=$DMP_FILECOUNT
+                RQST_LIMIT=$DMP_RQST_LIMIT
+                RETPD=$DM_PERIOD
+                EXPIRE_DATE=${DM_DATE:-none}
+                F_END_TF=${DMP_F_END_TF:-none}
+                LAST_FILE=${DMP_LAST_FILE:-none}
+                RUN_FLAG=${DMP_RUN_FLAG:-true}
+                LAST_TF=$DMP_LAST_TF
+                ;;
+            MPP)FILECOUNT=$MPP_FILECOUNT
+                RQST_LIMIT=$MPP_RQST_LIMIT
+                RETPD=$DM_PERIOD
+                EXPIRE_DATE=${DM_DATE:-none}
+                F_END_TF=${MPP_F_END_TF:-none}
+                LAST_FILE=${MPP_LAST_FILE:-none}
+                RUN_FLAG=${MPP_RUN_FLAG:-true}
+                LAST_TF=$MPP_LAST_TF
+                ;;
+             PP)FILECOUNT=$PP_FILECOUNT
+                RQST_LIMIT=$PP_RQST_LIMIT
+                RETPD=$DM_PERIOD
+                EXPIRE_DATE=${DM_DATE:-none}
+                F_END_TF=${PP_F_END_TF:-none}
+                LAST_FILE=${PP_LAST_FILE:-none}
+                RUN_FLAG=${PP_RUN_FLAG:-true}
+                LAST_TF=$PP_LAST_TF
+                ;;
+             BF)FILECOUNT=$BF_FILECOUNT
+                RQST_LIMIT=$BF_RQST_LIMIT
+                RETPD=$DM_PERIOD
+                EXPIRE_DATE=${DM_DATE:-none}
+                F_END_TF=${BF_F_END_TF:-none}
+                LAST_FILE=${BF_LAST_FILE:-none}
+                RUN_FLAG=${BF_RUN_FLAG:-true}
+                LAST_TF=$BF_LAST_TF
+                ;;
+            MIX)FILECOUNT=$MIX_FILECOUNT
+                RQST_LIMIT=$MIX_RQST_LIMIT
+                RETPD=$DM_PERIOD
+                EXPIRE_DATE=${DM_DATE:-none}
+                F_END_TF=${MIX_F_END_TF:-none}
+                LAST_FILE=${MIX_LAST_FILE:-none}
+                RUN_FLAG=${MIX_RUN_FLAG:-true}
+                LAST_TF=$MIX_LAST_TF
+                ;;
+             DB)FILECOUNT=$DB_FILECOUNT
+                RQST_LIMIT=$DB_RQST_LIMIT
+                RETPD=$DM_PERIOD
+                EXPIRE_DATE=${DM_DATE:-none}
+                F_END_TF=${DB_F_END_TF:-none}
+                LAST_FILE=${DB_LAST_FILE:-none}
+                RUN_FLAG=${DB_RUN_FLAG:-true}
+                LAST_TF=$DB_LAST_TF
+                ;;
+             PMP)FILECOUNT=$PMP_FILECOUNT
+                RQST_LIMIT=$PMP_RQST_LIMIT
+                RETPD=$DM_PERIOD
+                EXPIRE_DATE=${DM_DATE:-none}
+                F_END_TF=${PMP_F_END_TF:-none}
+                LAST_FILE=${PMP_LAST_FILE:-none}
+                RUN_FLAG=${PMP_RUN_FLAG:-true}
+                LAST_TF=$PMP_LAST_TF
+                ;;
+            esac
+
+#L----------------------------------------------------------------------
+#L Step 3c1:Call camelot to process request for camelot database
+#L----------------------------------------------------------------------
+#    Arguments passed to/from camelot
+#       IN: $CURRENT_RQST_NAME
+#           $F_END_JOB_PROGID
+#           $F_END_DSN_PREFIX
+#           $RUNID $VN $DATAM
+#           $EMAIL_DB
+#      OUT: None
+
+          if [[ $USE_CAMELOT = true && \
+                  $CURRENT_RQST_ACTION = ARCHIVE ]]
+          then
+            if [[ $CURRENT_RQST_TYPE = MPP || \
+                  $CURRENT_RQST_TYPE = PP ]]
+            then
+              echo -e "qsserver: `date`:  $CURRENT_RQST_NAME CAMELOT"
+              . camelot
+              if (( $? != 0 ))
+              then
+                PPCNTL_ERR='true'
+                echo -e "================================================="
+                echo -e "qsserver: Your camelot request has failed        "
+                echo -e "and this run has been aborted                    "
+                echo -e "================================================="
+                . archfail
+                exit
+
+              fi
+            fi
+          fi
+
+#L----------------------------------------------------------------------
+#L Step 3d:Call qscasedisp to process request
+#L----------------------------------------------------------------------
+#    Arguments passed to/from qscasedisp
+#       IN: $VERSION $IDRUN $DATAM
+#           $OPERATIONAL $STORCLAS
+#           $F_END_DSN_PREFIX $CURRENT_RQST_NAME $BLK
+#           $RECFM $LRECL $DF $CURRENT_RQST_TYPE
+#           $LINKFAIL_LIMIT $CURRENT_RQST_ACTION
+#           $F_END_JOB_PROGID $TYPE $DM_DATE
+#           $CURRENT_RQST_TYPE_TF
+#    IN/OUT:$FILECOUNT $RQST_LIMIT $RETPD $F_END_TF
+#           $LAST_FILE $RUN_FLAG $LAST_TF
+
+            . qscasedisp
+
+#L----------------------------------------------------------------------
+#L Step 3e:Re-initialize variables after qscasedisp
+#L----------------------------------------------------------------------
+
+            case $CURRENT_RQST_TYPE_TF in
+              DMP)DMP_FILECOUNT=$FILECOUNT
+                  DMP_RQST_LIMIT=$RQST_LIMIT
+                  DMP_RETPD=$RETPD
+                  DMP_F_END_TF=${F_END_TF:-none}
+                  DMP_LAST_FILE=${LAST_FILE:-none}
+                  DMP_RUN_FLAG=$RUN_FLAG
+                  DMP_LAST_TF=$LAST_TF
+                  ;;
+              MPP)MPP_FILECOUNT=$FILECOUNT
+                  MPP_RQST_LIMIT=$RQST_LIMIT
+                  MPP_RETPD=$RETPD
+                  MPP_F_END_TF=${F_END_TF:-none}
+                  MPP_LAST_FILE=${LAST_FILE:-none}
+                  MPP_RUN_FLAG=$RUN_FLAG
+                  MPP_LAST_TF=$LAST_TF
+                  ;;
+               PP)PP_FILECOUNT=$FILECOUNT
+                  PP_RQST_LIMIT=$RQST_LIMIT
+                  PP_RETPD=$RETPD
+                  PP_F_END_TF=${F_END_TF:-none}
+                  PP_LAST_FILE=${LAST_FILE:-none}
+                  PP_RUN_FLAG=$RUN_FLAG
+                  PP_LAST_TF=$LAST_TF
+                  ;;
+               BF)BF_FILECOUNT=$FILECOUNT
+                  BF_RQST_LIMIT=$RQST_LIMIT
+                  BF_RETPD=$RETPD
+                  BF_F_END_TF=${F_END_TF:-none}
+                  BF_LAST_FILE=${LAST_FILE:-none}
+                  BF_RUN_FLAG=$RUN_FLAG
+                  BF_LAST_TF=$LAST_TF
+                  ;;
+              MIX)MIX_FILECOUNT=$FILECOUNT
+                  MIX_RQST_LIMIT=$RQST_LIMIT
+                  MIX_RETPD=$RETPD
+                  MIX_F_END_TF=${F_END_TF:-none}
+                  MIX_LAST_FILE=${LAST_FILE:-none}
+                  MIX_RUN_FLAG=$RUN_FLAG
+                  MIX_LAST_TF=$LAST_TF
+                  ;;
+               DB)DB_FILECOUNT=$FILECOUNT
+                  DB_RQST_LIMIT=$RQST_LIMIT
+                  DB_RETPD=$RETPD
+                  DB_F_END_TF=${F_END_TF:-none}
+                  DB_LAST_FILE=${LAST_FILE:-none}
+                  DB_RUN_FLAG=$RUN_FLAG
+                  DB_LAST_TF=$LAST_TF
+                  ;;
+              PMP)PMP_FILECOUNT=$FILECOUNT
+                  PMP_RQST_LIMIT=$RQST_LIMIT
+                  PMP_RETPD=$RETPD
+                  PMP_F_END_TF=${F_END_TF:-none}
+                  PMP_LAST_FILE=${LAST_FILE:-none}
+                  PMP_RUN_FLAG=$RUN_FLAG
+                  PMP_LAST_TF=$LAST_TF
+                  ;;
+            esac
+
+# Update history file
+        . newpphist
+
+        else
+          echo -e "$CURRENT_RQST_NAME is zero length or does not exist:"
+          echo -e "next request"
+        fi
+#L----------------------------------------------------------------------
+#L Step 3f:Straight to qscasedisp if operational
+#L----------------------------------------------------------------------
+      else
+        . qscasedisp
+      fi
+    fi
+  else
+#L----------------------------------------------------------------------
+#L Step 4:Check for end of data and call script to close down process
+#L----------------------------------------------------------------------
+
+    if [[ -f $LOCKFILE ]]    # LOCKFILE indicates model still executing
+    then
+      echo -e "qsserver: EOF on PIPE but model still executing - waiting"
+      sleep 2
+      PERCENT="xxx"
+      RC=0
+#L----------------------------------------------------------------------
+#L Step 5:No LOCKFILE, so genuine EOF - Wrap up server.
+#L       Transfer remaining trigger files to front-end.
+#L----------------------------------------------------------------------
+    else
+      if [[ $OPERATIONAL = false \
+          && $CURRENT_RQST_ACTION != REL && $ARCHSYS = true ]]
+      then
+          echo -e "End of data, send remaining trigger files"
+
+          while (( $CNTR1 < 7 ))
+          do
+            case $CNTR1 in
+              0)LAST_TF=$DMP_LAST_TF
+                F_END_TF=$DMP_F_END_TF
+                ;;
+              1)LAST_TF=$MPP_LAST_TF
+                F_END_TF=$MPP_F_END_TF
+                ;;
+              2)LAST_TF=$PP_LAST_TF
+                F_END_TF=$PP_F_END_TF
+                ;;
+              3)LAST_TF=$BF_LAST_TF
+                F_END_TF=$BF_F_END_TF
+                ;;
+              4)LAST_TF=$MIX_LAST_TF
+                F_END_TF=$MIX_F_END_TF
+                ;;
+              5)LAST_TF=$DB_LAST_TF
+                F_END_TF=$DB_F_END_TF
+                ;;
+              6)LAST_TF=$PMP_LAST_TF
+                F_END_TF=$PMP_F_END_TF
+                ;;
+            esac
+
+#           send trigger file if one exists for this data type
+            CNTR1=$(( $CNTR1 + 1 ))
+
+          done
+
+          echo -e
+          echo -e "Last file to be transferred for these data streams:"
+          echo -e "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+          echo -e
+          echo -e "Dump data stream only (DMP) : " $DMP_LAST_FILE
+          echo -e "Mean PP data stream only (MPP) : " $MPP_LAST_FILE
+          echo -e "PP data stream only (PP) : " $PP_LAST_FILE
+          echo -e "Boundary data stream only (BF) : " $BF_LAST_FILE
+          echo -e "Mixed data stream (MIX) : " $MIX_LAST_FILE
+          echo -e "Dump and boundary data stream (DB) : " $DB_LAST_FILE
+          echo -e "Mean PP and PP data stream (PMP) : " $PMP_LAST_FILE
+          echo -e
+
+
+        . newpphist
+
+        echo -e "Updated history file..."
+        echo -e "~~~~~~~~~~~~~~~~~~~~~~~"
+        echo -e
+      fi
+      echo -e "Server process:... Ending"
+    fi
+  fi
+done

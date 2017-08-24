@@ -1,0 +1,660 @@
+*IF DEF,A02_1C                                                             LWMAST1C.2     
+C ******************************COPYRIGHT******************************    GTS2F400.5581  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.5582  
+C                                                                          GTS2F400.5583  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.5584  
+C restrictions as set forth in the contract.                               GTS2F400.5585  
+C                                                                          GTS2F400.5586  
+C                Meteorological Office                                     GTS2F400.5587  
+C                London Road                                               GTS2F400.5588  
+C                BRACKNELL                                                 GTS2F400.5589  
+C                Berkshire UK                                              GTS2F400.5590  
+C                RG12 2SZ                                                  GTS2F400.5591  
+C                                                                          GTS2F400.5592  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.5593  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.5594  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.5595  
+C Modelling at the above address.                                          GTS2F400.5596  
+C ******************************COPYRIGHT******************************    GTS2F400.5597  
+C                                                                          GTS2F400.5598  
+CLL  *DECK and routine LWMAST.                                             LWMAST1C.3     
+CLL  Before LWMAST is CALLed, LWLKIN (in deck LWTRAN) must be CALLed to    LWMAST1C.4     
+CLL  initialize LUT.                                                       LWMAST1C.5     
+CLL  If UPDATE *DEF CRAY is off, the code is standard FORTRAN 77 except    LWMAST1C.6     
+CLL  for having ! comments (it then sets the "vector length" to 1) but     LWMAST1C.7     
+CLL  otherwise it includes automatic arrays also.                          LWMAST1C.8     
+CLL                      Author: Stephanie Woodward 19 Oct 1994            LWMAST1C.9     
+CLL                      (largely based on existing UM code, originally    LWMAST1C.10    
+CLL                      written by William Ingram)                        LWMAST1C.11    
+CLL                      Reviewer: William Ingram 19 Oct 1994              LWMAST1C.12    
+CLL                      Version 3.4                                       LWMAST1C.13    
+CLL                                                                        LWMAST1C.14    
+CLL  It is the top-level plug-compatible routine in brick P232 (longwave   LWMAST1C.15    
+CLL  radiation), part of task P23 (radiation).  It                         LWMAST1C.16    
+CLL  also performs some of the functions of D23 (radiation diagnostics).   LWMAST1C.17    
+CLL  It calculates net longwave fluxes (and optionally flux diagnostics)   LWMAST1C.18    
+CLL  from the Planck flux differences found by LWPLAN, transmissivities    LWMAST1C.19    
+CLL  found by LWTRAN, and cloud arrays filled by LWCLD.                    LWMAST1C.20    
+CLL  Offline documentation is in UMDP 23.                                  LWMAST1C.21    
+C                                                                          GSS2F402.22    
+!    Model   Date     Modification history from model version 3.4:         AYY1F404.331   
+C     Vn.                                                                  GSS2F402.23    
+CLL   4.2    Sept.96  T3E migration: *DEF CRAY removed;                    GSS2F402.24    
+CLL                   *DEF T3E used for T3E library functions;             GSS2F402.25    
+CLL                   dynamic allocation no longer *DEF controlled;        GSS2F402.26    
+CLL                   cray HF functions replaced by T3E lib functions.     GSS2F402.27    
+CLL                       S.J.Swarbrick                                    GSS2F402.28    
+!     4.4    10/4/97  Pass logical through to LWCLD to indicate the        AYY1F404.332   
+!                     prognostic cloud ice should be used. AC Bushell      AYY1F404.333   
+!                                                                          AYY1F404.334   
+C*L                                                                        LWMAST1C.22    
+      SUBROUTINE LWMAST (H2O, CO2, O3, N2O, CH4, CFC11, CFC12,             LWMAST1C.23    
+     &     TAC, PEXNER, TSTAR, PSTAR, AB,                                  LWMAST1C.24    
+     &     BB, AC, BC, AICE, LCA, LCCWC1, LCCWC2, CCA, CCCWP, CCB, CCT,    LWMAST1C.25    
+     &     LUT,                                                            LWMAST1C.26    
+     &     CSOLRD, CSOLON, SFDN, SFDNON, CSSFDN, CSSDON,                   LWMAST1C.27    
+     &     L_CLOUD_WATER_PARTITION,                                        AYY1F404.335   
+     &     L2, NLEVS, NCLDS,                                               GSS2F402.29    
+     &     NWET, NOZONE, L1,                           SEAFX, FLUX)        LWMAST1C.31    
+C*                                                                         LWMAST1C.32    
+      EXTERNAL LWCLD, LWPLAN, LWPTSC, LWTRAN                               LWMAST1C.33    
+*CALL C_R_CP                                                               LWMAST1C.34    
+*CALL C_EPSLON                                                             LWMAST1C.35    
+*CALL LWNBANDS                                                             LWMAST1C.36    
+*CALL LWNGASES                                                             LWMAST1C.37    
+*CALL LWNTRANS                                                             LWMAST1C.38    
+*CALL LWNLKUPS                                                             LWMAST1C.39    
+C     !  Array dimensions must be constants in FORTRAN:                    LWMAST1C.41    
+C*L                                                                        LWMAST1C.46    
+      INTEGER!, INTENT(IN) ::                                              LWMAST1C.47    
+     &     L2,                       ! Number of points to be treated      LWMAST1C.49    
+     &     NLEVS,                    ! Number of levels                    LWMAST1C.50    
+     &     NCLDS,                    ! Number of possibly cloudy levels    LWMAST1C.51    
+     &     NWET,                     ! Number of levels with moisture      LWMAST1C.53    
+     &     NOZONE,                   ! Number of levels with ozone         LWMAST1C.54    
+     &     L1                        ! Full field dimension                LWMAST1C.55    
+      REAL!, INTENT(IN) ::                                                 LWMAST1C.56    
+     &     TAC(L1,NLEVS),            ! Temperature at layer centres        LWMAST1C.57    
+     &     PEXNER(L1,NLEVS+1),       ! Exner function @ layer boundaries   LWMAST1C.58    
+     &     TSTAR(L1), PSTAR(L1),     ! Surface temperature & pressure      LWMAST1C.59    
+     &     AC(NLEVS), BC(NLEVS),     ! A & B for layer centres and         LWMAST1C.60    
+     &     AB(NLEVS+1), BB(NLEVS+1), !                       boundaries    LWMAST1C.61    
+     &     LUT(IT,NBANDS,NSCGMX,2),  ! Look-up tables for LWTRAN           LWMAST1C.62    
+     &     AICE(L1),                 ! Sea-ice fraction                    LWMAST1C.63    
+     &     LCCWC1(L1,1/(NCLDS+1)+NCLDS), LCCWC2(L1,1/(NCLDS+1)+NCLDS),     LWMAST1C.64    
+C     ! Layer cloud condensed water contents (specific contents, mass      LWMAST1C.65    
+C     ! per unit mass).  Only the sum of these two fields is used.         LWMAST1C.66    
+     &     LCA(L1,1/(NCLDS+1)+NCLDS),! Layer cloud fractional cover        LWMAST1C.67    
+     &     CCCWP(L1),                ! Convective cloud fractional cover   LWMAST1C.68    
+     &     CCA(L1)                   !          and condensed water path   LWMAST1C.69    
+C     ! (LWCLD describes precisely which these cloud quantities are.)      LWMAST1C.70    
+!                                                                          LWMAST1C.71    
+     &     ,H2O(L1,NWET)             ! m.m.r.'s of gases                   LWMAST1C.72    
+     &     ,CO2                      !                                     LWMAST1C.73    
+     &     ,O3(L1,NOZONE)            !                                     LWMAST1C.74    
+     &     ,CH4(NLEVS)               !                                     LWMAST1C.75    
+     &     ,N2O(NLEVS)               !                                     LWMAST1C.76    
+     &     ,CFC11(NLEVS)             !                                     LWMAST1C.77    
+     &     ,CFC12(NLEVS)             !                                     LWMAST1C.78    
+                                                                           LWMAST1C.79    
+      INTEGER!, INTENT(IN) ::                                              LWMAST1C.80    
+     &     CCB(L1), CCT(L1)          ! Convective cloud base and top       LWMAST1C.81    
+      LOGICAL!, INTENT(IN)                                                 LWMAST1C.82    
+     &     CSOLON                    ! Is CSOLRD wanted ?                  LWMAST1C.83    
+     &     , SFDNON                  ! And is SFDN ?                       LWMAST1C.84    
+     &     ,CSSDON                   ! and its clear-sky equivalent        LWMAST1C.85    
+     &     ,L_CLOUD_WATER_PARTITION  ! Is cloud ice prognostic?            AYY1F404.336   
+      REAL!, INTENT(OUT) ::                                                LWMAST1C.86    
+     &     FLUX(L1,NLEVS+1),         ! Net longwave flux (+ downwards)     LWMAST1C.87    
+     &     CSOLRD(L1),               ! diagnosed clear-sky OLR             LWMAST1C.88    
+     &     SFDN(L1),                 ! Diagnosed downward surface flux     LWMAST1C.89    
+     &     CSSFDN(L1),               ! and its clear-sky equivalent        LWMAST1C.90    
+     &     SEAFX(L1)                 ! Term calculated by LWPLAN & used    LWMAST1C.91    
+      ! by LWRAD to derive open-sea-only flux at sea-ice points.           LWMAST1C.92    
+C*                                                                         LWMAST1C.93    
+CL    !  After zeroing FLUX and SEAFX,                                     LWMAST1C.94    
+CL    !  LWMAST calls LWPLAN, LWPTSC & LWCLD to set up arrays.             LWMAST1C.95    
+*IF DEF,RANDOVER                                                           LWMAST1C.96    
+CL    !  and initializes an array DNSRCE ("DO 10" loop).                   LWMAST1C.97    
+*ENDIF RANDOVER                                                            LWMAST1C.98    
+CL    !  Then it adds in the half-layer terms for each layer to the        LWMAST1C.99    
+CL    !  fluxes at the boundaries of that layer ("DO 2" loop).             LWMAST1C.100   
+CL    !  Most of the code is inside the "DO 3" loop and calculates         LWMAST1C.101   
+CL    !  the contribution to the flux at every layer boundary from every   LWMAST1C.102   
+CL    !  other.  That loop supplies the lower level being treated.         LWMAST1C.103   
+CL    !  Loops inside it ("DO 30" for layers that may contain cloud        LWMAST1C.104   
+CL    !  and "DO 38" for the others) supply the upper layer.               LWMAST1C.105   
+      REAL                           ! WORKSPACE                           LWMAST1C.106   
+     &     DB(L2,NLEVS,NBANDS,2),    ! Differences of the black-body       LWMAST1C.107   
+C     ! flux across bottom and top halves of layers,                       LWMAST1C.108   
+C     ! DB(,LEVEL,,1) between half-level LEVEL-1/2 & full-level LEVEL,     LWMAST1C.109   
+C     ! DB(,LEVEL,,2) between full-level LEVEL & half-level LEVEL+1/2.     LWMAST1C.110   
+     &     TRANS(L2,NBANDS),         ! Transmissivities                    LWMAST1C.111   
+     &     DPATH(L2,NLEVS,NGASUS,NBANDS),!Scaled pathlengths               LWMAST1C.112   
+     &     PATH(L2,NGASUS,NBANDS),   !        layer & current total path   LWMAST1C.113   
+     &     ECA(L2,NCLDS+1/(NCLDS+1),NBANDS),                               LWMAST1C.114   
+C     ! Effective clear-sky fraction: 1-ECA is cloud amount*emissivity     LWMAST1C.115   
+*IF DEF,RANDOVER                                                           LWMAST1C.116   
+     &     ECTA(L2,NCLDS,NBANDS),                                          LWMAST1C.117   
+     &     ECBA(L2,NCLDS,NBANDS),     ! Effective amount of                LWMAST1C.118   
+C     ! cloud (amount*emissivity) having its top or bottom in each layer   LWMAST1C.119   
+*ENDIF RANDOVER                                                            LWMAST1C.120   
+     &     EFFTRA, UPSRCE(L2,NBANDS),                                      LWMAST1C.121   
+C     ! EFFTRA is a temporary product of TRANS and a clear-sky term        LWMAST1C.122   
+*IF DEF,RANDOVER                                                           LWMAST1C.123   
+     &     DNSRCE(L2,NBANDS,2:(NCLDS+2/(NCLDS+1))),                        LWMAST1C.124   
+C     !       NCLDS+2/(NCLDS+1)=MAX(NCLDS,2) if NCLDS>=0                   LWMAST1C.125   
+     &     CLRF(L2,NBANDS), CLDCLB                                         LWMAST1C.126   
+C     ! Because random overlap of clouds in different layers is assumed,   LWMAST1C.127   
+C     ! a dB source term for upward and downward flux at each layer        LWMAST1C.128   
+C     ! boundary, from so much cloud surface (top or base respectively)    LWMAST1C.129   
+C     ! and so much clear sky, can be pre-calculated.  These are UPSRCE    LWMAST1C.130   
+C     ! and DNSRCE respectively.  Then the contribution from one layer     LWMAST1C.131   
+C     ! to the flux at any other is given by the dB source term, the       LWMAST1C.132   
+C     ! gaseous transmissivity between the two layers, and the fraction    LWMAST1C.133   
+C     ! of the grid-box where the two layers' view of each other is not    LWMAST1C.134   
+C     ! blocked by intervening cloud, CLRF.  CLDCLB is defined so that     LWMAST1C.135   
+C     ! (1-CLDCLB) is the effective cloud cover crossing a layer           LWMAST1C.136   
+C     ! boundary.                                                          LWMAST1C.137   
+*ELSE RANDOVER                                                             LWMAST1C.138   
+C     ! UPSRCE is a source term for the contribution to the flux at the    LWMAST1C.139   
+C     ! upper layer boundary when this is above all possible clouds.       LWMAST1C.140   
+     &     UPCLRF(L2,NBANDS), UPCLDF(L2,NBANDS), DNCLRF(L2,NBANDS),        LWMAST1C.141   
+     &     DNCLDF, DNCLRO, F1CON, F2CON                                    LWMAST1C.142   
+C     ! We assume that clouds in different layers overlap maximally if     LWMAST1C.143   
+C     ! there is cloud in all the layers between, but randomly if there    LWMAST1C.144   
+C     ! is any clear layer between.  Thus they can be grouped into         LWMAST1C.145   
+C     ! contiguous "blocks" separated by clear layers, and overlap is      LWMAST1C.146   
+C     ! maximal within a block but random between blocks.                  LWMAST1C.147   
+C     ! UPCLRF & UPCLDF are the fractions of the lower layer boundary      LWMAST1C.148   
+C     ! which are visible from the highest intervening clear layer (if     LWMAST1C.149   
+C     ! any) or from the upper layer boundary (if not) and are             LWMAST1C.150   
+C     ! effectively clear or have a cloud top active respectively.         LWMAST1C.151   
+C     ! DNCLRF and DNCLDF are similar but the other way up (switch         LWMAST1C.152   
+C     ! "higher" and "lower" in the definition, and change "cloud top"     LWMAST1C.153   
+C     ! to "cloud base").                                                  LWMAST1C.154   
+C     ! DNCLRO is the previous layer's value of DNCLRF, or equivalently    LWMAST1C.155   
+C     ! the minimum clear fraction in the layers between the two layer     LWMAST1C.156   
+C     ! boundaries and in the same cloud block as the layer below the      LWMAST1C.157   
+C     ! upper layer boundary.                                              LWMAST1C.158   
+C     ! F1,2CON are the contributions to the flux at each level from the   LWMAST1C.159   
+C     ! other, before allowing for gaseous transmissivities.               LWMAST1C.160   
+      LOGICAL NOCLRB(L2)                                                   LWMAST1C.161   
+C     ! NOCLRB is true if there is no clear layer between the two layer    LWMAST1C.162   
+C     ! boundaries.  Then UPCLRF to DNCLDF directly give the fractions     LWMAST1C.163   
+C     ! of the grid-box where the upward and downward fluxes have a        LWMAST1C.164   
+C     ! clear and a cloudy contribution.  If not extra terms are needed.   LWMAST1C.165   
+*ENDIF RANDOVER                                                            LWMAST1C.166   
+*CALL LWGSINBS                                                             LWMAST1C.167   
+*CALL LWKCONT                                                              LWMAST1C.168   
+      INTEGER BAND, GAS,             !  Loopers over band, absorbing       LWMAST1C.169   
+     &     LEVEL, LEVEL2, J,         !          gas, levels and points     LWMAST1C.170   
+*IF DEF,RANDOVER                                                           LWMAST1C.171   
+     &     LEVELA,                                                         LWMAST1C.172   
+C     ! accessed in a couple of loops where using the loop counter would   LWMAST1C.173   
+C     ! give out-of-bound memory references, when the value will not       LWMAST1C.174   
+C     ! actually be used                                                   LWMAST1C.175   
+*ENDIF -RANDOVER                                                           LWMAST1C.176   
+     &     FSCLYR                   !  Start of the "DO 38" loop           LWMAST1C.177   
+C                                                                          LWMAST1C.178   
+CL                                                                         LWMAST1C.179   
+CL    ! SECTION 1                                                          LWMAST1C.180   
+CL                                                                         LWMAST1C.181   
+CL    ! 1.1 Zero output space                                              LWMAST1C.182   
+CL                                                                         LWMAST1C.183   
+      DO 1 LEVEL=1, NLEVS+1                                                LWMAST1C.184   
+Cfpp$  Select(CONCUR)                                                      LWMAST1C.185   
+       DO 1 J=1, L2                                                        LWMAST1C.186   
+        FLUX(J,LEVEL) = 0.                                                 LWMAST1C.187   
+    1 CONTINUE                                                             LWMAST1C.188   
+CL                                                                         LWMAST1C.189   
+CL    ! 1.11 zero SEAFX                                                    LWMAST1C.190   
+CL                                                                         LWMAST1C.191   
+      DO J=1, L2                                                           LWMAST1C.192   
+        SEAFX(J) = 0.                                                      LWMAST1C.193   
+      ENDDO                                                                LWMAST1C.194   
+CL                                                                         LWMAST1C.195   
+CL    !  1.12  Zero CSOLRD:                                                LWMAST1C.196   
+CL                                                                         LWMAST1C.197   
+      IF ( CSOLON ) THEN                                                   LWMAST1C.198   
+        DO J=1, L2                                                         LWMAST1C.199   
+          CSOLRD(J) = 0.                                                   LWMAST1C.200   
+        ENDDO                                                              LWMAST1C.201   
+      ENDIF                                                                LWMAST1C.202   
+CL                                                                         LWMAST1C.203   
+CL    !  and SFDN:                                                         LWMAST1C.204   
+CL                                                                         LWMAST1C.205   
+      IF ( SFDNON ) THEN                                                   LWMAST1C.206   
+        DO J=1, L2                                                         LWMAST1C.207   
+          SFDN(J) = 0.                                                     LWMAST1C.208   
+        ENDDO                                                              LWMAST1C.209   
+      ENDIF                                                                LWMAST1C.210   
+CL                                                                         LWMAST1C.211   
+CL    !  and CSSFDN:                                                       LWMAST1C.212   
+CL                                                                         LWMAST1C.213   
+      IF ( CSSDON ) THEN                                                   LWMAST1C.214   
+        DO J=1, L2                                                         LWMAST1C.215   
+          CSSFDN(J) = 0.                                                   LWMAST1C.216   
+        ENDDO                                                              LWMAST1C.217   
+      ENDIF                                                                LWMAST1C.218   
+CL                                                                         LWMAST1C.219   
+CL    ! 1.2  Set up dB arrays from temperature arrays                      LWMAST1C.220   
+CL                                                                         LWMAST1C.221   
+Cfpp$ Expand                                                               LWMAST1C.222   
+      CALL LWPLAN (TAC, PEXNER, pstar, ab, bb, TSTAR, AICE,                LWMAST1C.223   
+     &     SFDN, SFDNON,                                                   LWMAST1C.224   
+     &     L2, NLEVS, L1,                    SEAFX,  DB, DB(1,1,1,2))      LWMAST1C.225   
+C                                                                          LWMAST1C.226   
+CL                                                                         LWMAST1C.227   
+CL    ! 1.3 Set up arrays of scaled pathlengths (Eqs 2.3.1 to 2.3.10)      LWMAST1C.228   
+CL                                                                         LWMAST1C.229   
+Cfpp$ Expand                                                               LWMAST1C.230   
+      CALL LWPTSC (H2O,CO2,O3,N2O,CH4,CFC11,CFC12,                         LWMAST1C.231   
+     &                     PSTAR, AC, BC, AB, BB, TAC,                     LWMAST1C.232   
+     &     L2,                                                             GSS2F402.30    
+     &     NWET, NOZONE, NLEVS, L1,                          DPATH)        LWMAST1C.236   
+CL                                                                         LWMAST1C.237   
+CL    1.4 Set arrays of effective amount of clear sky, cloud base & top    LWMAST1C.238   
+CL                                                                         LWMAST1C.239   
+      IF ( NCLDS .GT. 0 ) THEN                                             LWMAST1C.240   
+Cfpp$ Expand                                                               LWMAST1C.241   
+        CALL LWCLD (LCA, LCCWC1, LCCWC2, CCA, CCCWP, CCB, CCT, TAC,        LWMAST1C.242   
+     &     PSTAR, AB, BB, L_CLOUD_WATER_PARTITION, L1, NLEVS, NCLDS,       AYY1F404.337   
+     &     L2,                                                             GSS2F402.31    
+*IF DEF,RANDOVER                                                           LWMAST1C.247   
+     &     ECTA, ECBA,                                                     LWMAST1C.248   
+*ENDIF RANDOVER                                                            LWMAST1C.249   
+     &     ECA)                                                            LWMAST1C.250   
+      ENDIF                                                                LWMAST1C.251   
+*IF DEF,RANDOVER                                                           LWMAST1C.252   
+CL                                                                         LWMAST1C.253   
+CL    !  and set DNSRCE                                                    LWMAST1C.254   
+CL                                                                         LWMAST1C.255   
+      DO 10 LEVEL=2, NCLDS                                                 LWMAST1C.256   
+       DO 11 BAND=1, NBANDS                                                LWMAST1C.257   
+Cfpp$   Select(CONCUR)                                                     LWMAST1C.258   
+        DO 12 J=1, L2                                                      LWMAST1C.259   
+C        ! This division by CLDCLB, as well as the 2 later, would fail     LWMAST1C.260   
+C        ! if the inputs specified total cover by a black cloud more       LWMAST1C.261   
+C        ! than one layer thick - but not for the physically identical     LWMAST1C.262   
+C        ! case of total cover by black clouds in adjacent layers.         LWMAST1C.263   
+         CLDCLB = ECA(J,LEVEL,BAND) + ECBA(J,LEVEL,BAND)                   LWMAST1C.264   
+         DNSRCE(J,BAND,LEVEL) =                                            LWMAST1C.265   
+     &      ECA(J,LEVEL,BAND) * DB(J,LEVEL,BAND,1) / CLDCLB +              LWMAST1C.266   
+     &         DB(J,LEVEL-1,BAND,2)                                        LWMAST1C.267   
+   12   CONTINUE                                                           LWMAST1C.268   
+   11  CONTINUE                                                            LWMAST1C.269   
+   10 CONTINUE                                                             LWMAST1C.270   
+*ENDIF RANDOVER                                                            LWMAST1C.271   
+CL                                                                         LWMAST1C.272   
+CL    ! SECTION 2                                                          LWMAST1C.273   
+CL                                                                         LWMAST1C.274   
+CL    !  Add in the "half-layer" contributions.                            LWMAST1C.275   
+CL    !  Transmissivities are calculated from pathlengths which are        LWMAST1C.276   
+CL    !  a quarter those for the full layers (Eq 2.1.9):                   LWMAST1C.277   
+CL                                                                         LWMAST1C.278   
+      DO 2 LEVEL=1, NLEVS                                                  LWMAST1C.279   
+        DO 19 BAND = 1,NBANDS                                              LWMAST1C.280   
+C                                                                          LWMAST1C.281   
+          DO 222 GAS=1, NGASUS                                             LWMAST1C.282   
+            IF(GSINBS(GAS,BAND).EQ.1) THEN                                 LWMAST1C.283   
+CFPP$   SELECT(CONCUR)                                                     LWMAST1C.284   
+              DO 21 J=1, L2                                                LWMAST1C.285   
+                PATH(J,GAS,BAND) = .25 * DPATH(J,LEVEL,GAS,BAND)           LWMAST1C.286   
+   21         CONTINUE                                                     LWMAST1C.287   
+            END IF                                                         LWMAST1C.288   
+  222     CONTINUE                                                         LWMAST1C.289   
+C                                                                          LWMAST1C.290   
+   19   CONTINUE                                                           LWMAST1C.291   
+C                                                                          LWMAST1C.292   
+C                                                                          LWMAST1C.293   
+       CALL LWTRAN (PATH, LUT, LUT(1,1,1,2),                               LWMAST1C.294   
+     &     L2,                                                             GSS2F402.32    
+     &     TRANS)                                                          LWMAST1C.298   
+       IF (LEVEL.LE.NCLDS) THEN                                            LWMAST1C.299   
+C         !  In levels low enough that cloud may occur, there is no        LWMAST1C.300   
+C         !  radiative flux in the part of the grid-box covered by the     LWMAST1C.301   
+C         !  equivalent black-body cloud.                                  LWMAST1C.302   
+          DO 22 BAND=1, NBANDS                                             LWMAST1C.303   
+Cfpp$      Select(CONCUR)                                                  LWMAST1C.304   
+           DO 22 J=1, L2                                                   LWMAST1C.305   
+            EFFTRA = TRANS(J,BAND) * ECA(J,LEVEL,BAND)                     LWMAST1C.306   
+            FLUX(J,LEVEL) = FLUX(J,LEVEL) + EFFTRA * DB(J,LEVEL,BAND,1)    LWMAST1C.307   
+            FLUX(J,LEVEL+1) = FLUX(J,LEVEL+1) +                            LWMAST1C.308   
+     &                          EFFTRA * DB(J,LEVEL,BAND,2)                LWMAST1C.309   
+   22     CONTINUE                                                         LWMAST1C.310   
+        ELSE IF (LEVEL.LT.NLEVS) THEN                                      LWMAST1C.311   
+C         !  Further up, Eq 2.1.9 applies simply:                          LWMAST1C.312   
+          DO 23 BAND=1, NBANDS                                             LWMAST1C.313   
+Cfpp$      Select(CONCUR)                                                  LWMAST1C.314   
+           DO 23 J=1, L2                                                   LWMAST1C.315   
+            FLUX(J,LEVEL) = FLUX(J,LEVEL) +                                LWMAST1C.316   
+     &               TRANS(J,BAND) * DB(J,LEVEL,BAND,1)                    LWMAST1C.317   
+            FLUX(J,LEVEL+1) = FLUX(J,LEVEL+1) +                            LWMAST1C.318   
+     &               TRANS(J,BAND) * DB(J,LEVEL,BAND,2)                    LWMAST1C.319   
+   23     CONTINUE                                                         LWMAST1C.320   
+        ELSE !IF (LEVEL.EQ.NLEVS)                                          LWMAST1C.321   
+C         !  except right at the top, where the toa flux gets special      LWMAST1C.322   
+C         !  treatment (no transmissivity):                                LWMAST1C.323   
+          DO 24 BAND=1, NBANDS                                             LWMAST1C.324   
+Cfpp$      Select(CONCUR)                                                  LWMAST1C.325   
+           DO 24 J=1, L2                                                   LWMAST1C.326   
+            FLUX(J,LEVEL) = FLUX(J,LEVEL) +                                LWMAST1C.327   
+     &               TRANS(J,BAND) * DB(J,LEVEL,BAND,1)                    LWMAST1C.328   
+            FLUX(J,NLEVS+1) = FLUX(J,NLEVS+1) + DB(J,NLEVS,BAND,2)         LWMAST1C.329   
+            IF ( CSOLON ) CSOLRD(J) = CSOLRD(J) - DB(J,NLEVS,BAND,2)       LWMAST1C.330   
+   24     CONTINUE                                                         LWMAST1C.331   
+       ENDIF                                                               LWMAST1C.332   
+       IF ( CSSDON .AND. LEVEL .EQ. 1) THEN                                LWMAST1C.333   
+         DO 221 BAND=1,NBANDS                                              LWMAST1C.334   
+Cfpp$      Select(CONCUR)                                                  LWMAST1C.335   
+           DO J=1,L2                                                       LWMAST1C.336   
+             CSSFDN(J) = CSSFDN(J) + TRANS(J,BAND) * DB(J,LEVEL,BAND,1)    LWMAST1C.337   
+           ENDDO                                                           LWMAST1C.338   
+ 221     CONTINUE                                                          LWMAST1C.339   
+       ENDIF                                                               LWMAST1C.340   
+    2 CONTINUE                                                             LWMAST1C.341   
+CL                                                                         LWMAST1C.342   
+CL    ! Separate DB for each half-layer are needed for the "half-layer"    LWMAST1C.343   
+CL    ! terms and the cloud boundary (and surface) source terms.  Now      LWMAST1C.344   
+CL    ! the "half-layer" terms have been dealt with, they can be           LWMAST1C.345   
+CL    ! combined above all clouds, to save calculations later in the       LWMAST1C.346   
+CL    ! "DO 36" loop.                                                      LWMAST1C.347   
+CL                                                                         LWMAST1C.348   
+      DO 20 BAND=1, NBANDS                                                 LWMAST1C.349   
+Cfpp$   Select(CONCUR)                                                     LWMAST1C.350   
+       DO 20 LEVEL=NCLDS+1, NLEVS-1                                        LWMAST1C.351   
+        DO 20 J=1, L2                                                      LWMAST1C.352   
+         DB(J,LEVEL,BAND,2) = DB(J,LEVEL,BAND,2) + DB(J,LEVEL+1,BAND,1)    LWMAST1C.353   
+   20 CONTINUE                                                             LWMAST1C.354   
+CL                                                                         LWMAST1C.355   
+CL    ! SECTION 3                                                          LWMAST1C.356   
+CL                                                                         LWMAST1C.357   
+CL    ! Now have the full-level terms to find, with a contribution from    LWMAST1C.358   
+CL    ! every layer boundary to the flux at every other layer boundary.    LWMAST1C.359   
+CL                                                                         LWMAST1C.360   
+C     ! The contributions from each of a pair of layers to the other are   LWMAST1C.361   
+C     ! added in at once so that transmissivities or pathlengths do not    LWMAST1C.362   
+C     ! have to be stored for all combinations nor calculated twice.       LWMAST1C.363   
+C     !   LEVEL and LEVEL2 are the lower and upper layer boundaries        LWMAST1C.364   
+C     ! respectively.  Layer boundaries are conventionally indexed by      LWMAST1C.365   
+C     ! half-integers in the documentation, and so for FORTRAN we must     LWMAST1C.366   
+C     ! add or subtract a half.                                            LWMAST1C.367   
+C     ! We currently add it, so the numerical value of LEVEL is the        LWMAST1C.368   
+C     ! number of the layer centre ABOVE it, consistent with the           LWMAST1C.369   
+C     ! indexing of most arrays (not ECTA, which is indexed by LEVEL-1)    LWMAST1C.370   
+C                                                                          LWMAST1C.371   
+*IF DEF,RANDOVER                                                           LWMAST1C.372   
+C     ! The source term for the downward flux (i.e. from the upper layer   LWMAST1C.373   
+C     ! boundary, LEVEL2), DNSRCE, is needed on different passes through   LWMAST1C.374   
+C     ! the outer "DO 3" loop, so that the whole lot is precalculated      LWMAST1C.375   
+C     ! and stored, but the upward one, UPSRCE, is only needed for the     LWMAST1C.376   
+C     ! current value of LEVEL.  The calculations are complicated by the   LWMAST1C.377   
+C     ! need to take account of clouds more than one level thick.  This    LWMAST1C.378   
+C     ! means that over part of the grid-box neither the half-level dB     LWMAST1C.379   
+C     ! (for cloud top or bottom) nor the full-level one (for cloud-free   LWMAST1C.380   
+C     ! space) may need to be added in.  This is not easily allowed for    LWMAST1C.381   
+C     ! by CLRF alone.  The method adopted is to normalize UPSRCE and      LWMAST1C.382   
+C     ! DNSRCE to be the mean dB terms from the parts of the layer         LWMAST1C.383   
+C     ! boundary which do contribute, and initialize CLRF to CLDCLB        LWMAST1C.384   
+C     ! to take account of the effect of any cloud that does cross the     LWMAST1C.385   
+C     ! layer boundary at LEVEL.                                           LWMAST1C.386   
+*ENDIF RANDOVER                                                            LWMAST1C.387   
+      DO 3 LEVEL=1, NLEVS                                                  LWMAST1C.388   
+C      ! Start by setting the pathlength to that for the layer above the   LWMAST1C.389   
+C      ! layer boundary where FLUX(,LEVEL) applies, and also initialize    LWMAST1C.390   
+C      ! overlap quantities.                                               LWMAST1C.391   
+       DO 301 BAND = 1,NBANDS                                              LWMAST1C.392   
+         DO 304 GAS=1, NGASUS                                              LWMAST1C.393   
+           IF(GSINBS(GAS,BAND).EQ.1) THEN                                  LWMAST1C.394   
+CFPP$   SELECT(CONCUR)                                                     LWMAST1C.395   
+             DO 305 J=1, L2                                                LWMAST1C.396   
+               PATH(J,GAS,BAND) =  DPATH(J,LEVEL,GAS,BAND)                 LWMAST1C.397   
+  305        CONTINUE                                                      LWMAST1C.398   
+           END IF                                                          LWMAST1C.399   
+  304    CONTINUE                                                          LWMAST1C.400   
+C                                                                          LWMAST1C.401   
+  301  CONTINUE                                                            LWMAST1C.402   
+C                                                                          LWMAST1C.403   
+c                                                                          LWMAST1C.404   
+       DO 32 BAND=1, NBANDS                                                LWMAST1C.405   
+Cfpp$   Select(CONCUR)                                                     LWMAST1C.406   
+        DO 32 J=1, L2                                                      LWMAST1C.407   
+*IF DEF,RANDOVER                                                           LWMAST1C.408   
+         IF (LEVEL.EQ.1) THEN                                              LWMAST1C.409   
+            UPSRCE(J,BAND) = DB(J,1,BAND,1)                                LWMAST1C.410   
+            CLRF(J,BAND) = 1.                                              LWMAST1C.411   
+          ELSE IF (LEVEL.LE.(NCLDS+1)) THEN                                LWMAST1C.412   
+            CLDCLB = ECA(J,LEVEL-1,BAND) + ECTA(J,LEVEL-1,BAND)            LWMAST1C.413   
+            UPSRCE(J,BAND) = DB(J,LEVEL,BAND,1)                            LWMAST1C.414   
+     &             + ECA(J,LEVEL-1,BAND) * DB(J,LEVEL-1,BAND,2) / CLDCLB   LWMAST1C.415   
+            CLRF(J,BAND) = CLDCLB                                          LWMAST1C.416   
+          ELSE     ! IF LEVEL > NCLDS + 1                                  LWMAST1C.417   
+            UPSRCE(J,BAND) = DB(J,LEVEL-1,BAND,2)                          LWMAST1C.418   
+            CLRF(J,BAND) = 1.                                              LWMAST1C.419   
+         ENDIF                                                             LWMAST1C.420   
+*ELSE RANDOVER                                                             LWMAST1C.421   
+C                                                                          LWMAST1C.422   
+         IF ( LEVEL .GT. NCLDS+1 )                                         LWMAST1C.423   
+     &      UPSRCE(J,BAND) = DB(J,LEVEL-1,BAND,2)                          LWMAST1C.424   
+Combine with the RANDOVER code above when (if?) have "DO 30" same          LWMAST1C.425   
+         NOCLRB(J) = .TRUE.                                                LWMAST1C.426   
+         IF ( LEVEL .LE. NCLDS )                                           LWMAST1C.427   
+     &           DNCLRF(J,BAND) = MIN ( 1., ECA(J,LEVEL,BAND) )            LWMAST1C.428   
+C        ! This is really to initialize DNCLRO                             LWMAST1C.429   
+         IF (LEVEL.EQ.1) THEN                                              LWMAST1C.430   
+            UPCLRF(J,BAND) = 0.   ! Out if ECA(,0,)=0                      LWMAST1C.431   
+          ELSE IF ( LEVEL .LE. NCLDS+1 ) THEN                              LWMAST1C.432   
+            UPCLRF(J,BAND) = ECA(J,LEVEL-1,BAND)                           LWMAST1C.433   
+         ENDIF                                                             LWMAST1C.434   
+         UPCLDF(J,BAND) = 1. - UPCLRF(J,BAND)                              LWMAST1C.435   
+*ENDIF RANDOVER                                                            LWMAST1C.436   
+   32  CONTINUE                                                            LWMAST1C.437   
+*IF DEF,RANDOVER                                                           LWMAST1C.438   
+       DO 30 LEVEL2=LEVEL+1, NCLDS                                         LWMAST1C.439   
+*ELSE RANDOVER                                                             LWMAST1C.440   
+       DO 30 LEVEL2=LEVEL+1, NCLDS+1                                       LWMAST1C.441   
+         LEVELA = MIN(LEVEL2,NCLDS)                                        LWMAST1C.442   
+*ENDIF RANDOVER                                                            LWMAST1C.443   
+        CALL LWTRAN (PATH, LUT, LUT(1,1,1,2),                              LWMAST1C.444   
+     &     L2,                                                             GSS2F402.33    
+     &     TRANS)                                                          LWMAST1C.448   
+        IF (CSSDON .AND. LEVEL .EQ.1 ) THEN                                LWMAST1C.449   
+          DO 363 BAND= 1,NBANDS                                            LWMAST1C.450   
+Cfpp$       Select(CONCUR)                                                 LWMAST1C.451   
+            DO J=1,L2                                                      LWMAST1C.452   
+              CSSFDN(J) = CSSFDN(J) +                                      LWMAST1C.453   
+     &  TRANS(J,BAND) * (DB(J,LEVEL2,BAND,1) + DB(J,LEVEL2-1,BAND,2))      LWMAST1C.454   
+            ENDDO                                                          LWMAST1C.455   
+ 363      CONTINUE                                                         LWMAST1C.456   
+        ENDIF                                                              LWMAST1C.457   
+        DO 33 BAND=1, NBANDS                                               LWMAST1C.458   
+Cfpp$    Select(CONCUR)                                                    LWMAST1C.459   
+         DO 33 J=1, L2                                                     LWMAST1C.460   
+*IF DEF,RANDOVER                                                           LWMAST1C.461   
+C         ! Since this code works up from LEVEL, a cloud starts having     LWMAST1C.462   
+C         ! an effect on the overlaps (other than through CLDCLB) when     LWMAST1C.463   
+C         ! its base is reached, and its effect is constant thereafter.    LWMAST1C.464   
+          CLDCLB = ECA(J,LEVEL2-1,BAND) + ECBA(J,LEVEL2-1,BAND)            LWMAST1C.465   
+          CLRF(J,BAND) = CLRF(J,BAND) *                                    LWMAST1C.466   
+     &                      ( 1. - ECBA(J,LEVEL2-1,BAND) / CLDCLB )        LWMAST1C.467   
+          EFFTRA = TRANS(J,BAND) * CLRF(J,BAND)                            LWMAST1C.468   
+C                                                                          LWMAST1C.469   
+          FLUX(J,LEVEL) = FLUX(J,LEVEL) + EFFTRA * DNSRCE(J,BAND,LEVEL2)   LWMAST1C.470   
+          FLUX(J,LEVEL2) = FLUX(J,LEVEL2) + EFFTRA * UPSRCE(J,BAND)        LWMAST1C.471   
+*ELSE RANDOVER                                                             LWMAST1C.472   
+          DNCLRO = DNCLRF(J,BAND)                                          LWMAST1C.473   
+          IF (ECA(J,LEVEL2-1,BAND).EQ.1.) THEN                             LWMAST1C.474   
+            DNCLRO = 1.                                                    LWMAST1C.475   
+            NOCLRB(J) = .FALSE.                                            LWMAST1C.476   
+          ENDIF                                                            LWMAST1C.477   
+          IF (LEVEL2.LT.NCLDS+1) THEN                                      LWMAST1C.478   
+             DNCLRF(J,BAND) = MIN ( ECA(J,LEVEL2,BAND), DNCLRO )           LWMAST1C.479   
+           ELSE                                                            LWMAST1C.480   
+             DNCLRF(J,BAND) = DNCLRO                                       LWMAST1C.481   
+          ENDIF                                                            LWMAST1C.482   
+          DNCLDF = DNCLRO - DNCLRF(J,BAND)                                 LWMAST1C.483   
+C         !              = MAX ( 0, (1-ECA) - (1-DNCLRO) )                 LWMAST1C.484   
+          IF (NOCLRB(J)) THEN                                              LWMAST1C.485   
+            IF (LEVEL.GT.1) THEN       ! Out if ECA(,0,)=0                 LWMAST1C.486   
+               UPCLRF(J,BAND) = MIN ( ECA(J,LEVEL-1,BAND), DNCLRO )        LWMAST1C.487   
+             ELSE                                                          LWMAST1C.488   
+               UPCLRF(J,BAND) = 0.                                         LWMAST1C.489   
+            ENDIF                                                          LWMAST1C.490   
+            UPCLDF(J,BAND) = DNCLRO - UPCLRF(J,BAND)                       LWMAST1C.491   
+C           !              = MAX ( 0., (1-ECA) - (1-DNCLRO) )              LWMAST1C.492   
+          ENDIF                                                            LWMAST1C.493   
+C                                                                          LWMAST1C.494   
+C         ! This suggests simplification is desirable...                   LWMAST1C.495   
+          F1CON = DNCLRF(J,BAND) * DB(J,LEVEL2,BAND,1)                     LWMAST1C.496   
+     &         + ( DNCLRF(J,BAND)+DNCLDF ) * DB(J,LEVEL2-1,BAND,2)         LWMAST1C.497   
+          F2CON = ( UPCLRF(J,BAND)+UPCLDF(J,BAND) ) * DB(J,LEVEL,BAND,1)   LWMAST1C.498   
+          IF ( LEVEL .GT. 1 )                                              LWMAST1C.499   
+     &      F2CON = F2CON + UPCLRF(J,BAND) * DB(J,LEVEL-1,BAND,2)          LWMAST1C.500   
+          IF (.NOT.NOCLRB(J)) THEN                                         LWMAST1C.501   
+            F1CON = F1CON * ( UPCLRF(J,BAND) + UPCLDF(J,BAND) )            LWMAST1C.502   
+            F2CON = F2CON * DNCLRO                                         LWMAST1C.503   
+          ENDIF                                                            LWMAST1C.504   
+C                                                                          LWMAST1C.505   
+          FLUX(J,LEVEL)  = FLUX(J,LEVEL)  + TRANS(J,BAND) * F1CON          LWMAST1C.506   
+          FLUX(J,LEVEL2) = FLUX(J,LEVEL2) + TRANS(J,BAND) * F2CON          LWMAST1C.507   
+C                                                                          LWMAST1C.508   
+C NCLDS+1 bit may not vectorize well - but will probably shift it later    LWMAST1C.509   
+          IF (  (LEVEL2.EQ.NCLDS+1 .OR.  ECA(J,LEVELA,BAND).EQ.1.)         LWMAST1C.510   
+     &                        .AND. .NOT.NOCLRB(J)) THEN                   LWMAST1C.511   
+            UPCLDF(J,BAND) = UPCLDF(J,BAND) * DNCLRO                       LWMAST1C.512   
+            UPCLRF(J,BAND) = UPCLRF(J,BAND) * DNCLRO                       LWMAST1C.513   
+          ENDIF                                                            LWMAST1C.514   
+*ENDIF RANDOVER                                                            LWMAST1C.515   
+C                                                                          LWMAST1C.516   
+   33   CONTINUE                                                           LWMAST1C.517   
+C       ! add in the next layer's contributions to the gas pathlengths.    LWMAST1C.518   
+       DO 331 BAND = 1,NBANDS                                              LWMAST1C.519   
+         DO 334 GAS=1, NGASUS                                              LWMAST1C.520   
+           IF(GSINBS(GAS,BAND).EQ.1) THEN                                  LWMAST1C.521   
+CFPP$   SELECT(CONCUR)                                                     LWMAST1C.522   
+             DO 335 J=1, L2                                                LWMAST1C.523   
+           PATH(J,GAS,BAND) = PATH(J,GAS,BAND) +DPATH(J,LEVEL2,GAS,BAND)   LWMAST1C.524   
+  335     CONTINUE                                                         LWMAST1C.525   
+         END IF                                                            LWMAST1C.526   
+  334   CONTINUE                                                           LWMAST1C.527   
+C                                                                          LWMAST1C.528   
+  331  CONTINUE                                                            LWMAST1C.529   
+C                                                                          LWMAST1C.530   
+   30  CONTINUE                                                            LWMAST1C.531   
+C      ! For layers above all cloud, use the last values of the            LWMAST1C.532   
+C      ! cloud overlap terms (or the initialized ones if LEVEL>=NCLDS)     LWMAST1C.533   
+C      !  - otherwise the physics is the same.                             LWMAST1C.534   
+       FSCLYR=LEVEL2                    ! Next layer boundary to do is     LWMAST1C.535   
+*IF DEF,RANDOVER                                                           LWMAST1C.536   
+C      ! MAX(NCLDS+1,LEVEL+1), where there cannot be a cloud term in the   LWMAST1C.537   
+C      ! downward source, but there may still be for CLRF                  LWMAST1C.538   
+       IF (LEVEL.LE.NCLDS) THEN                                            LWMAST1C.539   
+         DO 35 BAND=1, NBANDS                                              LWMAST1C.540   
+Cfpp$     Select(CONCUR)                                                   LWMAST1C.541   
+          DO 35 J=1, L2                                                    LWMAST1C.542   
+           CLRF(J,BAND) = CLRF(J,BAND) * (1.-ECBA(J,NCLDS,BAND))           LWMAST1C.543   
+   35    CONTINUE                                                          LWMAST1C.544   
+       ENDIF                                                               LWMAST1C.545   
+*ELSE RANDOVER                                                             LWMAST1C.546   
+C      ! MAX(NCLDS+2,LEVEL+1), the lowest where no cloud terms occur       LWMAST1C.547   
+C      ! (though the downward source already has none at NCLDS+1, and so   LWMAST1C.548   
+C      ! needed special treatment above).                                  LWMAST1C.549   
+       IF (LEVEL.LE.NCLDS+1) THEN                                          LWMAST1C.550   
+         LEVELA = MAX(LEVEL-1,1)                                           LWMAST1C.551   
+         DO 35 BAND=1, NBANDS                                              LWMAST1C.552   
+Cfpp$     Select(CONCUR)                                                   LWMAST1C.553   
+          DO 35 J=1, L2                                                    LWMAST1C.554   
+           UPSRCE(J,BAND) = UPCLRF(J,BAND) * DB(J,LEVELA,BAND,2) +         LWMAST1C.555   
+     &     ( UPCLRF(J,BAND) + UPCLDF(J,BAND) ) * DB(J,LEVEL,BAND,1)        LWMAST1C.556   
+Could do: IF (.NOT.NOCLRB(J))                                              LWMAST1C.557   
+C    &     UPSRCE(J,BAND) = UPSRCE(J,BAND) * DNCLRO                        LWMAST1C.558   
+C  here rather than before l 33  - esp if take DO 30 loop to NCLDS only    LWMAST1C.559   
+   35    CONTINUE                                                          LWMAST1C.560   
+       ENDIF                                                               LWMAST1C.561   
+*ENDIF RANDOVER                                                            LWMAST1C.562   
+       DO 38 LEVEL2=FSCLYR, NLEVS+1                                        LWMAST1C.563   
+        CALL LWTRAN (PATH, LUT, LUT(1,1,1,2),                              LWMAST1C.564   
+     &     L2,                                                             GSS2F402.34    
+     &     TRANS)                                                          LWMAST1C.568   
+       IF (CSSDON .AND. LEVEL .EQ. 1) THEN                                 LWMAST1C.569   
+         DO 366 BAND=1,NBANDS                                              LWMAST1C.570   
+Cfpp$      Select(CONCUR)                                                  LWMAST1C.571   
+           DO J=1,L2                                                       LWMAST1C.572   
+             CSSFDN(J) =                                                   LWMAST1C.573   
+     &           CSSFDN(J) + TRANS(J,BAND) * DB(J,LEVEL2-1,BAND,2)         LWMAST1C.574   
+*IF DEF,RANDOVER                                                           LWMAST1C.575   
+             IF (LEVEL2 .EQ. NCLDS+1) CSSFDN(J) =                          LWMAST1C.576   
+     &           CSSFDN(J) + TRANS(J,BAND) * DB(J,LEVEL2,BAND,1)           LWMAST1C.577   
+*ENDIF RANDOVER                                                            LWMAST1C.578   
+           ENDDO                                                           LWMAST1C.579   
+ 366     CONTINUE                                                          LWMAST1C.580   
+       ENDIF                                                               LWMAST1C.581   
+        DO 36 BAND=1, NBANDS                                               LWMAST1C.582   
+Cfpp$    Select(CONCUR)                                                    LWMAST1C.583   
+         DO 36 J=1, L2                                                     LWMAST1C.584   
+C                                                                          LWMAST1C.585   
+*IF DEF,RANDOVER                                                           LWMAST1C.586   
+          EFFTRA = TRANS(J,BAND) * CLRF(J,BAND)                            LWMAST1C.587   
+          FLUX(J,LEVEL) = FLUX(J,LEVEL) + EFFTRA * DB(J,LEVEL2-1,BAND,2)   LWMAST1C.588   
+          IF ( LEVEL2 .EQ. NCLDS+1 )                                       LWMAST1C.589   
+     &      FLUX(J,LEVEL) = FLUX(J,LEVEL) + EFFTRA * DB(J,LEVEL2,BAND,1)   LWMAST1C.590   
+          FLUX(J,LEVEL2) = FLUX(J,LEVEL2) + EFFTRA * UPSRCE(J,BAND)        LWMAST1C.591   
+*ELSE RANDOVER                                                             LWMAST1C.592   
+          FLUX(J,LEVEL) = FLUX(J,LEVEL) + TRANS(J,BAND) *                  LWMAST1C.593   
+     &  ( UPCLDF(J,BAND) + UPCLRF(J,BAND) ) * DB(J,LEVEL2-1,BAND,2)        LWMAST1C.594   
+C                                                                          LWMAST1C.595   
+          FLUX(J,LEVEL2) = FLUX(J,LEVEL2)                                  LWMAST1C.596   
+     &                          + TRANS(J,BAND) * UPSRCE(J,BAND)           LWMAST1C.597   
+*ENDIF RANDOVER                                                            LWMAST1C.598   
+C                                                                          LWMAST1C.599   
+   36   CONTINUE                                                           LWMAST1C.600   
+        IF (LEVEL2.LT.NLEVS+1) THEN                                        LWMAST1C.601   
+C         ! Add in the next contribution to the gas pathlengths.           LWMAST1C.602   
+       do 341 band = 1,nbands                                              LWMAST1C.603   
+       DO 344 GAS=1, ngasus                                                LWMAST1C.604   
+         if(gsinbs(gas,band).eq.1) then                                    LWMAST1C.605   
+Cfpp$   Select(CONCUR)                                                     LWMAST1C.606   
+          DO 345 J=1, L2                                                   LWMAST1C.607   
+           PATH(J,GAS,band) = path(j,gas,band) +dpath(j,level2,gas,band)   LWMAST1C.608   
+  345     CONTINUE                                                         LWMAST1C.609   
+         end if                                                            LWMAST1C.610   
+  344   continue                                                           LWMAST1C.611   
+c                                                                          LWMAST1C.612   
+  341  continue                                                            LWMAST1C.613   
+c                                                                          LWMAST1C.614   
+                                                                           LWMAST1C.615   
+        ENDIF                                                              LWMAST1C.616   
+   38  CONTINUE                                                            LWMAST1C.617   
+CL     !  Put in the contributions to CSOLRD:                              LWMAST1C.618   
+       IF ( CSOLON ) THEN                                                  LWMAST1C.619   
+         DO 39 BAND=1, NBANDS                                              LWMAST1C.620   
+           DO J=1, L2                                                      LWMAST1C.621   
+             IF ( LEVEL .LE. NCLDS+1 ) CSOLRD(J) = CSOLRD(J) -             LWMAST1C.622   
+     &                              TRANS(J,BAND) * DB(J,LEVEL,BAND,1)     LWMAST1C.623   
+             IF ( LEVEL .GT. 1 ) CSOLRD(J) = CSOLRD(J) -                   LWMAST1C.624   
+     &                              TRANS(J,BAND) * DB(J,LEVEL-1,BAND,2)   LWMAST1C.625   
+           ENDDO                                                           LWMAST1C.626   
+   39    CONTINUE                                                          LWMAST1C.627   
+       ENDIF                                                               LWMAST1C.628   
+    3 CONTINUE                                                             LWMAST1C.629   
+C                                                                          LWMAST1C.630   
+C                                                                          LWMAST1C.631   
+CL    !  Change CSSFDN from the net downward flux which has been found     LWMAST1C.632   
+CL    !   so far to the downward flux wanted:                              LWMAST1C.633   
+      IF ( CSSDON ) THEN                                                   LWMAST1C.634   
+        DO J=1, L2                                                         LWMAST1C.635   
+          CSSFDN(J) = SFDN(J) + CSSFDN(J)                                  LWMAST1C.636   
+        ENDDO                                                              LWMAST1C.637   
+      ENDIF                                                                LWMAST1C.638   
+C                                                                          LWMAST1C.639   
+CL    !  Change SFDN from the upward flux returned by LWPLAN to the        LWMAST1C.640   
+CL    !   downward flux wanted:                                            LWMAST1C.641   
+      IF ( SFDNON ) THEN                                                   LWMAST1C.642   
+        DO J=1, L2                                                         LWMAST1C.643   
+          SFDN(J) = SFDN(J) + FLUX(J,1)                                    LWMAST1C.644   
+        ENDDO                                                              LWMAST1C.645   
+      ENDIF                                                                LWMAST1C.646   
+      RETURN                                                               LWMAST1C.647   
+      END                                                                  LWMAST1C.648   
+*ENDIF A02_1C                                                              LWMAST1C.649   

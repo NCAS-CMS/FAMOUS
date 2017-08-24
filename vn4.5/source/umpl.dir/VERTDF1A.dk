@@ -1,0 +1,508 @@
+*IF DEF,A07_1A                                                             VERTDF1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.11593 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.11594 
+C                                                                          GTS2F400.11595 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.11596 
+C restrictions as set forth in the contract.                               GTS2F400.11597 
+C                                                                          GTS2F400.11598 
+C                Meteorological Office                                     GTS2F400.11599 
+C                London Road                                               GTS2F400.11600 
+C                BRACKNELL                                                 GTS2F400.11601 
+C                Berkshire UK                                              GTS2F400.11602 
+C                RG12 2SZ                                                  GTS2F400.11603 
+C                                                                          GTS2F400.11604 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.11605 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.11606 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.11607 
+C Modelling at the above address.                                          GTS2F400.11608 
+C ******************************COPYRIGHT******************************    GTS2F400.11609 
+C                                                                          GTS2F400.11610 
+CLL  SUBROUTINE VDIF_CTL and VERT_DIF --------------------------           VERTDF1A.3     
+CLL                                                                        VERTDF1A.4     
+CLL  PURPOSE:   CONTROL SECTION FOR VERTICAL DIFFUSION ROUTINE WHICH       VERTDF1A.5     
+CLL APPLIES VERTICAL DIFFUSION TO WIND COMPONENTS WITHIN A LATITUDE BAND   VERTDF1A.6     
+CLL SYMMETRIC ABOUT THE EQUATOR.  THE DIFFUSION COEFFICIENT TAILS OFF      VERTDF1A.7     
+CLL AWAY FROM THE EQUATOR AND IS ZERO OUTSIDE THE BAND.                    VERTDF1A.8     
+CLL                                                                        VERTDF1A.9     
+CLL  FURTHER ALTERATIONS MAY BE REQUIRED FOR AUTOTASKING EFFICIENCY        VERTDF1A.10    
+CLL  SUITABLE FOR SINGLE COLUMN USE, CALL TO P_TO_UV BY-PASSED             VERTDF1A.11    
+CLL  SUITABLE FOR ROTATED GRIDS                                            VERTDF1A.12    
+CLL                                                                        VERTDF1A.13    
+CLL  ORIGINAL VERSION FOR CRAY Y-MP                                        VERTDF1A.14    
+CLL                                                                        VERTDF1A.15    
+CLL  WRITTEN BY C. WILSON                                                  VERTDF1A.16    
+CLL                                                                        VERTDF1A.17    
+CLL  Model            Modification history from model version 3.0:         VERTDF1A.18    
+CLL version  Date                                                          VERTDF1A.19    
+CLL                                                                        VERTDF1A.20    
+CLL   3.3   15/11/93  Removal of DIAG07 directive. New arguments to        DR151193.54    
+CLL                   dimension diagnostic arrays. D. Robinson.            DR151193.55    
+!     3.5    9/5/95   MPP code: Change updateable area  P.Burton           APB1F305.443   
+CLL   4.2    Oct. 96  T3E migration: *DEF CRAY removed                     GSS1F402.102   
+CLL                    (was used to switch on WHENFGT)                     GSS1F402.103   
+CLL                                    S.J.Swarbrick                       GSS1F402.104   
+!LL   4.4    17/06/97 Only prints out warning if there are no points       GPB1F404.1     
+!LL                   on all processors                     P.Burton       GPB1F404.2     
+CLL   4.5    Jul. 98  Kill the IBM specific lines (JCThil)                 AJC1F405.39    
+CLL                                                                        VERTDF1A.21    
+CLL  Programming standard: Unified Model documentation paper no. 4,        VERTDF1A.22    
+CLL  version 1, dated 12/09/89                                             VERTDF1A.23    
+CLL                                                                        VERTDF1A.24    
+CLL  Logical components covered: P21                                       VERTDF1A.25    
+CLL                                                                        VERTDF1A.26    
+CLL  Project task:                                                         VERTDF1A.27    
+CLL                                                                        VERTDF1A.28    
+CLL  Documentation:        The equation used is (2)                        VERTDF1A.29    
+CLL                        in Unified Model documentation paper no.p21     VERTDF1A.30    
+CLL                        C. Wilson, version 2,dated 30/10/89             VERTDF1A.31    
+CLLEND-------------------------------------------------------------        VERTDF1A.32    
+C                                                                          VERTDF1A.33    
+C*L  ARGUMENTS:---------------------------------------------------         VERTDF1A.34    
+      SUBROUTINE VDIF_CTL                                                  VERTDF1A.35    
+     *  (PSTAR,U,V,                                                        DR151193.56    
+     *   P_FIELD,U_FIELD,ROWS,FIRST_ROW,ROW_LENGTH,                        DR151193.57    
+     *   LEVEL_START,LEVEL_END,LEVELS_VD,P_LEVELS,                         DR151193.58    
+     *   AK,BK,DELTA_AK,DELTA_BK,COS_LAT, LATITUDE_BAND,                   DR151193.59    
+     *   VERTICAL_DIFFUSION, TIMESTEP,                                     DR151193.60    
+     *   STASH_U_FLUX,FLUX_UD_ON,U_LIST,                                   DR151193.61    
+     *   STASH_V_FLUX,FLUX_VD_ON,V_LIST,                                   DR151193.62    
+     *   LEN_STASH_U_FLUX,LEN_STASH_V_FLUX,                                DR151193.63    
+     *   POINTS_FLUX_U,POINTS_FLUX_V,LEVELS_FLUX,                          DR151193.64    
+     *   IRET)                                                             DR151193.65    
+                                                                           VERTDF1A.44    
+      IMPLICIT NONE                                                        VERTDF1A.45    
+                                                                           VERTDF1A.46    
+      INTEGER                                                              VERTDF1A.47    
+     *  P_FIELD            !IN    1ST DIMENSION OF FIELD OF PSTAR          VERTDF1A.48    
+     *, U_FIELD            !IN    1ST DIMENSION OF FIELD OF U,V            VERTDF1A.49    
+     *, ROWS               !IN    NUMBER OF ROWS TO BE UPDATED.            VERTDF1A.50    
+     *, FIRST_ROW          !IN    NUMBER OF FIRST ROW IN DATA ARRAY        VERTDF1A.51    
+     *, ROW_LENGTH         !IN    NUMBER OF POINTS PER ROW                 VERTDF1A.52    
+     *, LEVEL_START        !IN    BOTTOM LEVEL TO BE UPDATED.              VERTDF1A.53    
+     *, LEVEL_END          !IN    TOP    LEVEL TO BE UPDATED.              VERTDF1A.54    
+     *, LEVELS_VD          !IN    NO OF VERTICAL DIFFUSION LEVELS          DR151193.66    
+     *, P_LEVELS           !IN    NUMBER OF MODEL LEVELS                   DR151193.67    
+     *, LEN_STASH_U_FLUX   !IN    DIMENSION OF STASH_U_FLUX                DR151193.68    
+     *, LEN_STASH_V_FLUX   !IN    DIMENSION OF STASH_V_FLUX                DR151193.69    
+     *, POINTS_FLUX_U      !IN    NO OF POINTS IN U FLUX FIELD             DR151193.70    
+     *, POINTS_FLUX_V      !IN    NO OF POINTS IN V FLUX FIELD             DR151193.71    
+     *, LEVELS_FLUX        !IN    NO OF FLUX LEVELS                        DR151193.72    
+     *, IRET               ! RETURN CODE      :    IRET=0   NORMAL EXIT    VERTDF1A.56    
+                                                                           VERTDF1A.59    
+      REAL                                                                 VERTDF1A.60    
+     * PSTAR(P_FIELD)         !IN    PRIMARY MODEL ARRAY FOR PSTAR FIELD   VERTDF1A.61    
+     *,U(U_FIELD,P_LEVELS)    !INOUT PRIMARY MODEL ARRAY FOR U FIELD       DR151193.73    
+     *,V(U_FIELD,P_LEVELS)    !INOUT PRIMARY MODEL ARRAY FOR V FIELD       DR151193.74    
+C            AK,BK  DEFINE HYBRID VERTICAL COORDINATES P=A+BP*,            VERTDF1A.64    
+C       DELTA_AK,DELTA_BK  DEFINE LAYER PRESSURE THICKNESS PD=AD+BDP*,     VERTDF1A.65    
+     *,DELTA_AK(P_LEVELS)     !IN    LAYER THICKNESS                       DR151193.75    
+     *,DELTA_BK(P_LEVELS)     !IN    LAYER THICKNESS                       DR151193.76    
+     *,AK (P_LEVELS)          !IN    VALUE AT LAYER CENTRE                 DR151193.77    
+     *,BK (P_LEVELS)          !IN    VALUE AT LAYER CENTRE                 DR151193.78    
+     *,COS_LAT(U_FIELD)       !IN    COS(LAT) AT U POINTS                  VERTDF1A.71    
+     *,LATITUDE_BAND          !IN    LATITUDE(RADIANS)                     VERTDF1A.72    
+     *                        !      WHERE DIFFUSION PRESCRIBED ZERO       VERTDF1A.73    
+     *,VERTICAL_DIFFUSION     !IN    VALUE OF DIFFUSION COEFFICIENT        VERTDF1A.74    
+     *,TIMESTEP               !IN    TIMESTEP                              VERTDF1A.75    
+     *,STASH_U_FLUX(LEN_STASH_U_FLUX,*) !U MOMENTUM FLUX - Diagnostic      DR151193.79    
+     *,STASH_V_FLUX(LEN_STASH_V_FLUX,*) !V MOMENTUM FLUX - Diagnostic      DR151193.80    
+                                                                           VERTDF1A.83    
+C WARNING : Storage is only assigned by the controling routine             VERTDF1A.84    
+C           for the number of levels requested.                            VERTDF1A.85    
+                                                                           VERTDF1A.86    
+      LOGICAL                                                              VERTDF1A.87    
+     * FLUX_UD_ON                !U momentum diagnostic switch             VERTDF1A.88    
+     *,FLUX_VD_ON                !V momentum diagnostic switch             VERTDF1A.89    
+     *,U_LIST(P_LEVELS)          ! List of levels required                 DR151193.81    
+     *,V_LIST(P_LEVELS)          ! List of levels required                 DR151193.82    
+                                                                           VERTDF1A.94    
+C*---------------------------------------------------------------------    VERTDF1A.95    
+                                                                           VERTDF1A.96    
+*IF DEF,MPP                                                                APB1F305.444   
+! Parameters and Common blocks                                             APB1F305.445   
+*CALL PARVARS                                                              APB1F305.446   
+                                                                           GPB1F404.3     
+      INTEGER global_points  ! maximum number of points on any PEs         GPB1F404.4     
+     &,       info           ! GCOM return code                            GPB1F404.5     
+*ENDIF                                                                     APB1F305.447   
+C*L  WORKSPACE USAGE:-------------------------------------------------     VERTDF1A.97    
+C   DEFINE LOCAL WORKSPACE ARRAYS: 4+(LEVEL_END-LEVEL_START+1)*2           VERTDF1A.98    
+                                                                           VERTDF1A.99    
+C    +(LEVEL_END-LEVEL_START)*2                                            DR151193.83    
+                                                                           VERTDF1A.105   
+C   REAL ARRAYS REQUIRED AT FULL FIELD LENGTH                              VERTDF1A.106   
+C   1 INTEGER INDEX ARRAY                                                  VERTDF1A.107   
+                                                                           VERTDF1A.108   
+                                                                           VERTDF1A.126   
+      REAL                                                                 VERTDF1A.127   
+     * PSTAR_UV( ROWS*ROW_LENGTH )   ! INTERPOLATED PSTAR ON UV-GRID       VERTDF1A.128   
+     *,PSTAR_VD( ROWS*ROW_LENGTH )   ! GATHERED INTERPOLATED PSTAR         VERTDF1A.129   
+     *,VERT_DIF_LAT(ROWS*ROW_LENGTH) ! LAT. DEPENDENT DIFFUSION*TIMESTEP   VERTDF1A.130   
+     *,VERT_DIF_VD(ROWS*ROW_LENGTH)  ! GATHERED NON_ZERO DIFFUSION         VERTDF1A.131   
+     *,U_VD(ROWS*ROW_LENGTH*LEVELS_VD)  !GATHERED U                        DR151193.88    
+     *,V_VD(ROWS*ROW_LENGTH*LEVELS_VD)  !GATHERED V                        DR151193.89    
+     *,FLUX_U_DG(POINTS_FLUX_U,LEVELS_FLUX) !GATHERED FLUX                 DR151193.90    
+     *,FLUX_V_DG(POINTS_FLUX_V,LEVELS_FLUX) !GATHERED FLUX                 DR151193.91    
+                                                                           VERTDF1A.134   
+      INTEGER                                                              VERTDF1A.143   
+     * VERT_INDEX(ROWS*ROW_LENGTH)                                         VERTDF1A.144   
+                                                                           VERTDF1A.145   
+                                                                           VERTDF1A.147   
+C*---------------------------------------------------------------------    VERTDF1A.148   
+C                                                                          VERTDF1A.149   
+C*L EXTERNAL SUBROUTINES CALLED---------------------------------------     VERTDF1A.150   
+      EXTERNAL P_TO_UV ,VERT_DIF,TIMER                                     GSS1F402.105   
+C*------------------------------------------------------------------       VERTDF1A.152   
+CL  MAXIMUM VECTOR LENGTH ASSUMED IS (ROWS+1) * ROWLENGTH                  VERTDF1A.153   
+CL---------------------------------------------------------------------    VERTDF1A.154   
+C----------------------------------------------------------------------    VERTDF1A.155   
+C    DEFINE LOCAL VARIABLES                                                VERTDF1A.156   
+      INTEGER                                                              VERTDF1A.157   
+     *  P_POINTS      !     NUMBER OF P POINTS NEEDED                      VERTDF1A.158   
+     *, ROWS_P        !     NUMBER OF P ROWS   NEEDED                      VERTDF1A.159   
+     *, U_POINTS      !     NUMBER OF U POINTS UPDATED                     VERTDF1A.160   
+     *, START_P       !     START POSITION FOR P POINTS NEEDED             VERTDF1A.161   
+     *, START_U       !     START POSITION FOR U POINTS UPDATED            VERTDF1A.162   
+     *, POINTS_VD     !     NUMBER OF POINTS NON-ZERO DIFFUSION COEFFS     DR151193.92    
+                                                                           DR151193.93    
+      REAL                                                                 VERTDF1A.165   
+     *  COS_LAT_BAND    ! COS LAT AT WHICH DIFFUSION SET TO ZERO           VERTDF1A.166   
+     *, COEFF           ! LATITUDE-DEPENDENT DIFFUSION * TIMESTEP          VERTDF1A.167   
+C                                                                          VERTDF1A.168   
+      INTEGER    K,I,II,IK,! LOOP COUNTERS IN ROUTINE                      VERTDF1A.169   
+     *           KOUT_U,KOUT_V                                             VERTDF1A.170   
+C                                                                          VERTDF1A.171   
+                                                                           VERTDF1A.172   
+C-------------------------------------------------------------------       VERTDF1A.173   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       VERTDF1A.174   
+CL    1.     INITIALISATION                                                VERTDF1A.175   
+C--------------------------                                                VERTDF1A.176   
+                                                                           VERTDF1A.177   
+        START_P       = (FIRST_ROW-1)*ROW_LENGTH                           VERTDF1A.178   
+        START_U       = START_P                                            VERTDF1A.179   
+*IF -DEF,MPP                                                               APB1F305.448   
+        ROWS_P        = ROWS+1                                             VERTDF1A.180   
+*ELSE                                                                      APB1F305.449   
+      IF (atbase) THEN                                                     APB1F305.450   
+        ROWS_P=ROWS                                                        APB1F305.451   
+      ELSE                                                                 APB1F305.452   
+        ROWS_P=ROWS+1                                                      APB1F305.453   
+      ENDIF                                                                APB1F305.454   
+*ENDIF                                                                     APB1F305.455   
+        P_POINTS      = (ROWS_P)*ROW_LENGTH                                VERTDF1A.181   
+*IF -DEF,MPP                                                               APB1F305.456   
+        U_POINTS      = ROWS*ROW_LENGTH                                    VERTDF1A.182   
+*ELSE                                                                      APB1F305.457   
+      IF (atbase) THEN                                                     APB1F305.458   
+        U_POINTS=(ROWS-1)*ROW_LENGTH                                       APB1F305.459   
+      ELSE                                                                 APB1F305.460   
+        U_POINTS=ROWS*ROW_LENGTH                                           APB1F305.461   
+      ENDIF                                                                APB1F305.462   
+*ENDIF                                                                     APB1F305.463   
+                                                                           VERTDF1A.183   
+C------------------------------------------------------------------        VERTDF1A.184   
+CL    1.1  CALCULATE LATITUDE-DEPENDENT DIFFUSION COEFFICIENTS*TIMESTEP    VERTDF1A.185   
+CL         AND DETERMINE WHICH POINTS DIFFUSION IS APPLIED                 VERTDF1A.186   
+C------------------------------------------------------------------        VERTDF1A.187   
+                                                                           VERTDF1A.188   
+        COS_LAT_BAND = COS(LATITUDE_BAND)                                  VERTDF1A.189   
+        COEFF = VERTICAL_DIFFUSION * TIMESTEP / (1.- COS_LAT_BAND)         VERTDF1A.190   
+C                                                                          VERTDF1A.191   
+        DO I=1,U_POINTS                                                    VERTDF1A.192   
+         VERT_DIF_LAT(I) = COEFF * ( COS_LAT(START_U+I) - COS_LAT_BAND)    VERTDF1A.193   
+        END DO                                                             VERTDF1A.194   
+CL      SET UP INDEX FOR POINTS WITH NON-ZERO DIFFUSION                    VERTDF1A.195   
+                                                                           VERTDF1A.196   
+                                                                           VERTDF1A.204   
+        POINTS_VD = 0                                                      DR151193.95    
+        II = 1                                                             VERTDF1A.206   
+        DO I=1,U_POINTS                                                    VERTDF1A.207   
+          IF(VERT_DIF_LAT(I).GT.0) THEN                                    VERTDF1A.208   
+            VERT_INDEX(II)=I                                               VERTDF1A.209   
+            II=II + 1                                                      VERTDF1A.210   
+            POINTS_VD=POINTS_VD + 1                                        DR151193.96    
+          END IF                                                           VERTDF1A.212   
+       END DO                                                              VERTDF1A.213   
+                                                                           VERTDF1A.214   
+*IF DEF,MPP                                                                GPB1F404.6     
+      global_points=POINTS_VD                                              GPB1F404.7     
+                                                                           GPB1F404.8     
+      CALL GC_IMAX(1,nproc,info,global_points)                             GPB1F404.9     
+                                                                           GPB1F404.10    
+*ENDIF                                                                     GPB1F404.11    
+                                                                           VERTDF1A.216   
+CL      TEST FOR NO NON-ZERO DIFFUSION                                     VERTDF1A.217   
+        IF(POINTS_VD.EQ.0) THEN                                            DR151193.97    
+*IF DEF,MPP                                                                GPB1F404.12    
+        IF(global_points.EQ.0) THEN                                        GPB1F404.13    
+*ENDIF                                                                     GPB1F404.14    
+      WRITE(6,*) ' *************VERT_DIF WARNING*******************'       GIE0F403.667   
+      WRITE(6,*) ' * NO POINTS WITH NON_ZERO DIFFUSION COEFFICIENT*'       GIE0F403.668   
+      WRITE(6,*) ' *************VERT_DIF WARNING*******************'       GIE0F403.669   
+*IF DEF,MPP                                                                GPB1F404.15    
+        ENDIF                                                              GPB1F404.16    
+*ENDIF                                                                     GPB1F404.17    
+           IRET = 0                                                        VERTDF1A.222   
+           GOTO 1000                                                       VERTDF1A.223   
+        END IF                                                             VERTDF1A.224   
+                                                                           VERTDF1A.225   
+C------------------------------------------------------------------        VERTDF1A.226   
+CL    1.2 INTERPOLATE PSTAR TO UV GRID                                     VERTDF1A.227   
+C------------------------------------------------------------------        VERTDF1A.228   
+                                                                           VERTDF1A.229   
+*IF DEF,SCMA                                                               AJC1F405.40    
+                                                                           VERTDF1A.231   
+      DO I=1,U_POINTS                                                      VERTDF1A.232   
+       PSTAR_UV(I) =PSTAR(I)                                               VERTDF1A.233   
+      END DO                                                               VERTDF1A.234   
+                                                                           VERTDF1A.235   
+*ELSE                                                                      VERTDF1A.236   
+                                                                           VERTDF1A.237   
+      CALL P_TO_UV(PSTAR(START_P+1),PSTAR_UV,P_POINTS,U_POINTS,            VERTDF1A.238   
+     * ROW_LENGTH,ROWS_P)                                                  VERTDF1A.239   
+                                                                           VERTDF1A.240   
+*ENDIF                                                                     VERTDF1A.241   
+                                                                           VERTDF1A.242   
+C------------------------------------------------------------------        VERTDF1A.243   
+CL    2. GATHER PSTAR,WINDS AND DIFFUSION COEFFICIENT AT POINTS            VERTDF1A.244   
+CL       WHERE NON-ZERO DIFFUSION                                          VERTDF1A.245   
+C------------------------------------------------------------------        VERTDF1A.246   
+                                                                           VERTDF1A.247   
+      DO I=1,POINTS_VD                                                     DR151193.98    
+       PSTAR_VD(I)  = PSTAR_UV(VERT_INDEX(I))                              VERTDF1A.249   
+       VERT_DIF_VD(I)  = VERT_DIF_LAT(VERT_INDEX(I))                       VERTDF1A.250   
+      END DO                                                               VERTDF1A.251   
+                                                                           VERTDF1A.252   
+CL    LOOP OVER LEVELS                                                     VERTDF1A.253   
+                                                                           VERTDF1A.254   
+      DO K = LEVEL_START, LEVEL_END                                        VERTDF1A.255   
+         IK = (K-LEVEL_START)*POINTS_VD                                    DR151193.99    
+         DO I=1,POINTS_VD                                                  DR151193.100   
+           U_VD(I+IK)=U(START_U+VERT_INDEX(I),K)                           VERTDF1A.258   
+           V_VD(I+IK)=V(START_U+VERT_INDEX(I),K)                           VERTDF1A.259   
+         END DO                                                            VERTDF1A.260   
+      END DO                                                               VERTDF1A.261   
+      LEVELS_VD=LEVEL_END-LEVEL_START+1                                    VERTDF1A.262   
+                                                                           VERTDF1A.263   
+CL  3.  CALL VERT_DIF AND UPDATE WINDS                                     VERTDF1A.264   
+                                                                           VERTDF1A.265   
+      CALL VERT_DIF(PSTAR_VD,U_VD,V_VD,LEVELS_VD,POINTS_VD,                DR151193.101   
+     &              AK(LEVEL_START),BK(LEVEL_START),                       VERTDF1A.267   
+     &              DELTA_AK(LEVEL_START),DELTA_BK(LEVEL_START),           VERTDF1A.268   
+     &              VERT_DIF_VD,FLUX_U_DG,FLUX_V_DG,                       DR151193.102   
+     &              POINTS_FLUX_U,POINTS_FLUX_V,LEVELS_FLUX,               DR151193.103   
+     &              FLUX_UD_ON,FLUX_VD_ON)                                 DR151193.104   
+                                                                           VERTDF1A.284   
+      DO K = LEVEL_START, LEVEL_END                                        VERTDF1A.285   
+                                                                           VERTDF1A.286   
+         IK = (K-LEVEL_START)*POINTS_VD                                    DR151193.105   
+                                                                           VERTDF1A.295   
+         DO I=1,POINTS_VD                                                  DR151193.106   
+           U(START_U+VERT_INDEX(I),K)  = U_VD(I+IK)                        VERTDF1A.299   
+           V(START_U+VERT_INDEX(I),K)  = V_VD(I+IK)                        VERTDF1A.300   
+         END DO                                                            DR151193.107   
+                                                                           VERTDF1A.301   
+      END DO                                                               DR151193.108   
+                                                                           VERTDF1A.303   
+      IF (FLUX_UD_ON .OR. FLUX_VD_ON) THEN                                 DR151193.109   
+                                                                           VERTDF1A.312   
+        KOUT_U=0                                                           DR151193.110   
+        KOUT_V=0                                                           DR151193.111   
+                                                                           VERTDF1A.314   
+        DO K = LEVEL_START,LEVEL_END-1                                     DR151193.112   
+                                                                           DR151193.113   
+          IF (U_LIST(K)) THEN                                              DR151193.114   
+            KOUT_U=KOUT_U+1                                                DR151193.115   
+          END IF                                                           DR151193.116   
+          IF (V_LIST(K)) THEN                                              DR151193.117   
+            KOUT_V=KOUT_V+1                                                DR151193.118   
+          END IF                                                           DR151193.119   
+                                                                           DR151193.120   
+          IK = K-LEVEL_START+1                                             DR151193.121   
+                                                                           DR151193.122   
+          DO I=1,POINTS_VD                                                 DR151193.123   
+                                                                           DR151193.124   
+          IF (FLUX_UD_ON .AND. U_LIST(K)) THEN                             DR151193.125   
+           STASH_U_FLUX(START_U+VERT_INDEX(I),KOUT_U) = FLUX_U_DG(I,IK)    DR151193.126   
+          ENDIF                                                            DR151193.127   
+          IF (FLUX_VD_ON .AND. V_LIST(K)) THEN                             DR151193.128   
+           STASH_V_FLUX(START_U+VERT_INDEX(I),KOUT_V) = FLUX_V_DG(I,IK)    DR151193.129   
+          ENDIF                                                            DR151193.130   
+                                                                           DR151193.131   
+          ENDDO                                                            DR151193.132   
+                                                                           DR151193.133   
+        ENDDO                                                              DR151193.134   
+                                                                           DR151193.135   
+      ENDIF                                                                DR151193.136   
+                                                                           VERTDF1A.317   
+      IRET=0                                                               VERTDF1A.318   
+                                                                           VERTDF1A.319   
+1000  CONTINUE                                                             VERTDF1A.320   
+      RETURN                                                               VERTDF1A.321   
+      END                                                                  VERTDF1A.322   
+CLL  SUBROUTINE VERT_DIF--------------------------------------------       VERTDF1A.323   
+CLL                                                                        VERTDF1A.324   
+CLL  PURPOSE:   TO APPLY VERTICAL DIFFUSION TO WIND COMPONENTS             VERTDF1A.325   
+CLL             WITHIN A LATITUDE BAND SYMMETRIC ABOUT THE EQUATOR.        VERTDF1A.326   
+CLL             THE DIFFUSION COEFFICIENT TAILS OFF AWAY FROM THE          VERTDF1A.327   
+CLL             EQUATOR AND IS ZERO OUTSIDE THE BAND.                      VERTDF1A.328   
+CLL             THIS ROUTINE APPLIES A PRECALCULATED                       VERTDF1A.329   
+CLL             DIFFUSION COEFFICIENT TO ALL POINTS PASSED TO IT           VERTDF1A.330   
+CLL  SUITABLE FOR SINGLE COLUMN USE                                        VERTDF1A.331   
+CLL  SUITABLE FOR ROTATED GRIDS                                            VERTDF1A.332   
+CLL  FURTHER ALTERATIONS MAY BE REQUIRED FOR AUTOTASKING EFFICIENCY        VERTDF1A.333   
+CLL  ORIGINAL VERSION FOR CRAY Y-MP                                        VERTDF1A.334   
+CLL                                                                        VERTDF1A.335   
+CLL  WRITTEN BY C. WILSON                                                  VERTDF1A.336   
+CLL                                                                        VERTDF1A.337   
+CLL  Model            Modification history from model version 3.0:         VERTDF1A.338   
+CLL version  Date                                                          VERTDF1A.339   
+CLL                                                                        VERTDF1A.340   
+CLL   3.3   15/11/93  Removal of DIAG07 directive. New arguments to        DR151193.137   
+CLL                   dimension diagnostic arrays. D. Robinson.            DR151193.138   
+CLL   4.5    Jul. 98  Kill the IBM specific lines (JCThil)                 AJC1F405.41    
+CLL                                                                        DR151193.139   
+CLL  PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,        VERTDF1A.341   
+CLL  VERSION 1, DATED 12/09/89                                             VERTDF1A.342   
+CLL                                                                        VERTDF1A.343   
+CLL  LOGICAL COMPONENTS COVERED: P21                                       VERTDF1A.344   
+CLL                                                                        VERTDF1A.345   
+CLL  PROJECT TASK:                                                         VERTDF1A.346   
+CLL                                                                        VERTDF1A.347   
+CLL  DOCUMENTATION:        THE EQUATIONS USED ARE (1) TO (4)               VERTDF1A.348   
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER NO.P21     VERTDF1A.349   
+CLL                        C. WILSON, VERSION 2,DATED 30/10/89             VERTDF1A.350   
+CLLEND-------------------------------------------------------------        VERTDF1A.351   
+                                                                           VERTDF1A.352   
+C                                                                          VERTDF1A.353   
+C*L  ARGUMENTS:---------------------------------------------------         VERTDF1A.354   
+      SUBROUTINE VERT_DIF                                                  VERTDF1A.355   
+     *  (PSTAR,U,V,LEVELS_VD,POINTS_VD,AK,BK,DELTA_AK,DELTA_BK,            DR151193.140   
+     *   DIFFUSION_K,FLUX_U_DG,FLUX_V_DG,POINTS_FLUX_U,POINTS_FLUX_V,      DR151193.141   
+     *   LEVELS_FLUX,FLUX_UD_ON,FLUX_VD_ON)                                DR151193.142   
+                                                                           VERTDF1A.367   
+      IMPLICIT NONE                                                        VERTDF1A.368   
+                                                                           VERTDF1A.369   
+      INTEGER                                                              VERTDF1A.370   
+     *  POINTS_VD          !IN    NUMBER OF POINTS TO BE UPDATED           DR151193.143   
+     *, LEVELS_VD          !IN    NUMBER OF LEVELS TO BE UPDATED           VERTDF1A.372   
+     *, POINTS_FLUX_U      !IN    NUMBER OF LEVELS TO BE UPDATED           DR151193.144   
+     *, POINTS_FLUX_V      !IN    NUMBER OF LEVELS TO BE UPDATED           DR151193.145   
+     *, LEVELS_FLUX        !IN    NUMBER OF LEVELS TO BE UPDATED           DR151193.146   
+                                                                           VERTDF1A.375   
+      REAL                                                                 VERTDF1A.376   
+     * PSTAR(POINTS_VD)       !IN    PSTAR FIELD                           DR151193.147   
+     *,U(POINTS_VD,LEVELS_VD) !INOUT ARRAY FOR U FIELD                     DR151193.148   
+     *,V(POINTS_VD,LEVELS_VD) !INOUT ARRAY FOR V FIELD                     DR151193.149   
+C            AK,BK  DEFINE HYBRID VERTICAL COORDINATES P=A+BP*,            VERTDF1A.380   
+C       DELTA_AK,DELTA_BK  DEFINE LAYER PRESSURE THICKNESS PD=AD+BDP*,     VERTDF1A.381   
+     *,DELTA_AK(LEVELS_VD)     !IN    LAYER THICKNESS                      DR151193.150   
+     *,DELTA_BK(LEVELS_VD)     !IN    LAYER THICKNESS                      VERTDF1A.384   
+     *,AK (LEVELS_VD)          !IN    VALUE AT LAYER CENTRE                VERTDF1A.385   
+     *,BK (LEVELS_VD)          !IN    VALUE AT LAYER CENTRE                VERTDF1A.386   
+     *,DIFFUSION_K(POINTS_VD)  ! LAT. DEPENDENT DIFFUSION*TIMESTEP         DR151193.151   
+     *,FLUX_U_DG(POINTS_FLUX_U,LEVELS_FLUX) ! U MOMENTUM FLUX              DR151193.152   
+     *                                      ! DIAGNOSTIC                   DR151193.153   
+     *,FLUX_V_DG(POINTS_FLUX_V,LEVELS_FLUX) ! V MOMENTUM FLUX              DR151193.154   
+     *                                      ! DIAGNOSTIC                   DR151193.155   
+      LOGICAL                                                              VERTDF1A.395   
+     * FLUX_UD_ON                !U momentum diagnostic switch             VERTDF1A.396   
+     *,FLUX_VD_ON                !V momentum diagnostic switch             VERTDF1A.397   
+                                                                           VERTDF1A.400   
+C*---------------------------------------------------------------------    VERTDF1A.401   
+                                                                           VERTDF1A.402   
+C*L  WORKSPACE USAGE:-------------------------------------------------     VERTDF1A.403   
+C   DEFINE LOCAL WORKSPACE ARRAYS: 4 REAL ARRAYS REQUIRED                  VERTDF1A.404   
+C   AT FULL FIELD LENGTH (=POINTS)                                         VERTDF1A.405   
+C                                                                          VERTDF1A.406   
+                                                                           VERTDF1A.412   
+      REAL                                                                 VERTDF1A.413   
+     * FLUX_U(POINTS_VD,2)           ! DOWNWARD FLUXES U-MOMENTUM          DR151193.156   
+     *,FLUX_V(POINTS_VD,2)           ! DOWNWARD FLUXES V-MOMENTUM          DR151193.157   
+                                                                           VERTDF1A.416   
+                                                                           VERTDF1A.418   
+C*---------------------------------------------------------------------    VERTDF1A.419   
+C                                                                          VERTDF1A.420   
+C*L EXTERNAL SUBROUTINES CALLED---------------------------------------     VERTDF1A.421   
+C     NONE                                                                 VERTDF1A.422   
+C*------------------------------------------------------------------       VERTDF1A.423   
+CL  MAXIMUM VECTOR LENGTH ASSUMED =POINTS                                  VERTDF1A.424   
+CL---------------------------------------------------------------------    VERTDF1A.425   
+C----------------------------------------------------------------------    VERTDF1A.426   
+C    DEFINE LOCAL VARIABLES                                                VERTDF1A.427   
+      REAL                                                                 VERTDF1A.428   
+     *  DEL_AK          ! DIFFERENCE OF AK ACROSS FULL-LEVELS              VERTDF1A.429   
+     *, DEL_BK          ! DIFFERENCE OF BK ACROSS FULL-LEVELS              VERTDF1A.430   
+     *,DELTA_P          ! P(K+1/2) - P(K-1/2)                              VERTDF1A.431   
+     *,DELTA_PL         ! P(K+1)   - P(K)                                  VERTDF1A.432   
+C                                                                          VERTDF1A.433   
+      INTEGER    K,I      ! LOOP COUNTERS IN ROUTINE                       VERTDF1A.434   
+      INTEGER    KL,KU,KK ! LEVEL COUNTERS IN ROUTINE                      VERTDF1A.435   
+C                                                                          VERTDF1A.436   
+                                                                           VERTDF1A.437   
+C-------------------------------------------------------------------       VERTDF1A.438   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       VERTDF1A.439   
+C------------------------------------------------------------------        VERTDF1A.440   
+CL    1. CALCULATE VERTICAL FLUX OF MOMENTUM , EQN(1) DOCUMENTATION        VERTDF1A.441   
+CL       AND UPDATE U,V                                                    VERTDF1A.442   
+C------------------------------------------------------------------        VERTDF1A.443   
+                                                                           VERTDF1A.444   
+      KL = 1                                                               VERTDF1A.445   
+      KU = 2                                                               VERTDF1A.446   
+      DO I=1,POINTS_VD                                                     DR151193.158   
+       FLUX_U(I,KL) = 0.0                                                  VERTDF1A.448   
+       FLUX_V(I,KL) = 0.0                                                  VERTDF1A.449   
+      END DO                                                               VERTDF1A.450   
+                                                                           VERTDF1A.451   
+CL    LOOP OVER LEVELS                                                     VERTDF1A.452   
+                                                                           VERTDF1A.453   
+      DO K = 1,LEVELS_VD-1                                                 VERTDF1A.454   
+                                                                           VERTDF1A.455   
+CL      1.1  CALCULATE DELTA_P(K) AND DELTA_PL(K)                          VERTDF1A.456   
+        DEL_AK=AK(K+1) - AK(K)                                             VERTDF1A.457   
+        DEL_BK=BK(K+1) - BK(K)                                             VERTDF1A.458   
+                                                                           VERTDF1A.459   
+        DO I=1,POINTS_VD                                                   DR151193.159   
+          DELTA_P=DELTA_AK(K)+DELTA_BK(K)*PSTAR(I)                         VERTDF1A.461   
+          DELTA_PL=DEL_AK+DEL_BK*PSTAR(I)                                  VERTDF1A.462   
+                                                                           VERTDF1A.463   
+CL      1.2  COMPUTE FLUX (+VE UP) AND INCREMENT                           VERTDF1A.464   
+                                                                           VERTDF1A.465   
+          FLUX_U(I,KU)=(U(I,K+1) - U(I,K))*DIFFUSION_K(I)/DELTA_PL         VERTDF1A.466   
+          FLUX_V(I,KU)=(V(I,K+1) - V(I,K))*DIFFUSION_K(I)/DELTA_PL         VERTDF1A.467   
+                                                                           VERTDF1A.468   
+          U(I,K) = U(I,K) + (FLUX_U(I,KU) - FLUX_U(I,KL))/DELTA_P          VERTDF1A.476   
+          V(I,K) = V(I,K) + (FLUX_V(I,KU) - FLUX_V(I,KL))/DELTA_P          VERTDF1A.477   
+                                                                           DR151193.160   
+        END DO                                                             VERTDF1A.478   
+                                                                           DR151193.161   
+        IF (FLUX_UD_ON) THEN   !  SF(201,7)                                DR151193.162   
+          DO I=1,POINTS_VD                                                 DR151193.163   
+            FLUX_U_DG(I,K)= FLUX_U(I,KU)                                   DR151193.164   
+          ENDDO                                                            DR151193.165   
+        ENDIF                                                              DR151193.166   
+        IF (FLUX_VD_ON) THEN   !  SF(202,7)                                DR151193.167   
+          DO I=1,POINTS_VD                                                 DR151193.168   
+            FLUX_V_DG(I,K)= FLUX_V(I,KU)                                   DR151193.169   
+          ENDDO                                                            DR151193.170   
+        ENDIF                                                              DR151193.171   
+                                                                           VERTDF1A.479   
+C       SWAP STORAGE LOCATIONS FOR LOWER AND UPPER FLUXES                  VERTDF1A.480   
+        KK = KL                                                            VERTDF1A.481   
+        KL = KU                                                            VERTDF1A.482   
+        KU = KK                                                            VERTDF1A.483   
+                                                                           VERTDF1A.484   
+      END DO                                                               VERTDF1A.485   
+CL  END LOOP OVER LEVELS                                                   VERTDF1A.486   
+                                                                           VERTDF1A.487   
+CL    LAST LEVEL                                                           VERTDF1A.488   
+      K=LEVELS_VD                                                          VERTDF1A.489   
+      DO I=1,POINTS_VD                                                     DR151193.172   
+        DELTA_P=DELTA_AK(K)+DELTA_BK(K)*PSTAR(I)                           VERTDF1A.491   
+        U(I,K) = U(I,K) - FLUX_U(I,KL)/DELTA_P                             VERTDF1A.492   
+        V(I,K) = V(I,K) - FLUX_V(I,KL)/DELTA_P                             VERTDF1A.493   
+      END DO                                                               VERTDF1A.494   
+                                                                           VERTDF1A.495   
+      RETURN                                                               VERTDF1A.496   
+      END                                                                  VERTDF1A.497   
+*ENDIF                                                                     VERTDF1A.498   

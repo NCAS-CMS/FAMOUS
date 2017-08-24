@@ -1,0 +1,588 @@
+*IF DEF,A10_1C,AND,-DEF,SCMA                                               AJC0F405.260   
+C ******************************COPYRIGHT******************************    ADJCTL1C.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    ADJCTL1C.4     
+C                                                                          ADJCTL1C.5     
+C Use, duplication or disclosure of this code is subject to the            ADJCTL1C.6     
+C restrictions as set forth in the contract.                               ADJCTL1C.7     
+C                                                                          ADJCTL1C.8     
+C                Meteorological Office                                     ADJCTL1C.9     
+C                London Road                                               ADJCTL1C.10    
+C                BRACKNELL                                                 ADJCTL1C.11    
+C                Berkshire UK                                              ADJCTL1C.12    
+C                RG12 2SZ                                                  ADJCTL1C.13    
+C                                                                          ADJCTL1C.14    
+C If no contract has been raised with this copy of the code, the use,      ADJCTL1C.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      ADJCTL1C.16    
+C to do so must first be obtained in writing from the Head of Numerical    ADJCTL1C.17    
+C Modelling at the above address.                                          ADJCTL1C.18    
+C ******************************COPYRIGHT******************************    ADJCTL1C.19    
+C                                                                          ADJCTL1C.20    
+CLL   SUBROUTINE ADJ_CTL ---------------------------------------------     ADJCTL1C.21    
+CLL                                                                        ADJCTL1C.22    
+CLL   PURPOSE:   INTEGRATES SURFACE PRESSURE, POTENTIAL TEMPERATURE,       ADJCTL1C.23    
+CLL              AND HORIZONTAL WIND COMPONENTS THROUGH A SPECIFIED        ADJCTL1C.24    
+CLL              NUMBER OF ADJUSTMENT STEPS. AT THE END OF THE ROUTINE     ADJCTL1C.25    
+CLL              UPDATED VALUES OF ALL THESE FIELDS ALONG WITH THE         ADJCTL1C.26    
+CLL              UPDATED EXNER PRESSURE ARE HELD IN THE ARGUMENTS.         ADJCTL1C.27    
+CLL              FOURIER FILTERING IS PERFORMED UNDER THE                  ADJCTL1C.28    
+CLL              UPDATE IDENTIFIER 'GLOBAL'. ONE MORE PRESSURE ROW IS      ADJCTL1C.29    
+CLL              UPDATED THAN VELOCITY ROW.                                ADJCTL1C.30    
+CLL              FIRST_ROW IS NORTHERNMOST PRESSURE ROW TO BE UPDATED.     ADJCTL1C.31    
+CLL              FIRST_U_ROW UPDATED IS THE FIRST ONE TO THE SOUTH OF      ADJCTL1C.32    
+CLL              THE FIRST P ROW.                                          ADJCTL1C.33    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  ADJCTL1C.34    
+CLL   WAS VERSION FOR CRAY Y-MP                                            ADJCTL1C.35    
+CLL   WRITTEN BY M.H MAWSON.                                               ADJCTL1C.36    
+CLL                                                                        ADJCTL1C.37    
+CLL  MODEL            MODIFICATION HISTORY:                                ADJCTL1C.38    
+CLL VERSION  DATE                                                          ADJCTL1C.39    
+!LL   4.4   11/08/97  New version optimised for T3E.                       ADJCTL1C.40    
+!LL                   Not bit-reproducible with ADJCTL1A.                  ADJCTL1C.41    
+CLL   4.4   11/08/97  Remove extra swapbound by transferring it from U     ADJCTL1C.42    
+CLL                   and V to RECIP_RS*DELTAP_UV array. Need to           ADJCTL1C.43    
+CLL                   initialise variables such as V_MEAN to zero          ADJCTL1C.44    
+CLL                   removed. T3E version of P_EXNER calculation          ADJCTL1C.45    
+CLL                   reworked for efficiency gains.                       ADJCTL1C.46    
+CLL                   A. Dickinson                                         ADJCTL1C.47    
+!LL   4.5    21/08/98  Comment out cdir$ cache_bypass directives due       GSM4F405.16    
+!LL                    to t3e hardware error with new compiler.            GSM4F405.17    
+!LL                    S.D.Mullerworth                                     GSM4F405.18    
+!LL   4.5    28/10/98  Corrected error in loop bounds for non-T3E code     GPB0F405.206   
+!LL   4.5    23/10/98  Introduce Single Column Model. JC Thil              AJC0F405.259   
+CLL                                                                        ADJCTL1C.48    
+CLL   PROGRAMMING STANDARD:                                                ADJCTL1C.49    
+CLL   SYSTEM COMPONENTS COVERED: P11                                       ADJCTL1C.50    
+CLL   SYSTEM TASK: P1                                                      ADJCTL1C.51    
+CLL   DOCUMENTATION:  THE EQUATIONS USED ARE (23) TO (30)                  ADJCTL1C.52    
+CLL                   IN UNIFIED MODEL DOCUMENTATION PAPER NO. 10          ADJCTL1C.53    
+CLL                   M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON,               ADJCTL1C.54    
+CLLEND-------------------------------------------------------------        ADJCTL1C.55    
+                                                                           ADJCTL1C.56    
+C*L   ARGUMENTS:---------------------------------------------------        ADJCTL1C.57    
+                                                                           ADJCTL1C.58    
+      SUBROUTINE ADJ_CTL                                                   ADJCTL1C.59    
+     1  (U,V,THETA,Q,PSTAR,OROG_HEIGHT,RS,U_MEAN,V_MEAN,P_EXNER,           ADJCTL1C.60    
+     2   ETADOT_MEAN,PSTAR_OLD,COS_P_LATITUDE,COS_U_LATITUDE,              ADJCTL1C.61    
+     3   SEC_P_LATITUDE,SEC_U_LATITUDE,TAN_U_LATITUDE,F1,F2,F3,            ADJCTL1C.62    
+     4   LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,AK,BK,DELTA_AK,      ADJCTL1C.63    
+     5   DELTA_BK,THETA_REF,ADJUSTMENT_TIMESTEP,ADJUSTMENT_STEPS,          ADJCTL1C.64    
+     6   NORTHERN_FILTERED_P_ROW,SOUTHERN_FILTERED_P_ROW,ROW_LENGTH,       ADJCTL1C.65    
+     7   P_LEVELS,Q_LEVELS,                                                ADJCTL1C.66    
+*CALL ARGFLDPT                                                             ADJCTL1C.67    
+     7   P_FIELD,U_FIELD,AKH,BKH,                                          ADJCTL1C.68    
+     8   AKH_TO_THE_KAPPA,BKH_TO_THE_KAPPA,AK_TO_THE_KAPPA,                ADJCTL1C.69    
+     9   BK_TO_THE_KAPPA,COS_U_LONGITUDE,                                  ADJCTL1C.70    
+     *   SIN_U_LONGITUDE,TRIGS,IFAX,FILTER_WAVE_NUMBER_P_ROWS,             ADJCTL1C.71    
+     *   FILTER_WAVE_NUMBER_U_ROWS,ERROR_CODE,ERROR_MESSAGE,               ADJCTL1C.72    
+     & L_NEG_PSTAR,PHI_OUT,L_PHI_OUT,ADJ_TIME_SMOOTHING_WEIGHT,            ADJCTL1C.73    
+     & ADJ_TIME_SMOOTHING_COEFF,LLINTS,LWHITBROM)                          ADJCTL1C.74    
+                                                                           ADJCTL1C.75    
+      IMPLICIT NONE                                                        ADJCTL1C.76    
+                                                                           ADJCTL1C.77    
+      LOGICAL                                                              ADJCTL1C.78    
+     *  L_NEG_PSTAR    !IN SWITCH, IF TRUE THEN NEGATIVE PSTAR VALUES      ADJCTL1C.79    
+     *                 ! WILL BE DETECTED AND OUTPUT.                      ADJCTL1C.80    
+     *, L_PHI_OUT      !IN. IF TRUE THEN PHI REQUIRED AS OUTPUT.           ADJCTL1C.81    
+     *, LLINTS         !Logical switch for linear TS                       ADJCTL1C.82    
+     *, LWHITBROM      !Logical switch for White & Bromley terms           ADJCTL1C.83    
+                                                                           ADJCTL1C.84    
+      INTEGER                                                              ADJCTL1C.85    
+     *  P_FIELD            !IN DIMENSION OF FIELDS ON PRESSSURE GRID.      ADJCTL1C.86    
+     *, U_FIELD            !IN DIMENSION OF FIELDS ON VELOCITY GRID        ADJCTL1C.87    
+     *, P_LEVELS           !IN NUMBER OF PRESSURE LEVELS TO BE UPDATED.    ADJCTL1C.88    
+     *, Q_LEVELS           !IN NUMBER OF MOIST LEVELS TO BE UPDATED.       ADJCTL1C.89    
+     *, ROW_LENGTH         !IN    NUMBER OF POINTS PER ROW                 ADJCTL1C.90    
+     *, ADJUSTMENT_STEPS   !IN NUMBER OF ADJUSTMENT STEPS                  ADJCTL1C.91    
+! All TYPFLDPT arguments are intent IN                                     ADJCTL1C.92    
+*CALL TYPFLDPT                                                             ADJCTL1C.93    
+                                                                           ADJCTL1C.94    
+      INTEGER                                                              ADJCTL1C.95    
+     *  ERROR_CODE         !INOUT. 0 ON ENTRY. NON-ZERO ON OUT IF          ADJCTL1C.96    
+     *                     ! ABNORMAL RESULT OBTAINED.                     ADJCTL1C.97    
+                                                                           ADJCTL1C.98    
+      CHARACTER*80 ERROR_MESSAGE                                           ADJCTL1C.99    
+                                                                           ADJCTL1C.100   
+      INTEGER                                                              ADJCTL1C.101   
+     *  NORTHERN_FILTERED_P_ROW !IN P ROW ON WHICH FILTERING STOPS         ADJCTL1C.102   
+     *                          ! MOVING TOWARDS EQUATOR                   ADJCTL1C.103   
+     *, SOUTHERN_FILTERED_P_ROW !IN P ROW ON WHICH FILTERING STARTS        ADJCTL1C.104   
+     *                          ! AGAIN MOVING TOWARDS SOUTH POLE          ADJCTL1C.105   
+     &, FILTER_WAVE_NUMBER_P_ROWS(GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH)        ADJCTL1C.106   
+     &               ! LAST WAVE NUMBER NOT TO BE CHOPPED ON A P ROW       ADJCTL1C.107   
+     &, FILTER_WAVE_NUMBER_U_ROWS(GLOBAL_U_FIELD/GLOBAL_ROW_LENGTH)        ADJCTL1C.108   
+     &               ! LAST WAVE NUMBER NOT TO BE CHOPPED ON A U ROW       ADJCTL1C.109   
+     *, IFAX(10)           !IN HOLDS FACTORS OF ROW_LENGTH USED BY         ADJCTL1C.110   
+     *                     ! FILTERING.                                    ADJCTL1C.111   
+     *,ADJ_TIME_SMOOTHING_WEIGHT(ADJUSTMENT_STEPS) !IN COEFFICIENTS FOR    ADJCTL1C.112   
+     *                         ! FINITE DIFFERENCE SMOOTHING DERIVATIVE    ADJCTL1C.113   
+                                                                           ADJCTL1C.114   
+      REAL                                                                 ADJCTL1C.115   
+     * U(U_FIELD,P_LEVELS)    !INOUT U FIELD                               ADJCTL1C.116   
+     *,V(U_FIELD,P_LEVELS)    !INOUT V FIELD                               ADJCTL1C.117   
+     *,THETA(P_FIELD,P_LEVELS)!INOUT THETA FIELD                           ADJCTL1C.118   
+     *,P_EXNER(P_FIELD,P_LEVELS+1)!INOUT EXNER PRESSURE FIELD.             ADJCTL1C.119   
+     *,Q(P_FIELD,Q_LEVELS)    !INOUT Q FIELD                               ADJCTL1C.120   
+     *,PSTAR(P_FIELD)         !INOUT PSTAR FIELD                           ADJCTL1C.121   
+                                                                           ADJCTL1C.122   
+      REAL                                                                 ADJCTL1C.123   
+     * U_MEAN(U_FIELD,P_LEVELS) !OUT HOLDS MASS-WEIGHTED U                 ADJCTL1C.124   
+     *                        !  AVERAGED OVER ADJUSTMENT STEPS.           ADJCTL1C.125   
+     *,V_MEAN(U_FIELD,P_LEVELS) !OUT HOLDS MASS-WEIGHTED V*COS(PHI)        ADJCTL1C.126   
+     *                        !  AVERAGED OVER ADJUSTMENT STEPS.           ADJCTL1C.127   
+     *,ETADOT_MEAN(P_FIELD,P_LEVELS) !OUT HOLDS MASS-WEIGHTED VERTICAL     ADJCTL1C.128   
+     *                        ! VELOCITY AVERAGED OVER ADJUSTMENT          ADJCTL1C.129   
+     *                        ! STEPS.                                     ADJCTL1C.130   
+     *,PSTAR_OLD(P_FIELD)     !OUT HOLDS VALUE OF PSTAR ON PREVIOUS        ADJCTL1C.131   
+     *                        ! TIMESTEP                                   ADJCTL1C.132   
+     *,RS(P_FIELD,P_LEVELS)   !OUT RS FIELD                                ADJCTL1C.133   
+     *,PHI_OUT(P_FIELD,P_LEVELS) !OUT. HOLDS PHI IF DIAGNOSTIC             ADJCTL1C.134   
+     *                           !     REQUIRED.                           ADJCTL1C.135   
+                                                                           ADJCTL1C.136   
+      REAL                                                                 ADJCTL1C.137   
+     * DELTA_AK(P_LEVELS)       !IN    LAYER THICKNESS                     ADJCTL1C.138   
+     *,DELTA_BK(P_LEVELS)       !IN    LAYER THICKNESS                     ADJCTL1C.139   
+     *,AK(P_LEVELS)             !IN    VALUE OF A AT P POINTS              ADJCTL1C.140   
+     *,BK(P_LEVELS)             !IN    VALUE OF B AT P POINTS              ADJCTL1C.141   
+     *,AK_TO_THE_KAPPA(P_LEVELS)!IN (A/100000)**(R/CP) AT FULL LEVELS      ADJCTL1C.142   
+     *,BK_TO_THE_KAPPA(P_LEVELS)!IN (B/100000)**(R/CP) AT FULL LEVELS      ADJCTL1C.143   
+     *,AKH(P_LEVELS+1)          !IN    VALUE OF A AT HALF LEVELS.          ADJCTL1C.144   
+     *,BKH(P_LEVELS+1)          !IN    VALUE OF B AT HALF LEVELS.          ADJCTL1C.145   
+     *,AKH_TO_THE_KAPPA(P_LEVELS+1)!IN (A/100000)**(R/CP)                  ADJCTL1C.146   
+     *                                     !AT HALF LEVELS                 ADJCTL1C.147   
+     *,BKH_TO_THE_KAPPA(P_LEVELS+1)!IN (B/100000)**(R/CP)                  ADJCTL1C.148   
+     *                                     !AT HALF LEVELS                 ADJCTL1C.149   
+     *,OROG_HEIGHT(P_FIELD)     !IN OROGRAPHIC HEIGHT.                     ADJCTL1C.150   
+                                                                           ADJCTL1C.151   
+      REAL                                                                 ADJCTL1C.152   
+     * F1(U_FIELD)             !IN A CORIOLIS TERM SEE DOCUMENTATION       ADJCTL1C.153   
+     *,F2(U_FIELD)             !IN A CORIOLIS TERM SEE DOCUMENTATION       ADJCTL1C.154   
+     *,F3(U_FIELD)             !IN A CORIOLIS TERM SEE DOCUMENTATION       ADJCTL1C.155   
+     *,COS_U_LATITUDE(U_FIELD) !IN    COS(LAT) AT U POINTS (2-D ARRAY)     ADJCTL1C.156   
+     *,COS_P_LATITUDE(P_FIELD) !IN    COS(LAT) AT P POINTS (2-D ARRAY)     ADJCTL1C.157   
+     *,SEC_U_LATITUDE(U_FIELD) !IN  1/COS(LAT) AT U POINTS (2-D ARRAY)     ADJCTL1C.158   
+     *,SEC_P_LATITUDE(P_FIELD) !IN  1/COS(LAT) AT P POINTS (2-D ARRAY)     ADJCTL1C.159   
+     *,TAN_U_LATITUDE(U_FIELD) !IN    TAN(LAT) AT U POINTS (2-D ARRAY)     ADJCTL1C.160   
+     *,COS_U_LONGITUDE(ROW_LENGTH) !IN COS(LONGITUDE) AT U POINTS          ADJCTL1C.161   
+     *,SIN_U_LONGITUDE(ROW_LENGTH) !IN SIN(LONGITUDE) AT U POINTS          ADJCTL1C.162   
+                                                                           ADJCTL1C.163   
+      REAL                                                                 ADJCTL1C.164   
+     * THETA_REF(P_LEVELS)    !IN REFERENCE THETA PROFILE                  ADJCTL1C.165   
+     *,LONGITUDE_STEP_INVERSE !IN 1/LONGITUDE INCREMENT IN RADIANS         ADJCTL1C.166   
+     *,LATITUDE_STEP_INVERSE  !IN 1/LATITUDE INCREMENT IN RADIANS          ADJCTL1C.167   
+     *,ADJUSTMENT_TIMESTEP    !IN                                          ADJCTL1C.168   
+     &,ADJ_TIME_SMOOTHING_COEFF !IN COEFFICIENT. ZERO = NO SMOOTHING       ADJCTL1C.169   
+     *,TRIGS(ROW_LENGTH)      !IN HOLDS TRIGONOMETRIC FUNCTIONS USED       ADJCTL1C.170   
+     *                        ! IN FILTERING.                              ADJCTL1C.171   
+                                                                           ADJCTL1C.172   
+C*---------------------------------------------------------------------    ADJCTL1C.173   
+                                                                           ADJCTL1C.174   
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    ADJCTL1C.175   
+C    DEFINE LOCAL ARRAYS: 6 ARE REQUIRED IF TIME SMOOTHING                 ADJCTL1C.176   
+      REAL                                                                 ADJCTL1C.177   
+     * RS_DELTAP(P_FIELD)   !HOLDS RS * VERTICAL PRESSURE DIFFERENCE       ADJCTL1C.178   
+     *                      !AT P POINTS.                                  ADJCTL1C.179   
+     *,DIVERGENCE_FUNCTIONS(P_FIELD,P_LEVELS) !WORKSPACE FOR HOLDING       ADJCTL1C.180   
+     *                               !QUANTITIES INVOLVING DIVERGENCE      ADJCTL1C.181   
+     *,RS_DELTAP_UV(U_FIELD) !HOLDS RS_DELTAP AT U POINTS.                 ADJCTL1C.182   
+     *,RECIP_RS_SQUARED_SURFACE(P_FIELD) !HOLDS 1/(RS*RS) CALCULATED AT    ADJCTL1C.183   
+     *                                   ! MODEL SURFACE.                  ADJCTL1C.184   
+     *,RECIP_RS_DELTAP_UV(U_FIELD,P_LEVELS) ! 1./RS*DELTAP AT UV POINTS    ADJCTL1C.185   
+     &,U_SMOOTH(U_FIELD,P_LEVELS) ! IN ACCUMULATES U DURING ADJUSTMENT     ADJCTL1C.186   
+     &,V_SMOOTH(U_FIELD,P_LEVELS) ! IN ACCUMULATES V DURING ADJUSTMENT     ADJCTL1C.187   
+                                                                           ADJCTL1C.188   
+C*---------------------------------------------------------------------    ADJCTL1C.189   
+C DEFINE LOCAL VARIABLES                                                   ADJCTL1C.190   
+      INTEGER                                                              ADJCTL1C.191   
+     *  NORTHERN_FILTERED_U_ROW ! U ROW ON WHICH FITERING STOPS MOVING     ADJCTL1C.192   
+     *                     ! TOWARDS EQUATOR.                              ADJCTL1C.193   
+     *, SOUTHERN_FILTERED_U_ROW ! U ROW ON WHICH FILTERING STARTS AGAIN    ADJCTL1C.194   
+     *                     ! MOVING TOWARDS SOUTH POLE.                    ADJCTL1C.195   
+                                                                           ADJCTL1C.196   
+      INTEGER                                                              ADJCTL1C.197   
+     *  I                                                                  ADJCTL1C.198   
+     *, K                                                                  ADJCTL1C.199   
+     *, ADJ_STEP_NUMBER    ! USED TO HOLD THE NUMBER OF THE                ADJCTL1C.200   
+     *                     ! ADJUSTMENT STEP BEING EXECUTED.               ADJCTL1C.201   
+     *, FILTER_SPACE_U     ! HORIZONTAL DIMENSION OF SPACE NEEDED IN       ADJCTL1C.202   
+     *                     ! FILTERING ROUTINE FOR U ROWS.                 ADJCTL1C.203   
+     *, FILTER_SPACE_P     ! HORIZONTAL DIMENSION OF SPACE NEEDED IN       ADJCTL1C.204   
+     *                     ! FILTERING ROUTINE FOR P ROWS.                 ADJCTL1C.205   
+                                                                           ADJCTL1C.206   
+      REAL                                                                 ADJCTL1C.207   
+     *  RECIP_RS_DELTAP    ! HOLDS 1./RS_DELTAP                            ADJCTL1C.208   
+     *, RECIP_PREF         ! 1/PREF                                        ADJCTL1C.209   
+     *, RECIP_PREF_TO_THE_KAPPA ! 1/PREF ** KAPPA                          ADJCTL1C.210   
+     *, RECIP_ADJUSTMENT_STEPS                                             ADJCTL1C.211   
+     *, SCALAR                                                             ADJCTL1C.212   
+                                                                           ADJCTL1C.213   
+! No. of inputs for T3E vector library function                            ADJCTL1C.214   
+      integer n_inputs                                                     ADJCTL1C.215   
+                                                                           ADJCTL1C.216   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    ADJCTL1C.217   
+      EXTERNAL UV_ADJ,P_TO_UV,VERT_VEL,FILTER,POLAR_UV,                    ADJCTL1C.218   
+     *         P_TH_ADJ                                                    ADJCTL1C.219   
+C*---------------------------------------------------------------------    ADJCTL1C.220   
+CL    CALL COMDECK TO OBTAIN CONSTANTS USED.                               ADJCTL1C.221   
+                                                                           ADJCTL1C.222   
+*CALL C_ADJCTL                                                             ADJCTL1C.223   
+                                                                           ADJCTL1C.224   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD                             ADJCTL1C.225   
+CL---------------------------------------------------------------------    ADJCTL1C.226   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       ADJCTL1C.227   
+CL                                                                         ADJCTL1C.228   
+CL---------------------------------------------------------------------    ADJCTL1C.229   
+CL    SECTION 1.     INITIALISATION                                        ADJCTL1C.230   
+CL---------------------------------------------------------------------    ADJCTL1C.231   
+C INCLUDE LOCAL CONSTANTS FROM GENERAL CONSTANTS BLOCK                     ADJCTL1C.232   
+                                                                           ADJCTL1C.233   
+      RECIP_PREF = 1./PREF                                                 ADJCTL1C.234   
+      RECIP_PREF_TO_THE_KAPPA = RECIP_PREF**KAPPA                          ADJCTL1C.235   
+      RECIP_ADJUSTMENT_STEPS = 1./ADJUSTMENT_STEPS                         ADJCTL1C.236   
+                                                                           ADJCTL1C.237   
+*IF DEF,GLOBAL                                                             ADJCTL1C.238   
+CL    IF GLOBAL THEN SET FILTERING INFORMATION.                            ADJCTL1C.239   
+                                                                           ADJCTL1C.240   
+      NORTHERN_FILTERED_U_ROW = NORTHERN_FILTERED_P_ROW                    ADJCTL1C.241   
+      SOUTHERN_FILTERED_U_ROW = SOUTHERN_FILTERED_P_ROW - 1                ADJCTL1C.242   
+                                                                           ADJCTL1C.243   
+C SET FILTER_SPACE WHICH IS ROW_LENGTH+2 TIMES THE NUMBER OF ROWS TO       ADJCTL1C.244   
+C BE FILTERED.                                                             ADJCTL1C.245   
+                                                                           ADJCTL1C.246   
+      FILTER_SPACE_U = (ROW_LENGTH+2)*(NORTHERN_FILTERED_U_ROW-1+          ADJCTL1C.247   
+     *                U_FIELD/ROW_LENGTH-SOUTHERN_FILTERED_U_ROW)          ADJCTL1C.248   
+      FILTER_SPACE_P = (ROW_LENGTH+2)*(NORTHERN_FILTERED_P_ROW-1+          ADJCTL1C.249   
+     *                P_FIELD/ROW_LENGTH-SOUTHERN_FILTERED_P_ROW)          ADJCTL1C.250   
+                                                                           ADJCTL1C.251   
+*ELSE                                                                      ADJCTL1C.252   
+CL    IF LIMITED AREA SET U,V AT END OF ROW EQUAL TO U,V 1 GRID-LENGTH     ADJCTL1C.253   
+CL    TO THE LEFT.                                                         ADJCTL1C.254   
+                                                                           ADJCTL1C.255   
+*IF DEF,MPP                                                                ADJCTL1C.256   
+      IF (at_right_of_LPG) THEN  ! only do this at the RHS of the LPG      ADJCTL1C.257   
+*ENDIF                                                                     ADJCTL1C.258   
+        DO K=1,P_LEVELS                                                    ADJCTL1C.259   
+          DO I=FIRST_FLD_PT-1+LAST_ROW_PT , LAST_U_FLD_PT , ROW_LENGTH     ADJCTL1C.260   
+!           Loop over the right-hand column of the field                   ADJCTL1C.261   
+            U(I,K) = U(I-1,K)                                              ADJCTL1C.262   
+            V(I,K) = V(I-1,K)                                              ADJCTL1C.263   
+          ENDDO                                                            ADJCTL1C.264   
+        ENDDO                                                              ADJCTL1C.265   
+*IF DEF,MPP                                                                ADJCTL1C.266   
+      ENDIF ! if this processor is at the RHS of the LPG                   ADJCTL1C.267   
+*ENDIF                                                                     ADJCTL1C.268   
+*ENDIF                                                                     ADJCTL1C.269   
+                                                                           ADJCTL1C.270   
+                                                                           ADJCTL1C.271   
+CL LOOP OVER NUMBER OF ADJUSTMENT STEPS.                                   ADJCTL1C.272   
+                                                                           ADJCTL1C.273   
+      DO 110 ADJ_STEP_NUMBER = 1,ADJUSTMENT_STEPS                          ADJCTL1C.274   
+                                                                           ADJCTL1C.275   
+CL                                                                         ADJCTL1C.276   
+CL---------------------------------------------------------------------    ADJCTL1C.277   
+CL    SECTION 2.    CALL UV_ADJ TO ADJUST U AND V. ALSO RETURNS RS.        ADJCTL1C.278   
+CL---------------------------------------------------------------------    ADJCTL1C.279   
+                                                                           ADJCTL1C.280   
+        CALL UV_ADJ(U,V,THETA,Q,OROG_HEIGHT,PSTAR,F1,F2,                   ADJCTL1C.281   
+     *              F3,SEC_U_LATITUDE,TAN_U_LATITUDE,AK,BK,DELTA_AK,       ADJCTL1C.282   
+     *              DELTA_BK,LATITUDE_STEP_INVERSE,ADJUSTMENT_TIMESTEP,    ADJCTL1C.283   
+     *              LONGITUDE_STEP_INVERSE,RS,                             ADJCTL1C.284   
+*CALL ARGFLDPT                                                             ADJCTL1C.285   
+     *              U_FIELD,P_FIELD,ROW_LENGTH,P_LEVELS,                   ADJCTL1C.286   
+     *              Q_LEVELS,ADJ_STEP_NUMBER,AKH,BKH,P_EXNER,              ADJCTL1C.287   
+     *              ADJUSTMENT_STEPS,L_PHI_OUT,PHI_OUT,LLINTS,             ADJCTL1C.288   
+     *              LWHITBROM)                                             ADJCTL1C.289   
+CL                                                                         ADJCTL1C.290   
+CL---------------------------------------------------------------------    ADJCTL1C.291   
+CL    SECTION 3.    MASS-WEIGHTING OF U AND V.                             ADJCTL1C.292   
+CL---------------------------------------------------------------------    ADJCTL1C.293   
+                                                                           ADJCTL1C.294   
+! Initialise RS_DELTAP prior to calling P_TO_UV                            ADJCTL1C.295   
+! cdir$ cache_bypass rs_deltap                                             GSM4F405.19    
+          DO I=1,FIRST_VALID_PT-1                                          ADJCTL1C.297   
+            RS_DELTAP(I)=0.0                                               ADJCTL1C.298   
+          ENDDO                                                            ADJCTL1C.299   
+! cdir$ cache_bypass rs_deltap                                             GSM4F405.20    
+          DO I=LAST_P_VALID_PT+1,P_FIELD                                   ADJCTL1C.301   
+            RS_DELTAP(I)=0.0                                               ADJCTL1C.302   
+          ENDDO                                                            ADJCTL1C.303   
+CL LOOP OVER P_LEVELS                                                      ADJCTL1C.304   
+                                                                           ADJCTL1C.305   
+        DO 300 K = 1,P_LEVELS                                              ADJCTL1C.306   
+                                                                           ADJCTL1C.307   
+CL    CALCULATE RS * DELTA P AT ALL POINTS                                 ADJCTL1C.308   
+                                                                           ADJCTL1C.309   
+! loop over all points, including valid halos                              ADJCTL1C.310   
+          DO 310 I= FIRST_VALID_PT , LAST_P_VALID_PT                       ADJCTL1C.311   
+            RS_DELTAP(I) = RS(I,K)*(DELTA_AK(K) + DELTA_BK(K)*PSTAR(I))    ADJCTL1C.312   
+ 310      CONTINUE                                                         ADJCTL1C.313   
+                                                                           ADJCTL1C.314   
+CL    INTERPOLATE RS DELTAP ONTO U GRID                                    ADJCTL1C.315   
+                                                                           ADJCTL1C.316   
+          CALL P_TO_UV(RS_DELTAP,RS_DELTAP_UV,P_FIELD,U_FIELD,             ADJCTL1C.317   
+     &                 ROW_LENGTH,tot_P_ROWS)                              ADJCTL1C.318   
+                                                                           ADJCTL1C.319   
+CL    CALCULATE MASS WEIGHTED U AND V COS(PHI) AT ALL POINTS.              ADJCTL1C.320   
+                                                                           ADJCTL1C.321   
+! loop over "local" points - not including top and bottom halos            ADJCTL1C.322   
+          DO 320 I= FIRST_FLD_PT,LAST_U_FLD_PT                             ADJCTL1C.323   
+            RECIP_RS_DELTAP=1./RS_DELTAP_UV(I)                             ADJCTL1C.324   
+            U(I,K) = U(I,K)*RS_DELTAP_UV(I)                                ADJCTL1C.325   
+            V(I,K) = V(I,K)*RS_DELTAP_UV(I)                                ADJCTL1C.326   
+            RECIP_RS_DELTAP_UV(I,K)=RECIP_RS_DELTAP                        ADJCTL1C.327   
+ 320      CONTINUE                                                         ADJCTL1C.328   
+                                                                           ADJCTL1C.329   
+CL END LOOP OVER P_LEVELS                                                  ADJCTL1C.330   
+                                                                           ADJCTL1C.331   
+ 300    CONTINUE                                                           ADJCTL1C.332   
+                                                                           ADJCTL1C.333   
+CL                                                                         ADJCTL1C.334   
+CL---------------------------------------------------------------------    ADJCTL1C.335   
+CL    SECTION 4. FILTER U,V AND DIVERGENCE FUNCTIONS IF GLOBAL MODEL.      ADJCTL1C.336   
+CL---------------------------------------------------------------------    ADJCTL1C.337   
+                                                                           ADJCTL1C.338   
+*IF DEF,GLOBAL                                                             ADJCTL1C.339   
+                                                                           ADJCTL1C.340   
+C----------------------------------------------------------------------    ADJCTL1C.341   
+CL    SECTION 4.1 U_FIELD                                                  ADJCTL1C.342   
+C----------------------------------------------------------------------    ADJCTL1C.343   
+                                                                           ADJCTL1C.344   
+CL    CALL FILTER FOR U                                                    ADJCTL1C.345   
+                                                                           ADJCTL1C.346   
+        CALL FILTER(U,U_FIELD,P_LEVELS,FILTER_SPACE_U,ROW_LENGTH,          ADJCTL1C.347   
+*CALL ARGFLDPT                                                             ADJCTL1C.348   
+     *              FILTER_WAVE_NUMBER_U_ROWS,TRIGS,IFAX,                  ADJCTL1C.349   
+     *              NORTHERN_FILTERED_U_ROW,SOUTHERN_FILTERED_U_ROW)       ADJCTL1C.350   
+                                                                           ADJCTL1C.351   
+C----------------------------------------------------------------------    ADJCTL1C.352   
+CL    SECTION 4.2 V_FIELD                                                  ADJCTL1C.353   
+C----------------------------------------------------------------------    ADJCTL1C.354   
+                                                                           ADJCTL1C.355   
+CL    CALL FILTER FOR V                                                    ADJCTL1C.356   
+                                                                           ADJCTL1C.357   
+        CALL FILTER(V,U_FIELD,P_LEVELS,FILTER_SPACE_U,ROW_LENGTH,          ADJCTL1C.358   
+*CALL ARGFLDPT                                                             ADJCTL1C.359   
+     *              FILTER_WAVE_NUMBER_U_ROWS,TRIGS,IFAX,                  ADJCTL1C.360   
+     *              NORTHERN_FILTERED_U_ROW,SOUTHERN_FILTERED_U_ROW)       ADJCTL1C.361   
+                                                                           ADJCTL1C.362   
+        CALL POLAR_UV(U,V,ROW_LENGTH,U_FIELD,P_LEVELS,                     ADJCTL1C.363   
+*CALL ARGFLDPT                                                             ADJCTL1C.364   
+     &                COS_U_LONGITUDE,SIN_U_LONGITUDE)                     ADJCTL1C.365   
+*ENDIF                                                                     ADJCTL1C.366   
+                                                                           ADJCTL1C.367   
+        DO  K = 1,P_LEVELS                                                 ADJCTL1C.368   
+C     MULTIPLY V BY COS(PHI).                                              ADJCTL1C.369   
+                                                                           ADJCTL1C.370   
+! loop over "local" points - not including top and bottom halos            ADJCTL1C.371   
+          DO I= FIRST_FLD_PT,LAST_U_FLD_PT                                 ADJCTL1C.372   
+            V(I,K) = V(I,K)* COS_U_LATITUDE(I)                             ADJCTL1C.373   
+          ENDDO                                                            ADJCTL1C.374   
+        ENDDO                                                              ADJCTL1C.375   
+                                                                           ADJCTL1C.376   
+*IF DEF,MPP                                                                ADJCTL1C.377   
+! Do halo update for U, V and RECIP_RS_DELTAP_UV                           ADJCTL1C.378   
+        CALL SWAPBOUNDS(U,ROW_LENGTH,tot_P_ROWS,                           ADJCTL1C.379   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          ADJCTL1C.380   
+        CALL SWAPBOUNDS(V,ROW_LENGTH,tot_P_ROWS,                           ADJCTL1C.381   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          ADJCTL1C.382   
+        CALL SWAPBOUNDS(RECIP_RS_DELTAP_UV,ROW_LENGTH,tot_P_ROWS,          ADJCTL1C.383   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          ADJCTL1C.384   
+*ENDIF                                                                     ADJCTL1C.385   
+CL                                                                         ADJCTL1C.386   
+CL---------------------------------------------------------------------    ADJCTL1C.387   
+CL    SECTION 5. CALCULATE U_MEAN,V_MEAN AND ETA DOT.                      ADJCTL1C.388   
+CL---------------------------------------------------------------------    ADJCTL1C.389   
+                                                                           ADJCTL1C.390   
+      IF(ADJ_TIME_SMOOTHING_COEFF.NE.0.0) THEN                             ADJCTL1C.391   
+        IF(ADJ_STEP_NUMBER.EQ.1) THEN                                      ADJCTL1C.392   
+          DO 520 K=1,P_LEVELS                                              ADJCTL1C.393   
+! loop over all points, including valid halos                              ADJCTL1C.394   
+            DO I=FIRST_VALID_PT,LAST_U_VALID_PT                            ADJCTL1C.395   
+              U_SMOOTH(I,K)=ADJ_TIME_SMOOTHING_WEIGHT(ADJ_STEP_NUMBER)     ADJCTL1C.396   
+     &                      *U(I,K)                                        ADJCTL1C.397   
+              V_SMOOTH(I,K)=ADJ_TIME_SMOOTHING_WEIGHT(ADJ_STEP_NUMBER)     ADJCTL1C.398   
+     &                      *V(I,K)                                        ADJCTL1C.399   
+            END DO                                                         ADJCTL1C.400   
+ 520      CONTINUE                                                         ADJCTL1C.401   
+        ELSE IF(ADJ_STEP_NUMBER.EQ.ADJUSTMENT_STEPS) THEN                  ADJCTL1C.402   
+          DO 530 K=1,P_LEVELS                                              ADJCTL1C.403   
+! loop over all points, including valid halos                              ADJCTL1C.404   
+            DO I=FIRST_VALID_PT,LAST_U_VALID_PT                            ADJCTL1C.405   
+              U(I,K) = U(I,K)+ADJ_TIME_SMOOTHING_COEFF                     ADJCTL1C.406   
+     &                 *(ADJ_TIME_SMOOTHING_WEIGHT(ADJ_STEP_NUMBER)        ADJCTL1C.407   
+     &                 *U(I,K)+U_SMOOTH(I,K))                              ADJCTL1C.408   
+              V(I,K) = V(I,K)+ADJ_TIME_SMOOTHING_COEFF                     ADJCTL1C.409   
+     &                 *(ADJ_TIME_SMOOTHING_WEIGHT(ADJ_STEP_NUMBER)        ADJCTL1C.410   
+     &                 *V(I,K)+V_SMOOTH(I,K))                              ADJCTL1C.411   
+            END DO                                                         ADJCTL1C.412   
+ 530      CONTINUE                                                         ADJCTL1C.413   
+        ELSE                                                               ADJCTL1C.414   
+          DO 540 K=1,P_LEVELS                                              ADJCTL1C.415   
+! loop over all points, including valid halos                              ADJCTL1C.416   
+            DO I=FIRST_VALID_PT,LAST_U_VALID_PT                            ADJCTL1C.417   
+              U_SMOOTH(I,K)=U_SMOOTH(I,K) +                                ADJCTL1C.418   
+     &                      ADJ_TIME_SMOOTHING_WEIGHT(ADJ_STEP_NUMBER) *   ADJCTL1C.419   
+     &                      U(I,K)                                         ADJCTL1C.420   
+              V_SMOOTH(I,K)=V_SMOOTH(I,K) +                                ADJCTL1C.421   
+     &                      ADJ_TIME_SMOOTHING_WEIGHT(ADJ_STEP_NUMBER) *   ADJCTL1C.422   
+     &                      V(I,K)                                         ADJCTL1C.423   
+            END DO                                                         ADJCTL1C.424   
+ 540      CONTINUE                                                         ADJCTL1C.425   
+        END IF                                                             ADJCTL1C.426   
+      END IF                                                               ADJCTL1C.427   
+                                                                           ADJCTL1C.428   
+CL    CALCULATE U_MEAN AND V_MEAN AT ALL POINTS AND ALL LEVELS.            ADJCTL1C.429   
+                                                                           ADJCTL1C.430   
+      IF(ADJ_STEP_NUMBER.EQ.1) THEN                                        ADJCTL1C.431   
+                                                                           ADJCTL1C.432   
+        DO K = 1,P_LEVELS                                                  ADJCTL1C.433   
+! loop over all points, including valid halos                              ADJCTL1C.434   
+          DO I = 1,U_FIELD                                                 ADJCTL1C.435   
+            U_MEAN(I,K)=  U(I,K) * RECIP_ADJUSTMENT_STEPS                  ADJCTL1C.436   
+            V_MEAN(I,K)=  V(I,K) * RECIP_ADJUSTMENT_STEPS                  ADJCTL1C.437   
+          ENDDO                                                            ADJCTL1C.438   
+        ENDDO                                                              ADJCTL1C.439   
+                                                                           ADJCTL1C.440   
+      ELSE                                                                 ADJCTL1C.441   
+                                                                           ADJCTL1C.442   
+        DO 500 K = 1,P_LEVELS                                              ADJCTL1C.443   
+! loop over all points, including valid halos                              ADJCTL1C.444   
+          DO 510 I = FIRST_VALID_PT,LAST_U_VALID_PT                        ADJCTL1C.445   
+            U_MEAN(I,K)= U_MEAN(I,K) + U(I,K) * RECIP_ADJUSTMENT_STEPS     ADJCTL1C.446   
+            V_MEAN(I,K)= V_MEAN(I,K) + V(I,K) * RECIP_ADJUSTMENT_STEPS     ADJCTL1C.447   
+ 510      CONTINUE                                                         ADJCTL1C.448   
+ 500    CONTINUE                                                           ADJCTL1C.449   
+                                                                           ADJCTL1C.450   
+      ENDIF                                                                ADJCTL1C.451   
+                                                                           ADJCTL1C.452   
+CL    CALL VERT_VEL TO CALCULATE ETA DOT.                                  ADJCTL1C.453   
+CL    BOTH ETA DOT FOR THIS ADJUSTMENT STEP AND THE AVERAGED VALUE         ADJCTL1C.454   
+CL    ARE RETURNED.                                                        ADJCTL1C.455   
+CL    THE SUM OF THE DIVERGENCES ARE HELD AT LEVEL 1 IN THE ARRAY.         ADJCTL1C.456   
+                                                                           ADJCTL1C.457   
+C ETA DOT FOR THIS ADJUSTMENT STEP IS RETURNED IN DIVERGENCE FUNCTIONS.    ADJCTL1C.458   
+                                                                           ADJCTL1C.459   
+        CALL VERT_VEL(U,V,ETADOT_MEAN,SEC_P_LATITUDE,                      ADJCTL1C.460   
+     *                DIVERGENCE_FUNCTIONS,                                ADJCTL1C.461   
+     *                U_FIELD,P_FIELD,P_LEVELS,                            ADJCTL1C.462   
+*CALL ARGFLDPT                                                             ADJCTL1C.463   
+     *                ROW_LENGTH,LATITUDE_STEP_INVERSE,                    ADJCTL1C.464   
+     *                LONGITUDE_STEP_INVERSE,ADJUSTMENT_STEPS,AKH,BKH,     ADJCTL1C.465   
+     *                RS,ADJ_STEP_NUMBER,RECIP_RS_SQUARED_SURFACE,         ADJCTL1C.466   
+     *                PSTAR,LLINTS,LWHITBROM)                              ADJCTL1C.467   
+                                                                           ADJCTL1C.468   
+*IF DEF,MPP                                                                ADJCTL1C.469   
+! Update halos for DIVERGENCE_FUNCTIONS                                    ADJCTL1C.470   
+        CALL SWAPBOUNDS(DIVERGENCE_FUNCTIONS,ROW_LENGTH,tot_P_ROWS,        ADJCTL1C.471   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          ADJCTL1C.472   
+                                                                           ADJCTL1C.473   
+*ENDIF                                                                     ADJCTL1C.474   
+CL                                                                         ADJCTL1C.475   
+CL---------------------------------------------------------------------    ADJCTL1C.476   
+CL    SECTION 6. RECREATE U AND V FROM MASS-WEIGHTING U AND V COS(PHI).    ADJCTL1C.477   
+CL---------------------------------------------------------------------    ADJCTL1C.478   
+                                                                           ADJCTL1C.479   
+                                                                           ADJCTL1C.480   
+        DO 600 K = 1,P_LEVELS                                              ADJCTL1C.481   
+                                                                           ADJCTL1C.482   
+CL    RECREATE U AND V FORM MASS-WEIGHTED U AND V COS(PHI) AT ALL POINTS   ADJCTL1C.483   
+                                                                           ADJCTL1C.484   
+! loop over "local" points - not including top and bottom halos            ADJCTL1C.485   
+          DO 620 I= FIRST_VALID_PT,LAST_U_VALID_PT                         ADJCTL1C.486   
+            U(I,K) = U(I,K)*RECIP_RS_DELTAP_UV(I,K)                        ADJCTL1C.487   
+            V(I,K) = V(I,K)*RECIP_RS_DELTAP_UV(I,K)*SEC_U_LATITUDE(I)      ADJCTL1C.488   
+ 620      CONTINUE                                                         ADJCTL1C.489   
+                                                                           ADJCTL1C.490   
+                                                                           ADJCTL1C.491   
+ 600    CONTINUE                                                           ADJCTL1C.492   
+                                                                           ADJCTL1C.493   
+CL                                                                         ADJCTL1C.494   
+CL---------------------------------------------------------------------    ADJCTL1C.495   
+CL      SECTION 7. CALL P_TH_ADJ TO ADJUST P* AND THETA.                   ADJCTL1C.496   
+CL---------------------------------------------------------------------    ADJCTL1C.497   
+                                                                           ADJCTL1C.498   
+        CALL P_TH_ADJ(PSTAR,PSTAR_OLD,THETA,THETA_REF,                     ADJCTL1C.499   
+     *                DIVERGENCE_FUNCTIONS,RS,DELTA_AK,DELTA_BK,           ADJCTL1C.500   
+     *                P_FIELD,P_LEVELS,                                    ADJCTL1C.501   
+*CALL ARGFLDPT                                                             ADJCTL1C.502   
+     *                ADJ_STEP_NUMBER,ADJUSTMENT_TIMESTEP,                 ADJCTL1C.503   
+     *                ERROR_CODE,ERROR_MESSAGE,                            ADJCTL1C.504   
+     *                RECIP_RS_SQUARED_SURFACE,L_NEG_PSTAR)                ADJCTL1C.505   
+                                                                           ADJCTL1C.506   
+        IF(ERROR_CODE.NE.0) RETURN                                         ADJCTL1C.507   
+*IF DEF,MPP                                                                ADJCTL1C.508   
+! Do boundary swap for PSTAR and THETA                                     ADJCTL1C.509   
+        CALL SWAPBOUNDS(PSTAR,ROW_LENGTH,tot_P_ROWS,                       ADJCTL1C.510   
+     &                  EW_Halo,NS_Halo,1)                                 ADJCTL1C.511   
+!        CALL SET_SIDES(PSTAR,P_FIELD,ROW_LENGTH,1,fld_type_p)             ADJCTL1C.512   
+!        CALL SWAPBOUNDS(THETA,ROW_LENGTH,lasize(2),                       ADJCTL1C.513   
+!     &                  EW_Halo,NS_Halo,P_LEVELS)                         ADJCTL1C.514   
+*ENDIF                                                                     ADJCTL1C.515   
+CL                                                                         ADJCTL1C.516   
+CL---------------------------------------------------------------------    ADJCTL1C.517   
+CL      SECTION 8. CALCULATE P_EXNER FOR PRESSURE AT NEW TIME-LEVEL.       ADJCTL1C.518   
+CL                 CALCULATION PERFORMED AT ALL HALF-LEVELS.               ADJCTL1C.519   
+CL---------------------------------------------------------------------    ADJCTL1C.520   
+C                                                                          ADJCTL1C.521   
+        DO 800 K=1,P_LEVELS+1                                              ADJCTL1C.522   
+                                                                           ADJCTL1C.523   
+C CALCULATE EXNER AT LEVEL K - 1/2                                         ADJCTL1C.524   
+                                                                           ADJCTL1C.525   
+          IF(BKH(K).EQ.0.) THEN                                            ADJCTL1C.526   
+C IF A CONSTANT PRESSURE SURFACE SET EXNER TO HELD CONSTANT VALUE.         ADJCTL1C.527   
+            DO 810 I= 1,P_FIELD                                            ADJCTL1C.528   
+              P_EXNER(I,K) = AKH_TO_THE_KAPPA(K)                           ADJCTL1C.529   
+ 810        CONTINUE                                                       ADJCTL1C.530   
+                                                                           ADJCTL1C.531   
+          ELSE IF (K.GT.1.AND.AKH(K).EQ.0.) THEN                           ADJCTL1C.532   
+C IF A SIGMA LEVEL THEN THE LEVEL BELOW WAS A SIGMA LEVEL AND              ADJCTL1C.533   
+C EXNER CAN BE CALCULATED BY RESCALING THE VALUE AT THE LOWER LEVEL.       ADJCTL1C.534   
+                                                                           ADJCTL1C.535   
+            SCALAR = BKH_TO_THE_KAPPA(K)/BKH_TO_THE_KAPPA(K-1)             ADJCTL1C.536   
+! loop over all points, including valid halos                              ADJCTL1C.537   
+            DO 820 I=FIRST_VALID_PT,LAST_P_VALID_PT                        ADJCTL1C.538   
+              P_EXNER(I,K) = P_EXNER(I,K-1)* SCALAR                        ADJCTL1C.539   
+ 820        CONTINUE                                                       ADJCTL1C.540   
+          ELSE                                                             ADJCTL1C.541   
+C CALCULATE EXNER AS ((A+B*PSTAR)/100000)**(R/CP)                          ADJCTL1C.542   
+                                                                           ADJCTL1C.543   
+! loop over all points, including valid halos                              ADJCTL1C.544   
+                                                                           ADJCTL1C.545   
+                                                                           ADJCTL1C.546   
+*IF DEF,VECTLIB                                                            PXVECTLB.2     
+            do I=FIRST_VALID_PT,LAST_P_VALID_PT                            ADJCTL1C.548   
+               P_EXNER(I,K)=(AKH(K)+BKH(K)*PSTAR(I))*RECIP_PREF            ADJCTL1C.549   
+            enddo                                                          ADJCTL1C.550   
+            n_inputs=LAST_P_VALID_PT-FIRST_VALID_PT+1                      ADJCTL1C.551   
+            call alog_v(n_inputs, P_EXNER(FIRST_VALID_PT,K),               ADJCTL1C.552   
+     *                          P_EXNER(FIRST_VALID_PT,K))                 ADJCTL1C.553   
+            do I=FIRST_VALID_PT,LAST_P_VALID_PT                            ADJCTL1C.554   
+              P_EXNER(I,K)=P_EXNER(I,K)* KAPPA                             ADJCTL1C.555   
+            enddo                                                          ADJCTL1C.556   
+            call exp_v(n_inputs,P_EXNER(FIRST_VALID_PT,K),                 ADJCTL1C.557   
+     *                       P_EXNER(FIRST_VALID_PT,K))                    ADJCTL1C.558   
+*ELSE                                                                      ADJCTL1C.559   
+            DO I=FIRST_VALID_PT,LAST_P_VALID_PT                            GPB0F405.207   
+            P_EXNER(I,K)=((AKH(K)+BKH(K)*PSTAR(I))*RECIP_PREF)**KAPPA      ADJCTL1C.561   
+            END DO                                                         ADJCTL1C.562   
+*ENDIF                                                                     ADJCTL1C.563   
+                                                                           ADJCTL1C.564   
+          END IF                                                           ADJCTL1C.565   
+                                                                           ADJCTL1C.566   
+ 800    CONTINUE                                                           ADJCTL1C.567   
+                                                                           ADJCTL1C.568   
+                                                                           ADJCTL1C.569   
+CL END OF LOOP OVER ADJUSTMENT STEPS                                       ADJCTL1C.570   
+                                                                           ADJCTL1C.571   
+ 110  CONTINUE                                                             ADJCTL1C.572   
+*IF DEF,MPP                                                                ADJCTL1C.573   
+! Update halos for ETADOT_MEAN                                             ADJCTL1C.574   
+      CALL SWAPBOUNDS(ETADOT_MEAN,ROW_LENGTH,tot_P_ROWS,                   ADJCTL1C.575   
+     &                EW_Halo,NS_Halo,P_LEVELS)                            ADJCTL1C.576   
+*ENDIF                                                                     ADJCTL1C.577   
+                                                                           ADJCTL1C.578   
+CL    END OF ROUTINE ADJ_CTL                                               ADJCTL1C.579   
+                                                                           ADJCTL1C.580   
+      RETURN                                                               ADJCTL1C.581   
+      END                                                                  ADJCTL1C.582   
+                                                                           ADJCTL1C.583   
+*ENDIF                                                                     ADJCTL1C.584   

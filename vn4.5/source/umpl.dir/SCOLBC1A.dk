@@ -1,0 +1,747 @@
+*IF DEF,C96_1A,OR,DEF,C96_1B                                               SCOLBC1A.2     
+*IF DEF,MPP                                                                SCOLBC1A.3     
+C *****************************COPYRIGHT******************************     SCOLBC1A.4     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    SCOLBC1A.5     
+C                                                                          SCOLBC1A.6     
+C Use, duplication or disclosure of this code is subject to the            SCOLBC1A.7     
+C restrictions as set forth in the contract.                               SCOLBC1A.8     
+C                                                                          SCOLBC1A.9     
+C                Meteorological Office                                     SCOLBC1A.10    
+C                London Road                                               SCOLBC1A.11    
+C                BRACKNELL                                                 SCOLBC1A.12    
+C                Berkshire UK                                              SCOLBC1A.13    
+C                RG12 2SZ                                                  SCOLBC1A.14    
+C                                                                          SCOLBC1A.15    
+C If no contract has been raised with this copy of the code, the use,      SCOLBC1A.16    
+C duplication or disclosure of it is strictly prohibited.  Permission      SCOLBC1A.17    
+C to do so must first be obtained in writing from the Head of Numerical    SCOLBC1A.18    
+C Modelling at the above address.                                          SCOLBC1A.19    
+C ******************************COPYRIGHT******************************    SCOLBC1A.20    
+!+ Passes out ocean LBCs to processors at boundaries                       SCOLBC1A.21    
+!                                                                          SCOLBC1A.22    
+! Subroutine Interface                                                     SCOLBC1A.23    
+      SUBROUTINE SCATTER_OCEAN_LBCS(FULL_LBC,FULL_LENRIMDATA,              SCOLBC1A.24    
+     &                              PART_LBC,PART_LENRIMDATA,              SCOLBC1A.25    
+     &                              SCATTER_PE,                            SCOLBC1A.26    
+     &                              ICODE,CMESSAGE)                        SCOLBC1A.27    
+      IMPLICIT NONE                                                        SCOLBC1A.28    
+!                                                                          SCOLBC1A.29    
+! Description:                                                             SCOLBC1A.30    
+! Scatters ocean LBCs to relevant processors at the                        SCOLBC1A.31    
+! grid boundaries                                                          SCOLBC1A.32    
+!                                                                          SCOLBC1A.33    
+! Method:                                                                  SCOLBC1A.34    
+! The code loops around over all the processors.  For each                 SCOLBC1A.35    
+! processor there is then a loop over the four boundaries                  SCOLBC1A.36    
+! (North, East, South and West) and if the processor is on                 SCOLBC1A.37    
+! that particular boundary region, the appropriate data                    SCOLBC1A.38    
+! is sent from SCATTER_PE's FULL_LBC array to that                         SCOLBC1A.39    
+! processors PART_LBC array.                                               SCOLBC1A.40    
+! The data is transferred via two arrays, buf (the data to be              SCOLBC1A.41    
+! sent) and buf_expand (the data being received) which are both            SCOLBC1A.42    
+! on COMMON, to make the comms work with CRAY shmem correctly.             SCOLBC1A.43    
+!                                                                          SCOLBC1A.44    
+! The East and West boundaries of PART_LBC are dimensioned to              SCOLBC1A.45    
+! have the same number of rows of data as the prognostic fields to         SCOLBC1A.46    
+! which they relate (with halo rows excluded).                             SCOLBC1A.47    
+!                                                                          SCOLBC1A.48    
+! History                                                                  SCOLBC1A.49    
+!  Model    Date       Modification history from model version 4.5         SCOLBC1A.50    
+!  version                                                                 SCOLBC1A.51    
+!   4.5   17/06/98   New deck for MPP code. S.Ineson,M.Bell,P.Burton       SCOLBC1A.52    
+!                                                                          SCOLBC1A.53    
+! Subroutine Arguments:                                                    SCOLBC1A.54    
+                                                                           SCOLBC1A.55    
+      INTEGER                                                              SCOLBC1A.56    
+     &  FULL_LENRIMDATA   ! IN size of the FULL_LBC array                  SCOLBC1A.57    
+     &, PART_LENRIMDATA   ! IN size of the PART_LBC array                  SCOLBC1A.58    
+     &, SCATTER_PE        ! IN processor to scatter data from              SCOLBC1A.59    
+     &, ICODE             ! OUT error code                                 SCOLBC1A.60    
+                                                                           SCOLBC1A.61    
+      CHARACTER*(80)                                                       SCOLBC1A.62    
+     &  CMESSAGE          ! OUT error message                              SCOLBC1A.63    
+                                                                           SCOLBC1A.64    
+      REAL                                                                 SCOLBC1A.65    
+     &  FULL_LBC(FULL_LENRIMDATA)  ! IN full LBC (only on SCATTER_PE)      SCOLBC1A.66    
+     &, PART_LBC(PART_LENRIMDATA)  ! OUT local part of LBC                 SCOLBC1A.67    
+                                                                           SCOLBC1A.68    
+! Parameters and COMMON                                                    SCOLBC1A.69    
+                                                                           SCOLBC1A.70    
+*CALL PARVARS                                                              SCOLBC1A.71    
+*CALL GCCOM                                                                SCOLBC1A.72    
+                                                                           SCOLBC1A.73    
+      REAL                                                                 SCOLBC1A.74    
+     &  local_buf(FULL_LENRIMDATA)                                         SCOLBC1A.75    
+     &, buf3(FULL_LENRIMDATA)                                              SCOLBC1A.76    
+                                                                           SCOLBC1A.77    
+! TYPESIZE contains information about the tracers, and also                SCOLBC1A.78    
+! P_LEVELS, Q_LEVELS and RIMWIDTHO which we require                        SCOLBC1A.79    
+*CALL TYPSIZE                                                              SCOLBC1A.80    
+*CALL CNTLOCN                                                              SCOLBC1A.81    
+                                                                           SCOLBC1A.82    
+! Local variables                                                          SCOLBC1A.83    
+                                                                           SCOLBC1A.84    
+      INTEGER                                                              SCOLBC1A.85    
+     &  global_ROW_LENGTH ! length of row on global P grid                 SCOLBC1A.86    
+     &, global_P_ROWS     ! number of rows on global P grid                SCOLBC1A.87    
+     &, local_ROW_LENGTH  ! length of row on local P grid (no halos)       SCOLBC1A.88    
+     &, local_U_ROW_LENGTH ! length of row on local U grid (no halos)      SCOLBC1A.89    
+     &, local_P_ROWS      ! number of rows on local P grid (no halos)      SCOLBC1A.90    
+     &, local_U_ROWS      ! number of rows on local U grid (no halos)      SCOLBC1A.91    
+     &, global_P_LENRIM   ! size of boundary data for single               SCOLBC1A.92    
+!                         !   level on P grid for global data              SCOLBC1A.93    
+     &, global_U_LENRIM   ! size of boundary data for single               SCOLBC1A.94    
+!                         !   level on U grid for global data              SCOLBC1A.95    
+     &, local_P_LENRIM    ! size of boundary data for single               SCOLBC1A.96    
+!                         !    level on P grid for local data              SCOLBC1A.97    
+     &, local_U_LENRIM    ! size of boundary data for single               SCOLBC1A.98    
+!                         !    level on U grid for local data              SCOLBC1A.99    
+                                                                           SCOLBC1A.100   
+     &, global_START_ROW       ! first row in global data in boundary      SCOLBC1A.101   
+     &, local_START_ROW        ! first row in local data in boundary       SCOLBC1A.102   
+     &, global_START_POINT     ! first point in row in global boundary     SCOLBC1A.103   
+     &, local_START_POINT      ! first point in row in local boundary      SCOLBC1A.104   
+     &, N_P_ROWS               ! number of rows on P grid in boundary      SCOLBC1A.105   
+     &, N_P_POINTS             ! number of points in row on P grid         SCOLBC1A.106   
+     &, N_U_ROWS               ! number of rows on U grid in boundary      SCOLBC1A.107   
+     &, N_U_POINTS             ! number of points in row on U grid         SCOLBC1A.108   
+     &, global_P_ROW_LEN       ! length of row on P grid in boundary       SCOLBC1A.109   
+     &, global_U_ROW_LEN       ! length of row on U grid in boundary       SCOLBC1A.110   
+     &, local_P_ROW_LEN        ! length of row on P grid in boundary       SCOLBC1A.111   
+     &, local_U_ROW_LEN        ! length of row on U grid in boundary       SCOLBC1A.112   
+     &, global_P_bound_off     ! offset of a P grid boundary               SCOLBC1A.113   
+     &, local_P_bound_off      ! offset of a P grid boundary               SCOLBC1A.114   
+     &, global_U_bound_off     ! offset of a U grid boundary               SCOLBC1A.115   
+     &, local_U_bound_off      ! offset of a U grid boundary               SCOLBC1A.116   
+                                                                           SCOLBC1A.117   
+                                                                           SCOLBC1A.118   
+     &, global_TRACER_START      ! Start addresses of variables            SCOLBC1A.119   
+     &, global_U_START          ! in the global LBC data                   SCOLBC1A.120   
+     &, global_V_START          !                                          SCOLBC1A.121   
+     &, global_STREAM_START     !                                          SCOLBC1A.122   
+     &, global_ICE_START                                                   SCOLBC1A.123   
+     &, global_P_EAST_DATA_off  ! offset of East P data in global LBC      SCOLBC1A.124   
+     &, global_U_EAST_DATA_off  ! offset of East U data in global LBC      SCOLBC1A.125   
+     &, global_P_SOUTH_DATA_off ! offset of South P data in global LBC     SCOLBC1A.126   
+     &, global_U_SOUTH_DATA_off ! offset of South U data in global LBC     SCOLBC1A.127   
+     &, global_P_WEST_DATA_off  ! offset of West P data in global LBC      SCOLBC1A.128   
+     &, global_U_WEST_DATA_off  ! offset of West U data in global LBC      SCOLBC1A.129   
+                                                                           SCOLBC1A.130   
+     &, local_TRACER_START       ! Start addresses of variables            SCOLBC1A.131   
+     &, local_U_START           ! in the local LBC data                    SCOLBC1A.132   
+     &, local_V_START           !                                          SCOLBC1A.133   
+     &, local_STREAM_START      !                                          SCOLBC1A.134   
+     &, local_ICE_START                                                    SCOLBC1A.135   
+     &, local_P_EAST_DATA_off   ! offset of East P data in local LBC       SCOLBC1A.136   
+     &, local_U_EAST_DATA_off   ! offset of East U data in local LBC       SCOLBC1A.137   
+     &, local_P_SOUTH_DATA_off  ! offset of South P data in local LBC      SCOLBC1A.138   
+     &, local_U_SOUTH_DATA_off  ! offset of South U data in local LBC      SCOLBC1A.139   
+     &, local_P_WEST_DATA_off   ! offset of West P data in local LBC       SCOLBC1A.140   
+     &, local_U_WEST_DATA_off   ! offset of West U data in local LBC       SCOLBC1A.141   
+                                                                           SCOLBC1A.142   
+     &, offset,offset_p,offset_u   ! used in calculation of offsets        SCOLBC1A.143   
+     &, numside_colso  ! no of active boundary columns                     SCOLBC1A.144   
+     &, numside_rowso  ! no of active boundary rows                        SCOLBC1A.145   
+                                                                           SCOLBC1A.146   
+      INTEGER                                                              SCOLBC1A.147   
+     &  iproc  ! processor index                                           SCOLBC1A.148   
+     &, bound_type ! loop index for loop over boundary types               SCOLBC1A.149   
+     &, data_size  ! size of message to be sent                            SCOLBC1A.150   
+     &, buf_pt     ! pointer to position in buffer array                   SCOLBC1A.151   
+     &, ROW        ! loop index indicating row number                      SCOLBC1A.152   
+     &, POINT      ! loop index indicating point along row                 SCOLBC1A.153   
+     &, LEVEL      ! loop index indicating level                           SCOLBC1A.154   
+     &, TVAR       ! loop index indicating tracer variable                 SCOLBC1A.155   
+     &, info       ! return code from communications routines              SCOLBC1A.156   
+                                                                           SCOLBC1A.157   
+      INTEGER  ! magic numbers for boundary types                          SCOLBC1A.158   
+     &  bt_top   ! top boundary                                            SCOLBC1A.159   
+     &, bt_right ! right boundary                                          SCOLBC1A.160   
+     &, bt_base  ! bottom boundary                                         SCOLBC1A.161   
+     &, bt_left  ! left boundary                                           SCOLBC1A.162   
+      PARAMETER(bt_top=1,bt_right=2,bt_base=3,bt_left=4)                   SCOLBC1A.163   
+                                                                           SCOLBC1A.164   
+      LOGICAL                                                              SCOLBC1A.165   
+     &  iproc_at_left  ! processor at left of LPG                          SCOLBC1A.166   
+     &, iproc_at_right ! processor at right of LPG                         SCOLBC1A.167   
+     &, iproc_at_top   ! processor at top of LPG                           SCOLBC1A.168   
+     &, iproc_at_base  ! processor at base of LPG                          SCOLBC1A.169   
+                                                                           SCOLBC1A.170   
+!--------------------------------------------------------------------      SCOLBC1A.171   
+                                                                           SCOLBC1A.172   
+! Set up some sizes and addresses for the global data                      SCOLBC1A.173   
+                                                                           SCOLBC1A.174   
+! Set up some sizes                                                        SCOLBC1A.175   
+                                                                           SCOLBC1A.176   
+      global_ROW_LENGTH=glsize(1)                                          SCOLBC1A.177   
+      global_P_ROWS=glsize(2)                                              SCOLBC1A.178   
+                                                                           SCOLBC1A.179   
+! Find no of active rows, columns and set addresses for grid location      SCOLBC1A.180   
+                                                                           SCOLBC1A.181   
+      numside_rowso = 0                                                    SCOLBC1A.182   
+      numside_colso = 0                                                    SCOLBC1A.183   
+                                                                           SCOLBC1A.184   
+      IF (L_OBDY_NORTH) THEN                                               SCOLBC1A.185   
+        offset_p = global_ROW_LENGTH * RIMWIDTHO                           SCOLBC1A.186   
+        offset_u = (global_ROW_LENGTH-1) * RIMWIDTHO                       SCOLBC1A.187   
+        numside_rowso = numside_rowso + rimwidtho                          SCOLBC1A.188   
+      ELSE                                                                 SCOLBC1A.189   
+        offset_p = 0                                                       SCOLBC1A.190   
+        offset_u = 0                                                       SCOLBC1A.191   
+      ENDIF                                                                SCOLBC1A.192   
+                                                                           SCOLBC1A.193   
+      IF (L_OBDY_EAST) THEN                                                SCOLBC1A.194   
+        global_P_EAST_DATA_off = offset_p                                  SCOLBC1A.195   
+        global_U_EAST_DATA_off = offset_u                                  SCOLBC1A.196   
+        offset_p = offset_p + global_P_ROWS * RIMWIDTHO                    SCOLBC1A.197   
+        offset_u = offset_u + (global_P_ROWS-1) * RIMWIDTHO                SCOLBC1A.198   
+        numside_colso = numside_colso + rimwidtho                          SCOLBC1A.199   
+      ELSE                                                                 SCOLBC1A.200   
+        global_P_EAST_DATA_off = -1                                        SCOLBC1A.201   
+        global_U_EAST_DATA_off = -1                                        SCOLBC1A.202   
+      ENDIF                                                                SCOLBC1A.203   
+                                                                           SCOLBC1A.204   
+      IF (L_OBDY_SOUTH) THEN                                               SCOLBC1A.205   
+        global_P_SOUTH_DATA_off = offset_p                                 SCOLBC1A.206   
+        global_U_SOUTH_DATA_off = offset_u                                 SCOLBC1A.207   
+        offset_p = offset_p + global_ROW_LENGTH * RIMWIDTHO                SCOLBC1A.208   
+        offset_u = offset_u + (global_ROW_LENGTH-1) * RIMWIDTHO            SCOLBC1A.209   
+        numside_rowso = numside_rowso + rimwidtho                          SCOLBC1A.210   
+      ELSE                                                                 SCOLBC1A.211   
+        global_P_SOUTH_DATA_off = -1                                       SCOLBC1A.212   
+        global_U_SOUTH_DATA_off = -1                                       SCOLBC1A.213   
+      ENDIF                                                                SCOLBC1A.214   
+                                                                           SCOLBC1A.215   
+      IF (L_OBDY_WEST) THEN                                                SCOLBC1A.216   
+        global_P_WEST_DATA_off = offset_p                                  SCOLBC1A.217   
+        global_U_WEST_DATA_off = offset_u                                  SCOLBC1A.218   
+        numside_colso = numside_colso + rimwidtho                          SCOLBC1A.219   
+      ELSE                                                                 SCOLBC1A.220   
+        global_P_WEST_DATA_off = -1                                        SCOLBC1A.221   
+        global_U_WEST_DATA_off = -1                                        SCOLBC1A.222   
+      ENDIF                                                                SCOLBC1A.223   
+                                                                           SCOLBC1A.224   
+! Set up LENRIM sizes                                                      SCOLBC1A.225   
+                                                                           SCOLBC1A.226   
+      global_P_LENRIM = global_ROW_LENGTH*numside_rowso                    SCOLBC1A.227   
+     &                + global_P_ROWS* numside_colso                       SCOLBC1A.228   
+                                                                           SCOLBC1A.229   
+      global_U_LENRIM = (global_ROW_LENGTH-1)*numside_rowso                SCOLBC1A.230   
+     &                + (global_P_ROWS-1) * numside_colso                  SCOLBC1A.231   
+                                                                           SCOLBC1A.232   
+! Set up some addresses for variable types                                 SCOLBC1A.233   
+                                                                           SCOLBC1A.234   
+      IF (L_OBDY_TRACER) THEN                                              SCOLBC1A.235   
+        global_TRACER_START = 1                                            SCOLBC1A.236   
+        offset = global_P_LENRIM * KM_UI * NT_UI                           SCOLBC1A.237   
+      ELSE                                                                 SCOLBC1A.238   
+        global_TRACER_START = -1                                           SCOLBC1A.239   
+        offset = 0                                                         SCOLBC1A.240   
+      ENDIF                                                                SCOLBC1A.241   
+                                                                           SCOLBC1A.242   
+      IF (L_OBDY_UV) THEN                                                  SCOLBC1A.243   
+        global_U_START = offset + 1                                        SCOLBC1A.244   
+        global_V_START = offset + global_U_LENRIM * KM_UI + 1              SCOLBC1A.245   
+        offset = offset + 2 * global_U_LENRIM * KM_UI                      SCOLBC1A.246   
+      ELSE                                                                 SCOLBC1A.247   
+        global_U_START = -1                                                SCOLBC1A.248   
+        global_V_START = -1                                                SCOLBC1A.249   
+      ENDIF                                                                SCOLBC1A.250   
+                                                                           SCOLBC1A.251   
+      IF (L_OBDY_STREAM) THEN                                              SCOLBC1A.252   
+        global_STREAM_START = offset + 1                                   SCOLBC1A.253   
+        offset = offset + 2 * global_P_LENRIM                              SCOLBC1A.254   
+      ELSE                                                                 SCOLBC1A.255   
+        global_STREAM_START = -1                                           SCOLBC1A.256   
+      ENDIF                                                                SCOLBC1A.257   
+                                                                           SCOLBC1A.258   
+      IF (L_OBDY_ICE) THEN                                                 SCOLBC1A.259   
+        global_ICE_START = offset + 1                                      SCOLBC1A.260   
+      ELSE                                                                 SCOLBC1A.261   
+        global_ICE_START = -1                                              SCOLBC1A.262   
+      ENDIF                                                                SCOLBC1A.263   
+                                                                           SCOLBC1A.264   
+!--------------------------------------------------------------------      SCOLBC1A.265   
+                                                                           SCOLBC1A.266   
+! 2.0 Loop over processors                                                 SCOLBC1A.267   
+                                                                           SCOLBC1A.268   
+                                                                           SCOLBC1A.269   
+      DO iproc = first_comp_pe, last_comp_pe ! loop over all processors    SCOLBC1A.270   
+                                                                           SCOLBC1A.271   
+                                                                           SCOLBC1A.272   
+!   2.1 Set up logicals, sizes and addresses for local data                SCOLBC1A.273   
+                                                                           SCOLBC1A.274   
+! set up logicals indicating position on LPG                               SCOLBC1A.275   
+        iproc_at_left=.FALSE.                                              SCOLBC1A.276   
+        iproc_at_right=.FALSE.                                             SCOLBC1A.277   
+        iproc_at_top=.FALSE.                                               SCOLBC1A.278   
+        iproc_at_base=.FALSE.                                              SCOLBC1A.279   
+        IF (g_gridpos(1,iproc) .EQ. 0) iproc_at_left=.TRUE.                SCOLBC1A.280   
+        IF (g_gridpos(1,iproc) .EQ. nproc_x-1) iproc_at_right=.TRUE.       SCOLBC1A.281   
+        IF (g_gridpos(2,iproc) .EQ. 0) iproc_at_top=.TRUE.                 SCOLBC1A.282   
+        IF (g_gridpos(2,iproc) .EQ. nproc_y-1) iproc_at_base=.TRUE.        SCOLBC1A.283   
+                                                                           SCOLBC1A.284   
+! Set up the local data for this processor                                 SCOLBC1A.285   
+                                                                           SCOLBC1A.286   
+        local_ROW_LENGTH=g_blsizep(1,iproc)  ! no halos                    SCOLBC1A.287   
+        IF (iproc_at_right) THEN                                           SCOLBC1A.288   
+          local_U_ROW_LENGTH=local_ROW_LENGTH-1                            SCOLBC1A.289   
+        ELSE                                                               SCOLBC1A.290   
+          local_U_ROW_LENGTH=local_ROW_LENGTH                              SCOLBC1A.291   
+        ENDIF                                                              SCOLBC1A.292   
+                                                                           SCOLBC1A.293   
+        local_P_ROWS=g_blsizep(2,iproc)      ! again, no halos             SCOLBC1A.294   
+        IF (iproc_at_base) THEN                                            SCOLBC1A.295   
+          local_U_ROWS=local_P_ROWS-1                                      SCOLBC1A.296   
+        ELSE                                                               SCOLBC1A.297   
+          local_U_ROWS=local_P_ROWS                                        SCOLBC1A.298   
+        ENDIF                                                              SCOLBC1A.299   
+                                                                           SCOLBC1A.300   
+        local_P_LENRIM=local_ROW_LENGTH * numside_rowso                    SCOLBC1A.301   
+     &                     +local_P_ROWS * numside_colso                   SCOLBC1A.302   
+        local_U_LENRIM=local_U_ROW_LENGTH * numside_rowso                  SCOLBC1A.303   
+     &                     +local_U_ROWS * numside_colso                   SCOLBC1A.304   
+                                                                           SCOLBC1A.305   
+                                                                           SCOLBC1A.306   
+! Set up some addresses for variable types                                 SCOLBC1A.307   
+                                                                           SCOLBC1A.308   
+        IF (L_OBDY_TRACER) THEN                                            SCOLBC1A.309   
+          local_TRACER_START = 1                                           SCOLBC1A.310   
+          offset = local_P_LENRIM * KM_UI * NT_UI                          SCOLBC1A.311   
+        ELSE                                                               SCOLBC1A.312   
+          local_TRACER_START = -1                                          SCOLBC1A.313   
+          offset = 0                                                       SCOLBC1A.314   
+        ENDIF                                                              SCOLBC1A.315   
+                                                                           SCOLBC1A.316   
+        IF (L_OBDY_UV) THEN                                                SCOLBC1A.317   
+          local_U_START = offset + 1                                       SCOLBC1A.318   
+          local_V_START = offset + local_U_LENRIM * KM_UI + 1              SCOLBC1A.319   
+          offset = offset + 2 * local_U_LENRIM * KM_UI                     SCOLBC1A.320   
+        ELSE                                                               SCOLBC1A.321   
+          local_U_START = -1                                               SCOLBC1A.322   
+          local_V_START = -1                                               SCOLBC1A.323   
+        ENDIF                                                              SCOLBC1A.324   
+                                                                           SCOLBC1A.325   
+        IF (L_OBDY_STREAM) THEN                                            SCOLBC1A.326   
+          local_STREAM_START = offset + 1                                  SCOLBC1A.327   
+          offset = offset + 2 * local_P_LENRIM                             SCOLBC1A.328   
+        ELSE                                                               SCOLBC1A.329   
+          local_STREAM_START = -1                                          SCOLBC1A.330   
+        ENDIF                                                              SCOLBC1A.331   
+                                                                           SCOLBC1A.332   
+        IF (L_OBDY_ICE) THEN                                               SCOLBC1A.333   
+          local_ICE_START = offset + 1                                     SCOLBC1A.334   
+          offset = offset + 3 * local_P_LENRIM                             SCOLBC1A.335   
+        ELSE                                                               SCOLBC1A.336   
+          local_ICE_START = -1                                             SCOLBC1A.337   
+        ENDIF                                                              SCOLBC1A.338   
+                                                                           SCOLBC1A.339   
+! Set up some addresses for grid location                                  SCOLBC1A.340   
+                                                                           SCOLBC1A.341   
+        IF ( L_OBDY_NORTH) THEN                                            SCOLBC1A.342   
+          offset_p = local_ROW_LENGTH * RIMWIDTHO                          SCOLBC1A.343   
+          offset_u = local_U_ROW_LENGTH * RIMWIDTHO                        SCOLBC1A.344   
+        ELSE                                                               SCOLBC1A.345   
+          offset_p = 0                                                     SCOLBC1A.346   
+          offset_u = 0                                                     SCOLBC1A.347   
+        ENDIF                                                              SCOLBC1A.348   
+                                                                           SCOLBC1A.349   
+        IF ( L_OBDY_EAST) THEN                                             SCOLBC1A.350   
+          local_P_EAST_DATA_off = offset_p                                 SCOLBC1A.351   
+          local_U_EAST_DATA_off = offset_u                                 SCOLBC1A.352   
+          offset_p = offset_p + local_P_ROWS * RIMWIDTHO                   SCOLBC1A.353   
+          offset_u = offset_u + local_U_ROWS * RIMWIDTHO                   SCOLBC1A.354   
+        ELSE                                                               SCOLBC1A.355   
+          local_P_EAST_DATA_off = -1                                       SCOLBC1A.356   
+          local_U_EAST_DATA_off = -1                                       SCOLBC1A.357   
+        ENDIF                                                              SCOLBC1A.358   
+                                                                           SCOLBC1A.359   
+        IF ( L_OBDY_SOUTH) THEN                                            SCOLBC1A.360   
+          local_P_SOUTH_DATA_off = offset_p                                SCOLBC1A.361   
+          local_U_SOUTH_DATA_off = offset_u                                SCOLBC1A.362   
+          offset_p = offset_p + local_ROW_LENGTH * RIMWIDTHO               SCOLBC1A.363   
+          offset_u = offset_u + local_U_ROW_LENGTH * RIMWIDTHO             SCOLBC1A.364   
+        ELSE                                                               SCOLBC1A.365   
+          local_P_SOUTH_DATA_off = -1                                      SCOLBC1A.366   
+          local_U_SOUTH_DATA_off = -1                                      SCOLBC1A.367   
+        ENDIF                                                              SCOLBC1A.368   
+                                                                           SCOLBC1A.369   
+        IF ( L_OBDY_WEST) THEN                                             SCOLBC1A.370   
+          local_P_WEST_DATA_off = offset_p                                 SCOLBC1A.371   
+          local_U_WEST_DATA_off = offset_u                                 SCOLBC1A.372   
+        ELSE                                                               SCOLBC1A.373   
+          local_P_WEST_DATA_off = -1                                       SCOLBC1A.374   
+          local_U_WEST_DATA_off = -1                                       SCOLBC1A.375   
+        ENDIF                                                              SCOLBC1A.376   
+                                                                           SCOLBC1A.377   
+                                                                           SCOLBC1A.378   
+!-------------------------------------------------------------------       SCOLBC1A.379   
+                                                                           SCOLBC1A.380   
+!   2.2 Loop over boundaries: North, East, South and West                  SCOLBC1A.381   
+                                                                           SCOLBC1A.382   
+!   For the ocean model the order of the boundary data order is N,E,S,W.   SCOLBC1A.383   
+!   Howvever, row 1 of the ocean model is the the southern most row.       SCOLBC1A.384   
+!   Hence, the northern bdy data, bt_top ==> processors, iproc_at_base     SCOLBC1A.385   
+!          the southern bdy data,bt_base ==> processors, iproc_at_top      SCOLBC1A.386   
+                                                                           SCOLBC1A.387   
+        DO bound_type=bt_top,bt_left  ! loop over all boundaries           SCOLBC1A.388   
+                                                                           SCOLBC1A.389   
+          IF (((bound_type .EQ. bt_top) .AND. (iproc_at_base)              SCOLBC1A.390   
+     &              .AND. (L_OBDY_NORTH))    .OR.                          SCOLBC1A.391   
+     &       ((bound_type .EQ. bt_right) .AND. (iproc_at_right)            SCOLBC1A.392   
+     &              .AND. (L_OBDY_EAST))      .OR.                         SCOLBC1A.393   
+     &       ((bound_type .EQ. bt_base) .AND. (iproc_at_top)               SCOLBC1A.394   
+     &              .AND. (L_OBDY_SOUTH))      .OR.                        SCOLBC1A.395   
+     &       ((bound_type .EQ. bt_left) .AND. (iproc_at_left)              SCOLBC1A.396   
+     &              .AND. (L_OBDY_WEST)))             THEN                 SCOLBC1A.397   
+!             Processor iproc has a boundary of type bound_type            SCOLBC1A.398   
+                                                                           SCOLBC1A.399   
+                                                                           SCOLBC1A.400   
+!      2.2.1 Set up data pointers and sizes for this boundary              SCOLBC1A.401   
+                                                                           SCOLBC1A.402   
+            IF ((bound_type .EQ. bt_top) .OR.   ! What type of             SCOLBC1A.403   
+     &          (bound_type .EQ. bt_base)) THEN ! boundary is it?          SCOLBC1A.404   
+                                                                           SCOLBC1A.405   
+!             Northern or Southern boundary                                SCOLBC1A.406   
+                                                                           SCOLBC1A.407   
+              global_START_ROW=1                                           SCOLBC1A.408   
+              local_START_ROW=1                                            SCOLBC1A.409   
+                                                                           SCOLBC1A.410   
+              global_START_POINT=g_datastart(1,iproc)                      SCOLBC1A.411   
+              local_START_POINT=1                                          SCOLBC1A.412   
+                                                                           SCOLBC1A.413   
+              N_P_ROWS=RIMWIDTHO                                           SCOLBC1A.414   
+              N_P_POINTS=local_ROW_LENGTH                                  SCOLBC1A.415   
+              N_U_ROWS=RIMWIDTHO                                           SCOLBC1A.416   
+              N_U_POINTS=local_U_ROW_LENGTH                                SCOLBC1A.417   
+              global_P_ROW_LEN=global_ROW_LENGTH                           SCOLBC1A.418   
+              local_P_ROW_LEN=local_ROW_LENGTH                             SCOLBC1A.419   
+              global_U_ROW_LEN=global_ROW_LENGTH-1                         SCOLBC1A.420   
+              local_U_ROW_LEN=local_U_ROW_LENGTH                           SCOLBC1A.421   
+                                                                           SCOLBC1A.422   
+              IF (bound_type .EQ. bt_top) THEN  ! Northern boundary        SCOLBC1A.423   
+                global_P_bound_off=0                                       SCOLBC1A.424   
+                local_P_bound_off=0                                        SCOLBC1A.425   
+                global_U_bound_off=0                                       SCOLBC1A.426   
+                local_U_bound_off=0                                        SCOLBC1A.427   
+              ELSE  ! Southern boundary                                    SCOLBC1A.428   
+                global_P_bound_off=global_P_SOUTH_DATA_off                 SCOLBC1A.429   
+                local_P_bound_off=local_P_SOUTH_DATA_off                   SCOLBC1A.430   
+                global_U_bound_off=global_U_SOUTH_DATA_off                 SCOLBC1A.431   
+                local_U_bound_off=local_U_SOUTH_DATA_off                   SCOLBC1A.432   
+              ENDIF                                                        SCOLBC1A.433   
+                                                                           SCOLBC1A.434   
+            ELSE  ! Eastern or Western boundary                            SCOLBC1A.435   
+                                                                           SCOLBC1A.436   
+              global_START_ROW=g_datastart(2,iproc)                        SCOLBC1A.437   
+              local_START_ROW=1                                            SCOLBC1A.438   
+                                                                           SCOLBC1A.439   
+              global_START_POINT=1                                         SCOLBC1A.440   
+              local_START_POINT=1                                          SCOLBC1A.441   
+                                                                           SCOLBC1A.442   
+              N_P_ROWS=local_P_ROWS                                        SCOLBC1A.443   
+              N_P_POINTS=RIMWIDTHO                                         SCOLBC1A.444   
+              N_U_ROWS=local_U_ROWS                                        SCOLBC1A.445   
+              N_U_POINTS=RIMWIDTHO                                         SCOLBC1A.446   
+                                                                           SCOLBC1A.447   
+              global_P_ROW_LEN=RIMWIDTHO                                   SCOLBC1A.448   
+              local_P_ROW_LEN=RIMWIDTHO                                    SCOLBC1A.449   
+              global_U_ROW_LEN=RIMWIDTHO                                   SCOLBC1A.450   
+              local_U_ROW_LEN=RIMWIDTHO                                    SCOLBC1A.451   
+                                                                           SCOLBC1A.452   
+              IF (bound_type .EQ. bt_right) THEN ! Eastern boundary        SCOLBC1A.453   
+                global_P_bound_off=global_P_EAST_DATA_off                  SCOLBC1A.454   
+                local_P_bound_off=local_P_EAST_DATA_off                    SCOLBC1A.455   
+                global_U_bound_off=global_U_EAST_DATA_off                  SCOLBC1A.456   
+                local_U_bound_off=local_U_EAST_DATA_off                    SCOLBC1A.457   
+              ELSE ! Western boundary                                      SCOLBC1A.458   
+                global_P_bound_off=global_P_WEST_DATA_off                  SCOLBC1A.459   
+                local_P_bound_off=local_P_WEST_DATA_off                    SCOLBC1A.460   
+                global_U_bound_off=global_U_WEST_DATA_off                  SCOLBC1A.461   
+                local_U_bound_off=local_U_WEST_DATA_off                    SCOLBC1A.462   
+              ENDIF                                                        SCOLBC1A.463   
+                                                                           SCOLBC1A.464   
+            ENDIF ! What type of boundary is it?                           SCOLBC1A.465   
+                                                                           SCOLBC1A.466   
+                                                                           SCOLBC1A.467   
+!  Find size of the data to be sent to processor iproc                     SCOLBC1A.468   
+                                                                           SCOLBC1A.469   
+            data_size=0                                                    SCOLBC1A.470   
+            IF (L_OBDY_TRACER) data_size =                                 SCOLBC1A.471   
+     &           data_size + KM_UI * NT_UI * N_P_ROWS * N_P_POINTS         SCOLBC1A.472   
+            IF (L_OBDY_UV) data_size =                                     SCOLBC1A.473   
+     &           data_size + 2 * KM_UI * N_U_ROWS * N_U_POINTS             SCOLBC1A.474   
+            IF (L_OBDY_STREAM) data_size =                                 SCOLBC1A.475   
+     &           data_size + 2 * N_P_ROWS * N_P_POINTS                     SCOLBC1A.476   
+            IF (L_OBDY_ICE) data_size =                                    SCOLBC1A.477   
+     &           data_size + 3 * N_P_ROWS * N_P_POINTS                     SCOLBC1A.478   
+                                                                           SCOLBC1A.479   
+!           Check the buffer is big enough                                 SCOLBC1A.480   
+            IF (FULL_LENRIMDATA .LT.                                       SCOLBC1A.481   
+     &          data_size) THEN                                            SCOLBC1A.482   
+              WRITE(6,*) 'ERROR Buffer not big enough in SCATTER_LBCS'     SCOLBC1A.483   
+              WRITE(6,*) 'Buffer size is ',FULL_LENRIMDATA                 SCOLBC1A.484   
+              WRITE(6,*) 'Required size is ',data_size                     SCOLBC1A.485   
+              ICODE=1                                                      SCOLBC1A.486   
+              CMESSAGE='SCATTER_LBCS BUFFER TOO SMALL'                     SCOLBC1A.487   
+              GOTO 9999                                                    SCOLBC1A.488   
+            ENDIF                                                          SCOLBC1A.489   
+                                                                           SCOLBC1A.490   
+                                                                           SCOLBC1A.491   
+!      2.2.2 Pack all the data for this boundary into the buf3 array       SCOLBC1A.492   
+                                                                           SCOLBC1A.493   
+            CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)  ! scatter          SCOLBC1A.494   
+            info=GC_NONE                                                   SCOLBC1A.495   
+                                                                           SCOLBC1A.496   
+            IF (mype .EQ. SCATTER_PE) THEN  ! I'm scattering data          SCOLBC1A.497   
+                                                                           SCOLBC1A.498   
+                                                                           SCOLBC1A.499   
+              buf_pt=1                                                     SCOLBC1A.500   
+                                                                           SCOLBC1A.501   
+!             --- TRACERS ---                                              SCOLBC1A.502   
+                                                                           SCOLBC1A.503   
+              IF (L_OBDY_TRACER) THEN                                      SCOLBC1A.504   
+                                                                           SCOLBC1A.505   
+              DO TVAR = 1,NT_UI                                            SCOLBC1A.506   
+                DO LEVEL = 1,KM_UI                                         SCOLBC1A.507   
+                  DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1      SCOLBC1A.508   
+                    DO POINT=global_START_POINT,                           SCOLBC1A.509   
+     &                   global_START_POINT+N_P_POINTS-1                   SCOLBC1A.510   
+                      buf3(buf_pt)=FULL_LBC(global_TRACER_START-1+         SCOLBC1A.511   
+     &                                 global_P_bound_off+                 SCOLBC1A.512   
+     &                                 POINT+                              SCOLBC1A.513   
+     &                                 (ROW-1)*global_P_ROW_LEN+           SCOLBC1A.514   
+     &                                 (LEVEL-1)*global_P_LENRIM+          SCOLBC1A.515   
+     &                                 (TVAR-1)*KM_UI*global_P_LENRIM)     SCOLBC1A.516   
+                      buf_pt=buf_pt+1                                      SCOLBC1A.517   
+                    ENDDO                                                  SCOLBC1A.518   
+                  ENDDO                                                    SCOLBC1A.519   
+                ENDDO                                                      SCOLBC1A.520   
+              ENDDO                                                        SCOLBC1A.521   
+                                                                           SCOLBC1A.522   
+              ENDIF    !   L_OBDY_TRACER                                   SCOLBC1A.523   
+                                                                           SCOLBC1A.524   
+!             --- U V CURRENTS ---                                         SCOLBC1A.525   
+                                                                           SCOLBC1A.526   
+              IF (L_OBDY_UV) THEN                                          SCOLBC1A.527   
+                                                                           SCOLBC1A.528   
+                DO LEVEL = 1,KM_UI                                         SCOLBC1A.529   
+                  DO ROW=global_START_ROW,global_START_ROW+N_U_ROWS-1      SCOLBC1A.530   
+                    DO POINT=global_START_POINT,                           SCOLBC1A.531   
+     &                   global_START_POINT+N_U_POINTS-1                   SCOLBC1A.532   
+                      buf3(buf_pt)=FULL_LBC(global_U_START-1+              SCOLBC1A.533   
+     &                                 global_U_bound_off+                 SCOLBC1A.534   
+     &                                 POINT+                              SCOLBC1A.535   
+     &                                 (ROW-1)*global_U_ROW_LEN+           SCOLBC1A.536   
+     &                                 (LEVEL-1)*global_U_LENRIM)          SCOLBC1A.537   
+                      buf_pt=buf_pt+1                                      SCOLBC1A.538   
+                    ENDDO                                                  SCOLBC1A.539   
+                  ENDDO                                                    SCOLBC1A.540   
+                ENDDO                                                      SCOLBC1A.541   
+                                                                           SCOLBC1A.542   
+                DO LEVEL = 1,KM_UI                                         SCOLBC1A.543   
+                  DO ROW=global_START_ROW,global_START_ROW+N_U_ROWS-1      SCOLBC1A.544   
+                    DO POINT=global_START_POINT,                           SCOLBC1A.545   
+     &                   global_START_POINT+N_U_POINTS-1                   SCOLBC1A.546   
+                      buf3(buf_pt)=FULL_LBC(global_V_START-1+              SCOLBC1A.547   
+     &                                 global_U_bound_off+                 SCOLBC1A.548   
+     &                                 POINT+                              SCOLBC1A.549   
+     &                                 (ROW-1)*global_U_ROW_LEN+           SCOLBC1A.550   
+     &                                 (LEVEL-1)*global_U_LENRIM)          SCOLBC1A.551   
+                      buf_pt=buf_pt+1                                      SCOLBC1A.552   
+                    ENDDO                                                  SCOLBC1A.553   
+                  ENDDO                                                    SCOLBC1A.554   
+                ENDDO                                                      SCOLBC1A.555   
+                                                                           SCOLBC1A.556   
+              ENDIF     !  (L_OBDY_UV)                                     SCOLBC1A.557   
+                                                                           SCOLBC1A.558   
+!             --- STREAM FUNCTION ---                                      SCOLBC1A.559   
+                                                                           SCOLBC1A.560   
+              IF (L_OBDY_STREAM) THEN                                      SCOLBC1A.561   
+                                                                           SCOLBC1A.562   
+               DO TVAR = 1,2                                               SCOLBC1A.563   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        SCOLBC1A.564   
+                  DO POINT=global_START_POINT,                             SCOLBC1A.565   
+     &                 global_START_POINT+N_P_POINTS-1                     SCOLBC1A.566   
+                    buf3(buf_pt)=FULL_LBC(global_STREAM_START-1+           SCOLBC1A.567   
+     &                               global_P_bound_off+                   SCOLBC1A.568   
+     &                               POINT+                                SCOLBC1A.569   
+     &                               (ROW-1)*global_P_ROW_LEN+             SCOLBC1A.570   
+     &                               (TVAR-1)*global_P_LENRIM)             SCOLBC1A.571   
+                    buf_pt=buf_pt+1                                        SCOLBC1A.572   
+                  ENDDO                                                    SCOLBC1A.573   
+                ENDDO                                                      SCOLBC1A.574   
+               ENDDO                                                       SCOLBC1A.575   
+                                                                           SCOLBC1A.576   
+              ENDIF      !  L_OBDY_STREAM                                  SCOLBC1A.577   
+                                                                           SCOLBC1A.578   
+!             --- SEA ICE ---                                              SCOLBC1A.579   
+                                                                           SCOLBC1A.580   
+              IF (L_OBDY_ICE) THEN                                         SCOLBC1A.581   
+                                                                           SCOLBC1A.582   
+               DO TVAR=1,3                                                 SCOLBC1A.583   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        SCOLBC1A.584   
+                  DO POINT=global_START_POINT,                             SCOLBC1A.585   
+     &                 global_START_POINT+N_P_POINTS-1                     SCOLBC1A.586   
+                    buf3(buf_pt)=FULL_LBC(global_ICE_START-1+              SCOLBC1A.587   
+     &                               global_P_bound_off+                   SCOLBC1A.588   
+     &                               POINT+                                SCOLBC1A.589   
+     &                               (ROW-1)*global_P_ROW_LEN+             SCOLBC1A.590   
+     &                               (TVAR-1)*global_P_LENRIM)             SCOLBC1A.591   
+                    buf_pt=buf_pt+1                                        SCOLBC1A.592   
+                  ENDDO                                                    SCOLBC1A.593   
+                ENDDO                                                      SCOLBC1A.594   
+               ENDDO                                                       SCOLBC1A.595   
+                                                                           SCOLBC1A.596   
+              ENDIF      !  L_OBDY_ICE                                     SCOLBC1A.597   
+                                                                           SCOLBC1A.598   
+                                                                           SCOLBC1A.599   
+!      2.2.3 Send buf3 array to processor iproc into array local_buf       SCOLBC1A.600   
+                                                                           SCOLBC1A.601   
+              CALL GC_RSEND(iproc+1000*bound_type,data_size,iproc,info,    SCOLBC1A.602   
+     &                      local_buf,buf3)                                SCOLBC1A.603   
+                                                                           SCOLBC1A.604   
+            ENDIF ! IF I'm doing the scatter                               SCOLBC1A.605   
+                                                                           SCOLBC1A.606   
+            CALL GC_SSYNC(nproc,info)                                      SCOLBC1A.607   
+                                                                           SCOLBC1A.608   
+            CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)  ! scatter          SCOLBC1A.609   
+            info=GC_NONE                                                   SCOLBC1A.610   
+                                                                           SCOLBC1A.611   
+            IF (mype .EQ. iproc) THEN  ! I'm processor iproc               SCOLBC1A.612   
+                                                                           SCOLBC1A.613   
+!      2.2.4 Receive our part of the LBC info local_buf                    SCOLBC1A.614   
+                                                                           SCOLBC1A.615   
+              CALL GC_RRECV(iproc+1000*bound_type,data_size,SCATTER_PE,    SCOLBC1A.616   
+     &                      info,local_buf,buf3)                           SCOLBC1A.617   
+                                                                           SCOLBC1A.618   
+                                                                           SCOLBC1A.619   
+!      2.2.5 Unpack local_buf into our PART_LBC array                      SCOLBC1A.620   
+                                                                           SCOLBC1A.621   
+              buf_pt=1                                                     SCOLBC1A.622   
+                                                                           SCOLBC1A.623   
+                                                                           SCOLBC1A.624   
+!             --- TRACERS ---                                              SCOLBC1A.625   
+                                                                           SCOLBC1A.626   
+              IF (L_OBDY_TRACER) THEN                                      SCOLBC1A.627   
+                                                                           SCOLBC1A.628   
+                DO TVAR = 1,NT_UI                                          SCOLBC1A.629   
+                  DO LEVEL = 1,KM_UI                                       SCOLBC1A.630   
+                    DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1      SCOLBC1A.631   
+                      DO POINT=local_START_POINT,                          SCOLBC1A.632   
+     &                     local_START_POINT+N_P_POINTS-1                  SCOLBC1A.633   
+                        PART_LBC(local_TRACER_START-1+                     SCOLBC1A.634   
+     &                       local_P_bound_off+                            SCOLBC1A.635   
+     &                       POINT+                                        SCOLBC1A.636   
+     &                       (ROW-1)*local_P_ROW_LEN+                      SCOLBC1A.637   
+     &                       (LEVEL-1)*local_P_LENRIM+                     SCOLBC1A.638   
+     &                       (TVAR-1)*KM_UI*local_P_LENRIM)=               SCOLBC1A.639   
+     &                         local_buf(buf_pt)                           SCOLBC1A.640   
+                        buf_pt=buf_pt+1                                    SCOLBC1A.641   
+                      ENDDO                                                SCOLBC1A.642   
+                    ENDDO                                                  SCOLBC1A.643   
+                  ENDDO                                                    SCOLBC1A.644   
+                ENDDO                                                      SCOLBC1A.645   
+                                                                           SCOLBC1A.646   
+              ENDIF      !  L_OBDY_TRACER                                  SCOLBC1A.647   
+                                                                           SCOLBC1A.648   
+                                                                           SCOLBC1A.649   
+!             --- U,V CURRENTS ---                                         SCOLBC1A.650   
+                                                                           SCOLBC1A.651   
+              IF (L_OBDY_UV) THEN                                          SCOLBC1A.652   
+                                                                           SCOLBC1A.653   
+                DO LEVEL = 1,KM_UI                                         SCOLBC1A.654   
+                                                                           SCOLBC1A.655   
+                  DO ROW=local_START_ROW,local_START_ROW+N_U_ROWS-1        SCOLBC1A.656   
+                    DO POINT=local_START_POINT,                            SCOLBC1A.657   
+     &                   local_START_POINT+N_U_POINTS-1                    SCOLBC1A.658   
+                  PART_LBC(local_U_START-1+                                SCOLBC1A.659   
+     &                     local_U_bound_off+                              SCOLBC1A.660   
+     &                     POINT+                                          SCOLBC1A.661   
+     &                     (ROW-1)*local_U_ROW_LEN+                        SCOLBC1A.662   
+     &                     (LEVEL-1)*local_U_LENRIM)=                      SCOLBC1A.663   
+     &                       local_buf(buf_pt)                             SCOLBC1A.664   
+                      buf_pt=buf_pt+1                                      SCOLBC1A.665   
+                    ENDDO                                                  SCOLBC1A.666   
+                  ENDDO                                                    SCOLBC1A.667   
+                ENDDO                                                      SCOLBC1A.668   
+                                                                           SCOLBC1A.669   
+                DO LEVEL = 1,KM_UI                                         SCOLBC1A.670   
+                                                                           SCOLBC1A.671   
+                  DO ROW=local_START_ROW,local_START_ROW+N_U_ROWS-1        SCOLBC1A.672   
+                    DO POINT=local_START_POINT,                            SCOLBC1A.673   
+     &                   local_START_POINT+N_U_POINTS-1                    SCOLBC1A.674   
+                  PART_LBC(local_V_START-1+                                SCOLBC1A.675   
+     &                     local_U_bound_off+                              SCOLBC1A.676   
+     &                     POINT+                                          SCOLBC1A.677   
+     &                     (ROW-1)*local_U_ROW_LEN+                        SCOLBC1A.678   
+     &                     (LEVEL-1)*local_U_LENRIM)=                      SCOLBC1A.679   
+     &                       local_buf(buf_pt)                             SCOLBC1A.680   
+                      buf_pt=buf_pt+1                                      SCOLBC1A.681   
+                    ENDDO                                                  SCOLBC1A.682   
+                  ENDDO                                                    SCOLBC1A.683   
+                ENDDO                                                      SCOLBC1A.684   
+                                                                           SCOLBC1A.685   
+              ENDIF      !  L_OBDY_UV                                      SCOLBC1A.686   
+                                                                           SCOLBC1A.687   
+!             --- STREAMFUNCTION ---                                       SCOLBC1A.688   
+                                                                           SCOLBC1A.689   
+              IF (L_OBDY_STREAM) THEN                                      SCOLBC1A.690   
+                                                                           SCOLBC1A.691   
+               DO TVAR=1,2                                                 SCOLBC1A.692   
+                                                                           SCOLBC1A.693   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          SCOLBC1A.694   
+                  DO POINT=local_START_POINT,                              SCOLBC1A.695   
+     &                 local_START_POINT+N_P_POINTS-1                      SCOLBC1A.696   
+                    PART_LBC(local_STREAM_START-1+                         SCOLBC1A.697   
+     &                   local_P_bound_off+                                SCOLBC1A.698   
+     &                   POINT+                                            SCOLBC1A.699   
+     &                   (ROW-1)*local_P_ROW_LEN+                          SCOLBC1A.700   
+     &                   (TVAR-1)*local_P_LENRIM)=                         SCOLBC1A.701   
+     &                     local_buf(buf_pt)                               SCOLBC1A.702   
+                    buf_pt=buf_pt+1                                        SCOLBC1A.703   
+                  ENDDO                                                    SCOLBC1A.704   
+                ENDDO                                                      SCOLBC1A.705   
+               ENDDO                                                       SCOLBC1A.706   
+                                                                           SCOLBC1A.707   
+              ENDIF      !  L_OBDY_STREAM                                  SCOLBC1A.708   
+                                                                           SCOLBC1A.709   
+!             --- SEA ICE ---                                              SCOLBC1A.710   
+                                                                           SCOLBC1A.711   
+              IF (L_OBDY_ICE) THEN                                         SCOLBC1A.712   
+                                                                           SCOLBC1A.713   
+               DO TVAR=1,3                                                 SCOLBC1A.714   
+                                                                           SCOLBC1A.715   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          SCOLBC1A.716   
+                  DO POINT=local_START_POINT,                              SCOLBC1A.717   
+     &                 local_START_POINT+N_P_POINTS-1                      SCOLBC1A.718   
+                    PART_LBC(local_ICE_START-1+                            SCOLBC1A.719   
+     &                   local_P_bound_off+                                SCOLBC1A.720   
+     &                   POINT+                                            SCOLBC1A.721   
+     &                   (ROW-1)*local_P_ROW_LEN+                          SCOLBC1A.722   
+     &                   (TVAR-1)*local_P_LENRIM)=                         SCOLBC1A.723   
+     &                     local_buf(buf_pt)                               SCOLBC1A.724   
+                    buf_pt=buf_pt+1                                        SCOLBC1A.725   
+                  ENDDO                                                    SCOLBC1A.726   
+                ENDDO                                                      SCOLBC1A.727   
+               ENDDO                                                       SCOLBC1A.728   
+                                                                           SCOLBC1A.729   
+              ENDIF      !  L_OBDY_ICE                                     SCOLBC1A.730   
+                                                                           SCOLBC1A.731   
+            ENDIF  ! If I'm processor iproc                                SCOLBC1A.732   
+                                                                           SCOLBC1A.733   
+            CALL GC_SSYNC(nproc,info)                                      SCOLBC1A.734   
+                                                                           SCOLBC1A.735   
+          ENDIF ! If this processor has boundary type bound_type           SCOLBC1A.736   
+                                                                           SCOLBC1A.737   
+        ENDDO ! bound_type: loop over boundary types                       SCOLBC1A.738   
+                                                                           SCOLBC1A.739   
+      ENDDO ! iproc : loop over processors                                 SCOLBC1A.740   
+                                                                           SCOLBC1A.741   
+                                                                           SCOLBC1A.742   
+ 9999 CONTINUE  ! point to jump to if failure                              SCOLBC1A.743   
+                                                                           SCOLBC1A.744   
+      RETURN                                                               SCOLBC1A.745   
+      END                                                                  SCOLBC1A.746   
+*ENDIF                                                                     SCOLBC1A.747   
+*ENDIF                                                                     SCOLBC1A.748   

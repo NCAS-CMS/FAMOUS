@@ -1,0 +1,859 @@
+#!/bin/ksh                                                                 COPYRIGHT.842   
+# ----------------------------- COPYRIGHT ---------------------------- #   COPYRIGHT.843   
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #   COPYRIGHT.844   
+#                                                                      #   COPYRIGHT.845   
+# Use, duplication or disclosure of this code is subject to the        #   COPYRIGHT.846   
+# restrictions as set forth in the contract. If no contract has been   #   COPYRIGHT.847   
+# raised with this copy of the code, use, duplication or disclosure    #   COPYRIGHT.848   
+# of it is strictly prohibited. Permission to do so must be obtained   #   COPYRIGHT.849   
+# in writing from the Head of Numerical Modelling at The Met. Office.  #   COPYRIGHT.850   
+# ----------------------------- COPYRIGHT ---------------------------- #   COPYRIGHT.851   
+#LL---------------------------------------------------------------------   GLW1U401.661   
+#LL  Script: qsserver                                                      qsserver.4     
+#LL---------------------------------------------------------------------   GLW1U401.662   
+#LL  Purpose: Top level script for server process which runs in parallel   GCP1U304.3     
+#LL           to the model run, archives data to another machine and, if   GJG3U401.1     
+#LL           necessary, calls the routine that produces data for the      GJG3U401.2     
+#LL           Camelot database.                                            GJG3U401.3     
+#LL  14/08/95 4.0  K Rogers  Added variable ARCHTAPE                       GJG3U401.4     
+#LL           The server reads archive requests by a pipe connected        GCP1U304.5     
+#LL           to the model. Data files are transferred to the front-end    GCP1U304.6     
+#LL           along with trigger files, which are text files detailing     GCP1U304.7     
+#LL           archive requirements.                                        GCP1U304.8     
+#LL                                                                        qsserver.7     
+#LL  Author: C D Perks                   Date: September 1994              GCP1U304.9     
+#LL                                                                        qsserver.10    
+#LL  Code version no: 3.4                                                  GCP1U304.10    
+#LL  Modification History:                                                 qsserver.12    
+#LL  Date     Vn   Name      Change                                        GCP1U304.11    
+#LL  25/11/94 3.4  C D Perks Original Version                              GCP1U304.12    
+#LL  05/04/95 4.0  C D Perks Check for null or non-existent file           GCP1U400.1     
+#LL  07/06/95 4.0  C D Perks Included RUN_FLAG variables for NRUNs and     GCP1U400.2     
+#LL                          CRUNs so that #new# occurs for first TF       GCP1U400.3     
+#LL                          in stream for NRUNs                           GCP1U400.4     
+#LL  08/06/95 4.0  C D Perks Included *) in MNFIELDS case statement.       GCP1U400.5     
+#LL  15/06/95 4.0  C D Perks Swapped 'percent = %%%' test with test on     GLW1U401.663   
+#LL                          CURRENT_RQST_NAME to eliminate problems       GLW1U401.664   
+#LL                          linked with non '%%%' requests from model     GLW1U401.665   
+#LL  14/08/95 4.0  K Rogers  Added variable ARCHTAPE                       GLW1U401.666   
+#LL  26/03/96 4.1  L Wiles   Removed redundant ARCHTAPE in final           GLW1U401.667   
+#LL                          section since covered in copy2dest.           GLW1U401.668   
+#LL  02/04/96 4.1  L Wiles   Put non-portable trap command in if block.    GLW1U401.669   
+#LL  24/05/96 4.1  L Wiles   Changes for CRACER                            GLW1U401.670   
+#LL                          Set up new variables for trigger file flags   GLW1U401.671   
+#LL                          Check duplex backup authority if necessary    GLW1U401.672   
+#LL                          Write reviewdate file if review system.       GLW1U401.673   
+#LL 18/04/97  4.3  L Wiles  Add crackercheck directory                     GLW1U403.60    
+#LL                         Add new flag checks for trigger file entries   GLW1U403.61    
+#LL 22/08/97  4.4  L Wiles  Add test for stoprun and exit to archfail.     GLW2U404.68    
+#LL 25/02/98  4.5  I Edmond  Omit test for stoprun and call to archfail    GIE1U405.4     
+#LL                          if operational run. Initialise variable       GIE1U405.5     
+#LL                          F_END_TF_COPY.                                GIE1U405.6     
+#LL 17/08/98  4.5  I Edmond   Optimisation changes and warning             GIE2U405.1     
+#LL                           if partial archiving.                        GIE2U405.2     
+#LL                                                                        qsserver.70    
+#LL  Programming Standard: UM Tech Doc Paper on                            qsserver.71    
+#LL                        Automated Post Processing System                GCP1U304.13    
+#LL                                                                        qsserver.73    
+#LL  Project Task: Y1                                                      qsserver.74    
+#LL---------------------------------------------------------------------   GLW1U401.674   
+#LL  Called by : qsmain                                                    GCP1U304.15    
+#LL  Files used: $PPCNTL (front end control file)                          GCP1U304.16    
+#LL              $PPHIST                                                   GCP1U304.17    
+#LL              $ERRFLAG                                                  GCP1U304.18    
+#LL  Scripts called:                                                       GCP1U304.19    
+#LL              newpphist  -creates history file - pphist                 GLW1U401.675   
+#LL              qscasedisp -function to take action on each request       GLW1U401.676   
+#LL              copy2dest  -function to transfer data and trigger files   GLW1U401.677   
+#LL              getarchdate (calculates absolute date relative to today   GLW1U401.678   
+#LL                           from period given)                           GLW1U401.679   
+#LL  Variables:                                                            GCP1U304.23    
+#LL  Imports:                                                              GCP1U304.24    
+#LL  OPERATIONAL         # Operational flag                                GCP1U304.25    
+#LL  SETOPT              # Shell options                                   GCP1U304.26    
+#LL  TYPE                # Type of run either new or continuation          GCP1U304.27    
+#LL  LOCKFILE            # The existence of this file indicates whether    GCP1U304.28    
+#LL                        the model is still executing                    GCP1U400.10    
+#LL  PPHIST              # Post processing history file                    GCP1U304.30    
+#LL  PERCENT             # Code to indicate type of request in pipe        GCP1U304.31    
+#LL  F_END_JOB_PROGID    # Programmer letters for front-end jobs           GCP1U304.32    
+#LL  ERRFLAG             # File containing error flag to close down        GCP1U304.33    
+#LL                        model process                                   GCP1U304.34    
+#LL  ARCHTAPE            # True if archiving to tape.                      GCP1U400.11    
+#LL                        False if only copying data to disk              GCP1U400.12    
+#LL  BKUP_AUTH           # File listing all runs authorised for duplex     GLW1U401.680   
+#LL                        copies                                          GLW1U401.681   
+#LL  BKUP_DUMP           # Y if dumps requested to have duplex copy        GLW1U401.682   
+#LL  BKUP_PP             # Y if pp files requested to have duplex copy     GLW1U401.683   
+#LL  BKUP_MEANPP         # Y meanpp files requested to have duplex copy    GLW1U401.684   
+#LL  BKUP_BNDY           # Y bndry files requested to have duplex copy     GLW1U401.685   
+#LL  DM_METHOD           # REVIEW/EXPIRY/MGMTCLASS date type for archive   GLW1U401.686   
+#LL  DM_REVIEW           # Name of review date system                      GLW1U401.687   
+#LL                        currently only one (HADLEY)                     GLW1U401.688   
+#LL  DM_REVIEW_FILE      # File of listing information about each review   GLW1U401.689   
+#LL                        date system                                     GLW1U401.690   
+#LL  DATE_FORMAT         # 1=absolute date,2=retention period,3=UABRF      GLW1U401.691   
+#LL  DM_DATE             # Review Date if using a review system such as    GLW1U401.692   
+#LL                        HADLEY, Expiry date otherwise.                  GLW1U401.693   
+#LL  DM_PERIOD           # Relative period in days used to calculate       GLW1U401.694   
+#LL                        absolute review or expiry date                  GLW1U401.695   
+#LL  SCRATCH             # Delete from IBM disk after archiving to         GLW1U401.696   
+#LL                        tape(S is default)  N if not scratched          GLW1U401.697   
+#LL  MAIL                # Mail errors in archiving to user (M)            GLW1U401.698   
+#LL                        N if user not mailed                            GLW1U401.699   
+#LL  ARCH_CNTL           # File of MAXBYTES + MAXFILES for each system     GLW1U401.700   
+#LL  IBM_ARCHNAME        # Name of archiving system used on IBM            GLW1U401.701   
+#LL                        valid values CRACER, UABRF                      GLW1U401.702   
+#LL  F_END_DSN_PREFIX    # High level qualifier for IBM data file names    GLW1U401.703   
+#LL  ARCHSYS             # System archiveing required = true               GLW1U401.704   
+#LL                        Delete superceded dumps and script release      GLW1U401.705   
+#LL                        only = false                                    GLW1U401.706   
+#LL                                                                        GCP1U304.35    
+#LL  Exports:                                                              GCP1U304.36    
+#LL  CURRENT_RQST_NAME   # Name of current model output file processing    GLW1U401.707   
+#LL  CURRENT_RQST_ACTION # Request current action (archive/delete)         GCP1U304.38    
+#LL  CURRENT_RQST_TYPE   # Data stream type: dump;pp;mean pp;bndy          GCP1U304.39    
+#LL  CURRENT_RQST_TYPE_TF                       :CRACER_RQST_TYPE          GLW1U401.708   
+#LL          Trigger file stream type:                                     GLW1U401.709   
+#LL          dump                        :DMP   : D                        GLW1U401.710   
+#LL          pp                          :PP    : P                        GLW1U401.711   
+#LL          mean pp                     :MPP   : M                        GLW1U401.712   
+#LL          bndy                        :BF    : B                        GLW1U401.713   
+#LL          pp + mean pp together, dump :PMP   : N                        GLW1U401.714   
+#LL          and bndy separately                                           GLW1U401.715   
+#LL          dump + bndy together,       :DB    : C                        GLW1U401.716   
+#LL          pp and mean pp separately                                     GLW1U401.717   
+#LL          all types together          :MIX   : X                        GLW1U401.718   
+#LL  DMP_FILECOUNT       # Number of entries in dump TF                    GCP1U304.50    
+#LL  DMP_RQST_LIMIT      # Max. no. of entries in dump TF                  GCP1U304.51    
+#LL  DMP_RETPD           # Retention period in days for dump files         GCP1U304.52    
+#LL  DMP_EXPIRE_DATE     # Expiry date (year + julian day)dump files       GLW1U401.719   
+#LL  DMP_LAST_FILE       # Last dump file archived                         GCP1U304.54    
+#LL  DMP_RUN_FLAG        # First dump file of NRUN/CRUN? (T/F)             GCP1U400.13    
+#LL  DMP_F_END_TF        # Current dump trigger file                       GCP1U304.56    
+#LL  DMP_LAST_TF         # Last dump trigger file for current run          GCP1U304.57    
+#LL  MPP_FILECOUNT       # Number of entries in mean pp TF                 GCP1U304.58    
+#LL  MPP_RQST_LIMIT      # Max. no. of entries in mean pp TF               GCP1U304.59    
+#LL  MPP_RETPD           # Retention period in days for mean pp files      GCP1U304.60    
+#LL  MPP_EXPIRE_DATE     # Expiry date (year + julian day) mn pp files     GLW1U401.720   
+#LL  MPP_LAST_FILE       # Last mean pp file archived                      GCP1U304.62    
+#LL  MPP_RUN_FLAG        # First mean pp file of NRUN/CRUN? (T/F)          GCP1U400.14    
+#LL  MPP_F_END_TF        # Current mean pp trigger file                    GCP1U304.64    
+#LL  MPP_LAST_TF         # Last mean pp trigger file for current run       GCP1U304.65    
+#LL  PP_FILECOUNT        # Number of entries in pp TF                      GCP1U304.66    
+#LL  PP_RQST_LIMIT       # Max. no. of entries in pp TF                    GCP1U304.67    
+#LL  PP_RETPD            # Retention period in days for pp files           GCP1U304.68    
+#LL  PP_EXPIRE_DATE      # Expiry date (year + julian day) pp files        GLW1U401.721   
+#LL  PP_LAST_FILE        # Last pp file archived                           GCP1U304.70    
+#LL  PP_RUN_FLAG         # First pp file of NRUN/CRUN? (T/F)               GCP1U400.15    
+#LL  PP_F_END_TF         # Current pp trigger file                         GCP1U304.72    
+#LL  PP_LAST_TF          # Last pp trigger file for current run            GCP1U304.73    
+#LL  BF_FILECOUNT        # Number of entries in boundary data TF           GCP1U304.74    
+#LL  BF_RQST_LIMIT       # Max. no. of entries in boundary data TF         GCP1U304.75    
+#LL  BF_RETPD            # Retention period in days for bndy files         GLW1U401.722   
+#LL  BF_EXPIRE_DATE      # Expiry date (year julian day) bndy files        GLW1U401.723   
+#LL  BF_LAST_FILE        # Last boundary data file archived                GCP1U304.78    
+#LL  BF_RUN_FLAG         # First boundary file of NRUN/CRUN? (T/F)         GCP1U400.16    
+#LL  BF_F_END_TF         # Current boundary data trigger file              GCP1U304.80    
+#LL  BF_LAST_TF          # Last boundary trigger file for current run      GCP1U304.81    
+#LL  MIX_FILECOUNT       # Number of entries in mixed TF                   GCP1U304.82    
+#LL  MIX_RQST_LIMIT      # Max. no. of entries in mixed TF                 GCP1U304.83    
+#LL  MIX_RETPD           # Retention period in days for mixed files        GCP1U304.84    
+#LL  MIX_EXPIRE_DATE     # Expiry date (year + julian day) mixed files     GLW1U401.724   
+#LL  MIX_LAST_FILE       # Last mixed file archived                        GCP1U304.86    
+#LL  MIX_RUN_FLAG        # First mixed file of NRUN/CRUN? (T/F)            GCP1U400.17    
+#LL  MIX_F_END_TF        # Current mixed trigger file                      GCP1U304.88    
+#LL  MIX_LAST_TF         # Last mixed trigger file for current run         GCP1U304.89    
+#LL  DB_FILECOUNT        # Number of entries in dump/bndy TF               GCP1U304.90    
+#LL  DB_RQST_LIMIT       # Max. no. of entries in dump/bndy TF             GCP1U304.91    
+#LL  DB_RETPD            # Retention period in days - dump/bndy files      GLW1U401.725   
+#LL  DB_EXPIRE_DATE      # Expiry date (year + julian day) dump/bndy       GLW1U401.726   
+#LL  DB_LAST_FILE        # Last dump/bndy file archived                    GCP1U304.94    
+#LL  DB_RUN_FLAG         # First dump/bndy file of NRUN/CRUN? (T/F)        GCP1U400.18    
+#LL  DB_F_END_TF         # Current dump/bndy trigger file                  GCP1U304.96    
+#LL  DB_LAST_TF          # Last dump/bndy trigger file for current run     GCP1U304.97    
+#LL  PMP_FILECOUNT       # Number of entries in pp and mean pp data TF     GCP1U304.98    
+#LL  PMP_RQST_LIMIT      # Max no of entries in pp and mean pp data TF     GLW1U401.727   
+#LL  PMP_RETPD           # Retention period in days for pp and mean pp     GCP1U304.100   
+#LL  PMP_EXPIRE_DATE     # Expiry date (year + julian day) pp and mean     GLW1U401.728   
+#LL  PMP_LAST_FILE       # Last pp and mean pp  file archived              GCP1U304.102   
+#LL  PMP_RUN_FLAG        # First pp and mean pp file of NRUN/CRUN? (T/F)   GCP1U400.19    
+#LL  PMP_F_END_TF        # Current pp and mean pp trigger file             GCP1U304.104   
+#LL  PMP_LAST_TF         # Last pp and mean pp trigger file, current run   GLW1U401.729   
+#LL  F_END_TF            # Trigger file to be defined                      GCP1U304.106   
+#LL  AUTH_BKUP           # 'true' if duplex backup is authorised,          GLW1U401.730   
+#LL                      # 'false' ,otherwise                              GLW1U401.731   
+#LL  MAXBYTES            # Max total number of bytes per trigger file      GLW1U401.732   
+#LL  PPCNTL_ERR          # Flag for archfail if there is an error in any   GLW1U401.733   
+#LL                        of the ppcntl variable settings                 GLW1U401.734   
+#LL  SUMBYTES            # The sum of the bytes, of the files in a TF      GLW1U401.735   
+#LL  MAXFILES            # Maximum number of files per trigger file.       GLW1U401.736   
+#LL                                                                        GCP1U304.107   
+#LL  Local variables:                                                      GCP1U304.108   
+#LL                                                                        GCP1U304.109   
+#LL  RC                  # Return code from model input pipe               GCP1U304.110   
+#LL  RC1, RC2            # Return codes from grep commands                 GLW1U401.737   
+#LL  CNTR1               # Counter used for sending final trigger files    GCP1U304.111   
+#LL  TEST_AUTH           # Used to test if duplex backup is authorised.    GLW1U401.738   
+#LL  REVIEW_PATH         # path for directory for review system dates.     GLW1U401.739   
+#LL                                                                        GCP1U304.112   
+#LL                                                                        GLW1U401.740   
+#LL---------------------------------------------------------------------   GLW1U401.741   
+set -$SETOPT                                                               qsserver.137   
+echo "qsserver: Starting..."                                               GCP1U304.114   
+#L----------------------------------------------------------------------   GCP1U304.115   
+#L Step 0:Set shell options                                                GCP1U304.116   
+#L        Send message to model if server process dies                     GCP1U304.117   
+#L----------------------------------------------------------------------   GCP1U304.118   
+if [[ $UMMACHINE = METOCRAY ]]                                             GIE2U405.3     
+then                                                                       GLW1U401.743   
+   trap 'echo "T   Trapped server failure" >$ERRFLAG; exit'\               GLW1U401.744   
+ 1 2 3 4 5 6 7 8 10 12 13 14 15 24 25 26                                   GCP1U304.120   
+fi                                                                         GLW1U401.745   
+PPCNTL_ERR='false'                                                         GLW1U401.746   
+if [[ $RUNID = UABRF ]]                                                    GIE2U405.4     
+then                                                                       GLW1U401.748   
+  PPCNTL_ERR='true'                                                        GLW1U401.749   
+  echo "==================================================="               GLW1U401.750   
+  echo "qsserver: $RUNID is invalid. This is a reserved  "                 GLW1U401.751   
+  echo "word for CRACER post processing                   "                GLW1U401.752   
+  echo "==================================================="               GLW1U401.753   
+  . archfail                                                               GLW1U401.754   
+  exit                                                                     GLW1U401.755   
+                                                                           GLW1U401.756   
+fi                                                                         GLW1U401.757   
+                                                                           GLW1U401.758   
+#L----------------------------------------------------------------------   GCP1U304.121   
+#L Step 1 :Initialisation                                                  GCP1U304.122   
+#L      1a:Set environment variables for data and trigger file transfer    GCP1U304.123   
+#L       by calling post processing control script                         GCP1U304.124   
+#L----------------------------------------------------------------------   GCP1U304.125   
+. $PPCNTL                                                                  qsserver.141   
+#L----------------------------------------------------------------------   GCP1U304.126   
+#L Step 1b: Test if Operational - no further set up required               GCP1U304.127   
+#L----------------------------------------------------------------------   GCP1U304.128   
+if [[ $OPERATIONAL = true || $ARCHSYS = false ]]                           GIE2U405.5     
+then                                                                       qsserver.143   
+  :                                                                        qsserver.147   
+else                                                                       GCP1U304.130   
+#L----------------------------------------------------------------------   GCP1U304.131   
+#L Step 1c:Initialize and execute history file                             GCP1U304.132   
+#L----------------------------------------------------------------------   GCP1U304.133   
+#                                                                          qsserver.155   
+# If not operational -                                                     GCP1U304.134   
+# Build post processing control variables from pphist file                 GCP1U304.135   
+#                                                                          GCP1U304.136   
+  if [[ $TYPE = NRUN ]]        # New run                                   GIE2U405.6     
+  then                                                                     qsserver.157   
+    . newpphist                # Initialises the pphist file               GCP1U304.138   
+  fi                                                                       qsserver.159   
+  . $PPHIST                    # Execute post-processing history file      GCP1U304.139   
+                                                                           GCP1U304.140   
+#L----------------------------------------------------------------------   GCP1U304.141   
+#L Step 1d:Initialize variables that are required at start of run          GCP1U304.142   
+#L----------------------------------------------------------------------   GCP1U304.143   
+                                                                           GCP1U304.144   
+  DMP_RUN_FLAG='true'                                                      GCP1U400.20    
+  DMP_FILECOUNT=0                                                          GCP1U304.146   
+  DMP_LAST_TF='false'                                                      GCP1U304.147   
+  MPP_RUN_FLAG='true'                                                      GCP1U400.21    
+  MPP_FILECOUNT=0                                                          GCP1U304.149   
+  MPP_LAST_TF='false'                                                      GCP1U304.150   
+  PP_RUN_FLAG='true'                                                       GCP1U400.22    
+  PP_FILECOUNT=0                                                           GCP1U304.152   
+  PP_LAST_TF='false'                                                       GCP1U304.153   
+  BF_RUN_FLAG='true'                                                       GCP1U400.23    
+  BF_FILECOUNT=0                                                           GCP1U304.155   
+  BF_LAST_TF='false'                                                       GCP1U304.156   
+  MIX_RUN_FLAG='true'                                                      GCP1U400.24    
+  MIX_FILECOUNT=0                                                          GCP1U304.158   
+  MIX_LAST_TF='false'                                                      GCP1U304.159   
+  DB_RUN_FLAG='true'                                                       GCP1U400.25    
+  DB_FILECOUNT=0                                                           GCP1U304.161   
+  DB_LAST_TF='false'                                                       GCP1U304.162   
+  PMP_RUN_FLAG='true'                                                      GCP1U400.26    
+  PMP_FILECOUNT=0                                                          GCP1U304.164   
+  PMP_LAST_TF='false'                                                      GCP1U304.165   
+  F_END_TF_COPY='off'                                                      GIE1U405.7     
+                                                                           GCP1U304.166   
+  VERSION=`echo $VN | $UM_SED 's/\./0/'`                                   PXUTILTY.255   
+  typeset -u IDRUN=$RUNID                                                  GIE2U405.7     
+  CNTR1=0                                                                  GLW1U401.762   
+  SUMBYTES=${SUMBYTES:-0}                                                  GLW1U401.763   
+                                                                           GLW1U401.764   
+  if [[ $UMMACHINE = METOCRAY ]]                                           GIE2U405.8     
+  then                                                                     GLW1U401.766   
+    if [[ $IBM_ARCHNAME = CRACER || $IBM_ARCHNAME = UABRF ]]               GIE2U405.9     
+    then                                                                   GLW1U401.768   
+#L--------------------------------------------------------------------     GLW1U401.769   
+#L Step 1e: Set up CRACER and UABRF variables                              GLW1U401.770   
+#L--------------------------------------------------------------------     GLW1U401.771   
+                                                                           GLW1U401.772   
+      # set flags needed in trigger file                                   GLW1U401.773   
+      SCRATCH=${SCRATCH:-S}                                                GLW1U401.774   
+      MAIL=${MAIL:-M}                                                      GLW1U401.775   
+      if [[ $SCRATCH != N && $SCRATCH != S ]]                              GIE2U405.10    
+      then                                                                 GLW1U401.777   
+        SCRATCH='S'        #set to default -scratch when archived          GLW1U401.778   
+      fi                                                                   GLW1U401.779   
+      if [[ $MAIL != N && $MAIL != M ]]                                    GIE2U405.11    
+      then                                                                 GLW1U401.781   
+        MAIL='M'           #set to default -mail archiving errors          GLW1U401.782   
+      fi                                                                   GLW1U401.783   
+      TAPE=${TAPE:-N}                                                      GLW1U403.62    
+      if [[ $TAPE != N && $TAPE != R ]]                                    GIE2U405.12    
+      then                                                                 GLW1U403.64    
+        TAPE='N'        #set to default normal tape                        GLW1U403.65    
+      fi                                                                   GLW1U403.66    
+      CRACERCHECK=${CRACERCHECK:-"/u/m20/cprod/cracercheck"}               GLW1U403.67    
+                                                                           GLW1U401.784   
+# check correct high level qualifier for IBM file names                    GLW1U401.785   
+      typeset -L4 CRACER_HLQ_FLAG=$F_END_DSN_PREFIX                        GIE2U405.13    
+      if [[ $DM_REVIEW = HADLEY ]]                                         GIE2U405.14    
+      then                                                                 GLW1U401.788   
+        if [[ $CRACER_HLQ_FLAG != CRAC ]]                                  GIE2U405.15    
+        then                                                               GLW1U401.790   
+          PPCNTL_ERR='true'                                                GLW1U401.791   
+          echo "==================================================="       GLW1U401.792   
+          echo "qsserver: $F_END_DSN_PREFIX is invalid for CRACER"         GLW1U401.793   
+          echo "The prefix should be CRAC followed by group letter"        GLW1U401.794   
+          echo "eg CRACZ"                                                  GLW1U401.795   
+          echo "==================================================="       GLW1U401.796   
+          . archfail                                                       GLW1U401.797   
+          exit                                                             GLW1U401.798   
+                                                                           GLW1U401.799   
+        fi                                                                 GLW1U401.800   
+      fi                                                                   GLW1U401.801   
+# Warn user if partial archiving selected.                                 GIE2U405.129   
+      if [[ $STORCLAS = SCCLMPRK ]]; then                                  GIE2U405.130   
+        echo "========================================"                    GIE2U405.131   
+        echo " WARNING:  Partial Archiving selected,"                      GIE2U405.132   
+        echo "           with files left on IBM disk"                      GIE2U405.133   
+        echo "========================================"                    GIE2U405.134   
+      fi                                                                   GIE2U405.135   
+    fi     #end of code for CRACER and UABRF only                          GLW1U401.802   
+                                                                           GLW1U401.803   
+# set variables to default of 'N' if not specified                         GLW1U401.804   
+# needed for backward compatability                                        GLW1U401.805   
+                                                                           GLW1U401.806   
+    BKUP_DUMP=${BKUP_DUMP:-N}                                              GLW1U401.807   
+    BKUP_PP=${BKUP_PP:-N}                                                  GLW1U401.808   
+    BKUP_MEANPP=${BKUP_MEANPP:-N}                                          GLW1U401.809   
+    BKUP_BNDY=${BKUP_BNDY:-N}                                              GLW1U401.810   
+                                                                           GLW1U401.811   
+    if [[ $IBM_ARCHNAME = CRACER ]]                                        GIE2U405.16    
+    then                                                                   GLW1U401.813   
+      # check for backup authorisation                                     GLW1U401.814   
+      BKUP_AUTH=`eval echo $BKUP_AUTH`                                     GLW1U401.815   
+      if [[ -s $BKUP_AUTH ]]                                               GIE2U405.17    
+      then                                                                 GLW1U401.817   
+                                                                           GLW1U401.818   
+        TEST_AUTH=`$UM_GREP $RUNID $BKUP_AUTH`                             PXUTILTY.256   
+        if (( $? == 0 ))                                                   GIE2U405.18    
+        then                                                               GLW1U401.821   
+          AUTH_BKUP='true'                                                 GLW1U401.822   
+        else                                                               GLW1U401.823   
+          AUTH_BKUP='false'                                                GLW1U401.824   
+        fi                                                                 GLW1U401.825   
+      else                                                                 GLW1U401.826   
+        PPCNTL_ERR='true'                                                  GLW1U401.827   
+        echo "================================================="           GLW1U401.828   
+        echo "qsserver: Duplex backup authorisation file error "           GLW1U401.829   
+        echo "================================================="           GLW1U401.830   
+        . archfail                                                         GLW1U401.831   
+        exit                                                               GLW1U401.832   
+                                                                           GLW1U401.833   
+      fi                                                                   GLW1U401.834   
+                                                                           GLW1U401.835   
+      if [[ $BKUP_DUMP = Y || $BKUP_PP = Y || \                            GIE2U405.19    
+            $BKUP_MEANPP = Y || $BKUP_BNDY = Y ]]                          GIE2U405.20    
+      then                                                                 GLW1U401.838   
+        if [[ $AUTH_BKUP = false ]]                                        GIE2U405.21    
+        then                                                               GLW1U401.840   
+          PPCNTL_ERR='true'                                                GLW1U401.841   
+          echo "==================================================="       GLW1U401.842   
+          echo "qsserver: Duplex backup not authorised for $RUNID"         GLW1U401.843   
+          echo "==================================================="       GLW1U401.844   
+          . archfail                                                       GLW1U401.845   
+          exit                                                             GLW1U401.846   
+                                                                           GLW1U401.847   
+        fi                                                                 GLW1U401.848   
+      fi                                                                   GLW1U401.849   
+    fi    # End of code for CRACER only                                    GLW1U401.850   
+                                                                           GLW1U401.851   
+# if NRUN and REVIEW, get the path to the review date file and write       GLW1U401.852   
+# a file containing the review date (calculated from ret period)           GLW1U401.853   
+                                                                           GLW1U401.854   
+    if [[ $TYPE = NRUN && $DM_REVIEW != NONE ]]                            GIE2U405.22    
+    then                                                                   GLW1U401.856   
+      DM_REVIEW_FILE=`eval echo $DM_REVIEW_FILE`                           GLW1U401.857   
+      if [[ -s $DM_REVIEW_FILE ]]                                          GIE2U405.23    
+      then                                                                 GLW1U401.859   
+                                                                           GIE2U405.24    
+        REVIEW_PATH=`$UM_GREP $DM_REVIEW $DM_REVIEW_FILE | cut -f2 -d:`    PXUTILTY.257   
+        if (( $? == 0 ))                                                   GIE2U405.25    
+        then                                                               GLW1U401.862   
+          REVIEW_PATH=`eval echo $REVIEW_PATH`                             GLW1U401.863   
+        else                                                               GLW1U401.864   
+          PPCNTL_ERR='true'                                                GLW1U401.865   
+          echo "==================================================="       GLW1U401.866   
+          echo "qsserver: No entry in $DM_REVIEW_FILE"                     GLW1U401.867   
+          echo "for your system"                                           GLW1U401.868   
+          echo "==================================================="       GLW1U401.869   
+          . archfail                                                       GLW1U401.870   
+          exit                                                             GLW1U401.871   
+                                                                           GLW1U401.872   
+        fi                                                                 GLW1U401.873   
+      else                                                                 GLW1U401.874   
+        PPCNTL_ERR='true'                                                  GLW1U401.875   
+        echo "==================================================="         GLW1U401.876   
+        echo "qsserver: Review System Date Directory $DM_REVIEW_FILE"      GLW1U401.877   
+        echo "does not exist or is empty "                                 GLW1U401.878   
+        echo "==================================================="         GLW1U401.879   
+        . archfail                                                         GLW1U401.880   
+        exit                                                               GLW1U401.881   
+                                                                           GLW1U401.882   
+      fi                                                                   GLW1U401.883   
+      DATE_FORMAT=${DATE_FORMAT:-0}                                        GLW1U401.884   
+      if (( $DATE_FORMAT == 0 ))                                           GIE2U405.26    
+      then                                                                 GLW1U401.886   
+        PPCNTL_ERR='true'                                                  GLW1U401.887   
+        echo "==================================================="         GLW1U401.888   
+        echo "qsserver: DATE FORMAT not set up in PPCNTL       "           GLW1U401.889   
+        echo "==================================================="         GLW1U401.890   
+        . archfail                                                         GLW1U401.891   
+        exit                                                               GLW1U401.892   
+                                                                           GLW1U401.893   
+      fi                                                                   GLW1U401.894   
+      if (( $DATE_FORMAT == 2 ))                                           GIE2U405.27    
+      then                                                                 GLW1U401.896   
+        . getarchdate                                                      GLW1U401.897   
+      fi                                                                   GLW1U401.898   
+      echo $DM_DATE > $REVIEW_PATH/$RUNID                                  GLW1U401.899   
+    fi                                                                     GLW1U401.900   
+  fi   # End of code for Met Office Cray only                              GLW1U401.901   
+                                                                           GLW1U401.902   
+  if [[ $IBM_ARCHNAME = CRACER || $IBM_ARCHNAME = UABRF ]]                 GIE2U405.28    
+  then                                                                     GLW1U401.904   
+    ARCH_CNTL=`eval echo $ARCH_CNTL`                                       GLW1U401.905   
+    if [[ -s $ARCH_CNTL ]]                                                 GIE2U405.29    
+    then                                                                   GLW1U401.907   
+                                                                           GLW1U401.908   
+    # This is used when trigger file limits are set to 0                   GLW1U401.909   
+      MAXBYTES=`$UM_GREP $IBM_ARCHNAME'_MAXBYTES' $ARCH_CNTL |\            PXUTILTY.258   
+                cut -f2 -d:`                                               PXUTILTY.259   
+      MAXFILES=`$UM_GREP $IBM_ARCHNAME'_MAXFILES' $ARCH_CNTL |\            PXUTILTY.260   
+                cut -f2 -d:`                                               PXUTILTY.261   
+      if [[ -n $MAXBYTES && -n $MAXFILES ]]                                GIE2U405.30    
+      then                                                                 GLW1U401.913   
+        echo " MAXIMUM BYTE SIZE for trigger files is $MAXBYTES"           GLW1U401.914   
+        echo " MAXIMUM NUMBER OF FILES in trigger files is $MAXFILES"      GLW1U401.915   
+      else                                                                 GLW1U401.916   
+        PPCNTL_ERR='true'                                                  GLW1U401.917   
+        echo "==================================================="         GLW1U401.918   
+        echo "qsserver: Archive control file error."                       GLW1U401.919   
+        echo "==================================================="         GLW1U401.920   
+        echo " MAXIMUM BYTE SIZE for trigger files is $MAXBYTES"           GLW1U401.921   
+        echo " MAXIMUM NUMBER OF FILES in trigger files is $MAXFILES"      GLW1U401.922   
+        . archfail                                                         GLW1U401.923   
+        exit                                                               GLW1U401.924   
+                                                                           GLW1U401.925   
+      fi                                                                   GLW1U401.926   
+    else                                                                   GLW1U401.927   
+      PPCNTL_ERR='true'                                                    GLW1U401.928   
+      echo "==================================================="           GLW1U401.929   
+      echo "qsserver: Archive control file not found "                     GLW1U401.930   
+      echo "==================================================="           GLW1U401.931   
+      . archfail                                                           GLW1U401.932   
+      exit                                                                 GLW1U401.933   
+    fi                                                                     GLW1U401.934   
+  else                                                                     GLW1U401.935   
+    # set default MAXBYTES and MAXFILES for other archiving systems        GLW1U401.936   
+    MAXBYTES=100000000                                                     GLW1U401.937   
+    MAXFILES=10                                                            GLW1U401.938   
+  fi                                                                       GLW1U401.939   
+fi  # end of code for non OPERATIONAL variables                            GLW1U401.940   
+                                                                           GLW1U401.941   
+                                                                           GCP1U304.170   
+#L----------------------------------------------------------------------   GCP1U304.171   
+#L Step 2:Remove any old versions of DATAM/RUNID.requests                  GCP1U304.172   
+#L        Start reading a line at a time from the input pipe               GCP1U304.173   
+#L        Nb: first read is a dummy (PERCENT not set to '%%%')             GCP1U304.174   
+#L----------------------------------------------------------------------   GCP1U304.175   
+                                                                           GCP1U304.176   
+rm $DATAM/$RUNID.requests                                                  qsserver.219   
+RC=0                                                                       qsserver.220   
+while (( $RC == 0 ))                                                       GIE2U405.31    
+do                                                                         qsserver.222   
+if test $OPERATIONAL = 'false'                                             GIE1U405.1     
+then                                                                       GIE1U405.2     
+# Test for operator stoprun and call archfail if job has been stopped      GLW2U404.69    
+  $UM_GREP "stoprun: Operator" $ERRFLAG > $TEMP/$RUNID.stopped             PXUTILTY.262   
+  if [[ -s $TEMP/$RUNID.stopped ]]                                         GIE2U405.32    
+  then                                                                     GLW2U404.72    
+    . archfail                                                             GLW2U404.73    
+    exit                                                                   GLW2U404.74    
+  fi                                                                       GLW2U404.75    
+fi                                                                         GIE1U405.3     
+  read PERCENT CURRENT_RQST_NAME CURRENT_RQST_ACTION CURRENT_RQST_TYPE \   GCP1U304.177   
+  DATA_TYPE                                                                GCP1U304.178   
+  RC=$?                                                                    GCP1U304.179   
+                                                                           GCP1U304.180   
+# Copy the input request to a file in case data remains on cray disk       qsserver.225   
+                                                                           GCP1U304.181   
+  echo "$PERCENT $CURRENT_RQST_NAME $CURRENT_RQST_ACTION \                 GCP1U304.182   
+  $CURRENT_RQST_TYPE" >> $DATAM/$RUNID.requests                            GCP1U304.183   
+  RQST_TYPE=$CURRENT_RQST_TYPE                                             GCP1U304.184   
+  RQST_ACTION=$CURRENT_RQST_ACTION                                         GCP1U304.185   
+                                                                           GCP1U304.186   
+#L----------------------------------------------------------------------   GCP1U304.187   
+#L Step 3a:Deal with each request from the input pipe                      GCP1U304.188   
+#L----------------------------------------------------------------------   GCP1U304.189   
+                                                                           GCP1U304.190   
+  if (( $RC == 0 ))                                                        GIE2U405.33    
+  then                                                                     GCP1U304.192   
+    if [[ $PERCENT = %%% ]]                                                GIE2U405.34    
+    then                                                                   GCP1U304.195   
+      echo "qsserver: `date`: "\                                           GCP1U304.196   
+      $CURRENT_RQST_NAME $CURRENT_RQST_ACTION $CURRENT_RQST_TYPE           GCP1U304.197   
+      if [[ $OPERATIONAL = false ]]                                        GIE2U405.35    
+      then                                                                 GCP1U304.200   
+        if [[ $CURRENT_RQST_ACTION = REL ]]                                GIE2U405.36    
+        then                                                               GCP1U400.29    
+          . qscasedisp                                                     GCP1U400.30    
+        elif [[ -s $CURRENT_RQST_NAME ]]                                   GIE2U405.37    
+        then                                                               GCP1U400.32    
+          case $CURRENT_RQST_TYPE in                                       GCP1U400.33    
+            DUMP)                                                          GCP1U400.34    
+              CURRENT_RQST_TYPE='DMP'                                      GCP1U400.35    
+              ;;                                                           GCP1U304.211   
+            PPCHART|PPNOCHART)                                             GCP1U400.36    
+              ct -c9 $CURRENT_RQST_NAME; MNFIELDS_TYPE=$__ct               GIE2U405.38    
+              case $MNFIELDS_TYPE in                                       GCP1U400.39    
+                a|b|c|d|e|f|g|h|i|j)CURRENT_RQST_TYPE='PP'                 GCP1U400.40    
+                ;;                                                         GCP1U400.41    
+                1|2|3|4|m|s|t|p|w|r|l|u|x|y|z)CURRENT_RQST_TYPE='MPP'      GCP1U400.42    
+                ;;                                                         GCP1U400.43    
+                *)CURRENT_RQST_TYPE='MPP'                                  GCP1U400.44    
+                ;;                                                         GCP1U400.45    
+              esac                                                         GCP1U400.46    
+              ;;                                                           GCP1U304.213   
+            BNDY)                                                          GCP1U400.47    
+              CURRENT_RQST_TYPE='BF'                                       GCP1U400.48    
+              if [[ ${CURRENT_RQST_NAME##'$P'} != $CURRENT_RQST_NAME ]]    GIE2U405.39    
+              then                                                         GCP1U400.51    
+                CURRENT_RQST_ACTION='DELETE'                               GCP1U400.52    
+              fi                                                           GCP1U400.53    
+              ;;                                                           GCP1U400.54    
+          esac                                                             GCP1U400.55    
+                                                                           GCP1U304.225   
+#L----------------------------------------------------------------------   GCP1U304.226   
+#L Step 3b:Set trigger file types and reset $CURRENT_RQST_TYPE             GCP1U304.227   
+#L----------------------------------------------------------------------   GCP1U304.228   
+                                                                           GCP1U304.229   
+          case $STREAM_OPTION in                                           GCP1U400.56    
+            1)CURRENT_RQST_TYPE_TF=$CURRENT_RQST_TYPE                      GCP1U400.57    
+              ;;                                                           GCP1U304.237   
+            2)CURRENT_RQST_TYPE_TF='MIX'                                   GCP1U400.58    
+              ;;                                                           GCP1U304.239   
+            3)case $CURRENT_RQST_TYPE in                                   GCP1U400.59    
+                DMP|BF)CURRENT_RQST_TYPE_TF='DB'                           GCP1U400.60    
+                ;;                                                         GCP1U400.61    
+                MPP|PP)CURRENT_RQST_TYPE_TF=$CURRENT_RQST_TYPE             GCP1U400.62    
+                ;;                                                         GCP1U400.63    
+              esac                                                         GCP1U400.64    
+              ;;                                                           GCP1U304.244   
+            4)case $CURRENT_RQST_TYPE in                                   GCP1U400.65    
+                MPP|PP)CURRENT_RQST_TYPE_TF='PMP'                          GCP1U400.66    
+                ;;                                                         GCP1U400.67    
+                DMP|BF)CURRENT_RQST_TYPE_TF=$CURRENT_RQST_TYPE             GCP1U400.68    
+                ;;                                                         GCP1U400.69    
+              esac                                                         GCP1U400.70    
+              ;;                                                           GCP1U304.246   
+            5)case $CURRENT_RQST_TYPE in                                   GCP1U400.71    
+                DMP|BF)CURRENT_RQST_TYPE_TF='DB'                           GCP1U400.72    
+                ;;                                                         GCP1U400.73    
+                MPP|PP)CURRENT_RQST_TYPE_TF='PMP'                          GCP1U400.74    
+                ;;                                                         GCP1U400.75    
+              esac                                                         GCP1U400.76    
+              ;;                                                           GCP1U304.251   
+          esac                                                             GCP1U400.77    
+                                                                           GCP1U304.257   
+#L----------------------------------------------------------------------   GCP1U304.258   
+#L Step 3c:Initialize variables before calling camelot and qscasedisp      GJG3U401.5     
+#L----------------------------------------------------------------------   GCP1U304.260   
+                                                                           GCP1U304.261   
+          case $CURRENT_RQST_TYPE_TF in                                    GCP1U400.78    
+            DMP)FILECOUNT=$DMP_FILECOUNT                                   GCP1U400.79    
+                RQST_LIMIT=$DMP_RQST_LIMIT                                 GCP1U400.80    
+                RETPD=$DM_PERIOD                                           GLW1U401.942   
+                EXPIRE_DATE=${DM_DATE:-none}                               GLW1U401.943   
+                F_END_TF=${DMP_F_END_TF:-none}                             GCP1U400.83    
+                LAST_FILE=${DMP_LAST_FILE:-none}                           GCP1U400.84    
+                RUN_FLAG=${DMP_RUN_FLAG:-true}                             GCP1U400.85    
+                LAST_TF=$DMP_LAST_TF                                       GCP1U400.86    
+                ;;                                                         GCP1U400.87    
+            MPP)FILECOUNT=$MPP_FILECOUNT                                   GCP1U400.88    
+                RQST_LIMIT=$MPP_RQST_LIMIT                                 GCP1U400.89    
+                RETPD=$DM_PERIOD                                           GLW1U401.944   
+                EXPIRE_DATE=${DM_DATE:-none}                               GLW1U401.945   
+                F_END_TF=${MPP_F_END_TF:-none}                             GCP1U400.92    
+                LAST_FILE=${MPP_LAST_FILE:-none}                           GCP1U400.93    
+                RUN_FLAG=${MPP_RUN_FLAG:-true}                             GCP1U400.94    
+                LAST_TF=$MPP_LAST_TF                                       GCP1U400.95    
+                ;;                                                         GCP1U400.96    
+             PP)FILECOUNT=$PP_FILECOUNT                                    GCP1U400.97    
+                RQST_LIMIT=$PP_RQST_LIMIT                                  GCP1U400.98    
+                RETPD=$DM_PERIOD                                           GLW1U401.946   
+                EXPIRE_DATE=${DM_DATE:-none}                               GLW1U401.947   
+                F_END_TF=${PP_F_END_TF:-none}                              GCP1U400.101   
+                LAST_FILE=${PP_LAST_FILE:-none}                            GCP1U400.102   
+                RUN_FLAG=${PP_RUN_FLAG:-true}                              GCP1U400.103   
+                LAST_TF=$PP_LAST_TF                                        GCP1U400.104   
+                ;;                                                         GCP1U400.105   
+             BF)FILECOUNT=$BF_FILECOUNT                                    GCP1U400.106   
+                RQST_LIMIT=$BF_RQST_LIMIT                                  GCP1U400.107   
+                RETPD=$DM_PERIOD                                           GLW1U401.948   
+                EXPIRE_DATE=${DM_DATE:-none}                               GLW1U401.949   
+                F_END_TF=${BF_F_END_TF:-none}                              GCP1U400.110   
+                LAST_FILE=${BF_LAST_FILE:-none}                            GCP1U400.111   
+                RUN_FLAG=${BF_RUN_FLAG:-true}                              GCP1U400.112   
+                LAST_TF=$BF_LAST_TF                                        GCP1U400.113   
+                ;;                                                         GCP1U400.114   
+            MIX)FILECOUNT=$MIX_FILECOUNT                                   GCP1U400.115   
+                RQST_LIMIT=$MIX_RQST_LIMIT                                 GCP1U400.116   
+                RETPD=$DM_PERIOD                                           GLW1U401.950   
+                EXPIRE_DATE=${DM_DATE:-none}                               GLW1U401.951   
+                F_END_TF=${MIX_F_END_TF:-none}                             GCP1U400.119   
+                LAST_FILE=${MIX_LAST_FILE:-none}                           GCP1U400.120   
+                RUN_FLAG=${MIX_RUN_FLAG:-true}                             GCP1U400.121   
+                LAST_TF=$MIX_LAST_TF                                       GCP1U400.122   
+                ;;                                                         GCP1U400.123   
+             DB)FILECOUNT=$DB_FILECOUNT                                    GCP1U400.124   
+                RQST_LIMIT=$DB_RQST_LIMIT                                  GCP1U400.125   
+                RETPD=$DM_PERIOD                                           GLW1U401.952   
+                EXPIRE_DATE=${DM_DATE:-none}                               GLW1U401.953   
+                F_END_TF=${DB_F_END_TF:-none}                              GCP1U400.128   
+                LAST_FILE=${DB_LAST_FILE:-none}                            GCP1U400.129   
+                RUN_FLAG=${DB_RUN_FLAG:-true}                              GCP1U400.130   
+                LAST_TF=$DB_LAST_TF                                        GCP1U400.131   
+                ;;                                                         GCP1U400.132   
+             PMP)FILECOUNT=$PMP_FILECOUNT                                  GCP1U400.133   
+                RQST_LIMIT=$PMP_RQST_LIMIT                                 GCP1U400.134   
+                RETPD=$DM_PERIOD                                           GLW1U401.954   
+                EXPIRE_DATE=${DM_DATE:-none}                               GLW1U401.955   
+                F_END_TF=${PMP_F_END_TF:-none}                             GCP1U400.137   
+                LAST_FILE=${PMP_LAST_FILE:-none}                           GCP1U400.138   
+                RUN_FLAG=${PMP_RUN_FLAG:-true}                             GCP1U400.139   
+                LAST_TF=$PMP_LAST_TF                                       GCP1U400.140   
+                ;;                                                         GCP1U400.141   
+            esac                                                           GCP1U304.326   
+                                                                           GCP1U304.327   
+#L----------------------------------------------------------------------   GCP1U304.328   
+#L Step 3c1:Call camelot to process request for camelot database           GJG3U401.6     
+#L----------------------------------------------------------------------   GJG3U401.7     
+#    Arguments passed to/from camelot                                      GJG3U401.8     
+#       IN: $CURRENT_RQST_NAME                                             GJG3U401.9     
+#           $F_END_JOB_PROGID                                              GJG3U401.10    
+#           $F_END_DSN_PREFIX                                              GJG3U401.11    
+#           $RUNID $VN $DATAM                                              GJG3U401.12    
+#           $EMAIL_DB                                                      GJG3U401.13    
+#      OUT: None                                                           GJG3U401.14    
+                                                                           GJG3U401.15    
+          if [[ $USE_CAMELOT = true && \                                   GIE2U405.40    
+                  $CURRENT_RQST_ACTION = ARCHIVE ]]                        GIE2U405.41    
+          then                                                             GJG3U401.18    
+            if [[ $CURRENT_RQST_TYPE = MPP || \                            GIE2U405.42    
+                  $CURRENT_RQST_TYPE = PP ]]                               GIE2U405.43    
+            then                                                           GJG3U401.21    
+              echo "qsserver: `date`:  $CURRENT_RQST_NAME CAMELOT"         GJG3U401.22    
+              . camelot                                                    GJG3U401.23    
+              if (( $? != 0 ))                                             GIE2U405.44    
+              then                                                         GLW1U403.69    
+                PPCNTL_ERR='true'                                          GLW1U403.70    
+                echo "================================================="   GLW1U403.71    
+                echo "qsserver: Your camelot request has failed        "   GLW1U403.72    
+                echo "and this run has been aborted                    "   GLW1U403.73    
+                echo "================================================="   GLW1U403.74    
+                . archfail                                                 GLW1U403.75    
+                exit                                                       GLW1U403.76    
+                                                                           GLW1U403.77    
+              fi                                                           GLW1U403.78    
+            fi                                                             GJG3U401.24    
+          fi                                                               GJG3U401.25    
+                                                                           GJG3U401.26    
+#L----------------------------------------------------------------------   GJG3U401.27    
+#L Step 3d:Call qscasedisp to process request                              GCP1U304.329   
+#L----------------------------------------------------------------------   GCP1U304.330   
+#    Arguments passed to/from qscasedisp                                   GCP1U304.331   
+#       IN: $VERSION $IDRUN $DATAM                                         GCP1U304.332   
+#           $OPERATIONAL $STORCLAS                                         GCP1U400.142   
+#           $F_END_DSN_PREFIX $CURRENT_RQST_NAME $BLK                      GCP1U304.334   
+#           $RECFM $LRECL $DF $CURRENT_RQST_TYPE                           GCP1U304.335   
+#           $LINKFAIL_LIMIT $CURRENT_RQST_ACTION                           GCP1U304.336   
+#           $F_END_JOB_PROGID $TYPE $DM_DATE                               GLW1U401.956   
+#           $CURRENT_RQST_TYPE_TF                                          GCP1U304.338   
+#    IN/OUT:$FILECOUNT $RQST_LIMIT $RETPD $F_END_TF                        GCP1U304.339   
+#           $LAST_FILE $RUN_FLAG $LAST_TF                                  GCP1U400.143   
+                                                                           GCP1U304.341   
+            . qscasedisp                                                   GCP1U304.342   
+                                                                           GCP1U304.343   
+#L----------------------------------------------------------------------   GCP1U304.344   
+#L Step 3e:Re-initialize variables after qscasedisp                        GCP1U304.345   
+#L----------------------------------------------------------------------   GCP1U304.346   
+                                                                           GCP1U304.347   
+            case $CURRENT_RQST_TYPE_TF in                                  GCP1U304.348   
+              DMP)DMP_FILECOUNT=$FILECOUNT                                 GCP1U304.349   
+                  DMP_RQST_LIMIT=$RQST_LIMIT                               GCP1U304.350   
+                  DMP_RETPD=$RETPD                                         GCP1U304.351   
+                  DMP_F_END_TF=${F_END_TF:-none}                           GCP1U304.352   
+                  DMP_LAST_FILE=${LAST_FILE:-none}                         GCP1U304.353   
+                  DMP_RUN_FLAG=$RUN_FLAG                                   GCP1U400.144   
+                  DMP_LAST_TF=$LAST_TF                                     GCP1U304.355   
+                  ;;                                                       GCP1U304.356   
+              MPP)MPP_FILECOUNT=$FILECOUNT                                 GCP1U304.357   
+                  MPP_RQST_LIMIT=$RQST_LIMIT                               GCP1U304.358   
+                  MPP_RETPD=$RETPD                                         GCP1U304.359   
+                  MPP_F_END_TF=${F_END_TF:-none}                           GCP1U304.360   
+                  MPP_LAST_FILE=${LAST_FILE:-none}                         GCP1U304.361   
+                  MPP_RUN_FLAG=$RUN_FLAG                                   GCP1U400.145   
+                  MPP_LAST_TF=$LAST_TF                                     GCP1U304.363   
+                  ;;                                                       GCP1U304.364   
+               PP)PP_FILECOUNT=$FILECOUNT                                  GCP1U304.365   
+                  PP_RQST_LIMIT=$RQST_LIMIT                                GCP1U304.366   
+                  PP_RETPD=$RETPD                                          GCP1U304.367   
+                  PP_F_END_TF=${F_END_TF:-none}                            GCP1U304.368   
+                  PP_LAST_FILE=${LAST_FILE:-none}                          GCP1U304.369   
+                  PP_RUN_FLAG=$RUN_FLAG                                    GCP1U400.146   
+                  PP_LAST_TF=$LAST_TF                                      GCP1U304.371   
+                  ;;                                                       GCP1U304.372   
+               BF)BF_FILECOUNT=$FILECOUNT                                  GCP1U304.373   
+                  BF_RQST_LIMIT=$RQST_LIMIT                                GCP1U304.374   
+                  BF_RETPD=$RETPD                                          GCP1U304.375   
+                  BF_F_END_TF=${F_END_TF:-none}                            GCP1U304.376   
+                  BF_LAST_FILE=${LAST_FILE:-none}                          GCP1U304.377   
+                  BF_RUN_FLAG=$RUN_FLAG                                    GCP1U400.147   
+                  BF_LAST_TF=$LAST_TF                                      GCP1U304.379   
+                  ;;                                                       GCP1U304.380   
+              MIX)MIX_FILECOUNT=$FILECOUNT                                 GCP1U304.381   
+                  MIX_RQST_LIMIT=$RQST_LIMIT                               GCP1U304.382   
+                  MIX_RETPD=$RETPD                                         GCP1U304.383   
+                  MIX_F_END_TF=${F_END_TF:-none}                           GCP1U304.384   
+                  MIX_LAST_FILE=${LAST_FILE:-none}                         GCP1U304.385   
+                  MIX_RUN_FLAG=$RUN_FLAG                                   GCP1U400.148   
+                  MIX_LAST_TF=$LAST_TF                                     GCP1U304.387   
+                  ;;                                                       GCP1U304.388   
+               DB)DB_FILECOUNT=$FILECOUNT                                  GCP1U304.389   
+                  DB_RQST_LIMIT=$RQST_LIMIT                                GCP1U304.390   
+                  DB_RETPD=$RETPD                                          GCP1U304.391   
+                  DB_F_END_TF=${F_END_TF:-none}                            GCP1U304.392   
+                  DB_LAST_FILE=${LAST_FILE:-none}                          GCP1U304.393   
+                  DB_RUN_FLAG=$RUN_FLAG                                    GCP1U400.149   
+                  DB_LAST_TF=$LAST_TF                                      GCP1U304.395   
+                  ;;                                                       GCP1U304.396   
+              PMP)PMP_FILECOUNT=$FILECOUNT                                 GCP1U304.397   
+                  PMP_RQST_LIMIT=$RQST_LIMIT                               GCP1U304.398   
+                  PMP_RETPD=$RETPD                                         GCP1U304.399   
+                  PMP_F_END_TF=${F_END_TF:-none}                           GCP1U304.400   
+                  PMP_LAST_FILE=${LAST_FILE:-none}                         GCP1U304.401   
+                  PMP_RUN_FLAG=$RUN_FLAG                                   GCP1U400.150   
+                  PMP_LAST_TF=$LAST_TF                                     GCP1U304.403   
+                  ;;                                                       GCP1U304.404   
+            esac                                                           GCP1U400.151   
+                                                                           GCP1U304.406   
+# Update history file                                                      GCP1U304.407   
+        . newpphist                                                        GCP1U400.152   
+                                                                           GCP1U304.409   
+        else                                                               GCP1U400.153   
+          echo "$CURRENT_RQST_NAME is zero length or does not exist:"      GCP1U400.154   
+          echo "next request"                                              GCP1U400.155   
+        fi                                                                 GCP1U400.156   
+#L----------------------------------------------------------------------   GCP1U304.411   
+#L Step 3f:Straight to qscasedisp if operational                           GCP1U304.412   
+#L----------------------------------------------------------------------   GCP1U304.413   
+      else                                                                 GCP1U400.157   
+        . qscasedisp                                                       GCP1U400.158   
+      fi                                                                   GCP1U400.159   
+    fi                                                                     GCP1U304.415   
+  else                                                                     GCP1U400.160   
+#L----------------------------------------------------------------------   GCP1U304.419   
+#L Step 4:Check for end of data and call script to close down process      GCP1U304.420   
+#L----------------------------------------------------------------------   GCP1U304.421   
+                                                                           GCP1U304.422   
+    if [[ -f $LOCKFILE ]]    # LOCKFILE indicates model still executing    GIE2U405.45    
+    then                                                                   GCP1U400.162   
+      echo "qsserver: EOF on PIPE but model still executing - waiting"     GLW1U401.957   
+      sleep 2                                                              GCP1U400.164   
+      PERCENT="xxx"                                                        GCP1U400.165   
+      RC=0                                                                 GCP1U400.166   
+#L----------------------------------------------------------------------   GCP1U304.424   
+#L Step 5:No LOCKFILE, so genuine EOF - Wrap up server.                    GCP1U304.425   
+#L       Transfer remaining trigger files to front-end.                    GCP1U304.426   
+#L----------------------------------------------------------------------   GCP1U304.427   
+    else                                                                   GCP1U400.167   
+      if [[ $OPERATIONAL = false \                                         GIE2U405.46    
+          && $CURRENT_RQST_ACTION != REL && $ARCHSYS = true ]]             GIE2U405.47    
+      then                                                                 GCP1U400.169   
+          echo "End of data, send remaining trigger files"                 GCP1U400.172   
+                                                                           GCP1U304.429   
+          while (( $CNTR1 < 7 ))                                           GIE2U405.48    
+          do                                                               GCP1U400.174   
+            case $CNTR1 in                                                 GCP1U400.175   
+              0)LAST_TF=$DMP_LAST_TF                                       GCP1U400.176   
+                F_END_TF=$DMP_F_END_TF                                     GCP1U400.177   
+                ;;                                                         GCP1U400.178   
+              1)LAST_TF=$MPP_LAST_TF                                       GCP1U400.179   
+                F_END_TF=$MPP_F_END_TF                                     GCP1U400.180   
+                ;;                                                         GCP1U400.181   
+              2)LAST_TF=$PP_LAST_TF                                        GCP1U400.182   
+                F_END_TF=$PP_F_END_TF                                      GCP1U400.183   
+                ;;                                                         GCP1U400.184   
+              3)LAST_TF=$BF_LAST_TF                                        GCP1U400.185   
+                F_END_TF=$BF_F_END_TF                                      GCP1U400.186   
+                ;;                                                         GCP1U400.187   
+              4)LAST_TF=$MIX_LAST_TF                                       GCP1U400.188   
+                F_END_TF=$MIX_F_END_TF                                     GCP1U400.189   
+                ;;                                                         GCP1U400.190   
+              5)LAST_TF=$DB_LAST_TF                                        GCP1U400.191   
+                F_END_TF=$DB_F_END_TF                                      GCP1U400.192   
+                ;;                                                         GCP1U400.193   
+              6)LAST_TF=$PMP_LAST_TF                                       GCP1U400.194   
+                F_END_TF=$PMP_F_END_TF                                     GCP1U400.195   
+                ;;                                                         GCP1U400.196   
+            esac                                                           GCP1U400.197   
+                                                                           GCP1U304.432   
+#           send trigger file if one exists for this data type             GCP1U400.198   
+            if $LAST_TF                                                    GCP1U400.199   
+            then                                                           GCP1U400.200   
+              F_END_TF_COPY='on'                                           GCP1U400.201   
+              MODEL_F_END_TF=$DATAM/$F_END_TF                              GCP1U400.202   
+              . copy2dest                                                  GCP1U400.203   
+            fi                                                             GCP1U400.204   
+            CNTR1=$(( $CNTR1 + 1 ))                                        GIE2U405.49    
+                                                                           GCP1U304.458   
+          done                                                             GCP1U400.206   
+                                                                           GCP1U304.467   
+          echo                                                             GCP1U400.207   
+          echo "Last file to be transferred for these data streams:"       GLW1U401.960   
+          echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"       GLW1U401.961   
+          echo                                                             GCP1U400.210   
+          echo "Dump data stream only (DMP) : " $DMP_LAST_FILE             GCP1U400.211   
+          echo "Mean PP data stream only (MPP) : " $MPP_LAST_FILE          GCP1U400.212   
+          echo "PP data stream only (PP) : " $PP_LAST_FILE                 GCP1U400.213   
+          echo "Boundary data stream only (BF) : " $BF_LAST_FILE           GCP1U400.214   
+          echo "Mixed data stream (MIX) : " $MIX_LAST_FILE                 GCP1U400.215   
+          echo "Dump and boundary data stream (DB) : " $DB_LAST_FILE       GCP1U400.216   
+          echo "Mean PP and PP data stream (PMP) : " $PMP_LAST_FILE        GCP1U400.217   
+          echo                                                             GCP1U400.218   
+                                                                           GCP1U304.469   
+                                                                           GCP1U400.220   
+        . newpphist                                                        GCP1U400.221   
+                                                                           GLW1U401.962   
+        echo "Updated history file..."                                     GCP1U400.222   
+        echo "~~~~~~~~~~~~~~~~~~~~~~~"                                     GCP1U400.223   
+        echo                                                               GCP1U400.224   
+      fi                                                                   GCP1U400.225   
+      echo "Server process:... Ending"                                     GCP1U400.226   
+    fi                                                                     qsserver.253   
+  fi                                                                       GCP1U400.227   
+done                                                                       qsserver.352   

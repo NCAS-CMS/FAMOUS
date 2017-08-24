@@ -1,0 +1,248 @@
+*IF DEF,A14_1B                                                             EMDIAG1B.2     
+C *****************************COPYRIGHT******************************     EMDIAG1B.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    EMDIAG1B.4     
+C                                                                          EMDIAG1B.5     
+C Use, duplication or disclosure of this code is subject to the            EMDIAG1B.6     
+C restrictions as set forth in the contract.                               EMDIAG1B.7     
+C                                                                          EMDIAG1B.8     
+C                Meteorological Office                                     EMDIAG1B.9     
+C                London Road                                               EMDIAG1B.10    
+C                BRACKNELL                                                 EMDIAG1B.11    
+C                Berkshire UK                                              EMDIAG1B.12    
+C                RG12 2SZ                                                  EMDIAG1B.13    
+C                                                                          EMDIAG1B.14    
+C If no contract has been raised with this copy of the code, the use,      EMDIAG1B.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      EMDIAG1B.16    
+C to do so must first be obtained in writing from the Head of Numerical    EMDIAG1B.17    
+C Modelling at the above address.                                          EMDIAG1B.18    
+C ******************************COPYRIGHT******************************    EMDIAG1B.19    
+!+ Modified version of EMDIAG1A with fewer global sums                     EMDIAG1B.20    
+!                                                                          EMDIAG1B.21    
+! Subroutine Interface:                                                    EMDIAG1B.22    
+      SUBROUTINE ENG_MASS_DIAG (TL,U,V,AREA_P,AREA_UV,P_FIELD,             EMDIAG1B.23    
+     &                          U_FIELD,ROW_LENGTH,ROWS,                   EMDIAG1B.24    
+     &                          DELTA_AK,DELTA_BK,AK,BK,TOT_ENERGY,        EMDIAG1B.25    
+     &                          TOT_MASS_P,PART_MASS_P,P_LEVELS,PSTAR,     EMDIAG1B.26    
+*CALL ARGFLDPT                                                             EMDIAG1B.27    
+     &                          LLINTS,LWHITBROM)                          EMDIAG1B.28    
+      IMPLICIT NONE                                                        EMDIAG1B.29    
+!                                                                          EMDIAG1B.30    
+! Description:                                                             EMDIAG1B.31    
+! Part of the energy correction suite of routines:                         EMDIAG1B.32    
+! To globally intergrate total energy and mass of the atmosphere           EMDIAG1B.33    
+! This version reduces the total number of global sums done,               EMDIAG1B.34    
+! which makes it much more efficient on MPP machines (where the            EMDIAG1B.35    
+! global sum can be an expensive operation).                               EMDIAG1B.36    
+! Results will not bit-compare with version EMDIAG1A because of            EMDIAG1B.37    
+! different rounding errors.                                               EMDIAG1B.38    
+!                                                                          EMDIAG1B.39    
+! Method:                                                                  EMDIAG1B.40    
+! There are three basic sums to be calculated:                             EMDIAG1B.41    
+! 1) Energy                                                                EMDIAG1B.42    
+! 2) Total Mass                                                            EMDIAG1B.43    
+! 3) Partial Mass                                                          EMDIAG1B.44    
+! Sums are calculated over levels for each column (each column             EMDIAG1B.45    
+! is independent) and then the three sums are calculated.                  EMDIAG1B.46    
+*IF DEF,MPP,AND,-DEF,REPROD                                                EMDIAG1B.47    
+! A faster version of the global sum is done which gives different         EMDIAG1B.48    
+! rounding errors on different processor arrangements. See the             EMDIAG1B.49    
+! DO_SUMS subroutines for more details.                                    EMDIAG1B.50    
+*ENDIF                                                                     EMDIAG1B.51    
+!                                                                          EMDIAG1B.52    
+! Current code owner : Paul Burton                                         EMDIAG1B.53    
+!                                                                          EMDIAG1B.54    
+! History                                                                  EMDIAG1B.55    
+!  Model    Date      Modification history from model version 4.1          EMDIAG1B.56    
+!  version                                                                 EMDIAG1B.57    
+!    4.1    7/11/95   New DECK created to make EMDIAG suitable for         EMDIAG1B.58    
+!                     MPP use. P.Burton                                    EMDIAG1B.59    
+!    4.3   18/03/97   Corrected call to CALC_RS   P.Burton                 GPB3F403.80    
+!                                                                          EMDIAG1B.60    
+! Subroutine Arguments:                                                    EMDIAG1B.61    
+                                                                           EMDIAG1B.62    
+      LOGICAL LLINTS,                                                      EMDIAG1B.63    
+     &        LWHITBROM    ! IN use White+Bromley terms?                   EMDIAG1B.64    
+                                                                           EMDIAG1B.65    
+      INTEGER P_FIELD,    ! IN vector length of variables on P grid        EMDIAG1B.66    
+     &        U_FIELD,    ! IN vector length of variables on UV grid       EMDIAG1B.67    
+     &        ROW_LENGTH, ! IN number of pointer per row                   EMDIAG1B.68    
+     &        ROWS,       ! IN number of rows on P grid                    EMDIAG1B.69    
+     &        P_LEVELS    ! IN number of levels in vertical                EMDIAG1B.70    
+                                                                           EMDIAG1B.71    
+! All TYPFLDPT arguments are intent IN                                     EMDIAG1B.72    
+*CALL TYPFLDPT                                                             EMDIAG1B.73    
+                                                                           EMDIAG1B.74    
+      REAL    TL(P_FIELD,P_LEVELS),    ! IN temperature                    EMDIAG1B.75    
+     &        U(U_FIELD,P_LEVELS),     ! IN U component of wind            EMDIAG1B.76    
+     &        V(U_FIELD,P_LEVELS),     ! IN V component of wind            EMDIAG1B.77    
+     &        AREA_P(P_FIELD),         ! IN area of cells in P grid        EMDIAG1B.78    
+     &        AREA_UV(U_FIELD),        ! IN area of cells in UV grid       EMDIAG1B.79    
+     &        DELTA_AK(P_LEVELS),      ! IN  \thickness of layers          EMDIAG1B.80    
+     &        DELTA_BK(P_LEVELS),      ! IN  /in eta co-ordinates          EMDIAG1B.81    
+     &        AK(P_LEVELS),            ! IN  \eta co-ordinates of          EMDIAG1B.82    
+     &        BK(P_LEVELS),            ! IN  /mid-layer points             EMDIAG1B.83    
+     &        PSTAR(P_FIELD)           ! IN pressure at surface            EMDIAG1B.84    
+                                                                           EMDIAG1B.85    
+      REAL    TOT_ENERGY,   ! OUT total energy of atmosphere               EMDIAG1B.86    
+     &        TOT_MASS_P,   ! OUT total mass of atmosphere                 EMDIAG1B.87    
+     &        PART_MASS_P   ! OUT partial mass of atmosphere               EMDIAG1B.88    
+                                                                           EMDIAG1B.89    
+                                                                           EMDIAG1B.90    
+! Parameters                                                               EMDIAG1B.91    
+*CALL C_R_CP                                                               EMDIAG1B.92    
+*CALL C_A                                                                  EMDIAG1B.93    
+      INTEGER N_SUMS                                                       EMDIAG1B.94    
+      PARAMETER(N_SUMS=3)  ! there are 3 sums to do                        EMDIAG1B.95    
+!   Define magic numbers to define the various sums                        EMDIAG1B.96    
+      INTEGER energy,total_mass,partial_mass                               EMDIAG1B.97    
+      PARAMETER( energy=1,total_mass=2,partial_mass=3)                     EMDIAG1B.98    
+                                                                           EMDIAG1B.99    
+! Local variables                                                          EMDIAG1B.100   
+                                                                           EMDIAG1B.101   
+      REAL PSTAR_DELBK(P_FIELD),       ! pressure at surface*DELTA_BK      EMDIAG1B.102   
+     &     DELP_P(P_FIELD),            ! mass elements on P grid           EMDIAG1B.103   
+     &     DELP_UV(U_FIELD),           ! mass elements on UV grid          EMDIAG1B.104   
+     &     RS_P_K(P_FIELD),            ! radii on P grid                   EMDIAG1B.105   
+     &     RS_UV_K(U_FIELD),           ! radii on U grid                   EMDIAG1B.106   
+     &     WORK(P_FIELD),              ! workspace                         EMDIAG1B.107   
+     &     SUM_ARRAY(P_FIELD,N_SUMS),  ! the array to be summed            EMDIAG1B.108   
+     &     SUM_RESULTS(N_SUMS),        ! the sums of SUM_ARRAY             EMDIAG1B.109   
+     &     TS(P_FIELD)                 ! output from CALC_RS               EMDIAG1B.110   
+                                                                           EMDIAG1B.111   
+      INTEGER START_POINT,   ! point to start sums at                      EMDIAG1B.112   
+     &        END_P_POINT,   ! number of points to sum on P grid           EMDIAG1B.113   
+     &        END_U_POINT    ! number of points to sum on U grid           EMDIAG1B.114   
+                                                                           EMDIAG1B.115   
+      INTEGER I,K  ! loop variables                                        EMDIAG1B.116   
+                                                                           EMDIAG1B.117   
+! 1.0 Set up the range of points to sum over                               EMDIAG1B.118   
+                                                                           EMDIAG1B.119   
+! Sum over all points - missing out halos and northern/southern            EMDIAG1B.120   
+! boundaries/poles                                                         EMDIAG1B.121   
+      START_POINT=FIRST_FLD_PT                                             EMDIAG1B.122   
+      END_P_POINT=LAST_P_FLD_PT                                            EMDIAG1B.123   
+      END_U_POINT=LAST_U_FLD_PT                                            EMDIAG1B.124   
+                                                                           EMDIAG1B.125   
+*IF DEF,MPP                                                                EMDIAG1B.126   
+! QAN fix                                                                  EMDIAG1B.127   
+! Zero DELP_P and RS_P_Karray                                              EMDIAG1B.128   
+      DO I=1,P_FIELD                                                       EMDIAG1B.129   
+        DELP_P(I)=0.0                                                      EMDIAG1B.130   
+        RS_P_K(I)=0.0                                                      EMDIAG1B.131   
+      ENDDO                                                                EMDIAG1B.132   
+                                                                           EMDIAG1B.133   
+*ENDIF                                                                     EMDIAG1B.134   
+                                                                           EMDIAG1B.135   
+      DO K=1,N_SUMS                                                        EMDIAG1B.136   
+        DO I=1,P_FIELD                                                     EMDIAG1B.137   
+          SUM_ARRAY(I,K)=0.0                                               EMDIAG1B.138   
+        ENDDO                                                              EMDIAG1B.139   
+        SUM_RESULTS(K)=0.0                                                 EMDIAG1B.140   
+      ENDDO                                                                EMDIAG1B.141   
+                                                                           EMDIAG1B.142   
+! 2.0 Now the loop over levels.                                            EMDIAG1B.143   
+!     Sum the values up over each column and store in SUM_ARRAY            EMDIAG1B.144   
+                                                                           EMDIAG1B.145   
+      DO K=1,P_LEVELS                                                      EMDIAG1B.146   
+                                                                           EMDIAG1B.147   
+! 2.1 Set up arrays required for this level                                EMDIAG1B.148   
+                                                                           EMDIAG1B.149   
+        DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                EMDIAG1B.150   
+          PSTAR_DELBK(I)=-DELTA_BK(K)*PSTAR(I)                             EMDIAG1B.151   
+          DELP_P(I)=-DELTA_AK(K)+PSTAR_DELBK(I)                            EMDIAG1B.152   
+        ENDDO                                                              EMDIAG1B.153   
+                                                                           EMDIAG1B.154   
+        IF (.NOT. LWHITBROM) THEN                                          EMDIAG1B.155   
+                                                                           EMDIAG1B.156   
+          DO I=FIRST_VALID_PT,LAST_P_VALID_PT                              EMDIAG1B.157   
+           RS_P_K(I)=A                                                     EMDIAG1B.158   
+          ENDDO                                                            EMDIAG1B.159   
+                                                                           EMDIAG1B.160   
+        ELSE                                                               EMDIAG1B.161   
+                                                                           EMDIAG1B.162   
+          DO I=FIRST_VALID_PT,LAST_P_VALID_PT                              GPB3F403.81    
+            WORK(I)=RS_P_K(I) ! ie. from the last iteration or             EMDIAG1B.164   
+!                             ! junk for the 1st iteration                 EMDIAG1B.165   
+          ENDDO                                                            EMDIAG1B.166   
+                                                                           EMDIAG1B.167   
+! On the first iteration (ie. first level) , the WORK array is             EMDIAG1B.168   
+! ignored by CALC_RS. On subsequent iterations it will contain the         EMDIAG1B.169   
+! value of RS_P_K of the level under the current level.                    EMDIAG1B.170   
+          CALL CALC_RS(PSTAR(FIRST_VALID_PT),AK,BK,TS(FIRST_VALID_PT),     GPB3F403.82    
+     &                 WORK(FIRST_VALID_PT),RS_P_K(FIRST_VALID_PT),        GPB3F403.83    
+     &                 LAST_P_VALID_PT-FIRST_VALID_PT+1,K,P_LEVELS,        GPB3F403.84    
+     &                 LLINTS)                                             EMDIAG1B.173   
+                                                                           EMDIAG1B.174   
+        ENDIF ! IF (.NOT. LWHITBROM)                                       EMDIAG1B.175   
+                                                                           EMDIAG1B.176   
+        CALL P_TO_UV(DELP_P,DELP_UV,P_FIELD,U_FIELD,ROW_LENGTH,            EMDIAG1B.177   
+     &               tot_P_ROWS)                                           EMDIAG1B.178   
+        CALL P_TO_UV(RS_P_K,RS_UV_K,P_FIELD,U_FIELD,ROW_LENGTH,            EMDIAG1B.179   
+     &               tot_P_ROWS)                                           EMDIAG1B.180   
+                                                                           EMDIAG1B.181   
+! 2.2 Now do the sums. For each sum, first we calculate the                EMDIAG1B.182   
+!     numbers to be summed, using CALC_?_SUM_ARRAY (?=ENERGY or MASS)      EMDIAG1B.183   
+!     and add them into the SUM_ARRAY                                      EMDIAG1B.184   
+                                                                           EMDIAG1B.185   
+! 2.2.1 Energy : CP*TL                                                     EMDIAG1B.186   
+        CALL CALC_ENERGY_SUM_ARRAY(TL(1,K),AREA_P,DELP_P,RS_P_K,CP,        EMDIAG1B.187   
+     &                             P_FIELD,START_POINT_NO_HALO,            EMDIAG1B.188   
+     &                             END_P_POINT_NO_HALO,                    EMDIAG1B.189   
+     &                             SUM_ARRAY(1,energy))                    EMDIAG1B.190   
+                                                                           EMDIAG1B.191   
+! 2.2.2 Energy : 0.5*U*U                                                   EMDIAG1B.192   
+        DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                       EMDIAG1B.193   
+          WORK(I)=U(I,K)*U(I,K)                                            EMDIAG1B.194   
+        ENDDO                                                              EMDIAG1B.195   
+                                                                           EMDIAG1B.196   
+        CALL CALC_ENERGY_SUM_ARRAY(WORK,AREA_UV,DELP_UV,RS_UV_K,0.5,       EMDIAG1B.197   
+     &                             U_FIELD,START_POINT_NO_HALO,            EMDIAG1B.198   
+     &                             END_U_POINT_NO_HALO,                    EMDIAG1B.199   
+     &                             SUM_ARRAY(1,energy))                    EMDIAG1B.200   
+                                                                           EMDIAG1B.201   
+! 2.2.3 Energy : 0.5*V*V                                                   EMDIAG1B.202   
+        DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                       EMDIAG1B.203   
+          WORK(I)=V(I,K)*V(I,K)                                            EMDIAG1B.204   
+        ENDDO                                                              EMDIAG1B.205   
+                                                                           EMDIAG1B.206   
+        CALL CALC_ENERGY_SUM_ARRAY(WORK,AREA_UV,DELP_UV,RS_UV_K,0.5,       EMDIAG1B.207   
+     &                             U_FIELD,START_POINT_NO_HALO,            EMDIAG1B.208   
+     &                             END_U_POINT_NO_HALO,                    EMDIAG1B.209   
+     &                             SUM_ARRAY(1,energy))                    EMDIAG1B.210   
+                                                                           EMDIAG1B.211   
+                                                                           EMDIAG1B.212   
+! 2.2.4 Mass : PSTAR*DELBK*(-DELAK) (total mass) :                         EMDIAG1B.213   
+        CALL CALC_MASS_SUM_ARRAY(DELP_P,AREA_P,RS_P_K,                     EMDIAG1B.214   
+     &                           P_FIELD,START_POINT_NO_HALO,              EMDIAG1B.215   
+     &                           END_P_POINT_NO_HALO,                      EMDIAG1B.216   
+     &                           SUM_ARRAY(1,total_mass))                  EMDIAG1B.217   
+                                                                           EMDIAG1B.218   
+                                                                           EMDIAG1B.219   
+                                                                           EMDIAG1B.220   
+! 2.2.5 Mass : PSTAR*DELBK (partial mass) :                                EMDIAG1B.221   
+        CALL CALC_MASS_SUM_ARRAY(PSTAR_DELBK,AREA_P,RS_P_K,                EMDIAG1B.222   
+     &                           P_FIELD,START_POINT_NO_HALO,              EMDIAG1B.223   
+     &                           END_P_POINT_NO_HALO,                      EMDIAG1B.224   
+     &                           SUM_ARRAY(1,partial_mass))                EMDIAG1B.225   
+                                                                           EMDIAG1B.226   
+      ENDDO ! K : loop over levels                                         EMDIAG1B.227   
+                                                                           EMDIAG1B.228   
+! 2.3 Now finally do the global sums                                       EMDIAG1B.229   
+                                                                           EMDIAG1B.230   
+! 2.3.1 Zero mass and energy of atmosphere                                 EMDIAG1B.231   
+      TOT_MASS_P=0.0                                                       EMDIAG1B.232   
+      PART_MASS_P=0.0                                                      EMDIAG1B.233   
+      TOT_ENERGY=0.0                                                       EMDIAG1B.234   
+                                                                           EMDIAG1B.235   
+! 2.3.2 And do the sums:                                                   EMDIAG1B.236   
+                                                                           EMDIAG1B.237   
+      CALL DO_SUMS(SUM_ARRAY,P_FIELD,START_POINT_NO_HALO,                  EMDIAG1B.238   
+     &             END_P_POINT_NO_HALO,N_SUMS,SUM_RESULTS)                 EMDIAG1B.239   
+                                                                           EMDIAG1B.240   
+      TOT_ENERGY=SUM_RESULTS(energy)                                       EMDIAG1B.241   
+      TOT_MASS_P=SUM_RESULTS(total_mass)                                   EMDIAG1B.242   
+      PART_MASS_P=SUM_RESULTS(partial_mass)                                EMDIAG1B.243   
+                                                                           EMDIAG1B.244   
+      RETURN                                                               EMDIAG1B.245   
+      END                                                                  EMDIAG1B.246   
+*ENDIF                                                                     EMDIAG1B.247   

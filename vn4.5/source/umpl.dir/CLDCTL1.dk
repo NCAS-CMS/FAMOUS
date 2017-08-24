@@ -1,0 +1,1047 @@
+*IF DEF,CONTROL,AND,DEF,ATMOS                                              CLDCTL1.2     
+C ******************************COPYRIGHT******************************    GTS2F400.937   
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.938   
+C                                                                          GTS2F400.939   
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.940   
+C restrictions as set forth in the contract.                               GTS2F400.941   
+C                                                                          GTS2F400.942   
+C                Meteorological Office                                     GTS2F400.943   
+C                London Road                                               GTS2F400.944   
+C                BRACKNELL                                                 GTS2F400.945   
+C                Berkshire UK                                              GTS2F400.946   
+C                RG12 2SZ                                                  GTS2F400.947   
+C                                                                          GTS2F400.948   
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.949   
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.950   
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.951   
+C Modelling at the above address.                                          GTS2F400.952   
+C ******************************COPYRIGHT******************************    GTS2F400.953   
+C                                                                          GTS2F400.954   
+CLL SUBROUTINE CLD_CTL -----------------------------------------------     CLDCTL1.3     
+CLL                                                                        CLDCTL1.4     
+CLL Purpose:   Calls  LS_CLD  to convert liquid water, temperature,        CLDCTL1.5     
+CLL           and total water into temperature, moisture, cloud water,     CLDCTL1.6     
+CLL           and cloud ice. At non radiation timesteps, reads and adds    CLDCTL1.7     
+CLL           radiation increments, and calls output processing.           CLDCTL1.8     
+CLL                                                                        CLDCTL1.9     
+CLL LEVEL 2 Control routine                                                CLDCTL1.10    
+CLL Version for CRAY YMP                                                   CLDCTL1.11    
+CLL                                                                        CLDCTL1.12    
+CLL SB, CW, RR  <- programmer of some or all of previous code or changes   CLDCTL1.13    
+CLL                                                                        CLDCTL1.14    
+CLL  Model            Modification history from model version 3.0:         CLDCTL1.15    
+CLL version  Date                                                          CLDCTL1.16    
+CLL  3.1   2/02/93 : added comdeck CHSUNITS to define NUNITS for i/o       RS030293.95    
+CLL  3.1  20/01/93  Interface routine CLOUD_COVER_BASE to output cloud     RB200193.20    
+CLL  base ht. for a set of cloud cover thresholds (specified in DATA       RB200193.21    
+CLL  statement until implemented later as pseudo-levels).  R.T.H.Barnes    RB200193.22    
+CLL   3.2    13/07/93 Changed CHARACTER*(*) to CHARACTER*(80) for          TS150793.35    
+CLL                   portability.  Author Tracey Smith.                   TS150793.36    
+CLL  3.2  05/07/93  Modified call to CLOUD_COVER_BASE to include low       PC120793.120   
+CLL                 cloud fraction, base and top. Pete Clark               PC120793.121   
+CLL  3.2  13/04/93  Dynamic allocation of main arrays. R.T.H.Barnes.       @DYALLOC.720   
+!LL  4.0  22/11/94  Add two extra arguments to pass Qc and bs from         AYY2F400.91    
+!LL                 LS_CLD to ATMPHYS. A.C.Bushell.                        AYY2F400.92    
+CLL                 Argument LCAL360 passed to SOLPOS                      GSS1F304.262   
+CLL                                                 S.J.Swarbrick          GSS1F304.263   
+CLL  3.4  10/06/94  Variables added for TW and freezing level height.      ASW1F304.1     
+CLL                  Steve Woltering.                                      ASW1F304.2     
+CLL  3.4  07/07/94  Variables added for total cloud top height.            ASW1F304.3     
+CLL                  Steve Woltering.                                      ASW1F304.4     
+CLL  3.5  28/03/95  Sub-Model changes : Remove run time constants          ADR1F305.56    
+CLL                 from Atmos Dump headers. D. Robinson.                  ADR1F305.57    
+!     3.5    9/5/95   MPP code: Change updateable area,                    APB1F305.177   
+!                     add halo updates    P.Burton                         APB1F305.178   
+CLL  3.5  05/06/95  Chgs to SI & STINDEX arrays.  RTHBarnes                GRB4F305.35    
+CLL  4.0   1/2/95    Correct time information for calculating solar        AWI1F400.7     
+CLL                                           angle, and so incoming SW.   AWI1F400.8     
+CLL  4.1  17/1/96   Obtain photosynthetically active radiation from        AJS1F401.1441  
+CLL                 RADINCS array, correct for zenith angle and pass       AJS1F401.1442  
+CLL                 to section 3 (in non-radiation timesteps).             AJS1F401.1443  
+CLL                                               R.A.Betts                AJS1F401.1444  
+!    4.1  23/05/96  MPP Changes. D. Robinson.                              APBHF401.2     
+CLL   4.1  22/05/96  Replaced *DEF FAST with FRADIO to allow fast          GGH3F401.12    
+CLL                  radiation i/o code to be used. G Henderson            GGH3F401.13    
+!     4.2     Oct. 96 T3E migration: IF DEF CRAY removed                   GSS9F402.92    
+!                       S.J.Swarbrick                                      GSS9F402.93    
+!LL   4.2  10/02/97  Added PPX arguments to COPY_DIAG and                  GPB1F403.507   
+!LL                  EXTDIAG                         P.Burton              GPB1F403.508   
+!LL  4.3  26/02/97  Make diagnostic calcs. safer for MPP runs.             ARB2F403.109   
+!LL  4.3  28/04/97  Split EXTDIAG into seperate call to avoid              GPB1F403.1283  
+!LL                 processing unset diagnostics.   P.Burton               GPB1F403.1284  
+!    4.4  29/10/96 1A PDF_QC_OR_CF_LIQ = cloud PDF QC value,               AYY1F404.155   
+!                  2A PDF_QC_OR_CF_LIQ = liquid cloud fraction.            AYY1F404.156   
+!                  1A PDF_BS_OR_CF_ICE = cloud PDF bs value,               AYY1F404.157   
+!                  2A PDF_BS_OR_CF_ICE = frozen cloud fraction.            AYY1F404.158   
+!                                                   A.C.Bushell            AYY1F404.159   
+CLL  4.4  29/10/97  Call to RAD_MOSES added - surface radiation            ARE2F404.20    
+CLL                 calculations for MOSES II.      R. Essery              ARE2F404.21    
+!!!  4.4  18/09/97  SW Heating rates calculated for A03_6A                 ARN1F404.99    
+CLL                                                                        CLDCTL1.17    
+!LL  4.4  30/10/97  2D cloud amount calculated to be passed into           AJX0F404.495   
+!LL                 diagnostic routines.             J.M.Gregory           AJX0F404.496   
+!!!  4.5    2/6/98  Correct RAD_SNOW and RAD_NO_SNOW over sea, and add     ABX1F405.94    
+!!!                 check for unknown version of boundary layer.           ABX1F405.95    
+!!!                                                  R.A.Betts             ABX1F405.96    
+!LL  4.5  13/05/98  New area cloud array passed in.New parametrizations    ASK1F405.144   
+!LL                 called, and altered call to GLUE_CLD. S. Cusack        ASK1F405.145   
+CLL Programing Standards : U.M.D.P. NO 3                                   CLDCTL1.18    
+CLL                                                                        CLDCTL1.19    
+CLL System Components Covered : P292                                       CLDCTL1.20    
+CLL                                                                        CLDCTL1.21    
+CLL System Task : P0                                                       CLDCTL1.22    
+CLL                                                                        CLDCTL1.23    
+CLL External documentation: UMDP P0, Version 11 dated (26/11/90)           CLDCTL1.24    
+CLLEND -----------------------------------------------------------------   CLDCTL1.25    
+C*L Arguments                                                              CLDCTL1.26    
+                                                                           CLDCTL1.27    
+      SUBROUTINE CLD_CTL(CLOUD_FRACTION,SURF_RADFLUX,PHOTOSYNTH_ACT_RAD,   AJS1F401.1445  
+     &           AREA_CLOUD_FRACTION,                                      ASK1F405.146   
+     &           RAD_NO_SNOW,RAD_SNOW,SNOW_FRAC,                           ARE2F404.22    
+     &           PDF_QC_OR_CF_LIQ,PDF_BS_OR_CF_ICE,                        AYY1F404.160   
+     &           N_POLAR_VALUES,S_POLAR_VALUES,                            ARN1F404.100   
+     &           RADHEAT_RATE,BL_LEVELSDA,                                 ARN1F404.101   
+     &           L_RADHEAT,RADHEAT_DIM1,P_FIELDDA,                         ARN1F404.102   
+     &           P_LEVELSDA,Q_LEVELSDA,ROW_LENGTHDA,TOT_LEVELS,INT9,       @DYALLOC.722   
+*CALL ARGSIZE                                                              @DYALLOC.723   
+*CALL ARGD1                                                                @DYALLOC.724   
+*CALL ARGDUMA                                                              @DYALLOC.725   
+*CALL ARGDUMO                                                              @DYALLOC.726   
+*CALL ARGDUMW                                                              GKR1F401.192   
+*CALL ARGSTS                                                               @DYALLOC.727   
+*CALL ARGPTRA                                                              @DYALLOC.728   
+*CALL ARGPTRO                                                              @DYALLOC.729   
+*CALL ARGCONA                                                              @DYALLOC.730   
+*CALL ARGPPX                                                               GKR0F305.911   
+*CALL ARGFLDPT                                                             APBHF401.3     
+*IF DEF,FRADIO                                                             GGH3F401.14    
+     &           RADINCS,                                                  @DYALLOC.732   
+*ENDIF                                                                     @DYALLOC.733   
+     &    COS_ZENITH_ANGLE,                                                AWO1F401.59    
+     &           ICODE,CMESSAGE)                                           CLDCTL1.30    
+                                                                           CLDCTL1.31    
+      IMPLICIT NONE                                                        CLDCTL1.32    
+                                                                           CLDCTL1.33    
+*CALL CMAXSIZE                                                             @DYALLOC.734   
+*CALL CSUBMODL                                                             GSS1F305.922   
+*CALL TYPSIZE                                                              @DYALLOC.735   
+*CALL TYPD1                                                                @DYALLOC.736   
+*CALL TYPDUMA                                                              @DYALLOC.737   
+*CALL TYPDUMO                                                              @DYALLOC.738   
+*CALL TYPDUMW                                                              GKR1F401.193   
+*CALL TYPSTS                                                               @DYALLOC.739   
+*CALL TYPPTRA                                                              @DYALLOC.740   
+*CALL TYPPTRO                                                              @DYALLOC.741   
+*CALL TYPCONA                                                              @DYALLOC.742   
+*CALL PPXLOOK                                                              GKR0F305.912   
+*CALL TYPFLDPT                                                             APBHF401.4     
+                                                                           @DYALLOC.743   
+      INTEGER                                                              CLDCTL1.34    
+     &       P_FIELDDA,  !  COPY OF P_FIELD                                @DYALLOC.744   
+     &       P_LEVELSDA, !  COPY OF P_LEVELS                               @DYALLOC.745   
+     &       Q_LEVELSDA, !  COPY OF Q_LEVELS                               @DYALLOC.746   
+     &       BL_LEVELSDA,  !  COPY OF BL_LEVELS                            ARN1F404.103   
+     &       ROW_LENGTHDA, !  COPY OF ROW_LENGTH                           @DYALLOC.747   
+     &       TOT_LEVELS, !  2nd Dim of N_POLAR_VALUES & S_POLAR_VALUES     @DYALLOC.748   
+     &       RADHEAT_DIM1,       ! either P_FIELD or 1 - dimension of      ARN1F404.104   
+!                                ! RADHEAT_RATE                            ARN1F404.105   
+     &       INT9,       !  Length of STASHWORK - which may be filled in   CLDCTL1.39    
+C  this routine for Section 9 on any timestep and 1 on a non-radiation     CLDCTL1.40    
+C  timestep, i.e. one which is neither a SW nor LW timestep.               CLDCTL1.41    
+C  (There is no risk of over-writing problems, as STASH is CALLed for      CLDCTL1.42    
+C  Section 9 before any Section 1 diagnostics are put into STASHWORK.)     CLDCTL1.43    
+     &       ICODE       !  RETURN CODE:  0 NORMAL EXIT;  >0 ERROR         CLDCTL1.44    
+                                                                           CLDCTL1.45    
+      CHARACTER*80 CMESSAGE                                                TS150793.37    
+                                                                           CLDCTL1.47    
+      LOGICAL L_RADHEAT    ! True if RADHEAT_RATE to be calculated         ARN1F404.106   
+      REAL                                                                 CLDCTL1.48    
+     &       CLOUD_FRACTION(P_FIELDDA,Q_LEVELSDA),                         @DYALLOC.749   
+     &       AREA_CLOUD_FRACTION(P_FIELDDA,Q_LEVELSDA),                    ASK1F405.147   
+!      Cloud area in layer                                                 ASK1F405.148   
+     &       SIN_TRUE_LATITUDE(P_FIELDDA),                                 @DYALLOC.750   
+     &       DAY_FRACTION(P_FIELDDA),                                      @DYALLOC.751   
+     &       COS_ZENITH_ANGLE(P_FIELDDA),                                  @DYALLOC.752   
+     &       SURF_RADFLUX(P_FIELDDA),                                      @DYALLOC.753   
+     &       RAD_NO_SNOW(P_FIELDDA),        ! Surface net radiation,       ARE2F404.23    
+C                                           ! snow-free fraction           ARE2F404.24    
+     &       RAD_SNOW(P_FIELDDA),           ! Surface net radiation,       ARE2F404.25    
+C                                           ! snow-covered fraction        ARE2F404.26    
+     &       SNOW_FRAC(LAND_FIELD),         ! Snow cover fraction on       ARE2F404.27    
+C                                           ! land points                  ARE2F404.28    
+     &       PHOTOSYNTH_ACT_RAD(P_FIELDDA), ! photosythetically active     AJS1F401.1447  
+C                                           ! radiation (W/sq m)           AJS1F401.1448  
+     &       RADHEAT_RATE(RADHEAT_DIM1,BL_LEVELSDA),                       ARN1F404.107   
+     &       PDF_QC_OR_CF_LIQ(P_FIELDDA,Q_LEVELSDA),                       AYY1F404.161   
+     &       PDF_BS_OR_CF_ICE(P_FIELDDA,Q_LEVELSDA),                       AYY1F404.162   
+     &       N_POLAR_VALUES(ROW_LENGTHDA,TOT_LEVELS),                      @DYALLOC.754   
+     &       S_POLAR_VALUES(ROW_LENGTHDA,TOT_LEVELS)                       @DYALLOC.755   
+                                                                           CLDCTL1.56    
+C Include COMDECKS                                                         CLDCTL1.57    
+                                                                           CLDCTL1.58    
+*IF DEF,MPP                                                                APB1F305.179   
+! Parameters and Common blocks                                             APB1F305.180   
+*CALL PARVARS                                                              APB1F305.181   
+*ENDIF                                                                     APB1F305.182   
+*CALL CHSUNITS                                                             RS030293.96    
+*CALL CCONTROL                                                             CLDCTL1.60    
+*CALL C_R_CP                                                               CLDCTL1.62    
+*CALL CTIME                                                                CLDCTL1.63    
+*CALL CHISTORY                                                             GDR3F305.15    
+*CALL C_MDI                                                                AJS1F401.1449  
+*CALL C_OMEGA                                                              CLDCTL1.65    
+*CALL SWSC                                                                 CLDCTL1.66    
+*IF DEF,FRADIO                                                             GGH3F401.15    
+*CALL CRADINCS                                                             CLDCTL1.70    
+*ENDIF                                                                     CLDCTL1.71    
+*CALL CRUNTIMC                                                             ADR1F305.58    
+                                                                           CLDCTL1.72    
+C*L  Subroutines called:                                                   CLDCTL1.73    
+                                                                           CLDCTL1.74    
+      EXTERNAL GLUE_CLD, TIMER, STASH, SOLPOS, SOLANG, EXTDIAG             AYY2F400.97    
+     &,COPYDIAG_3D,COPYDIAG,CLOUD_COVER,CLOUD_COVER_BASE                   PC120793.122   
+C  Workspace usage                                                         CLDCTL1.77    
+                                                                           CLDCTL1.78    
+      REAL                                                                 CLDCTL1.79    
+     &      STASHWORK(INT9)                                                CLDCTL1.80    
+*IF -DEF,FRADIO                                                            GGH3F401.16    
+     &     ,RADINCS((P_FIELDDA*(P_LEVELSDA+3)+511)/512*512*2)              ARE2F404.29    
+C          RADINCS dimensioned for 512word blocking of SW and LW incrs     CLDCTL1.83    
+C          Extra levels included to hold net surface SW (band 1) without   ARE2F404.30    
+C          zenith angle adjustment, surface albedo and surface radiative   ARE2F404.31    
+C          temperature                                                     ARE2F404.32    
+*ENDIF                                                                     CLDCTL1.84    
+                                                                           CLDCTL1.85    
+C  Local variables                                                         CLDCTL1.86    
+                                                                           CLDCTL1.87    
+      INTEGER                                                              CLDCTL1.88    
+     &       n,                                                            ARE2F404.33    
+     &       I,L,LEVEL,I1,I2,! Loop counters                               ARE2F404.34    
+     &       LEN,            ! Length of field for I/O from paging file.   CLDCTL1.90    
+     &       II,KK,IFLAG,    ! Loop counters                               RB200193.25    
+     &       LEN_IO,         ! Length returned by unit function.           CLDCTL1.92    
+     &       FIRST_POINT,    ! Define limits of                            CLDCTL1.93    
+     &       LAST_POINT,     ! points to                                   CLDCTL1.94    
+     &       POINTS,         ! be processed.                               CLDCTL1.95    
+     &       LAND1,          ! First land point to be processed            ARE2F404.35    
+     &       LAND_PTS,       ! Land points to be processed                 ARE2F404.36    
+     &       JS,              ! Offset for start point                     CLDCTL1.96    
+     &       NFTSWAP,        ! FTN number of paging file                   PC120793.123   
+     &       NOCT                                                          PC120793.124   
+     &      ,IM_IDENT   ! internal model identifier                        GRB4F305.36    
+     &      ,IM_INDEX   ! internal model index for STASH arrays            GRB4F305.37    
+                                                                           CLDCTL1.98    
+      REAL                                                                 CLDCTL1.99    
+     &       SINDEC,      ! Sin of the solar declination                   CLDCTL1.100   
+     &       SCS,         ! Solar constant scaling factor                  CLDCTL1.101   
+     &       TIME,                                                         CLDCTL1.102   
+     &       A_IO            ! Real indicator returned by UNIT function.   CLDCTL1.103   
+C                                                                          CLDCTL1.104   
+                                                                           CLDCTL1.105   
+      LOGICAL                                                              CLDCTL1.106   
+     &       SWITCH          ! Set if radiation timestep                   CLDCTL1.107   
+     &      ,LC_REQD         ! Set if any low cloud diags required         PC120793.125   
+     &      ,WBFL_REQD       ! Set if wetbulb freez lev diags required     ASW1F304.5     
+     &      ,WBT_REQD        ! Set if wetbulb temp diags required          ASW1F304.6     
+     &      ,TCLDH_REQD      ! Set if cloud top height(tot) diags reqd     ASW1F304.7     
+                                                                           CLDCTL1.108   
+      REAL                                                                 CLDCTL1.109   
+     &    PU,PL,PUS,PLS                                                    CLDCTL1.110   
+     &   ,OCTAS(8)           ! set of 8 thresholds for cloud base ht.      RB200193.26    
+C*L  Workspace usage                                                       PC120793.126   
+!    Eight blocks of workspace required                                    AYY1F404.163   
+      REAL                                                                 PC120793.129   
+     +     C_COVER(P_FIELDDA)                                              PC120793.130   
+     +    ,LC_FRAC(P_FIELDDA)                                              PC120793.131   
+     +    ,LC_BASE(P_FIELDDA)                                              PC120793.132   
+     +    ,LC_TOP (P_FIELDDA)                                              PC120793.133   
+     +    ,WBFLH(P_FIELDDA)                                                ASW1F304.8     
+     +    ,TW(P_FIELDDA,Q_LEVELSDA)                                        ASW1F304.9     
+     +    ,CLOUD_TOP(P_FIELDDA)                                            ASW1F304.10    
+     &    ,CCA2D(P_FIELDDA)                                                AJX0F404.497   
+*CALL P_EXNERC                                                             CLDCTL1.111   
+*CALL NSTYPES                                                              ARE2F404.37    
+                                                                           CLDCTL1.112   
+C  Use DATA statement to set cloud cover threshold values                  RB200193.27    
+C   until implemented later as pseudo-levels.                              RB200193.28    
+      DATA OCTAS/0.1,1.5,2.5,3.5,4.5,5.5,6.5,7.9/                          RB200193.29    
+C                                                                          RB200193.30    
+CL  Internal Structure:                                                    CLDCTL1.113   
+CL                                                                         CLDCTL1.114   
+CL -------------SECTION 9 CLOUD AMOUNT CALCULATIONS -------------------    CLDCTL1.115   
+CL 9.0 Initialisation                                                      CLDCTL1.116   
+      FIRST_POINT = FIRST_VALID_PT                                         APBHF401.5     
+      LAST_POINT  = LAST_P_VALID_PT                                        APBHF401.6     
+      POINTS      = LAST_POINT-FIRST_POINT+1                               APBHF401.7     
+      JS          = FIRST_POINT-1                                          APBHF401.8     
+                                                                           GRB4F305.38    
+C  Set the polar points in PHOTOSYNTH_ACT_RAD to MDI                       AJS1F401.1453  
+                                                                           AJS1F401.1454  
+*IF DEF,MPP                                                                ARB2F403.110   
+      if (at_top_of_LPG) then                                              ARB2F403.111   
+*ENDIF                                                                     ARB2F403.112   
+      DO I=1,FIRST_POINT-1                                                 AJS1F401.1455  
+        PHOTOSYNTH_ACT_RAD(I) = RMDI                                       AJS1F401.1456  
+      ENDDO                                                                AJS1F401.1457  
+*IF DEF,MPP                                                                ARB2F403.113   
+      DO LEVEL = 1,CLOUD_LEVELS                                            ARB2F403.114   
+        DO I = 1,FIRST_POINT-1                                             ARB2F403.115   
+          CLOUD_FRACTION(I,LEVEL) = 0.0                                    ARB2F403.116   
+          AREA_CLOUD_FRACTION(I,LEVEL) = 0.0                               ASK1F405.149   
+        END DO                                                             ARB2F403.117   
+      END DO                                                               ARB2F403.118   
+      end if                                                               ARB2F403.119   
+*ENDIF                                                                     ARB2F403.120   
+                                                                           AJS1F401.1458  
+*IF DEF,MPP                                                                ARB2F403.121   
+      if (at_base_of_LPG) then                                             ARB2F403.122   
+*ENDIF                                                                     ARB2F403.123   
+      DO I=LAST_POINT+1,P_FIELD                                            AJS1F401.1459  
+        PHOTOSYNTH_ACT_RAD(I) = RMDI                                       AJS1F401.1460  
+      ENDDO                                                                AJS1F401.1461  
+*IF DEF,MPP                                                                ARB2F403.124   
+      DO LEVEL = 1,CLOUD_LEVELS                                            ARB2F403.125   
+        DO I = LAST_POINT+1,P_FIELD                                        ARB2F403.126   
+          CLOUD_FRACTION(I,LEVEL) = 0.0                                    ARB2F403.127   
+          AREA_CLOUD_FRACTION(I,LEVEL) = 0.0                               ASK1F405.150   
+        END DO                                                             ARB2F403.128   
+      END DO                                                               ARB2F403.129   
+      end if                                                               ARB2F403.130   
+*ENDIF                                                                     ARB2F403.131   
+                                                                           AJS1F401.1462  
+C  Set up internal model identifier and STASH index                        GRB4F305.39    
+      im_ident = atmos_im                                                  GRB4F305.40    
+      im_index = internal_model_index(im_ident)                            GRB4F305.41    
+                                                                           CLDCTL1.122   
+C SWITCH =.TRUE. If either radiation scheme is being called.               CLDCTL1.123   
+                                                                           CLDCTL1.124   
+      SWITCH = L_LW_RADIATE.OR.L_SW_RADIATE                                CLDCTL1.125   
+                                                                           CLDCTL1.126   
+CL 9.1 AT non-radiation timesteps, read radiation increments.              CLDCTL1.127   
+                                                                           CLDCTL1.128   
+      IF(.NOT.SWITCH) THEN                                                 CLDCTL1.129   
+*IF -DEF,FRADIO                                                            GGH3F401.17    
+        LEN=(P_FIELDDA*(P_LEVELS+3)+511)/512*512*2 !no. words for LW/SW    ARE2F404.38    
+C (The above includes extra levels for net surface SW (band 1) without     ARE2F404.39    
+C zenith angle adjustment, surface albedo and surface radiative temp)      ARE2F404.40    
+        NFTSWAP=16                                                         CLDCTL1.132   
+        CALL SETPOS(NFTSWAP,0,ICODE)                                       GTD0F400.43    
+      CALL BUFFIN(NFTSWAP,RADINCS,LEN,LEN_IO,A_IO)                         CLDCTL1.134   
+*ENDIF                                                                     CLDCTL1.135   
+      END IF                                                               CLDCTL1.136   
+                                                                           CLDCTL1.137   
+      IF (L_RHCPT) THEN                                                    ASK1F405.151   
+!                                                                          ASK1F405.152   
+        CALL RHCRIT_CALC(                                                  ASK1F405.153   
+     &    A_LEVDEPC(JAK),A_LEVDEPC(JBK),AKH,BKH,D1(JPSTAR+JS),             ASK1F405.154   
+     &    D1(JRHC(1)+JS),Q_LEVELS,POINTS,P_FIELD,                          ASK1F405.155   
+     &    D1(JTHETA(1)+JS),D1(JQ(1)+JS),D1(JQCF(1)+JS),                    ASK1F405.156   
+     &    ROW_LENGTHDA,D1(JLAND+JS),D1(JICE_FRACTION+JS),BL_LEVELS)        ASK1F405.157   
+!                                                                          ASK1F405.158   
+*IF DEF,MPP                                                                ASK1F405.159   
+        CALL SWAPBOUNDS(D1(JRHC(1)),ROW_LENGTH,P_ROWS,EW_Halo,NS_Halo,     ASK1F405.160   
+     &                Q_LEVELS)                                            ASK1F405.161   
+*ENDIF                                                                     ASK1F405.162   
+      ENDIF                                                                ASK1F405.163   
+!                                                                          ASK1F405.164   
+!L 9.2  Call GLUE_CLD to calculate cloud fraction and                      AYY2F400.98    
+CL      cloud water/ice content.                                           CLDCTL1.139   
+                                                                           CLDCTL1.140   
+                                                                           CLDCTL1.141   
+      IF(LTIMER) THEN                                                      CLDCTL1.142   
+        CALL TIMER('LS_CLD  ',3)                                           CLDCTL1.143   
+      END IF                                                               CLDCTL1.144   
+                                                                           CLDCTL1.145   
+      IF (L_CLD_AREA) THEN                                                 ASK1F405.165   
+        CALL AREA_CLD(                                                     ASK1F405.166   
+     &    A_LEVDEPC(JAK),A_LEVDEPC(JBK),D1(JPSTAR+JS),RHCRIT,Q_LEVELS,     ASK1F405.167   
+     &    D1(JRHC(1)+JS),POINTS,P_FIELD,D1(JTHETA(1)+JS),                  ASK1F405.168   
+     &    CLOUD_FRACTION(FIRST_POINT,1),D1(JQ(1)+JS),D1(JQCF(1)+JS),       ASK1F405.169   
+     &    D1(JQCL(1)+JS),PDF_QC_OR_CF_LIQ(FIRST_POINT,1),                  ASK1F405.170   
+     &    PDF_BS_OR_CF_ICE(FIRST_POINT,1),ICODE,                           ASK1F405.171   
+     &              AREA_CLOUD_FRACTION(FIRST_POINT,1),AKH,BKH)            ASK1F405.172   
+      ELSE                                                                 ASK1F405.173   
+        CALL GLUE_CLD(                                                     ASK1F405.174   
+     &    A_LEVDEPC(JAK),A_LEVDEPC(JBK),D1(JPSTAR+JS),                     ASK1F405.175   
+     &    RHCRIT,Q_LEVELS,D1(JRHC(1)+JS),                                  ASK1F405.176   
+     &    POINTS,P_FIELD,D1(JTHETA(1)+JS),                                 ASK1F405.177   
+     &    CLOUD_FRACTION(FIRST_POINT,1),D1(JQ(1)+JS),D1(JQCF(1)+JS),       ASK1F405.178   
+     &    D1(JQCL(1)+JS),PDF_QC_OR_CF_LIQ(FIRST_POINT,1),                  ASK1F405.179   
+     &    PDF_BS_OR_CF_ICE(FIRST_POINT,1),ICODE)                           ASK1F405.180   
+!                                                                          ASK1F405.181   
+!  Radiation uses layer cloud area, so if scheme is switched off put the   ASK1F405.182   
+!  volume cloud fraction into the area fraction array.                     ASK1F405.183   
+        DO LEVEL = 1,Q_LEVELS                                              ASK1F405.184   
+          DO I = 1,P_FIELD                                                 ASK1F405.185   
+            AREA_CLOUD_FRACTION(I,LEVEL) = CLOUD_FRACTION(I,LEVEL)         ASK1F405.186   
+          END DO                                                           ASK1F405.187   
+        END DO                                                             ASK1F405.188   
+!                                                                          ASK1F405.189   
+      ENDIF                                                                ASK1F405.190   
+                                                                           CLDCTL1.152   
+      IF(LTIMER) THEN                                                      CLDCTL1.153   
+        CALL TIMER('LS_CLD  ',4)                                           CLDCTL1.154   
+      END IF                                                               CLDCTL1.155   
+                                                                           CLDCTL1.156   
+      IF(ICODE.GT.0) THEN                                                  CLDCTL1.157   
+        CMESSAGE="CLD_CTL  : ERROR IN LS_CLD"                              CLDCTL1.158   
+        RETURN                                                             CLDCTL1.159   
+      END IF                                                               CLDCTL1.160   
+                                                                           CLDCTL1.161   
+CL 9.3 Diagnostic processing                                               CLDCTL1.162   
+                                                                           CLDCTL1.163   
+      IF(SF(201,9)) THEN                                                   CLDCTL1.164   
+                                                                           CLDCTL1.165   
+CL Copy cloud fraction to STASHWORK                                        CLDCTL1.166   
+                                                                           CLDCTL1.167   
+        CALL COPYDIAG_3D (STASHWORK(si(201,9,im_index)),CLOUD_FRACTION,    GRB4F305.42    
+     &      FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,P_LEVELS,            CLDCTL1.169   
+     &      STLIST(1,STINDEX(1,201,9,im_index)),LEN_STLIST,                GRB4F305.43    
+     &      STASH_LEVELS,NUM_STASH_LEVELS+1,                               GPB1F403.509   
+     &      im_ident,9,201,                                                GPB1F403.510   
+*CALL ARGPPX                                                               GPB1F403.511   
+     &      ICODE,CMESSAGE)                                                GPB1F403.512   
+                                                                           CLDCTL1.172   
+        IF(ICODE.GT.0) THEN                                                CLDCTL1.173   
+          CMESSAGE="CLD_CTL  : ERROR IN COPYDIAG_3D(cloud fraction)"       CLDCTL1.174   
+          RETURN                                                           CLDCTL1.175   
+        END IF                                                             CLDCTL1.176   
+      ENDIF                                                                CLDCTL1.177   
+!                                                                          ASK1F405.191   
+      IF(SF(227,9)) THEN                                                   ASK1F405.192   
+CL Copy cloud area fraction to STASHWORK                                   ASK1F405.193   
+        CALL COPYDIAG_3D (STASHWORK(si(227,9,im_index)),                   ASK1F405.194   
+     &      AREA_CLOUD_FRACTION,FIRST_POINT,LAST_POINT,P_FIELD,            ASK1F405.195   
+     &      ROW_LENGTH,P_LEVELS,STLIST(1,STINDEX(1,227,9,im_index)),       ASK1F405.196   
+     &      LEN_STLIST,STASH_LEVELS,NUM_STASH_LEVELS+1,                    ASK1F405.197   
+     &      im_ident,9,227,                                                ASK1F405.198   
+*CALL ARGPPX                                                               ASK1F405.199   
+     &      ICODE,CMESSAGE)                                                ASK1F405.200   
+        IF(ICODE.GT.0) THEN                                                ASK1F405.201   
+          CMESSAGE="CLD_CTL  : ERROR IN COPYDIAG_3D(LSCLD_AREA)"           ASK1F405.202   
+          RETURN                                                           ASK1F405.203   
+        END IF                                                             ASK1F405.204   
+      ENDIF                                                                ASK1F405.205   
+!                                                                          ASK1F405.206   
+!                                                                          ASK1F405.207   
+      IF(SF(228,9)) THEN                                                   ASK1F405.208   
+CL Copy RHcrit to STASHWORK                                                ASK1F405.209   
+        CALL COPYDIAG_3D (STASHWORK(si(228,9,im_index)),D1(JRHC(1)),       ASK1F405.210   
+     &      FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,P_LEVELS,            ASK1F405.211   
+     &      STLIST(1,STINDEX(1,228,9,im_index)),LEN_STLIST,                ASK1F405.212   
+     &      STASH_LEVELS,NUM_STASH_LEVELS+1,                               ASK1F405.213   
+     &      im_ident,9,228,                                                ASK1F405.214   
+*CALL ARGPPX                                                               ASK1F405.215   
+     &      ICODE,CMESSAGE)                                                ASK1F405.216   
+        IF(ICODE.GT.0) THEN                                                ASK1F405.217   
+          CMESSAGE="CLD_CTL  : ERROR IN COPYDIAG_3D(RHCPT)"                ASK1F405.218   
+          RETURN                                                           ASK1F405.219   
+        END IF                                                             ASK1F405.220   
+      ENDIF                                                                ASK1F405.221   
+!                                                                          ASK1F405.222   
+!                                                                          AJX0F404.498   
+! Calculate a 2D convective cloud amount to pass to diagnostic             AJX0F404.499   
+! routines.                                                                AJX0F404.500   
+!                                                                          AJX0F404.501   
+      IF (L_3D_CCA) THEN                                                   AJX0F404.502   
+        DO I=1,P_FIELD                                                     AJX0F404.503   
+          LEVEL=ID1(JCCT+I-1)                                              AJX0F404.504   
+          IF (LEVEL .GT. 1) THEN                                           AJX0F404.505   
+            CCA2D(I)=D1(JCCA(LEVEL-1)+I-1)                                 AJX0F404.506   
+          ELSE                                                             AJX0F404.507   
+            CCA2D(I)=0.0                                                   AJX0F404.508   
+          ENDIF                                                            AJX0F404.509   
+        ENDDO                                                              AJX0F404.510   
+      ELSE                                                                 AJX0F404.511   
+        DO I=1,P_FIELD                                                     AJX0F404.512   
+          CCA2D(I)=D1(JCCA(1)+I-1)                                         AJX0F404.513   
+        ENDDO                                                              AJX0F404.514   
+      ENDIF                                                                AJX0F404.515   
+                                                                           CLDCTL1.178   
+      IF ( SF(203,9) .OR. SF(204,9) .OR. SF(205,9) .OR.                    WI080293.1     
+     &     SF(216,9) .OR. SF(217,9) .OR. SF(226,9) ) THEN                  AYY1F404.166   
+                                                                           CLDCTL1.180   
+C                                                                          CLDCTL1.181   
+CL----------- Calculate layer cloud amount-----------------                CLDCTL1.182   
+C                                                                          CLDCTL1.183   
+C  The cloud amount is found by finding the max cloud cover over           CLDCTL1.184   
+C  a set of levels. The boundaries of these types are set in SETDCFL1      CLDCTL1.185   
+C  and stored in CCONSTS.                                                  CLDCTL1.186   
+                                                                           CLDCTL1.187   
+        CALL CLOUD_COVER (AREA_CLOUD_FRACTION, CCA2D, D1(JCCB),D1(JCCT),   ASK1F405.223   
+     &                   STASHWORK(si(203,9,im_index)),                    GRB4F305.44    
+     &                   STASHWORK(si(204,9,im_index)),                    GRB4F305.45    
+     &                   STASHWORK(si(205,9,im_index)),                    GRB4F305.46    
+     &                   STASHWORK(si(216,9,im_index)),                    GRB4F305.47    
+     &                   STASHWORK(si(217,9,im_index)),                    GRB4F305.48    
+     &                   STASHWORK(si(226,9,im_index)),                    AYY1F404.167   
+     &                   LOW_BOT_LEVEL,LOW_TOP_LEVEL,                      CLDCTL1.191   
+     &                   MED_BOT_LEVEL,MED_TOP_LEVEL,                      CLDCTL1.192   
+     &                   HIGH_BOT_LEVEL,HIGH_TOP_LEVEL,                    CLDCTL1.193   
+     &                   SF(203,9),SF(204,9),SF(205,9),                    CLDCTL1.194   
+     &                   SF(216,9), SF(217,9), SF(226,9),                  AYY1F404.168   
+     &                   CLOUD_LEVELS,P_FIELDDA,                           @DYALLOC.759   
+     &                   Q_LEVELSDA,                                       AYY1F404.169   
+     &                   ICODE,CMESSAGE)                                   CLDCTL1.196   
+                                                                           CLDCTL1.197   
+        IF (ICODE.GT.0) THEN                                               CLDCTL1.198   
+          RETURN                                                           CLDCTL1.199   
+        END IF                                                             CLDCTL1.200   
+                                                                           CLDCTL1.201   
+      END IF                                                               CLDCTL1.202   
+                                                                           CLDCTL1.203   
+        IF(SF(206,9)) THEN                                                 CLDCTL1.204   
+                                                                           CLDCTL1.205   
+CL Copy Cloud water to STASHWORK                                           CLDCTL1.206   
+                                                                           CLDCTL1.207   
+          CALL COPYDIAG_3D(STASHWORK(si(206,9,im_index)),D1(JQCL(1)),      GRB4F305.49    
+     &        FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                   CLDCTL1.209   
+     &        P_LEVELS,STLIST(1,STINDEX(1,206,9,im_index)),LEN_STLIST,     GRB4F305.50    
+     &      STASH_LEVELS,NUM_STASH_LEVELS+1,                               GPB1F403.513   
+     &      im_ident,9,206,                                                GPB1F403.514   
+*CALL ARGPPX                                                               GPB1F403.515   
+     &      ICODE,CMESSAGE)                                                GPB1F403.516   
+                                                                           CLDCTL1.212   
+          IF (ICODE.GT.0) THEN                                             CLDCTL1.213   
+            CMESSAGE="CLD_CTL  : ERROR IN COPYDIAG_3D(cloud water)"        CLDCTL1.214   
+            RETURN                                                         CLDCTL1.215   
+          END IF                                                           CLDCTL1.216   
+                                                                           CLDCTL1.217   
+        END IF                                                             CLDCTL1.218   
+                                                                           CLDCTL1.219   
+        IF(SF(207,9)) THEN                                                 CLDCTL1.220   
+                                                                           CLDCTL1.221   
+CL Copy Cloud ice to STASHWORK                                             CLDCTL1.222   
+                                                                           CLDCTL1.223   
+          CALL COPYDIAG_3D(STASHWORK(si(207,9,im_index)),D1(JQCF(1)),      GRB4F305.51    
+     &        FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                   CLDCTL1.225   
+     &        P_LEVELS,STLIST(1,STINDEX(1,207,9,im_index)),LEN_STLIST,     GRB4F305.52    
+     &      STASH_LEVELS,NUM_STASH_LEVELS+1,                               GPB1F403.517   
+     &      im_ident,9,207,                                                GPB1F403.518   
+*CALL ARGPPX                                                               GPB1F403.519   
+     &      ICODE,CMESSAGE)                                                GPB1F403.520   
+                                                                           CLDCTL1.228   
+          IF (ICODE.GT.0) THEN                                             CLDCTL1.229   
+            CMESSAGE="CLD_CTL  : ERROR IN COPYDIAG_3D(cloud ice)"          CLDCTL1.230   
+            RETURN                                                         CLDCTL1.231   
+          END IF                                                           CLDCTL1.232   
+                                                                           CLDCTL1.233   
+        END IF                                                             CLDCTL1.234   
+!                                                                          AYY1F404.170   
+      IF(SF(224,9)) THEN                                                   AYY1F404.171   
+!                                                                          AYY1F404.172   
+! 1A Cloud : Copy Cloud PDF QC value to STASHWORK (NOT IN MASTER LIST)     AYY1F404.173   
+! 2A Cloud : Copy cloud liquid fraction to STASHWORK                       AYY1F404.174   
+!                                                                          AYY1F404.175   
+        CALL COPYDIAG_3D (STASHWORK(si(224,9,im_index)),                   AYY1F404.176   
+     &      PDF_QC_OR_CF_LIQ,                                              AYY1F404.177   
+     &      FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,P_LEVELS,            AYY1F404.178   
+     &      STLIST(1,STINDEX(1,224,9,im_index)),LEN_STLIST,                AYY1F404.179   
+     &      STASH_LEVELS,NUM_STASH_LEVELS+1,im_ident,9,224,                AYY1F404.180   
+*CALL ARGPPX                                                               AYY1F404.181   
+     &      ICODE,CMESSAGE)                                                AYY1F404.182   
+!                                                                          AYY1F404.183   
+        IF(ICODE.GT.0) THEN                                                AYY1F404.184   
+          CMESSAGE="CLD_CTL  : ERROR IN COPYDIAG_3D(cloud liq frac)"       AYY1F404.185   
+          RETURN                                                           AYY1F404.186   
+        END IF                                                             AYY1F404.187   
+      END IF                                                               AYY1F404.188   
+!                                                                          AYY1F404.189   
+      IF(SF(225,9)) THEN                                                   AYY1F404.190   
+!                                                                          AYY1F404.191   
+! 1A Cloud : Copy Cloud PDF bs value to STASHWORK (NOT IN MASTER LIST)     AYY1F404.192   
+! 2A Cloud : Copy cloud ice fraction to STASHWORK                          AYY1F404.193   
+!                                                                          AYY1F404.194   
+        CALL COPYDIAG_3D (STASHWORK(si(225,9,im_index)),                   AYY1F404.195   
+     &      PDF_BS_OR_CF_ICE,                                              AYY1F404.196   
+     &      FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,P_LEVELS,            AYY1F404.197   
+     &      STLIST(1,STINDEX(1,225,9,im_index)),LEN_STLIST,                AYY1F404.198   
+     &      STASH_LEVELS,NUM_STASH_LEVELS+1,im_ident,9,225,                AYY1F404.199   
+*CALL ARGPPX                                                               AYY1F404.200   
+     &      ICODE,CMESSAGE)                                                AYY1F404.201   
+!                                                                          AYY1F404.202   
+        IF(ICODE.GT.0) THEN                                                AYY1F404.203   
+          CMESSAGE="CLD_CTL  : ERROR IN COPYDIAG_3D(cloud ice frac)"       AYY1F404.204   
+          RETURN                                                           AYY1F404.205   
+        END IF                                                             AYY1F404.206   
+      END IF                                                               AYY1F404.207   
+!                                                                          AYY1F404.208   
+C  Hard-wired loop over 8 cloud cover thresholds, with stashcodes          RB200193.32    
+C   208 - 215 inclusive, not all of which need have been selected.         RB200193.33    
+C    This will be replaced by User Interface provided pseudo-levels        RB200193.34    
+C     list with N_OCTAS set and single call of CLOUD_COVER_BASE            RB200193.35    
+C      at a later version - meanwhile BEWARE.                              RB200193.36    
+C                                                                          RB200193.37    
+C Items 208-215, 218-220                                                   PC120793.143   
+C     Are any low cloud diags required?                                    PC120793.144   
+      LC_REQD = SF(218,9).OR.SF(219,9).OR.SF(220,9)                        PC120793.145   
+      WBFL_REQD = SF(221,9)                                                ASW1F304.15    
+      WBT_REQD = SF(222,9)                                                 ASW1F304.16    
+      TCLDH_REQD = SF(223,9)                                               ASW1F304.17    
+      DO  IFLAG = 1,8                                                      RB200193.38    
+C Do we need to call for cloud base height or low cloud stats?             PC120793.146   
+        IF(SF(207+IFLAG,9).OR.LC_REQD.OR.WBFL_REQD.OR.WBT_REQD             ASW1F304.18    
+     &  .OR.TCLDH_REQD) THEN                                               ASW1F304.19    
+          NOCT=1                                                           PC120793.148   
+                                                                           RB200193.40    
+C                                                                          RB200193.41    
+CL----------- Calculate cloud base for specified cloud cover -------       RB200193.42    
+C                                                                          RB200193.43    
+C  The cloud base is found by locating the lowest level with               RB200193.44    
+C   CLOUD_FRACTION greater than the threshold value (OCTAS), and then      RB200193.45    
+C    adjusting for convective cloud if more significant.                   RB200193.46    
+                                                                           RB200193.47    
+          CALL CLOUD_COVER_BASE(D1(JTHETA(1)),D1(JQ(1)),                   RB200193.48    
+     &                   D1(JPSTAR),D1(JP_EXNER(1)),D1(JOROG),             RB200193.49    
+     &                   CCA2D,D1(JCCB),                                   AJX0F404.517   
+     &                   AREA_CLOUD_FRACTION,D1(JCCT),                     ASK1F405.224   
+     &                   P_FIELD,P_LEVELS,Q_LEVELS,                        RB200193.52    
+     &                   A_LEVDEPC(JAK),A_LEVDEPC(JBK),                    ASW1F304.21    
+     &                   AKH,BKH,                                          RB200193.53    
+     &                   OCTAS(IFLAG),NOCT,                                PC120793.149   
+     &                   SF(207+IFLAG,9),                                  PC120793.150   
+     &                   LC_REQD,                                          PC120793.151   
+     &                   WBFL_REQD,                                        ASW1F304.22    
+     &                   WBT_REQD,                                         ASW1F304.23    
+     &                   TCLDH_REQD,                                       ASW1F304.24    
+     &                   C_COVER,                                          PC120793.152   
+     &                   LC_FRAC,                                          PC120793.153   
+     &                   LC_BASE,                                          PC120793.154   
+     &                   LC_TOP,                                           ASW1F304.25    
+     &                   WBFLH,                                            ASW1F304.26    
+     &                   TW,                                               ASW1F304.27    
+     &                   CLOUD_TOP,FIRST_POINT,LAST_POINT)                 ARB2F403.132   
+          IF(SF(207+IFLAG,9)) THEN                                         PC120793.156   
+            CALL COPYDIAG(STASHWORK(si(207+IFLAG,9,im_index)),C_COVER,     GRB4F305.53    
+     &           FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                GPB1F403.521   
+     &           im_ident,9,207+IFLAG,                                     GPB1F403.522   
+*CALL ARGPPX                                                               GPB1F403.523   
+     &           ICODE,CMESSAGE)                                           GPB1F403.524   
+            IF (ICODE .GT. 0) GOTO 9999                                    GPB1F403.525   
+          ENDIF                                                            PC120793.159   
+          IF(LC_REQD) THEN                                                 PC120793.160   
+            IF(SF(218,9)) THEN                                             PC120793.161   
+            CALL COPYDIAG(STASHWORK(si(218,9,im_index)),LC_FRAC,           GRB4F305.54    
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            GPB1F403.526   
+     &               im_ident,9,218,                                       GPB1F403.527   
+*CALL ARGPPX                                                               GPB1F403.528   
+     &               ICODE,CMESSAGE)                                       GPB1F403.529   
+            IF (ICODE .GT. 0) GOTO 9999                                    GPB1F403.530   
+            ENDIF                                                          PC120793.164   
+            IF(SF(219,9)) THEN                                             PC120793.165   
+            CALL COPYDIAG(STASHWORK(si(219,9,im_index)),LC_BASE,           GRB4F305.55    
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            GPB1F403.531   
+     &               im_ident,9,219,                                       GPB1F403.532   
+*CALL ARGPPX                                                               GPB1F403.533   
+     &               ICODE,CMESSAGE)                                       GPB1F403.534   
+            IF (ICODE .GT. 0) GOTO 9999                                    GPB1F403.535   
+            ENDIF                                                          PC120793.168   
+            IF(SF(220,9)) THEN                                             PC120793.169   
+            CALL COPYDIAG(STASHWORK(si(220,9,im_index)),LC_TOP,            GRB4F305.56    
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            GPB1F403.536   
+     &               im_ident,9,220,                                       GPB1F403.537   
+*CALL ARGPPX                                                               GPB1F403.538   
+     &               ICODE,CMESSAGE)                                       GPB1F403.539   
+            IF (ICODE .GT. 0) GOTO 9999                                    GPB1F403.540   
+            ENDIF                                                          PC120793.172   
+            LC_REQD=.FALSE.      ! Make sure we don't recalculate it       PC120793.173   
+          ENDIF                                                            ASW1F304.29    
+          IF (WBFL_REQD) THEN                                              ASW1F304.30    
+            CALL COPYDIAG(STASHWORK(si(221,9,im_index)),WBFLH,             GRB4F305.57    
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           GPB1F403.541   
+     &                im_ident,9,221,                                      GPB1F403.542   
+*CALL ARGPPX                                                               GPB1F403.543   
+     &                ICODE,CMESSAGE)                                      GPB1F403.544   
+            IF (ICODE .GT. 0) GOTO 9999                                    GPB1F403.545   
+            WBFL_REQD=.FALSE.      ! Make sure we don't recalculate it     ASW1F304.33    
+          ENDIF                                                            ASW1F304.34    
+          IF (WBT_REQD) THEN                                               ASW1F304.35    
+            CALL COPYDIAG_3D(STASHWORK(si(222,9,im_index)),TW,             GRB4F305.58    
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            ASW1F304.37    
+     &        P_LEVELS,STLIST(1,STINDEX(1,222,9,im_index)),LEN_STLIST,     GRB4F305.59    
+     &               STASH_LEVELS,NUM_STASH_LEVELS+1,                      ASW1F304.39    
+     &               im_ident,9,222,                                       GPB1F403.546   
+*CALL ARGPPX                                                               GPB1F403.547   
+     &               ICODE,CMESSAGE)                                       ASW1F304.40    
+            IF (ICODE .GT. 0) GOTO 9999                                    GPB1F403.548   
+            WBT_REQD=.FALSE.      ! Make sure we don't recalculate it      ASW1F304.41    
+          ENDIF                                                            ASW1F304.42    
+          IF (TCLDH_REQD) THEN                                             ASW1F304.43    
+            CALL COPYDIAG(STASHWORK(si(223,9,im_index)),CLOUD_TOP,         GRB4F305.60    
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           GPB1F403.549   
+     &                im_ident,9,223,                                      GPB1F403.550   
+*CALL ARGPPX                                                               GPB1F403.551   
+     &                ICODE,CMESSAGE)                                      GPB1F403.552   
+            IF (ICODE .GT. 0) GOTO 9999                                    GPB1F403.553   
+            TCLDH_REQD=.FALSE.      ! Make sure we don't recalculate it    ASW1F304.46    
+          ENDIF                                                            PC120793.174   
+                                                                           RB200193.56    
+        END IF                                                             RB200193.57    
+                                                                           RB200193.58    
+      END DO                                                               RB200193.59    
+                                                                           CLDCTL1.235   
+CL Call STASH to process output                                            CLDCTL1.236   
+                                                                           CLDCTL1.237   
+      IF(LTIMER) THEN                                                      CLDCTL1.238   
+        CALL TIMER('STASH   ',3)                                           CLDCTL1.239   
+      END IF                                                               CLDCTL1.240   
+                                                                           CLDCTL1.241   
+      CALL STASH(a_sm,a_im,9,STASHWORK,                                    GKR0F305.913   
+*CALL ARGSIZE                                                              @DYALLOC.762   
+*CALL ARGD1                                                                @DYALLOC.763   
+*CALL ARGDUMA                                                              @DYALLOC.764   
+*CALL ARGDUMO                                                              @DYALLOC.765   
+*CALL ARGDUMW                                                              GKR1F401.194   
+*CALL ARGSTS                                                               @DYALLOC.766   
+*CALL ARGPPX                                                               GKR0F305.914   
+     &           ICODE,CMESSAGE)                                           @DYALLOC.770   
+                                                                           CLDCTL1.243   
+      IF(LTIMER) THEN                                                      CLDCTL1.244   
+        CALL TIMER('STASH   ',4)                                           CLDCTL1.245   
+      END IF                                                               CLDCTL1.246   
+                                                                           CLDCTL1.247   
+      IF(ICODE.GT.0) THEN                                                  CLDCTL1.248   
+        RETURN                                                             CLDCTL1.249   
+      END IF                                                               CLDCTL1.250   
+                                                                           CLDCTL1.251   
+*IF DEF,GLOBAL                                                             CLDCTL1.252   
+                                                                           CLDCTL1.253   
+CL Copy values adjacent to poles into temporary workspace                  CLDCTL1.254   
+                                                                           CLDCTL1.255   
+*IF DEF,MPP                                                                APBHF401.9     
+      IF (at_top_of_LPG) THEN                                              APBHF401.10    
+*ENDIF                                                                     APBHF401.11    
+        DO LEVEL=1,P_LEVELS                                                APBHF401.12    
+          DO I=1,ROW_LENGTH                                                APBHF401.13    
+            I1=I+START_POINT_NO_HALO-2                                     APBHF401.14    
+            PU=D1(JPSTAR+I1)*BKH(LEVEL+1) + AKH(LEVEL+1)                   APBHF401.15    
+            PL=D1(JPSTAR+I1)*BKH(LEVEL)   + AKH(LEVEL)                     APBHF401.16    
+            N_POLAR_VALUES(I,LEVEL)=D1(JTHETA(LEVEL)+I1)/                  APBHF401.17    
+     &      P_EXNER_C( D1(JP_EXNER(LEVEL+1)+I1),D1(JP_EXNER(LEVEL)+I1),    APBHF401.18    
+     &      PU,PL,KAPPA )                                                  APBHF401.19    
+          ENDDO                                                            APBHF401.20    
+        ENDDO                                                              APBHF401.21    
+                                                                           APBHF401.22    
+        DO 102 LEVEL=1,Q_LEVELS                                            APBHF401.23    
+          DO I=1,ROW_LENGTH                                                APBHF401.24    
+            I1=I+START_POINT_NO_HALO-2                                     APBHF401.25    
+            N_POLAR_VALUES(I,LEVEL+P_LEVELS)=D1(JQ(LEVEL)+I1)              APBHF401.26    
+            N_POLAR_VALUES(I,LEVEL+P_LEVELS+Q_LEVELS)=                     APBHF401.27    
+     &        D1(JQCL(LEVEL)+I1)                                           APBHF401.28    
+            N_POLAR_VALUES(I,LEVEL+P_LEVELS+2*Q_LEVELS)=                   APBHF401.29    
+     &        D1(JQCF(LEVEL)+I1)                                           APBHF401.30    
+          ENDDO                                                            APBHF401.31    
+  102   CONTINUE                                                           APBHF401.32    
+*IF DEF,MPP                                                                APBHF401.33    
+      ENDIF                                                                APBHF401.34    
+                                                                           APBHF401.35    
+      IF (at_base_of_LPG) THEN                                             APBHF401.36    
+*ENDIF                                                                     APBHF401.37    
+        DO LEVEL=1,P_LEVELS                                                APBHF401.38    
+          DO I=1,ROW_LENGTH                                                APBHF401.39    
+            I2=I+P_BOT_ROW_START-ROW_LENGTH-2                              APBHF401.40    
+            PUS=D1(JPSTAR+I2)*BKH(LEVEL+1) + AKH(LEVEL+1)                  APBHF401.41    
+            PLS=D1(JPSTAR+I2)*BKH(LEVEL)   + AKH(LEVEL)                    APBHF401.42    
+            S_POLAR_VALUES(I,LEVEL)=D1(JTHETA(LEVEL)+I2)/                  APBHF401.43    
+     &      P_EXNER_C( D1(JP_EXNER(LEVEL+1)+I2),D1(JP_EXNER(LEVEL)+I2),    APBHF401.44    
+     &      PUS,PLS,KAPPA )                                                APBHF401.45    
+          ENDDO                                                            APBHF401.46    
+        ENDDO                                                              APBHF401.47    
+                                                                           APBHF401.48    
+        DO LEVEL=1,Q_LEVELS                                                APBHF401.49    
+          DO I=1,ROW_LENGTH                                                APBHF401.50    
+            I2=I+P_BOT_ROW_START-ROW_LENGTH-2                              APBHF401.51    
+            S_POLAR_VALUES(I,LEVEL+P_LEVELS)=D1(JQ(LEVEL)+I2)              APBHF401.52    
+            S_POLAR_VALUES(I,LEVEL+P_LEVELS+Q_LEVELS)=                     APBHF401.53    
+     &        D1(JQCL(LEVEL)+I2)                                           APBHF401.54    
+            S_POLAR_VALUES(I,LEVEL+P_LEVELS+2*Q_LEVELS)=                   APBHF401.55    
+     &        D1(JQCF(LEVEL)+I2)                                           APBHF401.56    
+          ENDDO                                                            APBHF401.57    
+        ENDDO                                                              APBHF401.58    
+*IF DEF,MPP                                                                APBHF401.59    
+      ENDIF                                                                APBHF401.60    
+*ENDIF                                                                     APBHF401.61    
+                                                                           CLDCTL1.289   
+*ENDIF                                                                     CLDCTL1.290   
+                                                                           CLDCTL1.291   
+      IF (.NOT.SWITCH) THEN                                                CLDCTL1.292   
+                                                                           CLDCTL1.293   
+CL 9.4 Check completion of I/O and add radiation increments. Copy          CLDCTL1.294   
+CL     surface increments to SURF_RADFLUX.                                 CLDCTL1.295   
+CL     Perform output processing for radiation diagnostics if not a        CLDCTL1.296   
+CL     radiation timestep                                                  CLDCTL1.297   
+                                                                           CLDCTL1.298   
+*IF -DEF,FRADIO                                                            GGH3F401.18    
+                                                                           CLDCTL1.300   
+        IF(A_IO.NE.-1.0.OR.LEN_IO.NE.LEN) THEN                             CLDCTL1.301   
+          CMESSAGE=' CLD_CTL : PAGING I/O ERROR'                           CLDCTL1.302   
+          ICODE=1                                                          CLDCTL1.303   
+          RETURN                                                           CLDCTL1.304   
+        END IF                                                             CLDCTL1.305   
+*ENDIF                                                                     CLDCTL1.306   
+                                                                           CLDCTL1.307   
+        LEN=(P_FIELDDA*(P_LEVELS+3)+511)/512*512 ! offset to 2nd RADINCS   ARE2F404.41    
+C (The above includes extra levels for net surface SW (band 1) without     ARE2F404.42    
+C zenith angle adjustment and surface albedo)                              ARE2F404.43    
+*IF -DEF,MPP                                                               APB1F305.241   
+        FIRST_POINT=ROW_LENGTH+1                                           CLDCTL1.309   
+        LAST_POINT=P_FIELD-ROW_LENGTH                                      CLDCTL1.310   
+        POINTS = P_FIELD - 2 * ROW_LENGTH                                  CLDCTL1.311   
+*ELSE                                                                      APB1F305.242   
+      FIRST_POINT = START_POINT_INC_HALO                                   APBHF401.62    
+      LAST_POINT  = END_P_POINT_INC_HALO                                   APBHF401.63    
+      POINTS      = LAST_POINT-FIRST_POINT+1                               APBHF401.64    
+*ENDIF                                                                     APB1F305.256   
+                                                                           CLDCTL1.312   
+CL      Astronomy calculations - basically duplicating part of RAD_CTL.    CLDCTL1.313   
+                                                                           CLDCTL1.314   
+CL  Calculate sine of the solar declination and the scaling                CLDCTL1.315   
+CL      factor for solar intensity from the day number and year.           CLDCTL1.316   
+                                                                           CLDCTL1.317   
+        IF(LTIMER) THEN                                                    CLDCTL1.318   
+          CALL TIMER('SOLPOS  ',3)                                         CLDCTL1.319   
+        END IF                                                             CLDCTL1.320   
+                                                                           CLDCTL1.321   
+                                                                           AWI1F403.338   
+C       ! HADCM2 physics must continue to use the wrong solar time.        AWI1F403.339   
+                                                                           AWI1F403.340   
+        IF ( H_SECT(1) .EQ. '02B' ) THEN                                   AWI1F403.341   
+           CALL SOLPOS (I_DAY_NUMBER, I_YEAR, SINDEC, SCS, LCAL360)        AWI1F403.342   
+         ELSE                                                              AWI1F403.343   
+           CALL SOLPOS (PREVIOUS_TIME(7), PREVIOUS_TIME(1), SINDEC, SCS,   AWI1F403.344   
+     &                    LCAL360)                                         AWI1F400.10    
+        ENDIF                                                              AWI1F403.345   
+                                                                           CLDCTL1.323   
+        IF(LTIMER) THEN                                                    CLDCTL1.324   
+          CALL TIMER('SOLPOS  ',4)                                         CLDCTL1.325   
+        END IF                                                             CLDCTL1.326   
+                                                                           CLDCTL1.327   
+C calculate sine of true latitude from Coriolis component F3               CLDCTL1.328   
+                                                                           CLDCTL1.329   
+        CALL UV_TO_P(F3(FIRST_VALID_PT),                                   APBHF401.65    
+     &               SIN_TRUE_LATITUDE(FIRST_VALID_PT+ROW_LENGTH),         APBHF401.66    
+     &               U_FIELD-FIRST_VALID_PT+1,                             APBHF401.67    
+     &               P_FIELD-(FIRST_VALID_PT+ROW_LENGTH)+1,                APBHF401.68    
+     &               ROW_LENGTH,upd_P_ROWS+1)                              APBHF401.69    
+                                                                           APBHF401.70    
+*IF DEF,MPP                                                                APBHF401.71    
+        CALL SWAPBOUNDS(SIN_TRUE_LATITUDE,ROW_LENGTH,P_ROWS,               APBHF401.72    
+     &                  EW_Halo,NS_Halo,1)                                 APBHF401.73    
+*ENDIF                                                                     APBHF401.74    
+        DO I=FIRST_POINT, LAST_POINT                                       CLDCTL1.332   
+          SIN_TRUE_LATITUDE(I) = SIN_TRUE_LATITUDE(I) * 0.5 / OMEGA        CLDCTL1.333   
+        END DO                                                             CLDCTL1.334   
+                                                                           CLDCTL1.335   
+C calculate seconds elapsed since midnight                                 CLDCTL1.336   
+                                                                           CLDCTL1.337   
+        IF ( H_SECT(1) .EQ. '02B' ) THEN                                   AWI1F403.346   
+           TIME = REAL ( 3600 * I_HOUR + 60 * I_MINUTE + I_SECOND )        AWI1F403.347   
+         ELSE                                                              AWI1F403.348   
+           TIME = REAL ( 3600*PREVIOUS_TIME(4) + 60*PREVIOUS_TIME(5)       AWI1F403.349   
+     &                                      + PREVIOUS_TIME(6) )           AWI1F400.12    
+        ENDIF                                                              AWI1F403.350   
+                                                                           AWI1F403.351   
+                                                                           CLDCTL1.339   
+        IF(LTIMER) THEN                                                    CLDCTL1.340   
+          CALL TIMER('SOLANG  ',3)                                         CLDCTL1.341   
+        END IF                                                             CLDCTL1.342   
+                                                                           CLDCTL1.343   
+CL Calculate day fraction and the zenith angle for each grid point         CLDCTL1.344   
+                                                                           CLDCTL1.345   
+        CALL SOLANG(                                                       CLDCTL1.346   
+C input constants                                                          CLDCTL1.347   
+C    &     SINDEC, TIME, A_REALHD(30),                                     ADR1F305.60    
+     &     SINDEC, TIME, SECS_PER_STEPim(atmos_im),                        ADR1F305.61    
+C row and column dependent constants                                       CLDCTL1.349   
+     &     SIN_TRUE_LATITUDE(FIRST_POINT), TRUE_LONGITUDE(FIRST_POINT),    CLDCTL1.350   
+C size variables                                                           CLDCTL1.351   
+     &     POINTS,                                                         CLDCTL1.352   
+C output fields                                                            CLDCTL1.353   
+     &     DAY_FRACTION(FIRST_POINT), COS_ZENITH_ANGLE(FIRST_POINT) )      CLDCTL1.354   
+                                                                           CLDCTL1.355   
+        IF(LTIMER) THEN                                                    CLDCTL1.356   
+          CALL TIMER('SOLANG  ',4)                                         CLDCTL1.357   
+        END IF                                                             CLDCTL1.358   
+                                                                           CLDCTL1.359   
+CL      ! Combine the two terms to give the mean cos zenith angle over     CLDCTL1.360   
+CL      !  the whole of the physics timestep,                              CLDCTL1.361   
+        DO I=FIRST_POINT, LAST_POINT                                       CLDCTL1.364   
+          COS_ZENITH_ANGLE(I) = COS_ZENITH_ANGLE(I) * DAY_FRACTION(I)      CLDCTL1.365   
+        ENDDO                                                              CLDCTL1.367   
+C                                                                          CLDCTL1.368   
+C       !  Some SW diagnostics can now be made available:                  CLDCTL1.369   
+        IF ( SF(202,1) ) THEN                                              CLDCTL1.370   
+          DO I=FIRST_POINT, LAST_POINT                                     CLDCTL1.371   
+            STASHWORK(si(202,1,im_index)+I-1) =                            GRB4F305.61    
+     &                                 RADINCS(I) * COS_ZENITH_ANGLE(I)    GRB4F305.62    
+          ENDDO                                                            CLDCTL1.373   
+        CALL EXTDIAG (STASHWORK,si(1,1,im_index),SF(1,1),202,202,INT9,     GPB1F403.1285  
+     &     ROW_LENGTH, STLIST, LEN_STLIST, STINDEX(1,1,1,im_index), 2,     GPB1F403.1286  
+     &     STASH_LEVELS, NUM_STASH_LEVELS+1,                               GPB1F403.1287  
+     &     STASH_PSEUDO_LEVELS, NUM_STASH_PSEUDO,                          GPB1F403.1288  
+     &     im_ident,1,                                                     GPB1F403.1289  
+*CALL ARGPPX                                                               GPB1F403.1290  
+     &     ICODE, CMESSAGE)                                                GPB1F403.1291  
+        ENDIF                                                              CLDCTL1.374   
+        IF ( SF(207,1) ) THEN                                              CLDCTL1.375   
+          DO I=FIRST_POINT, LAST_POINT                                     CLDCTL1.376   
+            STASHWORK(si(207,1,im_index)+I-1) =                            GRB4F305.63    
+     &                                 COS_ZENITH_ANGLE(I) * SC * SCS      GRB4F305.64    
+          ENDDO                                                            CLDCTL1.378   
+        CALL EXTDIAG (STASHWORK,si(1,1,im_index),SF(1,1),207,207,INT9,     GPB1F403.1292  
+     &     ROW_LENGTH, STLIST, LEN_STLIST, STINDEX(1,1,1,im_index), 2,     GPB1F403.1293  
+     &     STASH_LEVELS, NUM_STASH_LEVELS+1,                               GPB1F403.1294  
+     &     STASH_PSEUDO_LEVELS, NUM_STASH_PSEUDO,                          GPB1F403.1295  
+     &     im_ident,1,                                                     GPB1F403.1296  
+*CALL ARGPPX                                                               GPB1F403.1297  
+     &     ICODE, CMESSAGE)                                                GPB1F403.1298  
+        ENDIF                                                              CLDCTL1.379   
+        IF ( SF(232,1) ) THEN                                              CLDCTL1.380   
+          DO 13 LEVEL=1,                                                   GRB4F305.65    
+     &            STASH_LEVELS(1,-STLIST(10,STINDEX(1,232,1,im_index)))    GRB4F305.66    
+            DO I=FIRST_POINT, LAST_POINT                                   CLDCTL1.382   
+             STASHWORK(si(232,1,im_index)+I-1+(LEVEL-1)*P_FIELD) =         GRB4F305.67    
+     &   RADINCS(I+LEVEL*P_FIELD) * COS_ZENITH_ANGLE(I) /                  ADR1F305.62    
+     &   SECS_PER_STEPim(atmos_im)                                         ADR1F305.63    
+            ENDDO                                                          CLDCTL1.385   
+   13     CONTINUE                                                         CLDCTL1.386   
+        CALL EXTDIAG (STASHWORK,si(1,1,im_index),SF(1,1),232,232,INT9,     GPB1F403.1299  
+     &     ROW_LENGTH, STLIST, LEN_STLIST, STINDEX(1,1,1,im_index), 2,     GPB1F403.1300  
+     &     STASH_LEVELS, NUM_STASH_LEVELS+1,                               GPB1F403.1301  
+     &     STASH_PSEUDO_LEVELS, NUM_STASH_PSEUDO,                          GPB1F403.1302  
+     &     im_ident,1,                                                     GPB1F403.1303  
+*CALL ARGPPX                                                               GPB1F403.1304  
+     &     ICODE, CMESSAGE)                                                GPB1F403.1305  
+        ENDIF                                                              CLDCTL1.387   
+C                                                                          CLDCTL1.392   
+C      add surface fluxes                                                  CLDCTL1.393   
+C                                                                          CLDCTL1.394   
+        DO I=FIRST_POINT,LAST_POINT                                        CLDCTL1.395   
+          SURF_RADFLUX(I) =                                                CLDCTL1.396   
+     &          RADINCS(I) * COS_ZENITH_ANGLE(I) + RADINCS(I+LEN)          CLDCTL1.397   
+          PHOTOSYNTH_ACT_RAD(I) =                                          AJS1F401.1469  
+     &          RADINCS(I+P_FIELD*(P_LEVELS+1)) * COS_ZENITH_ANGLE(I)      AJS1F401.1470  
+        END DO                                                             CLDCTL1.398   
+                                                                           ARE2F404.44    
+C                                                                          CLDCTL1.399   
+C      add in short wave radiation increments                              CLDCTL1.400   
+C                                                                          CLDCTL1.401   
+        DO 96 LEVEL=1,P_LEVELS                                             CLDCTL1.402   
+          DO I=FIRST_POINT,LAST_POINT                                      CLDCTL1.403   
+            D1(JTHETA(LEVEL)+I-1) = D1(JTHETA(LEVEL)+I-1)+                 CLDCTL1.404   
+     &         RADINCS(I+LEVEL*P_FIELD) * COS_ZENITH_ANGLE(I)              CLDCTL1.405   
+!                                                                          ARN1F404.108   
+!           Calculate radiative heating rates for layers 1 to BL_LEVELS    ARN1F404.109   
+!                                                                          ARN1F404.110   
+                                                                           ARN1F404.111   
+            IF (L_RADHEAT .AND. LEVEL .LE. BL_LEVELS) THEN                 ARN1F404.112   
+              RADHEAT_RATE(I,LEVEL) =                                      ARN1F404.113   
+     &           ( RADINCS(I+LEVEL*P_FIELD) * COS_ZENITH_ANGLE(I)          ARN1F404.114   
+     &           + RADINCS(I+LEVEL*P_FIELD+LEN) )                          ARN1F404.115   
+     &           / SECS_PER_STEPim(atmos_im)                               ARN1F404.116   
+            ENDIF                                                          ARN1F404.117   
+          END DO                                                           CLDCTL1.406   
+ 96     CONTINUE                                                           CLDCTL1.407   
+                                                                           CLDCTL1.408   
+        IF(LTIMER) THEN                                                    CLDCTL1.409   
+          CALL TIMER('STASH   ',3)                                         CLDCTL1.410   
+        END IF                                                             CLDCTL1.411   
+                                                                           CLDCTL1.412   
+        CALL STASH(a_sm,a_im,1,STASHWORK,                                  GKR0F305.915   
+*CALL ARGSIZE                                                              @DYALLOC.773   
+*CALL ARGD1                                                                @DYALLOC.774   
+*CALL ARGDUMA                                                              @DYALLOC.775   
+*CALL ARGDUMO                                                              @DYALLOC.776   
+*CALL ARGDUMW                                                              GKR1F401.195   
+*CALL ARGSTS                                                               @DYALLOC.777   
+*CALL ARGPPX                                                               GKR0F305.916   
+     &             ICODE,CMESSAGE)                                         @DYALLOC.781   
+                                                                           CLDCTL1.414   
+        IF (ICODE.GT.0) RETURN                                             CLDCTL1.415   
+                                                                           CLDCTL1.416   
+        IF(LTIMER) THEN                                                    CLDCTL1.417   
+          CALL TIMER('STASH   ',4)                                         CLDCTL1.418   
+        END IF                                                             CLDCTL1.419   
+C                                                                          CLDCTL1.420   
+C      add in long wave radiation increments                               CLDCTL1.421   
+C                                                                          CLDCTL1.422   
+        DO 97 LEVEL=1,P_LEVELS                                             CLDCTL1.423   
+          DO I=FIRST_POINT,LAST_POINT                                      CLDCTL1.424   
+            D1(JTHETA(LEVEL)+I-1) = D1(JTHETA(LEVEL)+I-1)+                 CLDCTL1.425   
+     &      RADINCS(I+LEVEL*P_FIELD+LEN)                                   CLDCTL1.426   
+          END DO                                                           CLDCTL1.427   
+ 97     CONTINUE                                                           CLDCTL1.428   
+                                                                           ARE2F404.45    
+        IF ( H_SECT(3) .EQ. '07A' ) THEN                                   ARE2F404.46    
+                                                                           ARE2F404.47    
+          LAND1 = 1                                                        ARE2F404.48    
+          LAND_PTS = 0                                                     ARE2F404.49    
+          DO L=1,LAND_FIELD                                                ARE2F404.50    
+            IF ( LAND_LIST(L) .LT. FIRST_POINT ) THEN                      ARE2F404.51    
+              LAND1 = LAND1 + 1                                            ARE2F404.52    
+            ELSEIF ( LAND_LIST(L) .LE. LAST_POINT ) THEN                   ARE2F404.53    
+              LAND_PTS = LAND_PTS + 1                                      ARE2F404.54    
+            ENDIF                                                          ARE2F404.55    
+          ENDDO                                                            ARE2F404.56    
+                                                                           ARE2F404.57    
+CL Set the SW+LW flux over the snow-free surface to the gridbox mean       ABX1F405.97    
+CL SW+LW flux (valid for sea points but corrected in RAD_MOSES for land    ABX1F405.98    
+CL points)                                                                 ABX1F405.99    
+        DO I=FIRST_POINT,LAST_POINT                                        ABX1F405.100   
+          RAD_NO_SNOW(I) = SURF_RADFLUX(I)                                 ABX1F405.101   
+          RAD_SNOW(I) = SURF_RADFLUX(I)                                    ABX1F405.102   
+        ENDDO                                                              ABX1F405.103   
+                                                                           ABX1F405.104   
+          CALL RAD_MOSES (                                                 ARE2F404.58    
+     &     P_FIELD,LAND_FIELD,LAND1,LAND_PTS,LAND_LIST,P_LEVELS,           ARE2F404.59    
+     &     BL_LEVELS,AKH,BKH,COS_ZENITH_ANGLE,                             ARE2F404.60    
+     &     RADINCS(P_FIELD*(P_LEVELS+2)+1),D1(JSFA),RADINCS(LEN+1),        ARE2F404.61    
+     &     RADINCS(P_FIELD+LEN+1),D1(JPSTAR),                              ARE2F404.62    
+     &     RADINCS,SNOW_FRAC,D1(JFRAC_TYP),                                ARE2F404.63    
+     &     RADINCS(P_FIELD*(P_LEVELS+1)+LEN+1),                            ARE2F404.64    
+     &     D1(JTSTAR_TYP),SECS_PER_STEPim(atmos_im),                       ARE2F404.65    
+     &     D1(JTHETA(1)),RAD_NO_SNOW,RAD_SNOW                              ARE2F404.66    
+     &     )                                                               ARE2F404.67    
+                                                                           ARE1F405.1     
+C Overwrite SURF_RADFLUX with the gridbox average for land points          ARE1F405.2     
+           DO L=LAND1,LAND1+LAND_PTS-1                                     ARE1F405.3     
+             I = LAND_LIST(L)                                              ARE1F405.4     
+             SURF_RADFLUX(I) = (1. - SNOW_FRAC(L))*RAD_NO_SNOW(I)          ARE1F405.5     
+     &                                 + SNOW_FRAC(L)*RAD_SNOW(I)          ARE1F405.6     
+           ENDDO                                                           ARE1F405.7     
+                                                                           ARE1F405.8     
+        ELSE IF ( H_SECT(3) .NE. '03A' .AND.                               ABX1F405.105   
+     &            H_SECT(3) .NE. '05A' .AND.                               ABX1F405.106   
+     &            H_SECT(3) .NE. '06A' ) THEN                              ABX1F405.107   
+           ICODE=1                                                         ABX1F405.108   
+           CMESSAGE='CLD_CTL: Unknown version of Section 3 '               ABX1F405.109   
+     &       //'encountered at call to RAD_MOSES.'                         ABX1F405.110   
+           RETURN                                                          ABX1F405.111   
+        ENDIF                                                              ARE2F404.68    
+                                                                           CLDCTL1.429   
+        IF(LTIMER) THEN                                                    CLDCTL1.430   
+          CALL TIMER('STASH   ',3)                                         CLDCTL1.431   
+        END IF                                                             CLDCTL1.432   
+                                                                           CLDCTL1.433   
+        CALL STASH(a_sm,a_im,2,STASHWORK,                                  GKR0F305.917   
+*CALL ARGSIZE                                                              @DYALLOC.783   
+*CALL ARGD1                                                                @DYALLOC.784   
+*CALL ARGDUMA                                                              @DYALLOC.785   
+*CALL ARGDUMO                                                              @DYALLOC.786   
+*CALL ARGDUMW                                                              GKR1F401.196   
+*CALL ARGSTS                                                               @DYALLOC.787   
+*CALL ARGPPX                                                               GKR0F305.918   
+     &             ICODE,CMESSAGE)                                         @DYALLOC.791   
+                                                                           CLDCTL1.435   
+        IF (ICODE.GT.0) RETURN                                             CLDCTL1.436   
+                                                                           CLDCTL1.437   
+        IF(LTIMER) THEN                                                    CLDCTL1.438   
+          CALL TIMER('STASH   ',4)                                         CLDCTL1.439   
+        END IF                                                             CLDCTL1.440   
+                                                                           CLDCTL1.441   
+      END IF                                                               CLDCTL1.442   
+                                                                           CLDCTL1.443   
+ 9999 CONTINUE                                                             GPB1F403.554   
+      RETURN                                                               CLDCTL1.444   
+      END                                                                  CLDCTL1.445   
+*ENDIF                                                                     CLDCTL1.446   

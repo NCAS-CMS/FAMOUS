@@ -1,0 +1,899 @@
+#!/bin/ksh                                                                 GSH6U404.97    
+# ----------------------------- COPYRIGHT ---------------------------- #   COPYRIGHT.793   
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #   COPYRIGHT.794   
+#                                                                      #   COPYRIGHT.795   
+# Use, duplication or disclosure of this code is subject to the        #   COPYRIGHT.796   
+# restrictions as set forth in the contract. If no contract has been   #   COPYRIGHT.797   
+# raised with this copy of the code, use, duplication or disclosure    #   COPYRIGHT.798   
+# of it is strictly prohibited. Permission to do so must be obtained   #   COPYRIGHT.799   
+# in writing from the Head of Numerical Modelling at The Met. Office.  #   COPYRIGHT.800   
+# ----------------------------- COPYRIGHT ---------------------------- #   COPYRIGHT.801   
+#                                                                          GSH6U404.111   
+#  Script: qsmncompile                                                     GSH6U404.112   
+#                                                                          GSH6U404.113   
+#  Description: performs the compilation and link editing of code for a    GSH6U404.114   
+#               model run		                                                GSH6U404.115   
+#                                                                          GSH6U404.116   
+#  Interface and arguments: qsmncompile                                    GSH6U404.117   
+#                                                                          GSH6U404.118   
+#  Author: Andy Brady                                                      GSH6U404.119   
+#  Owner:                                                                  GSH6U404.120   
+#                                                                          GSH6U404.121   
+#  History:                                                                GSH6U404.122   
+#  Vn   Date      Change                                                   GSH6U404.123   
+#  4.2 	?.?.96    Original Code.  (A Brady)		                              GSH6U404.124   
+#  4.4	22.05.97  Script header and some comments added.  (S Robertson)     GSH6U404.125   
+#  4.4  01.08.97  Added code to test the return value from qslistobj to    GSH6U404.126   
+#                 ensure a message is output if the model executable       GSH6U404.127   
+#                 has been removed prior to relinking.  (S Robertson)      GSH6U404.128   
+#LL    4.5    29-09-99 Changes relating to shortening of                   PXCLLMOD.41    
+#LL                    final load line and splitting of main               PXCLLMOD.42    
+#LL                    makefile into makefile.compile and makefile.link    PXCLLMOD.43    
+#LL                                             Luke Robinson.             PXCLLMOD.44    
+#  4.5  14.07.98  Moved functions to a separate file and autoloaded        GAV3U405.42    
+#                 them. (A Van der Wal)                                    GAV3U405.43    
+#                                                                          GSH6U404.129   
+#  Script called by: qsmain                                                GSH6U404.130   
+#  Script calls: qsconf, comp_parse, load_parse                            GSH6U404.131   
+#                                                                          GSH6U404.132   
+#  Variables that must be imported:                                        GSH6U404.133   
+#	BUILDSECT logical to indicate whether a section def combination          GSH6U404.134   
+#                 which has not been pre-built should now be built	        GSH6U404.135   
+#	COMPDIR	  temporary directory into which nupdate extracts code           GSH6U404.136   
+#	LOADMODULE the model run executable 	                                    GSH6U404.137   
+#	UCOMPDIR  the u(ser)comp(ile)dir(rectory) which contains the             GSH6U404.138   
+#                 source and object files required for the run             GSH6U404.139   
+#                                                                          GSH6U404.140   
+#  Variables that can be imported:                                         GSH6U404.141   
+#       BUILDHOST identifies the system the UM is being built upon         GSH6U404.142   
+#                 e.g. CrPVPf77 machine and compiler                       GSH6U404.143   
+#       BUILDSECT_LOG log file to note section	                            GSH6U404.144   
+#       CONFIGURE Unified Model global configuration script                GSH6U404.145   
+#       DECKLIST  a list of the decks which were extracted in the          GSH6U404.146   
+#                 previous run                                             GSH6U404.147   
+#       MAKEFILEUCOMP the user compile makefile                            PXCLLMOD.45    
+#       MAKEFILEULINK the user link makefile                               PXCLLMOD.46    
+#       MAKEFILEUCOMPIN makefile template for user compile                 PXCLLMOD.47    
+#       MAKEFILEULINKIN makefile template for user link                    PXCLLMOD.48    
+#       MAKETMPFILEC temp file to hold makefile directives for C files     GSH6U404.150   
+#       MAKETMPFILEF temp file to hold makefile directives for fortran     GSH6U404.151   
+#       NPROC     the number of processes to be run in parallel            GSH6U404.152   
+#       QSLISTOBJ script which returns a list of build combinations        GSH6U404.153   
+#                 required to run the given model configuration            GSH6U404.154   
+#       REBUILD_DIR directory into which code for given section def        GSH6U404.155   
+#                   combination, built during the run, is extracted        GSH6U404.156   
+#       SEDSCRIPT script (of sed commands) used to parse content into      GSH6U404.157   
+#                 the user Makefile                                        GSH6U404.158   
+#       TMPLIST   temp file which lists decks extracted during the run     GSH6U404.159   
+#                                                                          GSH6U404.160   
+#  Variables that are exported: <list of environment variables>            GSH6U404.161   
+#                                                                          GSH6U404.162   
+#  Local variables:                                                        GSH6U404.163   
+#	FORT      global fortran compiler command e.g. f90                       GSH6U404.164   
+#	FORTOPTS  global fortran compiler options                                GSH6U404.165   
+#	CC        global C compiler command e.g. cc                              GSH6U404.166   
+#	CCOPTS    global C compiler options                                      GSH6U404.167   
+#	LOAD      global loader compiler command                                 GSH6U404.168   
+#	LOADOPTS  global loader compiler options                                 GSH6U404.169   
+#	OBJS      a list of .o files to be parsed into the user Makefile         GSH6U404.170   
+#	PREOBJS   a list of pre-compiled .o files to be parsed into the          GSH6U404.171   
+#                 user Makefile                                            GSH6U404.172   
+#------------------------------------------------                          GSH6U404.173   
+                                                                           GEX1U402.2     
+# Miscelleneous options                                                    GEX1U402.3     
+NPROC=${NPROC:-10}                                                         GEX1U402.4     
+MAKEFILEUCOMPIN=\                                                          PXCLLMOD.49    
+${MAKEFILEUCOMPIN:-$UMDIR/vn$VN/source/makefileu_comp_in}                  PXCLLMOD.50    
+MAKEFILEULINKIN=\                                                          PXCLLMOD.51    
+${MAKEFILEULINKIN:-$UMDIR/vn$VN/source/makefileu_link_in}                  PXCLLMOD.52    
+MAKEFILEUCOMP=${MAKEFILEUCOMP:-$UCOMPDIR/makefile.compile}                 PXCLLMOD.53    
+MAKEFILEULINK=${MAKEFILEULINK:-$UCOMPDIR/makefile.link}                    PXCLLMOD.54    
+BUILDSECT_LOG=${BUILDSECT_LOG:-$UMDIR/vn$VN/src/UserBuild.log}             GSH1U403.40    
+DECKLIST=${DECKLIST:-$UCOMPDIR/decklist}                                   GSH1U403.41    
+CONFIGURE=${CONFIGURE:-qsconf}                                             GSH1U403.42    
+QSLISTOBJ=${QSLISTOBJ:-qslistobj}                                          GSH1U403.43    
+BUILDHOST=${BUILDHOST:-T3E_f90}                                            GSH1U403.44    
+REBUILD_DIR=${REBUILD_DIR:-$DATAW/Rebuilt}                                 GSH1U403.45    
+                                                                           GEX1U402.8     
+# Temporary files                                                          GEX1U402.9     
+MAKETMPFILEC=$TEMP/make_tmp_c_$$                                           GEX1U402.10    
+MAKETMPFILEF=$TEMP/make_tmp_f_$$                                           GEX1U402.11    
+SEDSCRIPT=$TEMP/sed_script_$$                                              GEX1U402.12    
+TMPLIST=$TEMP/tmplist_$$                                                   GEX1U402.13    
+                                                                           GEX1U402.14    
+autoload gen_sed_string fnnewcom fnmydiff fnmycut fnlistopt                GAV3U405.44    
+                                                                           GEX1U402.122   
+# Global fortran compiler command and options                              GEX1U402.123   
+line=`fnlistopt "$UCOMPVARS.tmp" "" FCOM`                                  GSH1U403.215   
+FORT=${line%:::*}                                                          GSH1U403.216   
+FORTOPTS=${line#$FORT:::}                                                  GSH1U403.217   
+                                                                           GEX1U402.127   
+# Global C-compiler command and options                                    GEX1U402.128   
+line=`fnlistopt "$UCOMPVARS.tmp" "" CCOM`                                  GSH1U403.218   
+CC=${line%:::*}                                                            GSH1U403.219   
+CCOPTS=${line#$CC:::}                                                      GSH1U403.220   
+                                                                           GEX1U402.132   
+# Global load command and options                                          GEX1U402.133   
+line=`fnlistopt "$UCOMPVARS.tmp" "" LCOM`                                  PXUNPACK.12    
+LOAD=${line%:::*}                                                          GSH1U403.222   
+LOADOPTS=${line#$LOAD:::}                                                  GSH1U403.223   
+                                                                           GEX1U402.137   
+# changes to compiler options, between runs, are held in changelistor.     GSH6U404.330   
+# From this it can be determined whether a change is global e.g. compile   GSH6U404.331   
+# change applicable to all fortran decks or if there has been a change     GSH6U404.332   
+# for a specific deck.                                                     GSH6U404.333   
+                                                                           GSH6U404.334   
+typeset -l changelistor                                                    GSH1U403.227   
+changelistor=`fnnewcom "$UCOMPVARS.tmp" "$COMPVARS"`                       GSH1U403.228   
+                                                                           GSH1U403.229   
+if [ -f "$UCOMPVARS" ]                                                     GSH1U403.230   
+then                                                                       GEX1U402.141   
+                                                                           GSH6U404.335   
+  # changes to compiler options, between this run and any previous run,    GSH6U404.336   
+  # are held in changelistruns.  This list is scanned during extraction    GSH6U404.337   
+  # so that files that need to be re-compiled are removed.                 GSH6U404.338   
+                                                                           GSH6U404.339   
+  typeset -l changelistruns                                                GSH1U403.234   
+  changelistruns=`fnnewcom "$UCOMPVARS.tmp" "$UCOMPVARS"`                  GSH1U403.235   
+fi                                                                         GEX1U402.144   
+                                                                           GEX1U402.145   
+echo "\nqsmncompile($SECONDS): ***\tCompile vars diff information."        GEX1U404.14    
+                                                                           GEX1U404.15    
+echo "qsmncompile($SECONDS): ***\t  System differences."                   GEX1U404.16    
+for comtag in $changelistor                                                GEX1U404.17    
+do                                                                         GEX1U404.18    
+  echo "qsmncompile($SECONDS): ***\t    $comtag"                           GEX1U404.19    
+done                                                                       GEX1U404.20    
+                                                                           GEX1U404.21    
+if [ -f "$UCOMPVARS" ]                                                     GEX1U404.22    
+then                                                                       GEX1U404.23    
+  echo "qsmncompile($SECONDS): ***\t  Last user run differences."          GEX1U404.24    
+  for comtag in $changelistruns                                            GEX1U404.25    
+  do                                                                       GEX1U404.26    
+    echo "qsmncompile($SECONDS): ***\t    $comtag"                         GEX1U404.27    
+  done                                                                     GEX1U404.28    
+fi                                                                         GEX1U404.29    
+                                                                           GEX1U404.30    
+echo "qsmncompile($SECONDS): ***\tEnd of compile vars info."               GEX1U404.31    
+## Remove all symlinked files from the user compile directory.             GSH6U404.340   
+## The files are relinked in the next step. It is safer to                 GSH6U404.341   
+## remove then re-create the link.                                         GSH6U404.342   
+                                                                           GEX1U402.152   
+echo \                                                                     GEX1U402.153   
+"\nqsmncompile($SECONDS): ***\tRemoving symlinks in compilation dir."      GEX1U402.154   
+                                                                           GEX1U402.155   
+# We do it like this for two reasons:                                      GSH1U403.236   
+#   1) We have reduced the number of individual process calls              GSH1U403.237   
+#      that have to be made to 14 from 1+N(files)                          GSH1U403.238   
+#   2) We should not reach the 1000+ argument limit on the rm()            GSH1U403.239   
+#      call on some platforms, as there are less than 200 decks            GSH1U403.240   
+#      in each iteration.                                                  GSH1U403.241   
+# The last iteration could be removed, if we were sure that there          GSH1U403.242   
+# would never be any decks that do not start with an alpha char.           GSH1U403.243   
+                                                                           GSH6U404.343   
+for letter in abce dfgh ijklp mor ns qtuvwxyz1234567890_                   GSH1U403.244   
+do                                                                         GEX1U402.158   
+  lnfiles=`find $UCOMPDIR -type l -name [$letter]\*.[ofc] -print`          GSH1U403.245   
+  if [ ! -z "$lnfiles" ]                                                   GSH1U403.246   
+  then                                                                     GEX1U402.160   
+    rm -f $lnfiles                                                         GSH1U403.247   
+  fi                                                                       GEX1U402.162   
+done                                                                       GEX1U402.163   
+echo "qsmncompile($SECONDS): ***\tFinished removing symlinks\n"            GEX1U402.164   
+                                                                           GEX1U402.165   
+                                                                           GSH6U404.344   
+## Step ?.? - Check files from previous compilations in parent dir.        GEX1U402.167   
+##            Create temporary files (c & f) for inclusion in Makefile.    GEX1U402.168   
+##            Move file to parent directory if new or changed              GEX1U402.169   
+##            Remove zero length files.                                    GEX1U402.170   
+                                                                           GEX1U402.172   
+# Remove the zero length files in the User Compile Directory.              GSH6U404.345   
+echo "\nqsmncompile($SECONDS): ***\tRemoving zero length files"            GEX1U402.174   
+find $UCOMPDIR -size 0 -exec rm {} \;                                      GEX1U402.175   
+echo "qsmncompile($SECONDS): ***\tFinished removing files\n"               GEX1U402.176   
+                                                                           GEX1U402.177   
+## decks modified in previous runs which are no longer modifed must        GSH6U404.346   
+## be removed and replaced with the original source and linked to the      GSH6U404.347   
+## pre-compiled code                                                       GSH6U404.348   
+                                                                           GSH6U404.349   
+## to do this a list of the files that have been extracted in this run     GSH6U404.350   
+## is kept, in DECKLIST, for comparison in subsequent runs                 GSH6U404.351   
+                                                                           GEX1U402.182   
+ls $COMPDIR > $TMPLIST                                                     GSH1U403.251   
+                                                                           GEX1U402.191   
+echo "\nqsmncompile($SECONDS): ***\tRemoving previously modified files"    GEX1U402.192   
+                                                                           GEX1U402.193   
+if [ -f "$DECKLIST" ]                                                      GSH1U403.252   
+then                                                                       GEX1U402.195   
+  # get a list of decks that have been modified in this run but not in     GSH6U404.352   
+  # the previous run                                                       GSH6U404.353   
+  typeset -l list                                                          GEX1U402.196   
+  list=`diff $DECKLIST $TMPLIST|$UM_GREP -E '^<'|$UM_AWK '{print $2}'|\    PXUTILTY.247   
+        sort -u`                                                           PXUTILTY.248   
+                                                                           GSH6U404.354   
+  if [ -z "$list" ]                                                        GSH6U404.355   
+  then                                                                     GSH6U404.356   
+    echo \                                                                 GEX1U402.200   
+"qsmncompile($SECONDS): ***\t  No files to rm. Modified same decks."       GEX1U402.201   
+    need_reload_step=false                                                 GSH1U403.254   
+  else                                                                     GEX1U402.202   
+    need_reload_step=true                                                  GSH1U403.255   
+                                                                           GSH6U404.357   
+    for file in $list                                                      GEX1U402.203   
+    do                                                                     GEX1U402.204   
+      need_reload_step=true                                                GSH1U403.256   
+      name=${file%.[cf]}                                                   GSH1U403.257   
+      if [ -f "$UCOMPDIR/$file" ]                                          GSH1U403.258   
+      then                                                                 GEX1U402.206   
+        # the source file exists in the u(ser)comp(ile)dir(ectory)         GSH6U404.358   
+        # - remove it                                                      GSH6U404.359   
+        echo \                                                             GEX1U402.207   
+"qsmncompile($SECONDS): ***\t  Removing unmodified file $file"             GSH1U403.259   
+        rm -f $UCOMPDIR/$file                                              GSH1U403.260   
+      else                                                                 GSH1U403.261   
+        echo \                                                             GSH1U403.262   
+"qsmncompile($SECONDS): ***\t  Cannot find source file $file"              GSH1U403.263   
+      fi                                                                   GSH1U403.264   
+      if [ -f "$UCOMPDIR/$name.o" ]                                        GSH1U403.265   
+      then                                                                 GEX1U402.211   
+        # the object file exist in the u(ser)comp(ile)dir(ectory)          GSH6U404.360   
+        # - remove it                                                      GSH6U404.361   
+        echo \                                                             GEX1U402.212   
+"qsmncompile($SECONDS): ***\t  Removing unmodified object file $name.o"    GSH1U403.266   
+        rm -f $UCOMPDIR/$name.o                                            GSH1U403.267   
+      else                                                                 GEX1U402.215   
+        echo \                                                             GEX1U402.216   
+"qsmncompile($SECONDS): ***\t  Cannot find object file $name.o"            GSH1U403.268   
+      fi                                                                   GEX1U402.227   
+    done                                                                   GEX1U402.228   
+  fi                                                                       GEX1U402.229   
+                                                                           GSH6U404.362   
+  # keep a copy of the list of modified decks at the start of the run      GSH6U404.363   
+  # i.e. from the previous run                                             GSH6U404.364   
+  mv -f $DECKLIST $DECKLIST.old                                            GSH1U403.269   
+else                                                                       GEX1U402.231   
+  echo \                                                                   GEX1U402.232   
+"qsmncompile($SECONDS): ***\t  This looks new. No files to remove"         GEX1U402.233   
+  need_reload_step=false                                                   GSH1U403.270   
+fi                                                                         GEX1U402.234   
+                                                                           GEX1U402.235   
+# keep a list of decks modified during this run                            GSH6U404.365   
+mv -f $TMPLIST $DECKLIST                                                   GSH1U403.271   
+                                                                           GEX1U402.237   
+echo "qsmncompile($SECONDS): ***\tFinished removing modified files\n"      GEX1U402.238   
+                                                                           GSH1U403.272   
+if [[ "$changelistruns" = *"all_load"* ]] ||\                              GSH1U403.273   
+   [[ "$changelistor" = *"all_load"* ]]                                    GSH1U403.274   
+then                                                                       GSH1U403.275   
+  need_reload_step=true                                                    GSH1U403.276   
+fi                                                                         GSH1U403.277   
+                                                                           GSH1U403.278   
+if [ "$need_reload_step" = "true" ] && [ -f "$LOADMODULE" ]                GSH1U403.279   
+then                                                                       GSH1U403.280   
+  echo \                                                                   GSH1U403.281   
+"\nqsmncompile($SECONDS): ***\tDecks have changed. Executable removed\n"   GSH1U403.282   
+  rm -f $LOADMODULE                                                        GSH1U403.283   
+fi                                                                         GSH1U403.284   
+                                                                           GEX1U402.239   
+echo "\nqsmncompile($SECONDS): ***\tSTARTING control source comparison"    GEX1U402.240   
+                                                                           GEX1U402.241   
+# Loop over .c and .f files in directory.                                  GEX1U402.242   
+#   1) Sed entries in a file for fortran source decks                      GEX1U402.243   
+#   2) Sed entries in a file for c source decks                            GEX1U402.244   
+#   3) Compare with files from any previous compilation                    GEX1U402.245   
+#   4) Move source up if necessary                                         GEX1U402.246   
+                                                                           GEX1U402.247   
+# From $UCOMPVARS, the u(ser)comp(ile)vars file, obtain a list of deck     GSH6U404.366   
+# names for which specific compiler options are given -> u(ser)decklist.   GSH6U404.367   
+                                                                           GSH6U404.368   
+typeset -l udecklist                                                       GEX1U402.251   
+                                                                           GSH6U404.369   
+# Ignore all lines that are comments (#) or global references              GSH6U404.370   
+# (@ or +@).  Take the first element of the lines taht are left            GSH6U404.371   
+# i.e. the deck names.                                                     GSH6U404.372   
+                                                                           GSH6U404.373   
+udecklist=`$UM_GREP -E -v '^#|^\@|^\+\@' $UCOMPVARS.tmp |\                 PXUTILTY.249   
+             cut -d" " -f1 |\                                              GSH1U403.287   
+             $UM_SED 's/^+//g'|\                                           PXUTILTY.250   
+             sort -u`                                                      GEX1U402.255   
+                                                                           GSH6U404.374   
+# For decks in the list, udecklist, the options can be scanned             GSH6U404.375   
+# in the following loop, with a call to fnlistopt.                         GSH6U404.376   
+                                                                           GSH6U404.377   
+# Consider each file in $COMPDIR, the temporary directory which nupdate    GSH6U404.378   
+# extracts to.  Create a makefile directive for each file.                 GSH6U404.379   
+                                                                           GSH6U404.380   
+                                                                           GEX1U402.256   
+for file in `ls | $UM_GREP -E '\.f$|\.c$'`                                 PXUTILTY.251   
+do                                                                         GEX1U402.258   
+  name=${file%.[cfCF]} # return file name                                  GEX1U402.259   
+  type=${file##$name.} # return file suffix (c|C|f|F]                      GEX1U402.260   
+  echo "qsmncompile($SECONDS): ***\t  $name\c"                             GSH1U403.288   
+                                                                           GSH1U403.289   
+  test=`fnmydiff $file $UCOMPDIR/$file`    # Are files different.          GSH1U403.290   
+  if [ $test -eq 1 ]                                                       GSH1U403.291   
+  then                                                                     GSH1U403.292   
+    echo "\t(Diff)\c"         # extracted vn. is different from user vn.   GSH6U404.381   
+    mv -f $file $UCOMPDIR/.   # move extracted vn. to user directory       GSH6U404.382   
+  elif [ $test -ne 0 ]                                                     GSH1U403.295   
+  then                                                                     GSH1U403.296   
+    echo "\t(New) \c"           # no user vn. of the file                  GSH6U404.383   
+    mv -f $file $UCOMPDIR/.     # move extracted vn. to user directory     GSH6U404.384   
+  else                                                                     GSH1U403.299   
+    # the extracted vn. is the same as the user vn. do nothing             GSH6U404.385   
+    echo "\t(Same)\c"                                                      GSH1U403.300   
+  fi                                                                       GSH1U403.302   
+                                                                           GEX1U402.261   
+  if [ "$type" = "f" ]  || [ "$type" = "F" ]                               GEX1U402.262   
+  then     # Must be fortran source                                        GEX1U402.263   
+    echo "\t(F)\c"                                                         GSH1U403.303   
+    if [[ "$udecklist" = *"$name"* ]]                                      GEX1U402.264   
+    then                                                                   GEX1U402.265   
+                                                                           GSH6U404.386   
+      # deck has specific compiler options, call fnlistopt to              GSH6U404.387   
+      # obtain them                                                        GSH6U404.388   
+      echo "\t(Opts:new)\c"                                                GSH1U403.304   
+      line=`fnlistopt "$UCOMPVARS.tmp" "$name" FCOM`                       GSH1U403.305   
+      fort=${line%:::*}                                                    GSH1U403.306   
+      opts=${line#$fort:::}                                                GSH1U403.307   
+                                                                           GSH6U404.389   
+      # Set the values of thisfort (the fortran compiler) and thisopts     GSH6U404.390   
+      # (the compiler options) by comparing the deck specific values       GSH6U404.391   
+      # with global values                                                 GSH6U404.392   
+                                                                           GSH6U404.393   
+      if [ "$fort" != "$FORT" ]                                            GEX1U402.274   
+      then                                                                 GEX1U402.275   
+        thisfort=$fort                                                     GEX1U402.276   
+      else                                                                 GEX1U402.277   
+        thisfort='$(FORT)'                                                 GEX1U402.278   
+      fi                                                                   GEX1U402.279   
+      if [ "$opts" != "$FORTOPTS" ]                                        GEX1U402.280   
+      then                                                                 GEX1U402.281   
+        thisopts=$opts                                                     GEX1U402.282   
+      else                                                                 GEX1U402.283   
+        thisopts='$(FORTOPTS)'                                             GEX1U402.284   
+      fi                                                                   GEX1U402.285   
+    else                                                                   GEX1U402.286   
+      # deck has no specific compiler options use global default values    GSH6U404.394   
+      thisfort='$(FORT)'                                                   GEX1U402.288   
+      thisopts='$(FORTOPTS)'                                               GEX1U402.289   
+    fi                                                                     GEX1U402.290   
+    # create a makefile directive for the current file                     GSH6U404.395   
+    echo \                                                                 GEX1U402.291   
+  "$name.o: $file\n\t$thisfort $thisopts -c $file\n" \                     GSH1U403.308   
+      >> $MAKETMPFILEF                                                     GEX1U402.293   
+  elif  [ "$type" = "c" ]  || [ "$type" = "C" ]                            GEX1U402.294   
+  then     # Must be c source                                              GEX1U402.295   
+    echo "\t(C)\c"                                                         GSH1U403.309   
+    if [[ "$udecklist" = *"$name"* ]]                                      GEX1U402.296   
+    then                                                                   GEX1U402.297   
+    # deck has specific compiler options, call fnlistopt to obtain them    GSH6U404.396   
+      echo "\t(Opts:new)\c"                                                GSH1U403.310   
+      line=`fnlistopt "$UCOMPVARS.tmp" "$name" CCOM`                       GSH1U403.311   
+      cc=${line%:::*}                                                      GSH1U403.312   
+      opts=${line#$cc:::}                                                  GSH1U403.313   
+                                                                           GSH6U404.397   
+      # set the values of thiscc (the c compiler) and thisopts             GSH6U404.398   
+      # (the compiler options) by comparing the deck specific values       GSH6U404.399   
+      # with global values                                                 GSH6U404.400   
+      if [ "$cc" != "$CC" ]                                                GEX1U402.304   
+      then                                                                 GEX1U402.305   
+        thiscc=$cc                                                         GEX1U402.306   
+      else                                                                 GEX1U402.307   
+        thiscc='$(CC)'                                                     GEX1U402.308   
+      fi                                                                   GEX1U402.309   
+      if [ "$opts" != "$CCOPTS" ]                                          GEX1U402.310   
+      then                                                                 GEX1U402.311   
+        thisopts=$opts                                                     GEX1U402.312   
+      else                                                                 GEX1U402.313   
+        thisopts='$(CCOPTS)'                                               GEX1U402.314   
+      fi                                                                   GEX1U402.315   
+    else                                                                   GEX1U402.316   
+      # the deck has no specific compiler options use global defaults      GSH6U404.401   
+      thiscc='$(CC)'                                                       GEX1U402.318   
+      thisopts='$(CCOPTS)'                                                 GEX1U402.319   
+    fi                                                                     GEX1U402.320   
+    # create a makefile directive for the current file                     GSH6U404.402   
+    echo "$name.o: $file\n\t$thiscc $thisopts -c $file\n" \                GSH1U403.314   
+      >> $MAKETMPFILEC                                                     GEX1U402.322   
+  else                                                                     GEX1U402.323   
+    echo "ERROR: file type \"$type\" for \"$file\" is unknown."            GEX1U402.324   
+    exit 1                                                                 GEX1U402.325   
+  fi                                                                       GEX1U402.326   
+                                                                           GEX1U402.327   
+  # Maintain a list of object files which will be parsed directly into     GSH6U404.403   
+  # the Makefile.  OBJS is of the form, OBJS=abcalc1.o ac_ctl1.o           GSH6U404.404   
+  OBJS="$OBJS $name.o"                                                     GSH6U404.405   
+                                                                           GEX1U402.331   
+  # Now we check the changelistruns (generated using shell function        GSH1U403.315   
+  # fnnewcom, above) to see if compiler options from this run are          GSH6U404.406   
+  # different from those in a previous run                                 GSH6U404.407   
+                                                                           GSH6U404.408   
+  unset needcompileruns                                                    GSH1U403.319   
+  if [ ! -z "$changelistruns" ]                                            GSH1U403.320   
+  then                                                                     GEX1U402.334   
+    if [[ "$changelistruns" = *"all_fortran"* ]] && [ "$type" = "f" ]      GSH1U403.321   
+    then                                                                   GSH1U403.322   
+      needcompileruns=true                                                 GSH1U403.323   
+    elif [[ "$changelistruns" = *"all_ccode"* ]] && [ "$type" = "c" ]      GSH1U403.324   
+    then                                                                   GSH1U403.325   
+      needcompileruns=true                                                 GSH1U403.326   
+    elif [[ "$changelistruns" = *$name* ]]                                 GSH1U403.327   
+    then                                                                   GSH1U403.328   
+      needcompileruns=true                                                 GSH1U403.329   
+    fi                                                                     GSH1U403.330   
+  fi                                                                       GSH1U403.331   
+                                                                           GSH1U403.332   
+  # remove object file if recompilation is indicated                       GSH6U404.409   
+  if [ "$needcompileruns" = "true" ]                                       GSH1U403.333   
+  then                                                                     GEX1U402.339   
+    if [ -f "$UCOMPDIR/$name.o" ]                                          GSH1U403.334   
+    then                                                                   GSH1U403.335   
+      echo "\t(O:rm)\c"                                                    GSH1U403.336   
+      rm -f $UCOMPDIR/$name.o                                              GSH1U403.337   
+    fi                                                                     GSH1U403.338   
+  fi                                                                       GEX1U402.345   
+  echo                                                                     GSH1U403.339   
+done                                                                       GEX1U402.346   
+                                                                           GEX1U402.347   
+echo "qsmncompile($SECONDS): ***\tFINISHED control source comparison\n"    GEX1U402.348   
+                                                                           GEX1U402.349   
+## Step ?.? -- extract pre-compiled objects from archive or rebuild        GEX1U402.351   
+##             them if required. Set up loader libraries and path          GEX1U402.352   
+##             accordingly                                                 GEX1U402.353   
+                                                                           GEX1U402.355   
+echo \                                                                     GEX1U402.356   
+"\nqsmncompile($SECONDS): ***\tSymlink-ing pre-compiled code"              GSH1U403.340   
+                                                                           GSH6U404.410   
+# execute the script held in environment variable QSLISTOBJ to             GSH6U404.411   
+# populate dirs.  The elements of dirs are strings of the form             GSH6U404.412   
+# a01_3a/G0/NORMAL which are subdirectory pathnames used to facilitate     GSH6U404.413   
+# linking of pre-compiled code                                             GSH6U404.414   
+                                                                           GEX1U402.358   
+dirs=`$QSLISTOBJ $DEFS $SECTMODE $OBJXREF $BUILDHOST`                      GSH1U403.341   
+                                                                           GEX1U402.360   
+estat=$?                                                                   GSH1U404.1     
+                                                                           GSH1U404.2     
+if test $estat = 99                                                        GSH1U404.3     
+then                                                                       GSH1U404.4     
+  echo \                                                                   GSH1U404.5     
+"qsmncompile($SECONDS): ***\tNeed to relink, removed executable."          GSH1U404.6     
+fi                                                                         GSH1U404.7     
+                                                                           GSH1U404.8     
+for dir in $dirs                                                           GEX1U402.361   
+do                                                                         GEX1U402.362   
+  unset no_section_defs                                                    GSH1U403.342   
+                                                                           GSH6U404.415   
+  # the directory PREOBJDIR is composed of sub directories, one for        GSH6U404.416   
+  # each section of the model e.g.$PREOBJDIR/a12_1a                        GSH6U404.417   
+                                                                           GSH6U404.418   
+  # These directories contain further directories, one for each section    GSH6U404.419   
+  # def combination that is pre-compiled e.g. $PREOBJDIR/a12_1a/G1G3Gn     GSH6U404.420   
+                                                                           GSH6U404.421   
+  # The pre-built object code is located within this directory structure   GSH6U404.422   
+                                                                           GSH6U404.423   
+  if [ ! -d $PREOBJDIR/$dir ]                                              GSH1U403.343   
+  then                                                                     GSH1U403.344   
+    # pre-built code does not exist                                        GSH6U404.424   
+    echo \                                                                 GSH1U403.345   
+"\nqsmncompile($SECONDS): ***\t  ERROR: $PREOBJDIR/$dir not found."        GSH1U403.346   
+    if [ "$BUILDSECT" = "true" ]                                           GSH1U403.347   
+    then                                                                   GSH1U403.348   
+      # build a section def combination that has not been pre-built        GSH6U404.425   
+      if [ -w "$BUILDSECT_LOG" ]                                           GSH1U403.349   
+      then                                                                 GSH1U403.350   
+        echo "`whoami`@`hostname`:`date +%D`:$dir" >> $BUILDSECT_LOG       GSH1U403.351   
+      fi                                                                   GSH1U403.352   
+      if [ ! -d "$REBUILD_DIR/obj/$dir" ]                                  GSH1U403.353   
+      then                                                                 GSH1U403.354   
+        echo \                                                             GSH1U403.355   
+"qsmncompile($SECONDS): ***\t  BUILDSECT is set. Calling configure.\n"     GSH1U403.356   
+        sect=${dir%%/*}                                                    GSH1U403.357   
+        rest=${dir#$sect/}                                                 GSH1U403.358   
+        defs=${rest%/*}                                                    GSH1U403.359   
+        mode=${rest#$defs/}                                                GSH1U403.360   
+        $CONFIGURE -outdir  $REBUILD_DIR \                                 GSH1U403.361   
+                   -cgopts  $mode \                                        GSH1U403.362   
+                   -defcom  $defs \                                        GSH1U403.363   
+                   -compvar $UCOMPVARS.tmp \                               GSH1U403.364   
+                   -ignore \                                               GSH1U403.367   
+                   -quiet1 \                                               GSH1U403.368   
+                   -sections $sect                                         GSH1U403.369   
+        if [ $? -ne 0 ]                                                    GSH1U403.370   
+        then                                                               GSH1U403.371   
+          echo "\nERROR: Call to script \"$CONFIGURE\" has failed."        GSH1U403.372   
+          echo "       Contact UM team.\n"                                 GSH1U403.373   
+          exit 1                                                           GSH1U403.374   
+        fi                                                                 GSH1U403.375   
+        echo \                                                             GSH1U403.376   
+"qsmncompile($SECONDS): ***\t  Configuration finished.\n"                  GSH1U403.377   
+        echo \                                                             GSH1U403.378   
+"qsmncompile($SECONDS): ***\t  Running make(1) for section $sect.\n"       GSH1U403.379   
+        ( cd $REBUILD_DIR/src/$sect ; make )                               GSH1U403.380   
+        if [ $? -ne 0 ]                                                    GSH1U403.381   
+        then                                                               GSH1U403.382   
+          echo "\nERROR: make(1) has failed."                              GSH1U403.383   
+          echo "       Contact UM team.\n"                                 GSH1U403.384   
+          exit 1                                                           GSH1U403.385   
+        fi                                                                 GSH1U403.386   
+        echo \                                                             GSH1U403.387   
+"\nqsmncompile($SECONDS): ***\t  make(1) complete.\n"                      GSH1U403.388   
+        cp $UCOMPVARS.tmp $REBUILD_DIR/src/$dir/CompileVars                GSH1U403.389   
+      fi                                                                   GSH1U403.390   
+      symcompvars=$REBUILD_DIR/src/$dir/CompileVars                        GSH1U403.391   
+      symobjdir=$REBUILD_DIR/obj                                           GSH1U403.392   
+      symsrcdir=$REBUILD_DIR/src                                           GSH1U403.393   
+    else                                                                   GSH1U403.394   
+      no_section_defs=true                                                 GSH1U403.395   
+    fi                                                                     GSH1U403.396   
+  else                                                                     GSH1U403.397   
+    # pre-built code does exist use central src and obj directories        GSH6U404.426   
+    symcompvars=$UCOMPVARS.tmp                                             GSH1U403.398   
+    symobjdir=$PREOBJDIR                                                   GSH1U403.399   
+    symsrcdir=$PRESRCDIR                                                   GSH1U403.400   
+  fi                                                                       GSH1U403.401   
+                                                                           GSH1U403.402   
+  if [ "$no_section_defs" = "true" ]                                       GSH1U403.403   
+  then                                                                     GSH1U403.404   
+    # This will cause a failure when all the sections have been looped.    GSH1U403.405   
+    no_section_def_list="$no_section_def_list $dir"                        GSH1U403.406   
+  else                                                                     GSH1U403.407   
+    echo "\nqsmncompile($SECONDS): ***\t  Linking $symobjdir/$dir."        GSH1U403.408   
+                                                                           GSH6U404.427   
+    # Carry out linking of the pre-compiled code.  Loop over the .o        GSH6U404.428   
+    # files in the directory indicated by each element of dirs.            GSH6U404.429   
+    for file in `ls $symobjdir/$dir |$UM_GREP -E '\.o$'`                   PXUTILTY.252   
+    do                                                                     GSH1U403.410   
+      unset source_exists                                                  GSH1U403.411   
+      unset need_make_rule                                                 GSH1U403.412   
+      name=${file%.o}                                                      GSH1U403.413   
+      echo "qsmncompile($SECONDS): ***\t    $name\c"                       GSH1U403.414   
+                                                                           GSH6U404.430   
+      # If, in the user compile directory there is no source file for      GSH6U404.431   
+      # .o file being looked at.  Create a sym(bolic) link to the source   GSH6U404.432   
+      # file in $PRESRCDIR.                                                GSH6U404.433   
+                                                                           GSH6U404.434   
+      if [ -f "$symsrcdir/$dir/../$name.f" ]                               GSH1U403.415   
+      then                                                                 GSH1U403.416   
+        type="f"                                                           GSH1U403.417   
+        if [ ! -f "$UCOMPDIR/$name.f" ]                                    GSH1U403.418   
+        then                                                               GSH1U403.419   
+          # link source from system prebuilt directories                   GSH6U404.435   
+          ln -s $symsrcdir/$dir/../$name.f $UCOMPDIR/.                     GSH1U403.420   
+          echo "\t(F:ok)\c"                                                GSH1U403.421   
+        else                                                               GSH1U403.422   
+          if [[ "$PREOBJS" = *"$name"* ]]                                  GSH1U403.423   
+          then                                                             GSH1U403.424   
+            # source already exists in UCOMPDIR linked in previous         GSH6U404.436   
+            # section def combination in current run                       GSH6U404.437   
+            echo "\t(F:Sec)\c"                                             GSH1U403.425   
+          elif [[ "$OTHEROBJ" = *"$name"* ]]                               GSH1U403.426   
+          then                                                             GSH1U403.427   
+            # O(utside)S(ystem)O(ld) deck in previous section def          GSH6U404.438   
+            # combination and labelled OSN already (see below)             GSH6U404.439   
+            echo "\t(F:OSO)\c"                                             GSH1U403.428   
+          elif [[ "$OBJS" = *"$name"* ]]                                   GSH1U403.429   
+          then                                                             GSH1U403.430   
+            # source already exists in UCOMPDIR which, modified and        GSH6U404.440   
+            # extracted in previous nupdate step                           GSH6U404.441   
+            echo "\t(F:src)\c"                                             GSH1U403.431   
+          else                                                             GSH1U403.432   
+            # O(utside)S(ystem)N(ew) user removed symlinked file and       GSH6U404.442   
+            # created a real file                                          GSH6U404.443   
+            echo "\t(F:OSN)\c"                                             GSH1U403.433   
+            OTHEROBJ="$OTHEROBJ $file"                                     GSH1U403.434   
+            need_make_rule="true"                                          GSH1U403.435   
+          fi                                                               GSH1U403.436   
+          source_exists="true"                                             GSH1U403.437   
+        fi                                                                 GSH1U403.438   
+      elif [ -f "$symsrcdir/$dir/../$name.c" ]                             GSH1U403.439   
+      then                                                                 GSH1U403.440   
+        type="c"                                                           GSH1U403.441   
+        if [ ! -f "$UCOMPDIR/$name.c" ]                                    GSH1U403.442   
+        then                                                               GSH1U403.443   
+          # link source from system prebuilt directories                   GSH6U404.444   
+          ln -s $symsrcdir/$dir/../$name.c $UCOMPDIR/.                     GSH1U403.444   
+          echo "\t(C:ok)\c"                                                GSH1U403.445   
+        else                                                               GSH1U403.446   
+          if [[ "$PREOBJS" = *"$name"* ]]                                  GSH1U403.447   
+          then                                                             GSH1U403.448   
+            # source already exists in UCOMPDIR linked in previous         GSH6U404.445   
+            # section def combination in current run                       GSH6U404.446   
+            echo "\t(C:Sec)\c"                                             GSH1U403.449   
+          elif [[ "$OBJS"  = *"$name"* ]]                                  GSH1U403.450   
+          then                                                             GSH1U403.451   
+            # source already exists in UCOMPDIR, modified and              GSH6U404.447   
+            # extracted in previous nupdate step                           GSH6U404.448   
+            echo "\t(C:src)\c"                                             GSH1U403.452   
+          elif [[ "$OTHEROBJ" = *"$name"* ]]                               GSH1U403.453   
+          then                                                             GSH1U403.454   
+            # O(utside)S(ystem)O(ld) deck in previous section def          GSH6U404.449   
+            # combination and labelled OSN already (see below)             GSH6U404.450   
+            echo "\t(C:OSO)\c"                                             GSH1U403.455   
+          else                                                             GSH1U403.456   
+            # O(utside)S(ystem)N(ew) user removed symlinked file and       GSH6U404.451   
+            # created a real file                                          GSH6U404.452   
+            echo "\t(C:OSN)\c"                                             GSH1U403.457   
+            OTHEROBJ="$OTHEROBJ $file"                                     GSH1U403.458   
+            need_make_rule="true"                                          GSH1U403.459   
+          fi                                                               GSH1U403.460   
+          source_exists="true"                                             GSH1U403.461   
+        fi                                                                 GSH1U403.462   
+      else                                                                 GSH1U403.463   
+        echo "\n\nERROR: Source for $name not found in $symsrcdir/$dir"    GSH1U403.464   
+        echo "       Please contact UM support group."                     GSH1U403.465   
+        exit 1                                                             GSH1U403.466   
+      fi                                                                   GSH1U403.467   
+                                                                           GSH1U403.468   
+      # If the source file was linked in the step, then we need to get     GSH1U403.469   
+      # the object here. If not, then the source file was either created   GSH1U403.470   
+      # by the extract step and the object will be created by the          GSH1U403.471   
+      # makefile or the source file exists from outside the run.           GSH1U403.472   
+                                                                           GSH1U403.473   
+      if [ -z "$source_exists" ] || [ ! -z "$need_make_rule" ]             GSH1U403.474   
+      then                                                                 GSH1U403.475   
+                                                                           GSH1U403.476   
+        if [ -z "$need_make_rule" ]                                        GSH1U403.477   
+        then                                                               GSH1U403.478   
+          # Find out whether or not this object needs to be re-compiled    GSH1U403.479   
+          # by parsing the changelistor env var produced by fnnewcom       GSH1U403.480   
+          # function at the top of this script.                            GSH1U403.481   
+          unset needcompileor                                              GSH1U403.482   
+          if [ ! -z "$changelistor" ]                                      GSH1U403.483   
+          then                                                             GSH1U403.484   
+            if [[ "$changelistor" = *"all_fortran"* ]] && \                GSH1U403.485   
+               [ "$type" = "f" ]                                           GSH1U403.486   
+            then                                                           GSH1U403.487   
+              needcompileor=true                                           GSH1U403.488   
+            elif [[ "$changelistor" = *"all_ccode"* ]] &&\                 GSH1U403.489   
+                 [ "$type" = "c" ]                                         GSH1U403.490   
+             then                                                          GSH1U403.491   
+               needcompileor=true                                          GSH1U403.492   
+            elif [[ "$changelistor" = *$name* ]]                           GSH1U403.493   
+            then                                                           GSH1U403.494   
+              needcompileor=true                                           GSH1U403.495   
+            fi                                                             GSH1U403.496   
+          fi                                                               GSH1U403.497   
+        else                                                               GSH1U403.498   
+          needcompileor=true                                               GSH1U403.499   
+        fi                                                                 GSH1U403.500   
+                                                                           GSH1U403.501   
+        # Either produce a symlink to the pre-compiled object, if          GSH1U403.502   
+        # a compilation is not needed, or generate an entry for the        GSH1U403.503   
+        # makefile to enable compilation at make time.                     GSH1U403.504   
+                                                                           GSH1U403.505   
+        if [ -z "$needcompileor" ]                                         GSH1U403.506   
+        then                                                               GSH1U403.507   
+          # Object does not need compiling, it can be linked.              GSH1U403.508   
+          if [ ! -f "$UCOMPDIR/$file" ]                                    GSH1U403.509   
+          then                                                             GSH1U403.510   
+            # object file linked from prebuilt system directories          GSH6U404.453   
+            echo "\t(O:ok)\c"                                              GSH1U403.511   
+          else                                                             GSH1U403.512   
+            # Object from previous compilation should be removed.          GSH1U403.513   
+            rm -f $UCOMPDIR/$file                                          GSH1U403.514   
+            echo "\t(O:rm/ok)\c"                                           GSH1U403.515   
+          fi                                                               GSH1U403.516   
+          ln -s $symobjdir/$dir/$file $UCOMPDIR/.                          GSH1U403.517   
+          PREOBJS="$PREOBJS $file"                                         GSH1U403.518   
+        else                                                               GSH1U403.519   
+	  unset needcompileruns                                                   GSH1U403.520   
+          if [ ! -z "$changelistruns" ]                                    GSH1U403.521   
+          then                                                             GSH1U403.522   
+            if [[ "$changelistruns" = *"all_fortran"* ]] && \              GSH1U403.523   
+               [ "$type" = "f" ]                                           GSH1U403.524   
+            then                                                           GSH1U403.525   
+              needcompileruns=true                                         GSH1U403.526   
+            elif [[ "$changelistruns" = *"all_ccode"* ]] && \              GSH1U403.527   
+                 [ "$type" = "c" ]                                         GSH1U403.528   
+            then                                                           GSH1U403.529   
+              needcompileruns=true                                         GSH1U403.530   
+            elif [[ "$changelistruns" = *$name* ]]                         GSH1U403.531   
+            then                                                           GSH1U403.532   
+              needcompileruns=true                                         GSH1U403.533   
+            fi                                                             GSH1U403.534   
+          fi                                                               GSH1U403.535   
+                                                                           GSH1U403.536   
+          if [ "$needcompileruns" = "true" ]                               GSH1U403.537   
+          then                                                             GSH1U403.538   
+            if [ -f "$UCOMPDIR/$name.o" ]                                  GSH1U403.539   
+            then                                                           GSH1U403.540   
+              # object file needs to be removed and recompiled             GSH6U404.454   
+              echo "\t(O:rm)\c"                                            GSH1U403.541   
+              rm -f $UCOMPDIR/$name.o                                      GSH1U403.542   
+            fi                                                             GSH1U403.543   
+          fi                                                               GSH1U403.544   
+          # entry in the make file will be made to allow for compilation   GSH6U404.455   
+          echo "\t(O:com)\c"                                               GSH1U403.546   
+                                                                           GSH1U403.547   
+          if [ "$type" = "f" ]  || [ "$type" = "F" ]                       GSH1U403.548   
+          then     # Must be fortran source                                GSH1U403.549   
+            if [[ "$udecklist" = *"$name"* ]]                              GSH1U403.550   
+            then                                                           GSH1U403.551   
+              # deck has specific compiler options, call fnlistopt to      GSH6U404.456   
+              # obtain them                                                GSH6U404.457   
+              echo "\t(Opts:ok)\c"                                         GSH1U403.555   
+              line=`fnlistopt "$symcompvars" "$name" FCOM`                 GSH1U403.556   
+              fort=${line%:::*}                                            GSH1U403.557   
+              opts=${line#$fort:::}                                        GSH1U403.558   
+                                                                           GSH6U404.458   
+              # Set the values of thisfort (the fortran compiler) and      GSH6U404.459   
+              # thisopts (the compiler options) by comparing the deck      GSH6U404.460   
+              # specific values with global values                         GSH6U404.461   
+                                                                           GSH6U404.462   
+              if [ "$fort" != "$FORT" ]                                    GSH1U403.559   
+              then                                                         GSH1U403.560   
+                thisfort=$fort                                             GSH1U403.561   
+              else                                                         GSH1U403.562   
+                thisfort='$(FORT)'                                         GSH1U403.563   
+              fi                                                           GSH1U403.564   
+              if [ "$opts" != "$FORTOPTS" ]                                GSH1U403.565   
+              then                                                         GSH1U403.566   
+                thisopts=$opts                                             GSH1U403.567   
+              else                                                         GSH1U403.568   
+                thisopts='$(FORTOPTS)'                                     GSH1U403.569   
+              fi                                                           GSH1U403.570   
+            else                                                           GSH1U403.571   
+              # the deck has no specific compiler options use global       GSH6U404.463   
+              # defaults                                                   GSH6U404.464   
+              thisfort='$(FORT)'                                           GSH1U403.573   
+              thisopts='$(FORTOPTS)'                                       GSH1U403.574   
+            fi                                                             GSH1U403.575   
+            # create a makefile directive for the current file             GSH6U404.465   
+            echo \                                                         GSH1U403.576   
+"$name.o: $name.f\n\t$thisfort $thisopts -c $name.f\n" \                   GSH1U403.577   
+              >> $MAKETMPFILEF                                             GSH1U403.578   
+          elif  [ "$type" = "c" ]  || [ "$type" = "C" ]                    GSH1U403.579   
+          then     # Must be c source                                      GSH1U403.580   
+            if [[ "$udecklist" = *"$name"* ]]                              GSH1U403.581   
+            then                                                           GSH1U403.582   
+              # deck has specific compiler options, call fnlistopt to      GSH6U404.466   
+              # obtain them                                                GSH6U404.467   
+              echo "\t(Opts:ok)\c"                                         GSH1U403.586   
+              line=`fnlistopt "$symcompvars" "$name" CCOM`                 GSH1U403.587   
+              cc=${line%:::*}                                              GSH1U403.588   
+              opts=${line#$cc:::}                                          GSH1U403.589   
+                                                                           GSH6U404.468   
+              # Set the values of thiscc (the C compiler) and thisopts     GSH6U404.469   
+              # (the compiler options) by comparing the deck specific      GSH6U404.470   
+              # values with global values                                  GSH6U404.471   
+                                                                           GSH6U404.472   
+              if [ "$cc" != "$CC" ]                                        GSH1U403.590   
+              then                                                         GSH1U403.591   
+                thiscc=$cc                                                 GSH1U403.592   
+              else                                                         GSH1U403.593   
+                thiscc='$(CC)'                                             GSH1U403.594   
+              fi                                                           GSH1U403.595   
+              if [ "$opts" != "$CCOPTS" ]                                  GSH1U403.596   
+              then                                                         GSH1U403.597   
+                thisopts=$opts                                             GSH1U403.598   
+              else                                                         GSH1U403.599   
+                thisopts='$(CCOPTS)'                                       GSH1U403.600   
+              fi                                                           GSH1U403.601   
+            else                                                           GSH1U403.602   
+              # the deck has no specific compiler options use global       GSH6U404.473   
+              # defaults                                                   GSH6U404.474   
+              thiscc='$(CC)'                                               GSH1U403.604   
+              thisopts='$(CCOPTS)'                                         GSH1U403.605   
+            fi                                                             GSH1U403.606   
+            # create a makefile directive for the current file             GSH6U404.475   
+            echo \                                                         GSH1U403.607   
+"$name.o: $name.c\n\t$thiscc $thisopts -c $name.c\n" \                     GSH1U403.608   
+>>$MAKETMPFILEC                                                            GSH1U403.609   
+          else                                                             GSH1U403.610   
+            echo \                                                         GSH1U403.611   
+"\n\nERROR: file type \"$type\" for \"$file\" is unknown."                 GSH1U403.612   
+            exit 1                                                         GSH1U403.613   
+          fi                                                               GSH1U403.614   
+          OBJS="$OBJS $name.o"                                             GSH1U403.615   
+        fi                                                                 GSH1U403.616   
+      fi                                                                   GSH1U403.617   
+      echo                                                                 GSH1U403.618   
+    done                                                                   GSH1U403.619   
+  fi                                                                       GSH1U403.620   
+done                                                                       GEX1U402.417   
+                                                                           GEX1U402.418   
+echo "\nqsmncompile($SECONDS): ***\tFinished symlink-ing object code\n"    GEX1U402.419   
+                                                                           GSH1U403.621   
+if [ ! -z "$no_section_def_list" ]                                         GSH1U403.622   
+then                                                                       GSH1U403.623   
+  cat << EOF                                                               GSH1U403.624   
+qsmncompile($SECONDS): ***	The following section-def combinations          GSH1U403.625   
+qsmncompile($SECONDS): ***	cannot be found:                                GSH1U403.626   
+                                                                           GSH1U403.627   
+EOF                                                                        GSH1U403.628   
+                                                                           GSH1U403.629   
+  for sd in $no_section_def_list                                           GSH1U403.630   
+  do                                                                       GSH1U403.631   
+    echo "qsmncompile($SECONDS): ***\t  $sd"                               GSH1U403.632   
+  done                                                                     GSH1U403.633   
+                                                                           GSH1U403.634   
+  cat << EOF                                                               GSH1U403.635   
+                                                                           GSH1U403.636   
+qsmncompile($SECONDS): ***	You will need to resolve this or set            GSH1U403.637   
+qsmncompile($SECONDS): ***	BUILDSECT to true in SUBMIT to build            GSH1U403.638   
+qsmncompile($SECONDS): ***	them in this run.                               GSH1U403.639   
+                                                                           GSH1U403.640   
+qsmncompile($SECONDS): ***	EXITING from qsmncompile.                       GSH1U403.641   
+                                                                           GSH1U403.642   
+                                                                           GSH1U403.643   
+EOF                                                                        GSH1U403.644   
+  exit 1                                                                   GSH1U403.645   
+fi                                                                         GSH1U403.646   
+                                                                           GEX1U402.420   
+## Create the compile and link makefiles from the templates                PXCLLMOD.55    
+## MAKEFILEUCOMPIN and MAKEFILEULINKIN                                     PXCLLMOD.56    
+                                                                           PXCLLMOD.57    
+echo "\nqsmncompile($SECONDS): ***\                                        PXCLLMOD.58    
+\tGenerating sed script for compile makefile"                              PXCLLMOD.59    
+                                                                           PXCLLMOD.60    
+echo "s^@nproc@^$NPROC^g"                            > $SEDSCRIPT          PXCLLMOD.61    
+echo `gen_sed_string "@objects@" "6" "$OBJS"`       >> $SEDSCRIPT          PXCLLMOD.62    
+echo `gen_sed_string "@preobjects@" "6" "$PREOBJS"` >> $SEDSCRIPT          PXCLLMOD.63    
+echo "s^@fort@^$FORT^g"                             >> $SEDSCRIPT          PXCLLMOD.64    
+echo "s^@fortopts@^$FORTOPTS^g"                     >> $SEDSCRIPT          PXCLLMOD.65    
+echo "s^@cc@^$CC^g"                                 >> $SEDSCRIPT          PXCLLMOD.66    
+echo "s^@ccopts@^$CCOPTS^g"                         >> $SEDSCRIPT          PXCLLMOD.67    
+echo "s^@iflags@^$IFLAGS^g"                         >> $SEDSCRIPT          PXCLLMOD.68    
+echo "s^@ciflags@^$CIFLAGS^g"                       >> $SEDSCRIPT          PXCLLMOD.69    
+#  This is a default rule to remove any unparsed directives                PXCLLMOD.70    
+echo "s^@.*@^^g"                                    >> $SEDSCRIPT          PXCLLMOD.71    
+                                                                           PXCLLMOD.72    
+echo "qsmncompile($SECONDS): ***\tSed script generated\n"                  PXCLLMOD.73    
+                                                                           PXCLLMOD.74    
+## Parse Makefile                                                          PXCLLMOD.75    
+# Run sed to create the compile Makefile.                                  PXCLLMOD.76    
+                                                                           PXCLLMOD.77    
+echo "\nqsmncompile($SECONDS): ***\                                        PXCLLMOD.78    
+\tRunning sed to create compile makefile"                                  PXCLLMOD.79    
+$UM_SED -f $SEDSCRIPT < $MAKEFILEUCOMPIN > $MAKEFILEUCOMP                  PXCLLMOD.80    
+                                                                           PXCLLMOD.81    
+# Add the directives:                                                      PXCLLMOD.82    
+if [ -f "$MAKETMPFILEF" ]                                                  PXCLLMOD.83    
+then                                                                       PXCLLMOD.84    
+  echo >> $MAKEFILEUCOMP                                                   PXCLLMOD.85    
+  cat $MAKETMPFILEF >> $MAKEFILEUCOMP                                      PXCLLMOD.86    
+fi                                                                         PXCLLMOD.87    
+                                                                           PXCLLMOD.88    
+if [ -f "$MAKETMPFILEC" ]                                                  PXCLLMOD.89    
+then                                                                       PXCLLMOD.90    
+  echo >> $MAKEFILEUCOMP                                                   PXCLLMOD.91    
+  cat $MAKETMPFILEC >> $MAKEFILEUCOMP                                      PXCLLMOD.92    
+fi                                                                         PXCLLMOD.93    
+                                                                           PXCLLMOD.94    
+#echo This is the compile makefile $MAKEFILEUCOMP                          PXCLLMOD.95    
+#cat $MAKEFILEUCOMP                                                        PXCLLMOD.96    
+                                                                           PXCLLMOD.97    
+echo "\nqsmncompile($SECONDS): ***\                                        PXCLLMOD.98    
+\tGenerating sed script for link makefile"                                 PXCLLMOD.99    
+                                                                           PXCLLMOD.100   
+echo "s^@output@^$LOADMODULE^g"      > $SEDSCRIPT # Create sed script.     PXCLLMOD.101   
+echo "s^@load@^$LOAD^g"             >> $SEDSCRIPT #                        PXCLLMOD.102   
+echo "s^@loadopts@^$LOADOPTS^g"     >> $SEDSCRIPT #                        PXCLLMOD.103   
+#  This is a default rule to remove any unparsed directives                PXCLLMOD.104   
+echo "s^@.*@^^g"                    >> $SEDSCRIPT                          PXCLLMOD.105   
+                                                                           PXCLLMOD.106   
+echo "qsmncompile($SECONDS): ***\tSed script generated\n"                  PXCLLMOD.107   
+                                                                           PXCLLMOD.108   
+## Parse Makefile                                                          PXCLLMOD.109   
+                                                                           PXCLLMOD.110   
+# Now run sed to create the link Makefile.                                 PXCLLMOD.111   
+                                                                           PXCLLMOD.112   
+echo "\nqsmncompile($SECONDS): ***\                                        PXCLLMOD.113   
+\tRunning sed to create link Makefile"                                     PXCLLMOD.114   
+$UM_SED -f $SEDSCRIPT < $MAKEFILEULINKIN > $MAKEFILEULINK                  PXCLLMOD.115   
+                                                                           PXCLLMOD.116   
+#echo This is the link makefile $MAKEFILEULINK                             PXCLLMOD.117   
+#cat $MAKEFILEULINK                                                        PXCLLMOD.118   
+                                                                           GSH6U404.482   
+echo "qsmncompile($SECONDS): ***\tFinished sed\n"                          GEX1U402.459   
+                                                                           GSH1U403.659   
+                                                                           GSH1U403.660   
+# Now update UCOMPVARS file as we have finished.                           GSH1U403.661   
+                                                                           GSH1U403.662   
+if [ -f "$UCOMPVARS" ]                                                     GSH1U403.663   
+then                                                                       GSH1U403.664   
+  mv -f $UCOMPVARS $UCOMPVARS.old                                          GSH1U403.665   
+fi                                                                         GSH1U403.666   
+                                                                           GSH1U403.667   
+mv -f $UCOMPVARS.tmp $UCOMPVARS                                            GSH1U403.668   

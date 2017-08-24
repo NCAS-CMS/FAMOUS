@@ -1,0 +1,329 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script:  allcompfiles
+#LL---------------------------------------------------------------------
+#LL
+#LL Purpose:    Create a u(ser)compile_vars file for a particular run.
+#LL             That is, a file with global compiler/loader options
+#LL             and deck specific compiler options.
+#LL
+#LL             The pathnames of files which contain overrides/
+#LL             additional compile variable options are held in
+#LL             a job file, called COMP_OPTS, created by the UMUI.
+#LL
+#LL             This script carries out a two way merge of a central
+#LL             compile options file and user overrides, to create a
+#LL             unique compile variable file for the run.
+#LL
+#LL             It may be that no overrides are requested in which case
+#LL             the central compile variable file will be used by
+#LL             default.
+#LL
+#LL
+#LL  Author:   K Rogers           Date:     15 Oct 1996
+#LL  Reviewer:                    Date of review:
+#LL
+#LL  Tested under OS version: UNICOS/mk
+#LL
+#LL  Code version no: 1.0         Date: 15 Oct 1996
+#LL
+#LL  Modification History:
+#LL  Vn   Date      Change
+#LL  4.2  15/10/96  Original version (K Rogers)
+#LL  4.3  26/05/97  Temporary files given a unique id using the shell
+#LL                 process identifier to avoid information being
+#LL                 incorrectly appended to these files (where files
+#LL                 not deleted bewteen runs).  Some comments added.
+#LL                 (S Robertson)
+#LL  4.4  14.08.97  Modified allcompfiles to ignore blank lines in
+#                   compiler override files.  (S Robertson)
+#LL  4.5  04.08.98 Changes so that all repeated decknames and mistyped
+#LL                TAG names in the users compile overrides files  are
+#LL                listed before exiting.  Ian Edmond
+#LL
+#LL  Programming standard: UM Doc Paper 3A, version 1 (29/10/90)
+#LL
+#LL  Project task: C0
+#LL
+#LL  Logical components covered: J02
+#LL
+#LL  External documentation:
+#LL    UM Doc Paper C0 - The top-level control system
+#LL
+#L   Interface and arguments:
+#L    . allcompfiles COMP_FILES $JOBDIR $UCOMPVAR
+#L
+#L    $1    -  filename of list in Job Directory
+#L    $2    -  Name of job directory
+#L    $3    -  File name for update file
+#L
+#L   -------------------------------------------------------------------
+#L
+#L   Called by: qsmncompile
+#L   Calls :
+#L       None
+#L
+#L   Imports:
+#L     TEMP          - temporary directory
+#L
+#L   Exports:
+#L
+#L   Local variables:
+#L
+#L     COMPFILE       - name of compile file
+#L     COMP_LIST      - file with list of compile variable files
+#L     COMPSF         - will hold $3 the ...
+#L----------------------------------------------------------------------
+
+#L Step 0 - Set up environment variables
+
+set -$SETOPT
+
+# Set up temporary files.
+COMP_LIST=$TEMP/complist
+COMPSF=$3
+export COMPSF TEMP
+
+# Check correct number of arguments have been given to the script.
+if test $# -ne 3
+then
+  echo -e 'Usage is: .  allcompfiles <comp_list> <location> <destination>'
+  exit
+fi
+
+# Create user compile directory if it doesn't exist
+if test ! -d $UCOMPDIR
+then
+  echo -e Creating directory $UCOMPDIR
+  mkdir -p $UCOMPDIR
+fi
+
+# copy the file in $1, to the script variable $COMP_LIST, to obtain
+# a list of files (pathnames) with compile overrides
+
+cp $2/$1 $COMP_LIST
+CC=$?
+if test $CC -ne 0
+then
+    echo -e "***ERROR: Move of file failed"  $2/$1 ". Return code" $CC
+    exit
+fi
+
+echo -e "Files copied to modset $2 are: "
+
+# Produce a single update file with the actual compile overrides
+cat $COMP_LIST | while read COMPFILE
+do
+
+# The contents of all the files with compile overrides are
+# appended to $$tempfile1.  By using cp the file $$tempfile is
+# created new on each iteration of the loop
+
+     cp `eval echo -e $COMPFILE` $TEMP/$$tempfile
+     CC=$?
+     if test $CC -ne 0
+     then
+       # cp command was unsuccessful.
+       if test "$COMPFILE" != ""
+       then
+         echo -e "allcompfiles: error copying $COMPFILE"
+         exit 1
+       fi
+     else
+       # cp successful, redirect the contents of the temporary
+       # file to a further temporary file $$tempfile1
+       cat $TEMP/$$tempfile >> $TEMP/$$tempfile1
+       echo -e $COMPFILE
+       # change the permissions on the file to r(ead) and w(rite) for
+       # user, group and others - anyone can read/write to it (?)
+       chmod 666 $TEMP/$$tempfile
+     fi
+done
+
+# test if $TEMP/$$tempfile1 exists and is not 0 in size i.e.
+# that there is at least one user override
+
+if test -s $TEMP/$$tempfile1   # there is at least one compile file
+then
+
+#-------------------------------------------------------------------
+# sort the contents of $TEMP/$$tempfile1, making lower case letters
+# their uppercase equivalent, for comparsion (via -f option) and
+# direct the result to $TEMP/$$tempfile2 rather than standard out
+# (via -o option)
+#-------------------------------------------------------------------
+sort -f $TEMP/$$tempfile1 | $UM_GREP -E -v '^#| *^$' > $TEMP/$$tempfile2
+
+#-------------------------------------------------------------------
+# Carry out a check of the entries in the sorted file (above) to
+# identify any ambiguities e.g. a compiler option set more than
+# once for the same deck.
+#
+# This is done line be line comparing a given line with the
+# previous line.  If it has the same DECKID and VARNAME then
+# there are duplicate lines  in the file.
+#
+# Cannot determine which one is correct, so exit from the script.
+#-------------------------------------------------------------------
+
+DECKID=""
+VARNAME=""
+DECKID_PREV=""
+VARNAME_PREV=""
+DODGYDECKS=""
+DODGYVARS=""
+
+# check there are no variables specified more than once
+TAGS=`$UM_AWK '/^@/{print $2}' $COMPVARS | $UM_SED 's/=.*//g' |\
+	tr -s "\012" ":"`
+
+cat $TEMP/$$tempfile2 | while read DECKID OTHERVARS
+do
+  VARNAME=`echo -e $OTHERVARS | $UM_AWK -F= '{print $1}'`
+  if [[ "$DECKID" != "#"* ]]
+  then # process non-comment line check validity of VARNAME tag
+    if [[ "$TAGS" = *"$VARNAME:"* ]]
+    then # VARNAME is valid continue checking process
+      if [[ "$DECKID_PREV" = "$DECKID" ]]
+      then
+        if test "$VARNAME_PREV" = "$VARNAME"
+        then
+        if [[ `echo -e $DODGYDECKS | $UM_GREP $DECKID` = "" ]]
+          then
+            DODGYDECKS="$DODGYDECKS\n$DECKID"
+        fi
+        fi
+      fi
+    else # VARNAME is invalid - flag as an error and exit from script
+      if [[ `echo -e $DODGYVARS | $UM_GREP $VARNAME` = "" ]]
+        then
+          DODGYVARS="$DODGYVARS $VARNAME"
+      fi
+    fi
+  fi
+  VARNAME_PREV="$VARNAME"
+  DECKID_PREV="$DECKID"
+done
+# Check for repeated deck names and bad spelling of TAG names in users
+# compile overrides file.
+if [[ $DODGYDECKS != "" || $DODGYVARS != "" ]]
+  then
+  if [[ $DODGYDECKS != "" ]]
+    then
+      echo -e allcompfiles: There is more than one line starting with
+      echo -e $DODGYDECKS
+      echo -e allcompfiles: Please correct your compile variable files
+      echo -e allcompfiles: to be unambiguous.
+  fi
+  if [[ $DODGYVARS != "" ]]
+    then
+      echo -e "allcompfiles: $DODGYVARS is/are not a valid option(s)."
+      echo -e "Please check your spelling with the list of valid tags"
+      echo -e "shown below"
+      echo -e "$TAGS"
+  fi
+  exit 1
+
+fi
+
+
+
+
+
+
+#----------------------------------------------------------------------
+# $COMPVARS is a central compile variables file.  Create a
+# sorted copy.  Note, currently not sorted with the -f option
+# which makes lowercase letters uppercase for the purpose of
+# comparison.
+#----------------------------------------------------------------------
+
+sort -f $COMPVARS > $TEMP/compile_vars.sort
+
+# empty the output file
+> $COMPSF
+
+# Loop over central compile file.  For lines that are overridden
+# in the user file copy the user line to update file.  Otherwise
+# copy in central file line.
+
+cat $TEMP/compile_vars.sort | while read DECKID OTHERVARS
+do
+  # check first that the line is not blank (empty)
+  if test "$DECKID" != ""       # check line is not empty
+  then
+     # Ignore commented lines in the file.  Currently assume that
+     # a comment has a # anchored to the start of the line.
+
+    COMMENT=`echo -e "$DECKID" | cut -c 1`
+
+    if test $COMMENT != '#'        # check line is not a comment
+    then
+      VARNAME=`echo -e $OTHERVARS | $UM_AWK -F= '{print $1}'`
+
+      # if line matches on both deckname and compile variable
+      # fields write the user version to the output file
+
+      COMPGREP=`$UM_GREP -e "^$DECKID" $TEMP/$$tempfile2 |   \
+		$UM_GREP -e "$VARNAME" ` > $TEMP/$$tempfile6
+      if test ! -z "$COMPGREP"
+      then
+	echo -e '+'$COMPGREP > $TEMP/$$tempfile6
+      else
+        # no match found for the particular DECKID and VARNAME
+        # empty the file
+        > $TEMP/$$tempfile6
+      fi
+
+      if test -s $TEMP/$$tempfile6
+      then
+        # write user line to file
+        cat $TEMP/$$tempfile6 >> $COMPSF
+      else
+        # write default (central file) line
+        echo -e $DECKID $OTHERVARS >> $COMPSF
+      fi
+
+    fi
+  fi
+done
+
+
+# loop over user compile file.  For lines that are not in central
+# file append these to output file.
+cat $TEMP/$$tempfile2 | while read DECKID OTHERVARS
+do
+  if [[ "$DECKID" = "#"* ]]
+  then
+    # commnet line is ignored - do nothing
+    :
+  else
+    VARNAME=`echo -e $OTHERVARS | $UM_AWK -F= '{print $1}'`
+
+    $UM_GREP -e "$DECKID" $TEMP/compile_vars.sort | \
+    $UM_GREP -e "$VARNAME" > $TEMP/$$tempfile8
+
+    if test ! -s $TEMP/$$tempfile8
+    then
+      # write user line to file if not in central file
+      echo -e $DECKID $OTHERVARS >> $COMPSF
+    fi
+  fi
+done
+
+else
+
+  cp $COMPVARS $COMPSF
+
+fi
+
+chmod 744 $COMPSF

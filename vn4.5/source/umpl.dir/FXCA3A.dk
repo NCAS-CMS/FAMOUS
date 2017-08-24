@@ -1,0 +1,1656 @@
+*IF DEF,A70_1A,OR,DEF,A70_1B                                               APB4F405.25    
+*IF DEF,A01_3A,OR,DEF,A02_3A                                               FXCA3A.2     
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.13280 
+C                                                                          GTS2F400.13281 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.13282 
+C restrictions as set forth in the contract.                               GTS2F400.13283 
+C                                                                          GTS2F400.13284 
+C                Meteorological Office                                     GTS2F400.13285 
+C                London Road                                               GTS2F400.13286 
+C                BRACKNELL                                                 GTS2F400.13287 
+C                Berkshire UK                                              GTS2F400.13288 
+C                RG12 2SZ                                                  GTS2F400.13289 
+C                                                                          GTS2F400.13290 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.13291 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.13292 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.13293 
+C Modelling at the above address.                                          GTS2F400.13294 
+C ******************************COPYRIGHT******************************    GTS2F400.13295 
+C                                                                          GTS2F400.13296 
+!+ Subroutine to calculate radiative fluxes.                               FXCA3A.3     
+!                                                                          FXCA3A.4     
+! Method:                                                                  FXCA3A.5     
+!       Properties independent of the spectral bands are set.              FXCA3A.6     
+!       A loop over bands is then entered. Grey optical properties         FXCA3A.7     
+!       are set and an appropriate subroutine is called to treat           FXCA3A.8     
+!       the gaseous overlaps. The final fluxes are assigned.               FXCA3A.9     
+!                                                                          FXCA3A.10    
+! Current Owner of Code: J. M. Edwards                                     FXCA3A.11    
+!                                                                          FXCA3A.12    
+! History:                                                                 FXCA3A.13    
+!       Version         Date                    Comment                    FXCA3A.14    
+!       4.0             27-07-95                Original Code              FXCA3A.15    
+!                                               (J. M. Edwards)            FXCA3A.16    
+!       4.1             10-06-96                New solvers added.         ADB1F401.425   
+!                                               Revised formulation for    ADB1F401.426   
+!                                               sea-ice. Renaming of       ADB1F401.427   
+!                                               diagnostic and logical     ADB1F401.428   
+!                                               switch for flux            ADB1F401.429   
+!                                               below 690 nm. Pointer      ADB1F401.430   
+!                                               to water vapour added.     ADB1F401.431   
+!                                               (J. M. Edwards)            ADB1F401.432   
+!       4.2             08-08-96                Generalization for         ADB1F402.440   
+!                                               vertically coherent        ADB1F402.441   
+!                                               convective cloud.          ADB1F402.442   
+!       4.4             30-09-96                Effective Radius           ADB2F404.551   
+!                                               relabelled as charact-     ADB2F404.552   
+!                                               eristic dimension for      ADB2F404.553   
+!                                               generality to cover        ADB2F404.554   
+!                                               parametrizations of        ADB2F404.555   
+!                                               non-spherical ice.         ADB2F404.556   
+!                                               (J. M. Edwards)            ADB2F404.557   
+!       4.5             18-05-98                Removal of variable for    ADB1F405.292   
+!                                               obsolete solver.           ADB1F405.293   
+!                                               (J. M. Edwards)            ADB1F405.294   
+!                                                                          FXCA3A.17    
+! Description of Code:                                                     FXCA3A.18    
+!   FORTRAN 77  with extensions listed in documentation.                   FXCA3A.19    
+!                                                                          FXCA3A.20    
+!- ---------------------------------------------------------------------   FXCA3A.21    
+      SUBROUTINE FLUX_CALC(IERR                                            FXCA3A.22    
+!                       Logical Flags for Processes                        FXCA3A.23    
+     &   , L_RAYLEIGH, L_AEROSOL, L_GAS, L_CONTINUUM                       FXCA3A.24    
+     &   , L_CLOUD, L_DROP, L_ICE                                          FXCA3A.25    
+!                       Angular Integration                                FXCA3A.26    
+     &   , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT            FXCA3A.27    
+     &   , L_RESCALE, N_ORDER_GAUSS                                        FXCA3A.28    
+!                       Treatment of Scattering                            FXCA3A.29    
+     &   , I_SCATTER_METHOD, L_SWITCH_SCATTER                              FXCA3A.30    
+!                       Options for treating clouds                        ADB1F402.904   
+     &   , L_GLOBAL_CLOUD_TOP, N_CLOUD_TOP_GLOBAL                          ADB1F402.905   
+!                       Options for Solver                                 FXCA3A.31    
+     &   , I_SOLVER                                                        ADB1F405.295   
+!                       General Spectral Properties                        FXCA3A.33    
+     &   , N_BAND, I_FIRST_BAND, I_LAST_BAND, WEIGHT_BAND                  FXCA3A.34    
+!                       General Atmospheric Properties                     FXCA3A.35    
+     &   , N_PROFILE, N_LAYER                                              FXCA3A.36    
+     &   , L_LAYER, L_CLOUD_LAYER                                          FXCA3A.37    
+     &   , P, T, T_GROUND, T_LEVEL, D_MASS                                 FXCA3A.38    
+!                       Spectral Region                                    FXCA3A.39    
+     &   , ISOLIR                                                          FXCA3A.40    
+!                       Solar Fields                                       FXCA3A.41    
+     &   , SEC_0, SOLAR_TOA, SOLAR_FLUX_BAND, RAYLEIGH_COEFFICIENT         FXCA3A.42    
+!                       Infra-red Fields                                   FXCA3A.43    
+     &   , N_DEG_FIT, THERMAL_COEFFICIENT, T_REF_PLANCK                    FXCA3A.44    
+     &   , L_IR_SOURCE_QUAD                                                FXCA3A.45    
+!                       Gaseous Absorption                                 FXCA3A.46    
+     &   , N_ABSORB, I_GAS_OVERLAP, I_GAS                                  FXCA3A.47    
+     &   , GAS_MIX_RATIO, N_BAND_ABSORB, INDEX_ABSORB                      FXCA3A.48    
+     &   , I_BAND_ESFT, W_ESFT, K_ESFT, I_SCALE_ESFT                       FXCA3A.49    
+     &   , I_SCALE_FNC, SCALE_VECTOR                                       FXCA3A.50    
+     &   , P_REFERENCE, T_REFERENCE                                        FXCA3A.51    
+!                       Doppler Broadening                                 FXCA3A.52    
+     &   , L_DOPPLER, DOPPLER_CORRECTION                                   FXCA3A.53    
+!                       Surface Fields                                     FXCA3A.54    
+     &   , L_SURFACE, I_SURFACE, I_SPEC_SURFACE, SURFACE_ALBEDO            FXCA3A.55    
+     &   , ALBEDO_FIELD_DIFF, ALBEDO_FIELD_DIR                             FXCA3A.56    
+     &   , N_DIR_ALBEDO_FIT, DIRECT_ALBEDO_PARM                            FXCA3A.57    
+     &   , EMISSIVITY_GROUND, EMISSIVITY_FIELD                             FXCA3A.58    
+!                       Continuum Absorption                               FXCA3A.59    
+     &   , N_BAND_CONTINUUM, INDEX_CONTINUUM, INDEX_WATER                  FXCA3A.60    
+     &   , K_CONTINUUM, I_SCALE_FNC_CONT, SCALE_CONTINUUM                  FXCA3A.61    
+     &   , P_REF_CONTINUUM, T_REF_CONTINUUM                                FXCA3A.62    
+!                       Properties of Aerosols                             FXCA3A.63    
+     &   , N_AEROSOL, AEROSOL_MIX_RATIO                                    FXCA3A.64    
+     &   , AEROSOL_ABSORPTION, AEROSOL_SCATTERING, AEROSOL_ASYMMETRY       FXCA3A.65    
+     &   , I_AEROSOL_PARAMETRIZATION, NHUMIDITY, HUMIDITIES                FXCA3A.66    
+!                       Properties of Clouds                               FXCA3A.67    
+     &   , N_CONDENSED, TYPE_CONDENSED                                     FXCA3A.68    
+     &   , I_CLOUD, I_CLOUD_REPRESENTATION, W_CLOUD, FRAC_CLOUD            FXCA3A.69    
+     &   , CONDENSED_MIX_RATIO, CONDENSED_DIM_CHAR                         ADB2F404.558   
+     &   , I_CONDENSED_PARAM, CONDENSED_PARAM_LIST                         FXCA3A.71    
+!                       Fluxes Calculated                                  FXCA3A.72    
+     &   , FLUX_DIRECT, FLUX_DOWN, FLUX_UP                                 FXCA3A.73    
+!                       Options for Clear-sky Fluxes                       FXCA3A.74    
+     &   , L_CLEAR, I_SOLVER_CLEAR                                         FXCA3A.75    
+!                       Clear-sky Fluxes Calculated                        FXCA3A.76    
+     &   , FLUX_DIRECT_CLEAR, FLUX_DOWN_CLEAR, FLUX_UP_CLEAR               FXCA3A.77    
+!                       Arrays specific to the UM                          FXCA3A.78    
+!                       Arrays for Coupling                                FXCA3A.79    
+     &   , N_FRAC_ICE_POINT, I_FRAC_ICE_POINT, ICE_FRACTION                ADB1F401.433   
+     &   , ALBEDO_SEA_DIFF, ALBEDO_SEA_DIR                                 FXCA3A.80    
+     &   , SEA_FLUX                                                        FXCA3A.81    
+!                       Arrays for diagnostics specific to the UM          FXCA3A.82    
+     &   , L_FLUX_BELOW_690NM_SURF, WEIGHT_690NM                           ADB1F401.434   
+     &   , FLUX_BELOW_690NM_SURF                                           ADB1F401.435   
+     &   , L_SURFACE_DOWN_FLUX, SURFACE_DOWN_FLUX                          FXCA3A.85    
+     &   , L_SURF_DOWN_CLR, SURF_DOWN_CLR                                  FXCA3A.86    
+     &   , L_SURF_UP_CLR, SURF_UP_CLR                                      FXCA3A.87    
+!                       Dimensions of Arrays                               FXCA3A.88    
+     &   , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                              FXCA3A.89    
+     &   , NPD_BAND                                                        FXCA3A.90    
+     &   , NPD_SPECIES                                                     FXCA3A.91    
+     &   , NPD_ESFT_TERM, NPD_SCALE_FNC, NPD_SCALE_VARIABLE                FXCA3A.92    
+     &   , NPD_CONTINUUM                                                   FXCA3A.93    
+     &   , NPD_AEROSOL_SPECIES, NPD_HUMIDITIES                             FXCA3A.94    
+     &   , NPD_CLOUD_PARAMETER                                             FXCA3A.95    
+     &   , NPD_THERMAL_COEFF                                               FXCA3A.96    
+     &   , NPD_SURFACE, NPD_ALBEDO_PARM                                    FXCA3A.97    
+     &   )                                                                 FXCA3A.98    
+!                                                                          FXCA3A.99    
+!                                                                          FXCA3A.100   
+      IMPLICIT NONE                                                        FXCA3A.101   
+!                                                                          FXCA3A.102   
+!                                                                          FXCA3A.103   
+!     DUMMY ARRAY SIZES                                                    FXCA3A.104   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.105   
+     &     NPD_PROFILE                                                     FXCA3A.106   
+!             MAXIMUM NUMBER OF PROFILES                                   FXCA3A.107   
+     &   , NPD_LAYER                                                       FXCA3A.108   
+!             MAXIMUM NUMBER OF LAYERS                                     FXCA3A.109   
+     &   , NPD_BAND                                                        FXCA3A.110   
+!             NUMBER OF BANDS                                              FXCA3A.111   
+     &   , NPD_SPECIES                                                     FXCA3A.112   
+!             NUMBER OF SPECIES                                            FXCA3A.113   
+     &   , NPD_CONTINUUM                                                   FXCA3A.114   
+!             NUMBER OF CONTINUA                                           FXCA3A.115   
+     &   , NPD_AEROSOL_SPECIES                                             FXCA3A.116   
+!             NUMBER OF AEROSOL SPECIES                                    FXCA3A.117   
+     &   , NPD_HUMIDITIES                                                  FXCA3A.118   
+!             MAXIMUM NUMBER OF HUMIDITIES                                 FXCA3A.119   
+     &   , NPD_ESFT_TERM                                                   FXCA3A.120   
+!             MAXIMUM NUMBER OF ESFT TERMS                                 FXCA3A.121   
+     &   , NPD_SCALE_FNC                                                   FXCA3A.122   
+!             NUMBER OF SCALING FUNCTIONS                                  FXCA3A.123   
+     &   , NPD_SCALE_VARIABLE                                              FXCA3A.124   
+!             NUMBER OF SCALING VARIABLES                                  FXCA3A.125   
+     &   , NPD_CLOUD_PARAMETER                                             FXCA3A.126   
+!             MAXIMUM NUMBER OF CLOUD PARAMETERS                           FXCA3A.127   
+     &   , NPD_THERMAL_COEFF                                               FXCA3A.128   
+!             MAXIMUM NUMBER OF THERMAL COEFFICIENTS                       FXCA3A.129   
+     &   , NPD_SURFACE                                                     FXCA3A.130   
+!             NUMBER OF SURFACE TYPES                                      FXCA3A.131   
+     &   , NPD_ALBEDO_PARM                                                 FXCA3A.132   
+!             NUMBER OF PARAMETERS FOR DIRECT ALB.                         FXCA3A.133   
+     &   , NPD_COLUMN                                                      FXCA3A.134   
+!             NUMBER OF COLUMNS PER POINT                                  FXCA3A.135   
+!                                                                          FXCA3A.136   
+!     INCLUDE COMDECKS.                                                    FXCA3A.137   
+*CALL DIMFIX3A                                                             FXCA3A.138   
+*CALL GASOVL3A                                                             FXCA3A.139   
+*CALL CLSCHM3A                                                             FXCA3A.140   
+*CALL CLREPP3A                                                             FXCA3A.141   
+*CALL CLDCMP3A                                                             FXCA3A.142   
+*CALL CLDTYP3A                                                             FXCA3A.143   
+*CALL ANGINT3A                                                             FXCA3A.144   
+*CALL SOLVER3A                                                             FXCA3A.145   
+*CALL TWOSTR3A                                                             FXCA3A.146   
+*CALL SPCRG3A                                                              FXCA3A.147   
+*CALL ESFTSC3A                                                             FXCA3A.148   
+*CALL AERPRM3A                                                             FXCA3A.149   
+*CALL ERROR3A                                                              FXCA3A.150   
+!                                                                          FXCA3A.151   
+!                                                                          FXCA3A.152   
+!                                                                          FXCA3A.153   
+!     DUMMY ARGUMENTS.                                                     FXCA3A.154   
+      INTEGER   !, INTENT(OUT)                                             FXCA3A.155   
+     &     IERR                                                            FXCA3A.156   
+!             ERROR FLAG                                                   FXCA3A.157   
+!                                                                          FXCA3A.158   
+!STR  GENERAL LOGICAL SWITCHES:                                            ADB1F401.436   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.160   
+     &     L_LAYER                                                         FXCA3A.161   
+!             VALUES GIVEN IN LAYERS                                       FXCA3A.162   
+     &   , L_CLOUD_LAYER                                                   FXCA3A.163   
+!             CLOUD VALUES GIVEN IN LAYERS                                 FXCA3A.164   
+     &   , L_CLEAR                                                         FXCA3A.165   
+!             CALCULATE CLEAR-SKY FLUXES                                   FXCA3A.166   
+     &   , L_IR_SOURCE_QUAD                                                FXCA3A.167   
+!             USE A QUADRATIC SOURCE FUNCTION                              FXCA3A.168   
+     &   , L_RESCALE                                                       FXCA3A.169   
+!             FLAG FOR DELTA-RESCALING                                     FXCA3A.170   
+     &   , L_2_STREAM_CORRECT                                              FXCA3A.171   
+!             CORRECTION TO 2-STREAM SCHEME                                FXCA3A.172   
+!                                                                          FXCA3A.173   
+!STR  PARAMETERS CONTROLLING ALGORITHMS:                                   FXCA3A.174   
+!     REPRESENTATION OF CLOUDS:                                            FXCA3A.175   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.176   
+     &     I_CLOUD                                                         FXCA3A.177   
+!             CLOUD SCHEME USED                                            FXCA3A.178   
+      LOGICAL   !, INTENT(IN)                                              ADB1F402.906   
+     &     L_GLOBAL_CLOUD_TOP                                              ADB1F402.907   
+!             FLAG TO USE A GLOBAL VALUE FOR THE TOPS OF CLOUDS            ADB1F402.908   
+      INTEGER   !, INTENT(IN)                                              ADB1F402.909   
+     &     N_CLOUD_TOP_GLOBAL                                              ADB1F402.910   
+!             GLOBAL TOPMOST CLOUDY LAYER                                  ADB1F402.911   
+!                                                                          ADB1F402.912   
+!     NUMERICAL ALGORITHMS:                                                FXCA3A.179   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.180   
+     &     ISOLIR                                                          FXCA3A.181   
+!             VISIBLE OR IR                                                FXCA3A.182   
+     &   , I_SOLVER                                                        FXCA3A.183   
+!             SOLVER USED                                                  FXCA3A.184   
+     &   , I_SOLVER_CLEAR                                                  FXCA3A.187   
+!             CLEAR SOLVER USED                                            FXCA3A.188   
+     &   , I_2STREAM                                                       FXCA3A.189   
+!             TWO-STREAM SCHEME                                            FXCA3A.190   
+     &   , I_ANGULAR_INTEGRATION                                           FXCA3A.191   
+!             ANGULAR INTEGRATION SCHEME                                   FXCA3A.192   
+     &   , N_ORDER_GAUSS                                                   FXCA3A.193   
+!             ORDER OF GAUSSIAN INTEGRATION                                FXCA3A.194   
+!     RANGE OF SPECTRAL BANDS:                                             FXCA3A.195   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.196   
+     &     I_FIRST_BAND                                                    FXCA3A.197   
+!             FIRST BAND                                                   FXCA3A.198   
+     &   , I_LAST_BAND                                                     FXCA3A.199   
+!             LAST BAND                                                    FXCA3A.200   
+!                                                                          FXCA3A.201   
+!     GENERAL PROPERTIES OF SPECTRUM:                                      FXCA3A.202   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.203   
+     &     N_BAND                                                          FXCA3A.204   
+!             NUMBER OF SPECTRAL BANDS                                     FXCA3A.205   
+     &   , N_ABSORB                                                        FXCA3A.206   
+!             NUMBER OF ABSORBERS                                          FXCA3A.207   
+     &   , N_AEROSOL                                                       FXCA3A.208   
+!             NUMBER OF AEROSOL SPECIES                                    FXCA3A.209   
+!                                                                          FXCA3A.210   
+!STR  SOLAR FIELDS:                                                        FXCA3A.211   
+      REAL      !, INTENT(IN)                                              FXCA3A.212   
+     &     SOLAR_TOA(NPD_PROFILE)                                          FXCA3A.213   
+!             INCIDENT SOLAR RADIATION                                     FXCA3A.214   
+     &   , SOLAR_FLUX_BAND(NPD_BAND)                                       FXCA3A.215   
+!             NORMALIZED FLUX IN BAND                                      FXCA3A.216   
+     &   , SEC_0(NPD_PROFILE)                                              FXCA3A.217   
+!             SECANT OF ZENITH ANGLE                                       FXCA3A.218   
+!                                                                          FXCA3A.219   
+!STR  ATMOSPHERIC PROFILES:                                                FXCA3A.220   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.221   
+     &     N_PROFILE                                                       FXCA3A.222   
+!             NUMBER OF PROFILES                                           FXCA3A.223   
+     &   , N_LAYER                                                         FXCA3A.224   
+!             NUMBER OF LAYERS                                             FXCA3A.225   
+      REAL      !, INTENT(IN)                                              FXCA3A.226   
+     &     P(NPD_PROFILE, 0: NPD_LAYER)                                    FXCA3A.227   
+!             PRESSURE                                                     FXCA3A.228   
+     &   , T(NPD_PROFILE, 0: NPD_LAYER)                                    FXCA3A.229   
+!             TEMPERATURE                                                  FXCA3A.230   
+     &   , T_GROUND(NPD_PROFILE)                                           FXCA3A.231   
+!             TEMPERATURE OF GROUND                                        FXCA3A.232   
+     &   , T_LEVEL(NPD_PROFILE, 0: NPD_LAYER)                              FXCA3A.233   
+!             TEMPERATURE ON LEVELS                                        FXCA3A.234   
+     &   , D_MASS(NPD_PROFILE, NPD_LAYER)                                  FXCA3A.235   
+!             MASS THICKNESS OF EACH LAYER                                 FXCA3A.236   
+     &   , GAS_MIX_RATIO(NPD_PROFILE, 0: NPD_LAYER, NPD_SPECIES)           FXCA3A.237   
+!             GASEOUS MASS MIXING RATIOS                                   FXCA3A.238   
+!                                                                          FXCA3A.239   
+!STR  SURFACE PROPERTIES:                                                  FXCA3A.240   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.241   
+     &     L_SURFACE(NPD_SURFACE)                                          FXCA3A.242   
+!             TYPES OF SURFACES FOR WHICH DATA ARE PRESENT                 FXCA3A.243   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.244   
+     &     I_SURFACE(NPD_PROFILE)                                          FXCA3A.245   
+!             TYPE OF SURFACE AT THE FOOT OF EACH PROFILE                  FXCA3A.246   
+     &   , I_SPEC_SURFACE(NPD_SURFACE)                                     FXCA3A.247   
+!             METHOD OF SPECIFYING ALBEDO                                  FXCA3A.248   
+     &   , N_DIR_ALBEDO_FIT(NPD_SURFACE)                                   FXCA3A.249   
+!             NUMBER OF PARAMETERS IN FIT TO DIRECT ALBEDO                 FXCA3A.250   
+      REAL      !, INTENT(IN)                                              FXCA3A.251   
+     &     SURFACE_ALBEDO(NPD_BAND, NPD_SURFACE)                           FXCA3A.252   
+!             SURFACE ALBEDO                                               FXCA3A.253   
+     &   , ALBEDO_FIELD_DIFF(NPD_PROFILE, NPD_BAND)                        FXCA3A.254   
+!             SPECIFIED DIFFUSE ALBEDOS                                    FXCA3A.255   
+     &   , ALBEDO_FIELD_DIR(NPD_PROFILE, NPD_BAND)                         FXCA3A.256   
+!             SPECIFIED DIRECT ALBEDOS                                     FXCA3A.257   
+     &   , DIRECT_ALBEDO_PARM(0: NPD_ALBEDO_PARM, NPD_BAND, NPD_SURFACE)   FXCA3A.258   
+!             COEFFICIENTS FOR DIRECT ALBEDOS                              FXCA3A.259   
+     &   , EMISSIVITY_GROUND(NPD_BAND, NPD_SURFACE)                        FXCA3A.260   
+!             SURFACE EMISSIVITIES                                         FXCA3A.261   
+     &   , EMISSIVITY_FIELD(NPD_PROFILE, NPD_BAND)                         FXCA3A.262   
+!             SPECIFIED EMISSIVITIES                                       FXCA3A.263   
+!                                                                          FXCA3A.264   
+!STR  RAYLEIGH SCATTERING:                                                 FXCA3A.265   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.266   
+     &     L_RAYLEIGH                                                      FXCA3A.267   
+!             INCLUDE RAYLEIGH SCATTERING IN THE CALCULATION.              FXCA3A.268   
+      REAL      !, INTENT(IN)                                              FXCA3A.269   
+     &     RAYLEIGH_COEFFICIENT(NPD_BAND)                                  FXCA3A.270   
+!             RAYLEIGH COEFFICIENTS                                        FXCA3A.271   
+!                                                                          FXCA3A.272   
+!STR  FIELDS FOR GASEOUS ABSORPTION:                                       FXCA3A.273   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.274   
+     &     L_GAS                                                           FXCA3A.275   
+!             INCLUDE GAS ABSORPTION IN THE CALCULATION                    FXCA3A.276   
+!     GASEOUS OVERLAPS:                                                    FXCA3A.277   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.278   
+     &     I_GAS_OVERLAP(NPD_BAND)                                         FXCA3A.279   
+!             GAS OVERLAP ASSUMPTION                                       FXCA3A.280   
+     &   , I_GAS                                                           FXCA3A.281   
+!             GAS TO BE CONSIDERED (ONE GAS ONLY)                          FXCA3A.282   
+!     ESFTS:                                                               FXCA3A.283   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.284   
+     &     N_BAND_ABSORB(NPD_BAND)                                         FXCA3A.285   
+!             NUMBER OF ABSORBERS IN BAND                                  FXCA3A.286   
+     &   , INDEX_ABSORB(NPD_SPECIES, NPD_BAND)                             FXCA3A.287   
+!             LIST OF ABSORBERS IN BANDS                                   FXCA3A.288   
+     &   , I_BAND_ESFT(NPD_BAND, NPD_SPECIES)                              FXCA3A.289   
+!             NUMBER OF TERMS IN BAND                                      FXCA3A.290   
+     &   , I_SCALE_ESFT(NPD_BAND, NPD_SPECIES)                             FXCA3A.291   
+!             TYPE OF ESFT SCALING                                         FXCA3A.292   
+     &   , I_SCALE_FNC(NPD_BAND, NPD_SPECIES)                              FXCA3A.293   
+!             TYPE OF SCALING FUNCTION                                     FXCA3A.294   
+      REAL      !, INTENT(IN)                                              FXCA3A.295   
+     &     W_ESFT(NPD_ESFT_TERM, NPD_BAND, NPD_SPECIES)                    FXCA3A.296   
+!             WEIGHTS FOR ESFT                                             FXCA3A.297   
+     &   , K_ESFT(NPD_ESFT_TERM, NPD_BAND, NPD_SPECIES)                    FXCA3A.298   
+!             EXPONENTIAL ESFT TERMS                                       FXCA3A.299   
+     &   , SCALE_VECTOR(NPD_SCALE_VARIABLE, NPD_ESFT_TERM, NPD_BAND        FXCA3A.300   
+     &        , NPD_SPECIES)                                               FXCA3A.301   
+!             ABSORBER SCALING PARAMETERS                                  FXCA3A.302   
+     &   , P_REFERENCE(NPD_SPECIES, NPD_BAND)                              FXCA3A.303   
+!             REFERENCE SCALING PRESSURE                                   FXCA3A.304   
+     &   , T_REFERENCE(NPD_SPECIES, NPD_BAND)                              FXCA3A.305   
+!             REFERENCE SCALING TEMPERATURE                                FXCA3A.306   
+!                                                                          FXCA3A.307   
+!STR  SPECTRAL DATA FOR THE CONTINUUM:                                     FXCA3A.308   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.309   
+     &     L_CONTINUUM                                                     FXCA3A.310   
+!             INCLUDE CONTINUUM ABSORPTION IN THE CALCULATION              FXCA3A.311   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.312   
+     &     N_BAND_CONTINUUM(NPD_BAND)                                      FXCA3A.313   
+!             NUMBER OF CONTINUA IN BANDS                                  FXCA3A.314   
+     &   , INDEX_CONTINUUM(NPD_BAND, NPD_CONTINUUM)                        FXCA3A.315   
+!             INDICES OF CONTINUA                                          FXCA3A.316   
+     &   , INDEX_WATER                                                     FXCA3A.317   
+!             INDEX OF WATER                                               FXCA3A.318   
+     &   , I_SCALE_FNC_CONT(NPD_BAND, NPD_CONTINUUM)                       FXCA3A.319   
+!             TYPE OF SCALING FUNCTION FOR CONTINUUM                       FXCA3A.320   
+      REAL      !, INTENT(IN)                                              FXCA3A.321   
+     &     K_CONTINUUM(NPD_BAND, NPD_CONTINUUM)                            FXCA3A.322   
+!             CONTINUUM EXTINCTION COEFFICIENTS                            FXCA3A.323   
+     &   , SCALE_CONTINUUM(NPD_SCALE_VARIABLE, NPD_BAND, NPD_CONTINUUM)    FXCA3A.324   
+!             CONTINUUM SCALING PARAMETERS                                 FXCA3A.325   
+     &   , P_REF_CONTINUUM(NPD_CONTINUUM, NPD_BAND)                        FXCA3A.326   
+!             CONTINUUM REFERENCE PRESSURE                                 FXCA3A.327   
+     &   , T_REF_CONTINUUM(NPD_CONTINUUM, NPD_BAND)                        FXCA3A.328   
+!             CONTINUUM REFERENCE TEMPERATURE                              FXCA3A.329   
+!                                                                          FXCA3A.330   
+!                                                                          FXCA3A.331   
+!STR  GENERAL CLOUD FIELDS:                                                FXCA3A.332   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.333   
+     &     L_CLOUD                                                         FXCA3A.334   
+!             CLOUDS ARE REQUIRED IN THE CALCULATION                       FXCA3A.335   
+      REAL      !, INTENT(IN)                                              FXCA3A.336   
+     &     W_CLOUD(NPD_PROFILE, NPD_LAYER)                                 FXCA3A.337   
+!             AMOUNT OF CLOUD                                              FXCA3A.338   
+     &   , FRAC_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)              FXCA3A.339   
+!             FRACTIONS OF DIFFERENT TYPES OF CLOUD                        FXCA3A.340   
+!                                                                          FXCA3A.341   
+!STR  FIELDS FOR MICROPHYSICAL QUANTITIES:                                 FXCA3A.342   
+!                                                                          FXCA3A.343   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.344   
+     &     L_DROP                                                          FXCA3A.345   
+!             INCLUDE DROPLETS IN THE CALCULATION                          FXCA3A.346   
+     &   , L_ICE                                                           FXCA3A.347   
+!             INCLUDE ICE IN THE CALCULATION                               FXCA3A.348   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.349   
+     &     N_CONDENSED                                                     FXCA3A.350   
+!             NUMBER OF CONDENSED COMPONENTS IN CLOUDS                     FXCA3A.351   
+     &   , TYPE_CONDENSED(NPD_CLOUD_COMPONENT)                             FXCA3A.352   
+!             TYPES OF CONDENSED COMPONENTS                                FXCA3A.353   
+     &   , I_CONDENSED_PARAM(NPD_CLOUD_COMPONENT)                          FXCA3A.354   
+!             PARAMETRIZATION SCHEMES FOR COMPONENTS                       FXCA3A.355   
+     &   , I_CLOUD_REPRESENTATION                                          FXCA3A.356   
+!             REPRESENTATION OF MIXING RULE CHOSEN                         FXCA3A.357   
+!                                                                          FXCA3A.358   
+      REAL      !, INTENT(IN)                                              FXCA3A.359   
+     &     CONDENSED_MIX_RATIO(NPD_PROFILE, 0: NPD_LAYER                   FXCA3A.360   
+     &        , NPD_CLOUD_COMPONENT)                                       FXCA3A.361   
+!             MIXING RATIOS OF CONDENSED COMPONENTS                        FXCA3A.362   
+     &   , CONDENSED_DIM_CHAR(NPD_PROFILE, 0: NPD_LAYER                    ADB2F404.559   
+     &        , NPD_CLOUD_COMPONENT)                                       FXCA3A.364   
+!             EFFECTIVE RADII OF CONDENSED COMPONENTS                      FXCA3A.365   
+     &   , CONDENSED_PARAM_LIST(NPD_CLOUD_PARAMETER                        FXCA3A.366   
+     &        , NPD_CLOUD_COMPONENT, NPD_BAND)                             FXCA3A.367   
+!             COEFFICIENTS IN PARAMETRIZATIONS OF CONDENSED PHASES         FXCA3A.368   
+!                                                                          FXCA3A.369   
+!                                                                          FXCA3A.370   
+!                                                                          FXCA3A.371   
+!STR  FIELDS FOR AEROSOLS:                                                 FXCA3A.372   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.373   
+     &     L_AEROSOL                                                       FXCA3A.374   
+!             INCLUDE AEROSOLS IN THE CALCULATION                          FXCA3A.375   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.376   
+     &     I_AEROSOL_PARAMETRIZATION(NPD_AEROSOL_SPECIES)                  FXCA3A.377   
+!             PARAMETRIZATION FLAGS FOR AEROSOL                            FXCA3A.378   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.379   
+     &     NHUMIDITY(NPD_AEROSOL_SPECIES)                                  FXCA3A.380   
+!             NUMBER OF HUMIDITIES                                         FXCA3A.381   
+      REAL      !, INTENT(IN)                                              FXCA3A.382   
+     &     AEROSOL_MIX_RATIO(NPD_PROFILE, 0: NPD_LAYER                     FXCA3A.383   
+     &        , NPD_AEROSOL_SPECIES)                                       FXCA3A.384   
+!             NUMBER DENSITY OF AEROSOLS                                   FXCA3A.385   
+      REAL      !, INTENT(IN)                                              FXCA3A.386   
+     &     AEROSOL_ABSORPTION(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES          FXCA3A.387   
+     &        , NPD_BAND)                                                  FXCA3A.388   
+!             ABSORPTION BY AEROSOLS                                       FXCA3A.389   
+     &   , AEROSOL_SCATTERING(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES          FXCA3A.390   
+     &        , NPD_BAND)                                                  FXCA3A.391   
+!             SCATTERING BY AEROSOLS                                       FXCA3A.392   
+     &   , AEROSOL_ASYMMETRY(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES           FXCA3A.393   
+     &        , NPD_BAND)                                                  FXCA3A.394   
+!             ASYMMETRY BY AEROSOLS                                        FXCA3A.395   
+     &   , HUMIDITIES(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES)                 FXCA3A.396   
+!             HUMIDITIES FOR SPECIES                                       FXCA3A.397   
+!                                                                          FXCA3A.398   
+!                                                                          FXCA3A.399   
+!STR  FITTING OF THE PLANCKIAN FUNCTION:                                   FXCA3A.400   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.401   
+     &     N_DEG_FIT                                                       FXCA3A.402   
+!             DEGREE OF THERMAL FITTING FNC.                               FXCA3A.403   
+      REAL      !, INTENT(IN)                                              FXCA3A.404   
+     &     THERMAL_COEFFICIENT(0: NPD_THERMAL_COEFF-1, NPD_BAND)           FXCA3A.405   
+!             COEFFICIENTS OF SOURCE TERMS                                 FXCA3A.406   
+     &   , T_REF_PLANCK                                                    FXCA3A.407   
+!             PLANCKIAN REFERENCE TEMPERATURE                              FXCA3A.408   
+!                                                                          FXCA3A.409   
+!STR  DOPPLER BROADENING                                                   FXCA3A.410   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.411   
+     &     L_DOPPLER(NPD_SPECIES)                                          FXCA3A.412   
+!             FLAGS TO ACTIVATE DOPPLER CORRECTIONS                        FXCA3A.413   
+      REAL      !, INTENT(IN)                                              FXCA3A.414   
+     &     DOPPLER_CORRECTION(NPD_SPECIES)                                 FXCA3A.415   
+!             DOPPLER BROADENING TERM                                      FXCA3A.416   
+      REAL      !, INTENT(OUT)                                             FXCA3A.417   
+     &     WEIGHT_BAND(NPD_BAND)                                           FXCA3A.418   
+!             WEIGHTING FUNCTION FOR BANDS                                 FXCA3A.419   
+!                                                                          FXCA3A.420   
+!STR  CONTROL OF SCATTERING:                                               FXCA3A.421   
+      INTEGER   !, INTENT(IN)                                              FXCA3A.422   
+     &     I_SCATTER_METHOD                                                FXCA3A.423   
+!             METHOD OF TREATING SCATTERING                                FXCA3A.424   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.425   
+     &     L_SWITCH_SCATTER(NPD_BAND)                                      FXCA3A.426   
+!             SWITCHES FOR SCATTERING IN BANDS                             FXCA3A.427   
+!                                                                          FXCA3A.428   
+!                                                                          FXCA3A.429   
+!STR  FLUXES CALCULATED:                                                   FXCA3A.430   
+      REAL      !, INTENT(OUT)                                             FXCA3A.431   
+     &     FLUX_DIRECT(NPD_PROFILE, 0: NPD_LAYER)                          FXCA3A.432   
+!             DIRECT FLUX                                                  FXCA3A.433   
+     &   , FLUX_DOWN(NPD_PROFILE, 0: NPD_LAYER)                            FXCA3A.434   
+!             DOWNWARD FLUX                                                FXCA3A.435   
+     &   , FLUX_UP(NPD_PROFILE, 0: NPD_LAYER)                              FXCA3A.436   
+!             UPWARD FLUX                                                  FXCA3A.437   
+     &   , FLUX_DIRECT_CLEAR(NPD_PROFILE, 0: NPD_LAYER)                    FXCA3A.438   
+!             CLEAR DIRECT FLUX                                            FXCA3A.439   
+     &   , FLUX_DOWN_CLEAR(NPD_PROFILE, 0: NPD_LAYER)                      FXCA3A.440   
+!             CLEAR DOWNWARD FLUX                                          FXCA3A.441   
+     &   , FLUX_UP_CLEAR(NPD_PROFILE, 0: NPD_LAYER)                        FXCA3A.442   
+!             CLEAR UPWARD FLUX                                            FXCA3A.443   
+!                                                                          FXCA3A.444   
+!STR  ARRAYS SPECIFIC TO THE UNIFIED MODEL                                 FXCA3A.445   
+!                                                                          FXCA3A.446   
+!     SWITCHES FOR DIAGNOSTICS:                                            FXCA3A.447   
+      LOGICAL   !, INTENT(IN)                                              FXCA3A.448   
+     &     L_FLUX_BELOW_690NM_SURF                                         ADB1F401.437   
+!             FLUX BELOW 690NM AT SURFACE TO BE CALCULATED                 ADB1F401.438   
+     &   , L_SURFACE_DOWN_FLUX                                             FXCA3A.451   
+!             DOWNWARD SURFACE FLUX REQUIRED                               FXCA3A.452   
+     &   , L_SURF_DOWN_CLR                                                 FXCA3A.453   
+!             CALCULATE DOWNWARD CLEAR FLUX                                FXCA3A.454   
+     &   , L_SURF_UP_CLR                                                   FXCA3A.455   
+!             CALCULATE UPWARD CLEAR FLUX                                  FXCA3A.456   
+!                                                                          FXCA3A.457   
+!     ARRAYS FOR USE WITH COUPLING:                                        FXCA3A.458   
+      INTEGER   !, INTENT(IN)                                              ADB1F401.439   
+     &     N_FRAC_ICE_POINT                                                ADB1F401.440   
+!             NUMBER OF POINTS WITH FRACTIONAL ICE COVER                   ADB1F401.441   
+     &   , I_FRAC_ICE_POINT(NPD_PROFILE)                                   ADB1F401.442   
+!             INDICES OF POINTS WITH FRACTIONAL ICE COVER                  ADB1F401.443   
+      REAL      !, INTENT(IN)                                              ADB1F401.444   
+     &     ICE_FRACTION(NPD_PROFILE)                                       ADB1F401.445   
+!             ICE FRACTION                                                 ADB1F401.446   
+      REAL      !, INTENT(IN)                                              FXCA3A.459   
+     &     ALBEDO_SEA_DIFF(NPD_PROFILE, NPD_BAND)                          FXCA3A.460   
+!             DIFFUSE ALBEDO FOR OPEN SEA                                  FXCA3A.461   
+     &   , ALBEDO_SEA_DIR(NPD_PROFILE, NPD_BAND)                           FXCA3A.462   
+!             DIRECT ALBEDO FOR OPEN SEA                                   FXCA3A.463   
+!                                                                          FXCA3A.464   
+!     ARRAYS FOR USE WITH DIAGNOSTICS:                                     FXCA3A.465   
+      REAL      !, INTENT(IN)                                              FXCA3A.466   
+     &     WEIGHT_690NM(NPD_BAND)                                          ADB1F401.447   
+!             WEIGHTS FOR EACH BAND FOR REGION BELOW 690 NM                ADB1F401.448   
+!                                                                          FXCA3A.469   
+!     SURFACE FLUXES FOR COUPLING OR DIAGNOSTIC USE                        FXCA3A.470   
+      REAL      !, INTENT(OUT)                                             FXCA3A.471   
+     &     SEA_FLUX(NPD_PROFILE)                                           FXCA3A.472   
+!             NET DOWNWARD FLUX INTO SEA                                   FXCA3A.473   
+     &   , SURFACE_DOWN_FLUX(NPD_PROFILE)                                  FXCA3A.474   
+!             DOWNWARD FLUX AT SURFACE                                     FXCA3A.475   
+     &   , SURF_DOWN_CLR(NPD_PROFILE)                                      FXCA3A.476   
+!             CLEAR-SKY DOWNWARD FLUX AT SURFACE                           FXCA3A.477   
+     &   , SURF_UP_CLR(NPD_PROFILE)                                        FXCA3A.478   
+!             CLEAR-SKY UPWARD FLUX AT SURFACE                             FXCA3A.479   
+     &   , FLUX_BELOW_690NM_SURF(NPD_PROFILE)                              ADB1F401.449   
+!             SURFACE FLUX BELOW 690NM                                     ADB1F401.450   
+!                                                                          FXCA3A.482   
+!                                                                          FXCA3A.483   
+!                                                                          FXCA3A.484   
+!     LOCAL ARGUMENTS.                                                     FXCA3A.485   
+!     GENERAL POINTERS:                                                    FXCA3A.486   
+      INTEGER                                                              FXCA3A.487   
+     &     I_TOP                                                           FXCA3A.488   
+!             TOP LEVEL OF PROFILES                                        FXCA3A.489   
+     &   , I_BAND                                                          FXCA3A.490   
+!             SPECTRAL BAND                                                FXCA3A.491   
+     &   , N_AUGMENT                                                       FXCA3A.492   
+!             LENGTH OF LONG FLUX VECTOR                                   FXCA3A.493   
+     &   , N_GAS                                                           FXCA3A.494   
+!             NUMBER OF ACTIVE GASES                                       FXCA3A.495   
+     &   , I_GAS_BAND                                                      FXCA3A.496   
+!             SINGLE VARIABLE FOR GAS IN BAND                              FXCA3A.497   
+     &   , N_CONTINUUM                                                     FXCA3A.498   
+!             NUMBER OF CONTINUA IN BAND                                   FXCA3A.499   
+     &   , I_CONTINUUM                                                     FXCA3A.500   
+!             CONTINUUM NUMBER                                             FXCA3A.501   
+     &   , I_CONTINUUM_POINTER(NPD_CONTINUUM)                              FXCA3A.502   
+!             POINTERS TO CONTINUA                                         FXCA3A.503   
+!                                                                          FXCA3A.504   
+!     SCATTERING IN INDIVIDUAL BANDS                                       FXCA3A.505   
+      INTEGER                                                              FXCA3A.506   
+     &     I_SCATTER_METHOD_BAND                                           FXCA3A.507   
+!             METHOD OF TREATING SCATTERING IN GIVEN BAND                  FXCA3A.508   
+!                                                                          FXCA3A.509   
+!     VARIABLES FOR SURFACE PROPERTIES:                                    FXCA3A.510   
+      INTEGER                                                              FXCA3A.511   
+     &     N_POINT_TYPE(NPD_SURFACE)                                       FXCA3A.512   
+!             NUMBER OF POINTS OF EACH TYPE                                FXCA3A.513   
+     &   , INDEX_SURFACE(NPD_PROFILE, NPD_SURFACE)                         FXCA3A.514   
+!             INDICES OF EACH SURFACE TYPE                                 FXCA3A.515   
+!                                                                          FXCA3A.516   
+!     POINTERS TO THE CONTENTS OF LAYERS:                                  FXCA3A.517   
+      INTEGER                                                              FXCA3A.518   
+     &     N_FREE_PROFILE(NPD_LAYER)                                       FXCA3A.519   
+!             NUMBER OF FREE PROFILES                                      FXCA3A.520   
+     &   , I_FREE_PROFILE(NPD_PROFILE, NPD_LAYER)                          FXCA3A.521   
+!             COLUMNS CONTAINING FREE PROFILES                             FXCA3A.522   
+     &   , N_CLOUD_TOP                                                     FXCA3A.523   
+!             TOPMOST CLOUDY LAYER                                         FXCA3A.524   
+     &   , N_CLOUD_PROFILE(NPD_LAYER)                                      FXCA3A.525   
+!             NUMBER OF CLOUDY PROFILES                                    FXCA3A.526   
+     &   , I_CLOUD_PROFILE(NPD_PROFILE, NPD_LAYER)                         FXCA3A.527   
+!             PROFILES CONTAINING CLOUDS                                   FXCA3A.528   
+!                                                                          FXCA3A.529   
+!     POINTERS TO TYPES OF CLOUDS:                                         FXCA3A.530   
+      LOGICAL                                                              FXCA3A.531   
+     &     L_CLOUD_CMP(NPD_CLOUD_COMPONENT)                                FXCA3A.532   
+!             LOGICAL SWITCHES TO INCLUDE COMPONENTS                       FXCA3A.533   
+      INTEGER                                                              FXCA3A.534   
+     &     I_PHASE_CMP(NPD_CLOUD_COMPONENT)                                FXCA3A.535   
+!             PHASES OF COMPONENTS                                         FXCA3A.536   
+     &   , I_CLOUD_TYPE(NPD_CLOUD_COMPONENT)                               FXCA3A.537   
+!             TYPES OF CLOUD TO WHICH EACH COMPONENT CONTRIBUTES           FXCA3A.538   
+     &   , I_REGION_CLOUD(NPD_CLOUD_TYPE)                                  ADB1F402.443   
+!             REGIONS IN WHICH PARTICULAR TYPE OF CLOUD FALL               ADB1F402.444   
+!                                                                          FXCA3A.539   
+!     FRACTIONAL COVERAGE OF DIFFERENT REGIONS:                            ADB1F402.445   
+      REAL                                                                 ADB1F402.446   
+     &     FRAC_REGION(NPD_PROFILE, NPD_LAYER, NPD_REGION)                 ADB1F402.447   
+!             FRACTION OF TOTAL CLOUD OCCUPIED BY SPECIFIC REGIONS         ADB1F402.448   
+!                                                                          ADB1F402.449   
+!     POINTER TO TABLE OF HUMIDITY:                                        FXCA3A.540   
+      INTEGER                                                              FXCA3A.541   
+     &     I_HUMIDITY_POINTER(NPD_PROFILE, NPD_LAYER)                      FXCA3A.542   
+!             POINTER TO LOOK-UP TABLE FOR AEROSOLS                        FXCA3A.543   
+!                                                                          FXCA3A.544   
+!     CONTROLLING VARIABLES:                                               FXCA3A.545   
+      INTEGER                                                              FXCA3A.546   
+     &     I                                                               FXCA3A.547   
+!             LOOP INDEX                                                   FXCA3A.548   
+     &   , J                                                               FXCA3A.549   
+!             LOOP INDEX                                                   FXCA3A.550   
+     &   , K                                                               FXCA3A.551   
+!             LOOP INDEX                                                   FXCA3A.552   
+     &   , L                                                               FXCA3A.553   
+!             LOOP INDEX                                                   FXCA3A.554   
+!                                                                          FXCA3A.555   
+!     LOGICAL SWITCHES:                                                    FXCA3A.556   
+      LOGICAL                                                              FXCA3A.557   
+     &     L_GAS_BAND                                                      FXCA3A.558   
+!             FLAG TO INCLUDE GASEOUS ABSORPTION IN A PARTICULAR BAND      FXCA3A.559   
+     &   , L_MOIST_AEROSOL                                                 FXCA3A.560   
+!             FLAG FOR MOIST AEROSOL                                       FXCA3A.561   
+     &   , L_AEROSOL_DENSITY                                               FXCA3A.562   
+!             FLAG FOR CALCULATION OF ATMOSPHERIC DENSITY FOR AEROSOLS     FXCA3A.563   
+     &   , L_NET                                                           FXCA3A.564   
+!             FLAG FOR NET FLUXES                                          FXCA3A.565   
+!                                                                          FXCA3A.566   
+!     SURFACE PROPERTIES:                                                  FXCA3A.567   
+      REAL                                                                 FXCA3A.568   
+     &     ALBEDO_SURFACE_DIFF(NPD_PROFILE)                                FXCA3A.569   
+!             DIFFUSE SURFACE ALBEDO                                       FXCA3A.570   
+     &   , ALBEDO_SURFACE_DIR(NPD_PROFILE)                                 FXCA3A.571   
+!             DIRECT SURFACE ALBEDO                                        FXCA3A.572   
+!                                                                          FXCA3A.573   
+      REAL                                                                 FXCA3A.574   
+     &     INC_SOLAR_FLUX_BAND(NPD_PROFILE)                                FXCA3A.575   
+!             INCIDENT SOLAR FLUX IN BAND                                  FXCA3A.576   
+      REAL                                                                 FXCA3A.577   
+     &     GAS_FRAC_RESCALED(NPD_PROFILE, 0: NPD_LAYER, NPD_SPECIES)       FXCA3A.578   
+!             RESCALED GAS MIXING RATIOS                                   FXCA3A.579   
+     &   , AMOUNT_CONTINUUM(NPD_PROFILE, 0: NPD_LAYER, NPD_CONTINUUM)      ADB2F404.560   
+!             AMOUNTS OF CONTINUA                                          FXCA3A.582   
+     &   , K_CONTINUUM_MONO(NPD_CONTINUUM)                                 FXCA3A.583   
+!             MONOCHROMATIC CONTINUUM COMPONENTS                           FXCA3A.584   
+!                                                                          FXCA3A.585   
+!     THERMAL ARRAYS:                                                      FXCA3A.586   
+      REAL                                                                 FXCA3A.587   
+     &     PLANCK_SOURCE_BAND(NPD_PROFILE, 0: NPD_LAYER)                   FXCA3A.588   
+!             PLANCK FUNCTION IN BAND AT LEVELS                            FXCA3A.589   
+     &   , DIFF_PLANCK_BAND(NPD_PROFILE, NPD_LAYER)                        FXCA3A.590   
+!             DIFFERENTIAL THERMAL SOURCE IN BAND                          FXCA3A.591   
+     &   , DIFF_PLANCK_BAND_2(NPD_PROFILE, NPD_LAYER)                      FXCA3A.592   
+!             2 x 2ND DIFF. THERMAL SOURCE IN BAND                         FXCA3A.593   
+     &   , THERMAL_GROUND_BAND(NPD_PROFILE)                                FXCA3A.594   
+!             GROUND SOURCE FUNCTION IN BAND                               FXCA3A.595   
+!                                                                          FXCA3A.596   
+!     ATMOSPHERIC DENSITIES:                                               FXCA3A.597   
+      REAL                                                                 FXCA3A.598   
+     &     DENSITY(NPD_PROFILE, 0: NPD_LAYER)                              FXCA3A.599   
+!             OVERALL DENSITY                                              FXCA3A.600   
+     &   , MOLAR_DENSITY_WATER(NPD_PROFILE, 0: NPD_LAYER)                  FXCA3A.601   
+!             MOLAR DENSITY OF WATER                                       FXCA3A.602   
+     &   , MOLAR_DENSITY_FRN(NPD_PROFILE, 0: NPD_LAYER)                    FXCA3A.603   
+!             MOLAR DENSITY OF FOREIGN SPECIES                             FXCA3A.604   
+!                                                                          FXCA3A.605   
+!     FIELDS FOR MOIST AEROSOLS:                                           FXCA3A.606   
+      REAL                                                                 FXCA3A.607   
+     &     DELTA_HUMIDITY                                                  FXCA3A.608   
+!             INCREMENT IN LOOK-UP TABLE FOR HUM.                          FXCA3A.609   
+     &   , MEAN_REL_HUMIDITY(NPD_PROFILE, NPD_LAYER)                       FXCA3A.610   
+!             MEAN RELATIVE HUMIDITY OF LAYERS                             FXCA3A.611   
+!                                                                          FXCA3A.612   
+!     FUNDAMENTAL OPTICAL PROPERTIES OF LAYERS:                            FXCA3A.613   
+      REAL                                                                 FXCA3A.614   
+     &     K_GREY_TOT_FREE(NPD_PROFILE, NPD_LAYER)                         FXCA3A.615   
+!             FREE TOTAL GREY EXTINCTION                                   FXCA3A.616   
+     &   , K_EXT_SCAT_FREE(NPD_PROFILE, NPD_LAYER)                         FXCA3A.617   
+!             FREE SCATTERING EXTINCTION                                   FXCA3A.618   
+     &   , ASYMMETRY_FREE(NPD_PROFILE, NPD_LAYER)                          FXCA3A.619   
+!             FREE ASYMMETRIES                                             FXCA3A.620   
+     &   , FORWARD_SCATTER_FREE(NPD_PROFILE, NPD_LAYER)                    FXCA3A.621   
+!             FREE FORWARD SCATTERING                                      FXCA3A.622   
+     &   , K_GREY_TOT_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)        FXCA3A.623   
+!             TOTAL CLOUDY GREY EXTINCTION                                 FXCA3A.624   
+     &   , K_EXT_SCAT_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)        FXCA3A.625   
+!             CLOUDY SCATTERING EXTINCTION                                 FXCA3A.626   
+     &   , ASYMMETRY_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)         FXCA3A.627   
+!             CLOUDY ASYMMETRIES                                           FXCA3A.628   
+     &   , FORWARD_SCATTER_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)   FXCA3A.629   
+!             CLOUDY FORWARD SCATTERING                                    FXCA3A.630   
+!                                                                          FXCA3A.631   
+!     LOCAL RADIATIVE FLUXES:                                              FXCA3A.632   
+      REAL                                                                 FXCA3A.633   
+     &     FLUX_TOTAL(NPD_PROFILE, 2*NPD_LAYER+2)                          FXCA3A.634   
+!             TOTAL FLUX                                                   FXCA3A.635   
+     &   , FLUX_TOTAL_CLEAR(NPD_PROFILE, 2*NPD_LAYER+2)                    FXCA3A.636   
+!             CLEAR TOTAL FLUX                                             FXCA3A.637   
+     &   , FLUX_DIRECT_BAND(NPD_PROFILE, 0: NPD_LAYER)                     FXCA3A.638   
+!             DIRECT FLUX IN BAND                                          FXCA3A.639   
+     &   , FLUX_TOTAL_BAND(NPD_PROFILE, 2*NPD_LAYER+2)                     FXCA3A.640   
+!             TOTAL FLUX IN BAND                                           FXCA3A.641   
+     &   , FLUX_DIRECT_CLEAR_BAND(NPD_PROFILE, 0: NPD_LAYER)               FXCA3A.642   
+!             DIRECT FLUX IN BAND                                          FXCA3A.643   
+     &   , FLUX_TOTAL_CLEAR_BAND(NPD_PROFILE, 2*NPD_LAYER+2)               FXCA3A.644   
+!             TOTAL FLUX IN BAND                                           FXCA3A.645   
+     &   , PLANCK_FLUX(NPD_PROFILE, 0: NPD_LAYER)                          FXCA3A.646   
+!             PLANCKIAN FLUX IN BAND                                       FXCA3A.647   
+!                                                                          FXCA3A.648   
+!     COEFFICIENTS FOR THE TRANSFER OF ENERGY BETWEEN                      FXCA3A.649   
+!     PARTIALLY CLOUDY LAYERS:                                             FXCA3A.650   
+      REAL                                                                 FXCA3A.651   
+     &     CLOUD_OVERLAP(NPD_PROFILE, 0: NPD_LAYER, NPD_OVERLAP_COEFF)     FXCA3A.652   
+!             COEFFICIENTS DEFINING OVERLAPPING OPTIONS FOR CLOUDS:        FXCA3A.653   
+!             THESE ALSO DEPEND ON THE SOLVER SELECTED.                    FXCA3A.654   
+     &   , W_FREE(NPD_PROFILE, NPD_LAYER)                                  FXCA3A.655   
+!             CLEAR-SKY FRACTION                                           FXCA3A.656   
+      INTEGER                                                              FXCA3A.657   
+     &     N_COLUMN(NPD_PROFILE)                                           FXCA3A.658   
+!             NUMBER OF COLUMNS REQUIRED                                   FXCA3A.659   
+      LOGICAL                                                              FXCA3A.660   
+     &     L_COLUMN(NPD_PROFILE, NPD_LAYER, NPD_COLUMN)                    FXCA3A.661   
+!             COLUMN FLAGS FOR COLUMNS                                     FXCA3A.662   
+      REAL                                                                 FXCA3A.663   
+     &     AREA_COLUMN(NPD_PROFILE, NPD_COLUMN)                            FXCA3A.664   
+!             AREAS OF COLUMNS                                             FXCA3A.665   
+!                                                                          FXCA3A.666   
+!     LOCAL VARIABLES SPECIFIC TO THE UNIFIED MODEL.                       ADB1F401.451   
+      REAL                                                                 ADB1F401.452   
+     &     PLANCK_FREEZE_SEA                                               ADB1F401.453   
+!             PLANCK FUNCTION OVER FREEZING SEA                            ADB1F401.454   
+!                                                                          ADB1F401.455   
+!                                                                          ADB1F401.456   
+!     SUBROUTINES CALLED:                                                  FXCA3A.667   
+      EXTERNAL                                                             FXCA3A.668   
+     &     SET_CLOUD_POINTER, SET_CLOUD_GEOMETRY, SET_SCATTERING           FXCA3A.669   
+     &   , OVERLAP_MIX_MAXIMUM, OVERLAP_MIX_RANDOM                         FXCA3A.670   
+     &   , SPLIT_MAXIMUM, COLLECT_SURFACE, INITIALIZE_FLUX                 FXCA3A.671   
+     &   , CALCULATE_DENSITY, SET_MOIST_AEROSOL_PROPERTIES                 FXCA3A.672   
+     &   , SCALE_ABSORB, RESCALE_CONTINUUM, GREY_EXTINCTION                FXCA3A.673   
+     &   , RESCALE_ASYMMETRY                                               FXCA3A.674   
+     &   , DIFF_PLANCK_SOURCE, SET_SURFACE_PROPERTIES                      FXCA3A.675   
+     &   , SOLVE_BAND_WITHOUT_GAS, SOLVE_BAND_ONE_GAS                      FXCA3A.676   
+     &   , SOLVE_BAND_RANDOM_OVERLAP, SOLVE_BAND_FESFT                     FXCA3A.677   
+     &   , SOLVE_BAND_CLR_FESFT, SOLVE_BAND_K_EQV                          FXCA3A.678   
+     &   , AUGMENT_TOTAL_FLUX, ASSIGN_FLUX                                 FXCA3A.679   
+     &   , R2_INIT_COUPLE_DIAG, R2_COUPLE_DIAG                             FXCA3A.680   
+     &   , OVERLAP_TRIPLE                                                  ADB1F402.450   
+!     FUNCTIONS CALLED:                                                    FXCA3A.681   
+      LOGICAL                                                              FXCA3A.682   
+     &     L_CLOUD_DENSITY                                                 FXCA3A.683   
+!             FLAG FOR CALCULATION OF ATMOSPHERIC DENSITIES FOR CLOUDS     FXCA3A.684   
+      EXTERNAL                                                             FXCA3A.685   
+     &     L_CLOUD_DENSITY                                                 FXCA3A.686   
+!                                                                          FXCA3A.687   
+!                                                                          FXCA3A.688   
+!     SETTING OF PROPERTIES OF ARRAYS:                                     FXCA3A.689   
+*CALL CLREPD3A                                                             FXCA3A.690   
+!                                                                          FXCA3A.691   
+!                                                                          FXCA3A.692   
+!                                                                          FXCA3A.693   
+!                                                                          FXCA3A.694   
+!     INITIAL DETERMINATION OF FLAGS AND SWITCHES:                         FXCA3A.695   
+!                                                                          FXCA3A.696   
+      IF (I_ANGULAR_INTEGRATION.EQ.IP_TWO_STREAM) THEN                     FXCA3A.697   
+!                                                                          FXCA3A.698   
+!        CURRENTLY, WE DO NOT ALLOW THE USE OF SOLVERS FOR THE             ADB1F405.296   
+!        NET FLUX ALONE AS THIS MAKES IT DIFFICULT TO INCORPORATE          ADB1F405.297   
+!        SOME DIAGNOSTICS.                                                 ADB1F405.298   
+!                                                                          ADB1F405.299   
+         L_NET=.FALSE.                                                     ADB1F405.300   
+!                                                                          FXCA3A.707   
+      ELSE IF (I_ANGULAR_INTEGRATION.EQ.IP_IR_GAUSS) THEN                  FXCA3A.708   
+!                                                                          FXCA3A.709   
+         L_NET=.FALSE.                                                     FXCA3A.710   
+!                                                                          FXCA3A.711   
+      ENDIF                                                                FXCA3A.712   
+!                                                                          FXCA3A.713   
+!     THE LENGTH OF THE LONG FLUX VECTOR DEPENDS ON WHETHER WE SOLVE       FXCA3A.714   
+!     FOR THE FULL OR THE NET FLUX.                                        FXCA3A.715   
+      IF (L_NET) THEN                                                      FXCA3A.716   
+         N_AUGMENT=N_LAYER+1                                               FXCA3A.717   
+      ELSE                                                                 FXCA3A.718   
+         N_AUGMENT=2*(N_LAYER+1)                                           FXCA3A.719   
+      ENDIF                                                                FXCA3A.720   
+!                                                                          FXCA3A.721   
+!     SET THE TOP LEVEL OF THE PROFILES.                                   FXCA3A.722   
+      IF (L_LAYER) THEN                                                    FXCA3A.723   
+         I_TOP=1                                                           FXCA3A.724   
+      ELSE                                                                 FXCA3A.725   
+         I_TOP=0                                                           FXCA3A.726   
+      ENDIF                                                                FXCA3A.727   
+!                                                                          FXCA3A.728   
+!                                                                          FXCA3A.729   
+!                                                                          FXCA3A.730   
+!     INITIAL CALCULATIONS FOR SURFACE PROPERTIES:                         FXCA3A.731   
+!                                                                          FXCA3A.732   
+!     COLLECT POINTS WITH THE SAME SURFACE SPECIFICATION.                  FXCA3A.733   
+      CALL COLLECT_SURFACE(N_PROFILE                                       FXCA3A.734   
+     &   , I_SURFACE                                                       FXCA3A.735   
+     &   , N_POINT_TYPE, INDEX_SURFACE                                     FXCA3A.736   
+     &   , NPD_PROFILE, NPD_SURFACE                                        FXCA3A.737   
+     &   )                                                                 FXCA3A.738   
+!                                                                          FXCA3A.739   
+!                                                                          FXCA3A.740   
+!                                                                          FXCA3A.741   
+!     INITIAL CALCULATIONS FOR AEROSOLS:                                   FXCA3A.742   
+!                                                                          FXCA3A.743   
+!     SET THE SPECTRALLY INDEPENDENT PROPERTIES OF MOIST AEROSOLS.         FXCA3A.744   
+      L_MOIST_AEROSOL=.FALSE.                                              FXCA3A.745   
+      DO J=1, N_AEROSOL                                                    FXCA3A.746   
+         L_MOIST_AEROSOL=L_MOIST_AEROSOL.OR.                               FXCA3A.747   
+     &      (I_AEROSOL_PARAMETRIZATION(J)                                  FXCA3A.748   
+     &      .EQ.IP_AEROSOL_PARAM_MOIST)                                    FXCA3A.749   
+      ENDDO                                                                FXCA3A.750   
+!                                                                          FXCA3A.751   
+      IF (L_MOIST_AEROSOL) THEN                                            FXCA3A.752   
+         CALL SET_MOIST_AEROSOL_PROPERTIES(IERR                            AWO1F403.38    
+     &      , N_PROFILE, N_LAYER, L_LAYER                                  AWO1F403.39    
+     &      , N_AEROSOL, I_AEROSOL_PARAMETRIZATION, NHUMIDITY              FXCA3A.754   
+     &      , GAS_MIX_RATIO(1, 0, INDEX_WATER), T, P, DELTA_HUMIDITY       FXCA3A.755   
+     &      , MEAN_REL_HUMIDITY, I_HUMIDITY_POINTER                        FXCA3A.756   
+     &      , NPD_PROFILE, NPD_LAYER, NPD_AEROSOL_SPECIES                  FXCA3A.757   
+     &      )                                                              FXCA3A.758   
+         IF (IERR.NE.I_NORMAL) RETURN                                      AWO1F403.40    
+      ENDIF                                                                FXCA3A.759   
+!                                                                          FXCA3A.760   
+!                                                                          FXCA3A.761   
+!     CHECK WHETHER THE DENSITIES WILL BE NEEDED FOR                       FXCA3A.762   
+!     UNPARAMETRIZED AEROSOLS.                                             FXCA3A.763   
+      L_AEROSOL_DENSITY=.FALSE.                                            ADB1F402.451   
+      IF (L_AEROSOL) THEN                                                  FXCA3A.764   
+         DO J=1, N_AEROSOL                                                 FXCA3A.766   
+            L_AEROSOL_DENSITY=L_AEROSOL_DENSITY.OR.                        FXCA3A.767   
+     &         (I_AEROSOL_PARAMETRIZATION(J).EQ.                           FXCA3A.768   
+     &            IP_AEROSOL_PARAM_MOIST)                                  FXCA3A.769   
+     &         .OR.(I_AEROSOL_PARAMETRIZATION(J).EQ.                       FXCA3A.770   
+     &            IP_AEROSOL_UNPARAMETRIZED)                               FXCA3A.771   
+         ENDDO                                                             FXCA3A.772   
+      ENDIF                                                                FXCA3A.773   
+!                                                                          FXCA3A.774   
+!                                                                          FXCA3A.775   
+!                                                                          FXCA3A.776   
+!     INITIAL CALCULATIONS FOR CLOUDS:                                     FXCA3A.777   
+!                                                                          FXCA3A.778   
+!     SET POINTERS TO THE TYPES OF CLOUD.                                  FXCA3A.779   
+      CALL SET_CLOUD_POINTER(IERR                                          FXCA3A.780   
+     &   , N_CONDENSED, TYPE_CONDENSED, I_CLOUD_REPRESENTATION             FXCA3A.781   
+     &   , L_DROP, L_ICE                                                   FXCA3A.782   
+     &   , I_PHASE_CMP, I_CLOUD_TYPE, L_CLOUD_CMP                          FXCA3A.783   
+     &   )                                                                 FXCA3A.784   
+      IF (IERR.NE.I_NORMAL) RETURN                                         FXCA3A.785   
+!                                                                          FXCA3A.786   
+!                                                                          FXCA3A.787   
+!     SET THE GEOMETRY OF THE CLOUDS.                                      FXCA3A.788   
+      CALL SET_CLOUD_GEOMETRY(N_PROFILE, N_LAYER                           FXCA3A.789   
+     &   , L_GLOBAL_CLOUD_TOP, N_CLOUD_TOP_GLOBAL                          ADB1F402.913   
+     &   , W_CLOUD                                                         FXCA3A.790   
+     &   , N_CLOUD_PROFILE, I_CLOUD_PROFILE                                FXCA3A.791   
+     &   , N_CLOUD_TOP                                                     FXCA3A.792   
+     &   , N_FREE_PROFILE, I_FREE_PROFILE                                  FXCA3A.793   
+     &   , NPD_PROFILE, NPD_LAYER                                          FXCA3A.794   
+     &   )                                                                 FXCA3A.795   
+!                                                                          FXCA3A.796   
+      IF (I_CLOUD.EQ.IP_CLOUD_TRIPLE) THEN                                 ADB1F402.452   
+!        AGGREGATE CLOUDS INTO REGIONS FOR SOLVING.                        ADB1F402.453   
+         CALL AGGREGATE_CLOUD(IERR                                         ADB1F402.454   
+     &      , N_PROFILE, N_LAYER, N_CLOUD_TOP                              ADB1F402.455   
+     &      , I_CLOUD, I_CLOUD_REPRESENTATION                              ADB1F402.456   
+     &      , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION)                        ADB1F402.457   
+     &      , FRAC_CLOUD                                                   ADB1F402.458   
+     &      , I_REGION_CLOUD, FRAC_REGION                                  ADB1F402.459   
+     &      , NPD_PROFILE, NPD_LAYER                                       ADB1F402.460   
+     &      )                                                              ADB1F402.461   
+      ENDIF                                                                ADB1F402.462   
+!                                                                          ADB1F401.458   
+!     CALCULATE ENERGY TRANSFER COEFFICIENTS IN A MIXED COLUMN,            FXCA3A.797   
+!     OR SPLIT THE ATMOSPHERE INTO COLUMNS WITH A COLUMN MODEL:            FXCA3A.798   
+!                                                                          FXCA3A.799   
+      IF (I_CLOUD.EQ.IP_CLOUD_MIX_MAX) THEN                                FXCA3A.800   
+!                                                                          FXCA3A.801   
+         CALL OVERLAP_MIX_MAXIMUM(N_PROFILE, N_LAYER, N_CLOUD_TOP          FXCA3A.802   
+     &      , ISOLIR, I_SOLVER                                             FXCA3A.803   
+     &      , W_CLOUD, W_FREE                                              FXCA3A.804   
+     &      , CLOUD_OVERLAP                                                FXCA3A.805   
+     &      , NPD_PROFILE, NPD_LAYER                                       FXCA3A.806   
+     &      )                                                              FXCA3A.807   
+      ELSE IF (I_CLOUD.EQ.IP_CLOUD_MIX_RANDOM) THEN                        FXCA3A.808   
+         CALL OVERLAP_MIX_RANDOM(N_PROFILE, N_LAYER, N_CLOUD_TOP           FXCA3A.809   
+     &      , ISOLIR, I_SOLVER                                             FXCA3A.810   
+     &      , W_CLOUD, W_FREE                                              FXCA3A.811   
+     &      , CLOUD_OVERLAP                                                FXCA3A.812   
+     &      , NPD_PROFILE, NPD_LAYER                                       FXCA3A.813   
+     &      )                                                              FXCA3A.814   
+!                                                                          FXCA3A.815   
+      ELSE IF (I_CLOUD.EQ.IP_CLOUD_TRIPLE) THEN                            ADB1F402.463   
+!                                                                          ADB1F402.464   
+!        CALCULATE OVERLAPS FOR THE TRIPLE DECOMPOSITION                   ADB1F402.465   
+!        OF THE COLUMN INTO STRATIFORM AND CONVECTIVE PARTS.               ADB1F402.466   
+         CALL OVERLAP_TRIPLE(N_PROFILE, N_LAYER, N_CLOUD_TOP               ADB1F402.467   
+     &      , W_CLOUD, W_FREE, FRAC_REGION                                 ADB1F402.468   
+     &      , CLOUD_OVERLAP                                                ADB1F402.469   
+     &      , NPD_PROFILE, NPD_LAYER                                       ADB1F402.470   
+     &      )                                                              ADB1F402.471   
+         IF (IERR.NE.I_NORMAL) RETURN                                      ADB1F402.472   
+!                                                                          ADB1F402.473   
+      ELSE IF (I_CLOUD.EQ.IP_CLOUD_COLUMN_MAX) THEN                        FXCA3A.816   
+!                                                                          FXCA3A.817   
+         CALL SPLIT_MAXIMUM(N_PROFILE, N_LAYER                             FXCA3A.818   
+     &      , W_CLOUD                                                      FXCA3A.819   
+     &      , N_COLUMN, AREA_COLUMN, L_COLUMN                              FXCA3A.820   
+     &      , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                           FXCA3A.821   
+     &      )                                                              FXCA3A.822   
+      ENDIF                                                                FXCA3A.823   
+!                                                                          FXCA3A.824   
+!                                                                          FXCA3A.825   
+!     CALCULATE THE ATMOSPHERIC DENSITIES:                                 FXCA3A.826   
+!                                                                          FXCA3A.827   
+      IF ( L_CONTINUUM                                                     FXCA3A.828   
+     &      .OR.L_AEROSOL_DENSITY                                          FXCA3A.829   
+     &      .OR.(L_CLOUD                                                   ADB1F401.459   
+     &      .AND.L_CLOUD_DENSITY(N_CONDENSED, I_PHASE_CMP, L_CLOUD_CMP     ADB1F401.460   
+     &                        , I_CONDENSED_PARAM                          FXCA3A.831   
+     &                        ) ) ) THEN                                   ADB1F401.461   
+         CALL CALCULATE_DENSITY(N_PROFILE, N_LAYER, L_CONTINUUM            FXCA3A.834   
+     &      , GAS_MIX_RATIO(1, 0, INDEX_WATER)                             FXCA3A.835   
+     &      , P, T, I_TOP                                                  FXCA3A.836   
+     &      , DENSITY, MOLAR_DENSITY_WATER, MOLAR_DENSITY_FRN              FXCA3A.837   
+     &      , NPD_PROFILE, NPD_LAYER                                       FXCA3A.838   
+     &      )                                                              FXCA3A.839   
+      ENDIF                                                                FXCA3A.840   
+!                                                                          FXCA3A.841   
+!                                                                          FXCA3A.842   
+!                                                                          FXCA3A.843   
+!     INITIALIZE THE TOTAL FLUXES.                                         FXCA3A.844   
+!                                                                          FXCA3A.845   
+      CALL INITIALIZE_FLUX(N_PROFILE, N_LAYER, N_AUGMENT                   FXCA3A.846   
+     &   , ISOLIR                                                          FXCA3A.847   
+     &   , FLUX_DIRECT, FLUX_TOTAL                                         FXCA3A.848   
+     &   , L_CLEAR                                                         FXCA3A.849   
+     &   , FLUX_DIRECT_CLEAR, FLUX_TOTAL_CLEAR                             FXCA3A.850   
+     &   , 0.0E+00                                                         FXCA3A.851   
+     &   , NPD_PROFILE, NPD_LAYER                                          FXCA3A.852   
+     &   , L_NET                                                           FXCA3A.853   
+     &   )                                                                 FXCA3A.854   
+!                                                                          FXCA3A.855   
+!     INITIALIZE THE PLANCKIAN FLUXES IF REQUIRED.                         FXCA3A.856   
+      IF ( (ISOLIR.EQ.IP_INFRA_RED).AND.(.NOT.L_NET) ) THEN                FXCA3A.857   
+         DO I=0, N_LAYER                                                   FXCA3A.858   
+            DO L=1, N_PROFILE                                              FXCA3A.859   
+               PLANCK_FLUX(L, I)=0.0E+00                                   FXCA3A.860   
+            ENDDO                                                          FXCA3A.861   
+         ENDDO                                                             FXCA3A.862   
+      ENDIF                                                                FXCA3A.863   
+!                                                                          FXCA3A.864   
+!                                                                          FXCA3A.865   
+!     INITIALIZATION OF DIAGNOSTICS AND COUPLING ARRAYS FOR THE            FXCA3A.866   
+!     UNIFIED MODEL.                                                       FXCA3A.867   
+      CALL R2_INIT_COUPLE_DIAG(N_PROFILE                                   FXCA3A.868   
+     &   , SEA_FLUX                                                        FXCA3A.869   
+     &   , L_SURFACE_DOWN_FLUX, SURFACE_DOWN_FLUX                          FXCA3A.870   
+     &   , L_SURF_DOWN_CLR, SURF_DOWN_CLR                                  FXCA3A.871   
+     &   , L_SURF_UP_CLR, SURF_UP_CLR                                      FXCA3A.872   
+     &   , L_FLUX_BELOW_690NM_SURF, FLUX_BELOW_690NM_SURF                  ADB1F401.462   
+     &   , NPD_PROFILE                                                     FXCA3A.874   
+     &   )                                                                 FXCA3A.875   
+!                                                                          FXCA3A.876   
+!                                                                          FXCA3A.877   
+!                                                                          FXCA3A.878   
+!                                                                          FXCA3A.879   
+!                                                                          FXCA3A.880   
+!     SOLVE THE EQUATION OF TRANSFER IN EACH BAND AND                      FXCA3A.881   
+!     INCREMENT THE FLUXES.                                                FXCA3A.882   
+!                                                                          FXCA3A.883   
+      DO I_BAND=I_FIRST_BAND, I_LAST_BAND                                  FXCA3A.884   
+!                                                                          FXCA3A.885   
+!                                                                          FXCA3A.886   
+!        SET THE FLAG FOR THE TREATMENT OF SCATTERING IN THIS BAND         FXCA3A.887   
+         CALL SET_SCATTERING(I_SCATTER_METHOD                              FXCA3A.888   
+     &      , L_SWITCH_SCATTER(I_BAND)                                     FXCA3A.889   
+     &      , I_SCATTER_METHOD_BAND                                        FXCA3A.890   
+     &      )                                                              FXCA3A.891   
+!                                                                          FXCA3A.892   
+!        DETERMINE WHETHER GASEOUS ABSORPTION IS INCLUDED IN THIS BAND.    FXCA3A.893   
+         IF ( (L_GAS).AND.(N_BAND_ABSORB(I_BAND).GT.0) ) THEN              FXCA3A.894   
+!                                                                          FXCA3A.895   
+!           NOTE: I_GAS_BAND IS USED EXTENSIVELY BELOW SINCE NESTED        FXCA3A.896   
+!           ARRAY ELEMENTS IN A SUBROUTINE CALL (SEE LATER) CAN            FXCA3A.897   
+!           CONFUSE SOME COMPILERS.                                        FXCA3A.898   
+!                                                                          FXCA3A.899   
+!           NORMALLY THE NUMBER OF GASES IN THE CALCULATION WILL BE        FXCA3A.900   
+!           AS IN THE SPECTRAL FILE, BUT PARTICULAR OPTIONS MAY RESULT     FXCA3A.901   
+!           IN THE OMISSION OF SOME GASES.                                 FXCA3A.902   
+!                                                                          FXCA3A.903   
+            N_GAS=N_BAND_ABSORB(I_BAND)                                    FXCA3A.904   
+!                                                                          FXCA3A.905   
+            IF (I_GAS_OVERLAP(I_BAND).EQ.IP_OVERLAP_SINGLE) THEN           FXCA3A.906   
+!                                                                          FXCA3A.907   
+!              THERE WILL BE NO GASEOUS ABSORPTION IN THIS BAND            FXCA3A.908   
+!              UNLESS THE SELECTED GAS APPEARS.                            FXCA3A.909   
+               N_GAS=0                                                     FXCA3A.910   
+!                                                                          FXCA3A.911   
+               DO I=1, N_BAND_ABSORB(I_BAND)                               FXCA3A.912   
+                  IF (INDEX_ABSORB(I, I_BAND).EQ.I_GAS) N_GAS=1            FXCA3A.913   
+               ENDDO                                                       FXCA3A.914   
+!                                                                          FXCA3A.915   
+            ENDIF                                                          FXCA3A.916   
+!                                                                          FXCA3A.917   
+!                                                                          FXCA3A.918   
+            IF (N_GAS.GT.0) THEN                                           FXCA3A.919   
+!                                                                          FXCA3A.920   
+!              SET THE FLAG FOR GASEOUS ABSORPTION IN THE BAND.            FXCA3A.921   
+               L_GAS_BAND=.TRUE.                                           FXCA3A.922   
+!                                                                          FXCA3A.923   
+               DO J=1, N_GAS                                               FXCA3A.924   
+!                                                                          FXCA3A.925   
+                  I_GAS_BAND=INDEX_ABSORB(J, I_BAND)                       FXCA3A.926   
+!                                                                          FXCA3A.927   
+!                 RESET THE POINTER IF THERE IS JUST ONE GAS.              ADB1F401.463   
+!                                                                          FXCA3A.929   
+                  IF (I_GAS_OVERLAP(I_BAND).EQ.IP_OVERLAP_SINGLE)          FXCA3A.930   
+     &               THEN                                                  FXCA3A.931   
+!                    ONLY THE SELECTED GAS IS ACTIVE IN THE BAND.          FXCA3A.932   
+                     I_GAS_BAND=I_GAS                                      FXCA3A.933   
+!                                                                          FXCA3A.934   
+                  ENDIF                                                    FXCA3A.935   
+!                                                                          FXCA3A.936   
+                  IF (I_SCALE_ESFT(I_BAND, I_GAS_BAND)                     FXCA3A.937   
+     &               .EQ.IP_SCALE_BAND) THEN                               FXCA3A.938   
+!                    RESCALE THE AMOUNT OF GAS FOR THIS BAND NOW.          FXCA3A.939   
+                     CALL SCALE_ABSORB(IERR, N_PROFILE, N_LAYER            FXCA3A.940   
+     &                  , GAS_MIX_RATIO(1, 0, I_GAS_BAND), P, T            FXCA3A.941   
+     &                  , L_LAYER, I_TOP                                   FXCA3A.942   
+     &                  , GAS_FRAC_RESCALED(1, 0, I_GAS_BAND)              FXCA3A.943   
+     &                  , I_SCALE_FNC(I_BAND, I_GAS_BAND)                  FXCA3A.944   
+     &                  , P_REFERENCE(I_GAS_BAND, I_BAND)                  FXCA3A.945   
+     &                  , T_REFERENCE(I_GAS_BAND, I_BAND)                  FXCA3A.946   
+     &                  , SCALE_VECTOR(1, 1, I_BAND, I_GAS_BAND)           FXCA3A.947   
+     &                  , L_DOPPLER(I_GAS_BAND)                            FXCA3A.948   
+     &                  , DOPPLER_CORRECTION(I_GAS_BAND)                   FXCA3A.949   
+     &                  , NPD_PROFILE, NPD_LAYER, NPD_SCALE_FNC            FXCA3A.950   
+     &                  , NPD_SCALE_VARIABLE                               FXCA3A.951   
+     &                  )                                                  FXCA3A.952   
+                     IF (IERR.NE.I_NORMAL) RETURN                          FXCA3A.953   
+!                                                                          FXCA3A.954   
+                  ELSE IF (I_SCALE_ESFT(I_BAND, I_GAS_BAND)                FXCA3A.955   
+     &               .EQ.IP_SCALE_NULL) THEN                               FXCA3A.956   
+!                    COPY ACROSS THE UNSCALED ARRAY.                       FXCA3A.957   
+                        DO I=1, N_LAYER                                    FXCA3A.958   
+                           DO L=1, N_PROFILE                               FXCA3A.959   
+                              GAS_FRAC_RESCALED(L, I, I_GAS_BAND)          FXCA3A.960   
+     &                           =GAS_MIX_RATIO(L, I, I_GAS_BAND)          FXCA3A.961   
+                           ENDDO                                           FXCA3A.962   
+                        ENDDO                                              FXCA3A.963   
+                  ENDIF                                                    FXCA3A.964   
+               ENDDO                                                       FXCA3A.965   
+            ELSE                                                           FXCA3A.966   
+               L_GAS_BAND=.FALSE.                                          FXCA3A.967   
+            ENDIF                                                          FXCA3A.968   
+!                                                                          FXCA3A.969   
+         ELSE                                                              FXCA3A.970   
+            L_GAS_BAND=.FALSE.                                             FXCA3A.971   
+         ENDIF                                                             FXCA3A.972   
+!                                                                          FXCA3A.973   
+!                                                                          FXCA3A.974   
+!                                                                          FXCA3A.975   
+!        RESCALE AMOUNTS OF CONTINUA.                                      FXCA3A.976   
+!                                                                          FXCA3A.977   
+         IF (L_CONTINUUM) THEN                                             FXCA3A.978   
+            N_CONTINUUM=N_BAND_CONTINUUM(I_BAND)                           FXCA3A.979   
+            DO I=1, N_CONTINUUM                                            FXCA3A.980   
+               I_CONTINUUM_POINTER(I)=INDEX_CONTINUUM(I_BAND, I)           FXCA3A.981   
+               I_CONTINUUM=I_CONTINUUM_POINTER(I)                          FXCA3A.982   
+               K_CONTINUUM_MONO(I_CONTINUUM)                               FXCA3A.983   
+     &            =K_CONTINUUM(I_BAND, I_CONTINUUM)                        FXCA3A.984   
+               CALL RESCALE_CONTINUUM(N_PROFILE, N_LAYER, I_CONTINUUM      FXCA3A.985   
+     &            , P, T, L_LAYER, I_TOP                                   FXCA3A.986   
+     &            , DENSITY, MOLAR_DENSITY_WATER, MOLAR_DENSITY_FRN        FXCA3A.987   
+     &            , GAS_MIX_RATIO(1, 0, INDEX_WATER)                       FXCA3A.988   
+     &            , AMOUNT_CONTINUUM(1, 0, I_CONTINUUM)                    FXCA3A.989   
+     &            , I_SCALE_FNC_CONT(I_BAND, I_CONTINUUM)                  FXCA3A.990   
+     &            , P_REF_CONTINUUM(I_CONTINUUM, I_BAND)                   FXCA3A.991   
+     &            , T_REF_CONTINUUM(I_CONTINUUM, I_BAND)                   FXCA3A.992   
+     &            , SCALE_CONTINUUM(1, I_BAND, I_CONTINUUM)                FXCA3A.993   
+     &            , NPD_PROFILE, NPD_LAYER, NPD_SCALE_FNC                  FXCA3A.994   
+     &            , NPD_SCALE_VARIABLE                                     FXCA3A.995   
+     &            )                                                        FXCA3A.996   
+            ENDDO                                                          FXCA3A.997   
+         ENDIF                                                             FXCA3A.998   
+!                                                                          FXCA3A.999   
+!                                                                          FXCA3A.1000  
+!                                                                          FXCA3A.1001  
+!        CALCULATE THE GREY EXTINCTION WITHIN THE BAND.                    FXCA3A.1002  
+!                                                                          FXCA3A.1003  
+         CALL GREY_EXTINCTION(IERR                                         FXCA3A.1004  
+     &      , N_PROFILE, N_LAYER, L_LAYER, P, T, DENSITY                   FXCA3A.1005  
+     &      , L_RESCALE                                                    FXCA3A.1006  
+     &      , L_RAYLEIGH, RAYLEIGH_COEFFICIENT(I_BAND)                     FXCA3A.1007  
+     &      , L_CONTINUUM, N_CONTINUUM, I_CONTINUUM_POINTER                FXCA3A.1008  
+     &      , K_CONTINUUM_MONO, AMOUNT_CONTINUUM                           FXCA3A.1009  
+     &      , L_AEROSOL, N_AEROSOL, AEROSOL_MIX_RATIO                      FXCA3A.1010  
+     &      , I_AEROSOL_PARAMETRIZATION                                    FXCA3A.1011  
+     &      , I_HUMIDITY_POINTER, HUMIDITIES, DELTA_HUMIDITY               FXCA3A.1012  
+     &      , MEAN_REL_HUMIDITY                                            FXCA3A.1013  
+     &      , AEROSOL_ABSORPTION(1, 1, I_BAND)                             FXCA3A.1014  
+     &      , AEROSOL_SCATTERING(1, 1, I_BAND)                             FXCA3A.1015  
+     &      , AEROSOL_ASYMMETRY(1, 1, I_BAND)                              FXCA3A.1016  
+     &      , L_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE, N_CLOUD_TOP       FXCA3A.1017  
+     &      , L_CLOUD_LAYER, I_CLOUD                                       FXCA3A.1018  
+     &      , N_CONDENSED, L_CLOUD_CMP, I_PHASE_CMP                        FXCA3A.1019  
+     &      , I_CONDENSED_PARAM, CONDENSED_PARAM_LIST(1, 1, I_BAND)        FXCA3A.1020  
+     &      , CONDENSED_MIX_RATIO, CONDENSED_DIM_CHAR                      ADB2F404.561   
+     &      , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION)                        FXCA3A.1022  
+     &      , I_CLOUD_TYPE                                                 FXCA3A.1023  
+     &      , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE             FXCA3A.1024  
+     &      , FORWARD_SCATTER_FREE                                         FXCA3A.1025  
+     &      , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                           FXCA3A.1026  
+     &      , ASYMMETRY_CLOUD, FORWARD_SCATTER_CLOUD                       FXCA3A.1027  
+     &      , NPD_PROFILE, NPD_LAYER, NPD_CONTINUUM                        FXCA3A.1028  
+     &      , NPD_AEROSOL_SPECIES, NPD_HUMIDITIES                          FXCA3A.1029  
+     &      , NPD_CLOUD_PARAMETER                                          FXCA3A.1030  
+     &      )                                                              FXCA3A.1031  
+         IF (IERR.NE.I_NORMAL) RETURN                                      FXCA3A.1032  
+!                                                                          FXCA3A.1033  
+!                                                                          FXCA3A.1034  
+!                                                                          FXCA3A.1035  
+         IF (I_ANGULAR_INTEGRATION.EQ.IP_TWO_STREAM) THEN                  FXCA3A.1036  
+!                                                                          FXCA3A.1037  
+!           RESCALE THE ASYMMETRY AND CALCULATE THE SCATTERING             FXCA3A.1038  
+!           FRACTIONS. (THESE ARE GREY AND MAY BE CALCULATED OUTSIDE       FXCA3A.1039  
+!           A LOOP OVER GASES).                                            FXCA3A.1040  
+!                                                                          FXCA3A.1041  
+            IF (L_RESCALE) THEN                                            FXCA3A.1042  
+!                                                                          FXCA3A.1043  
+!              RESCALE FREE ASYMMETRY:                                     FXCA3A.1044  
+!                                                                          FXCA3A.1045  
+               CALL RESCALE_ASYMMETRY(N_PROFILE, 1, N_LAYER                FXCA3A.1046  
+     &            , ASYMMETRY_FREE, FORWARD_SCATTER_FREE                   FXCA3A.1047  
+     &            , NPD_PROFILE, NPD_LAYER                                 FXCA3A.1048  
+     &            )                                                        FXCA3A.1049  
+!                                                                          FXCA3A.1050  
+!                                                                          FXCA3A.1051  
+               IF (L_CLOUD) THEN                                           FXCA3A.1052  
+!                                                                          FXCA3A.1053  
+!                 RESCALE CLOUDY ASYMMETRY:                                FXCA3A.1054  
+!                                                                          FXCA3A.1055  
+                  DO K=1, NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION)            FXCA3A.1056  
+                     CALL RESCALE_ASYMMETRY(N_PROFILE, N_CLOUD_TOP         FXCA3A.1057  
+     &                  , N_LAYER                                          FXCA3A.1058  
+     &                  , ASYMMETRY_CLOUD(1, 1, K)                         FXCA3A.1059  
+     &                  , FORWARD_SCATTER_CLOUD(1, 1, K)                   FXCA3A.1060  
+     &                  , NPD_PROFILE, NPD_LAYER                           FXCA3A.1061  
+     &                  )                                                  FXCA3A.1062  
+                  ENDDO                                                    FXCA3A.1063  
+!                                                                          FXCA3A.1064  
+               ENDIF                                                       FXCA3A.1065  
+!                                                                          FXCA3A.1066  
+            ENDIF                                                          FXCA3A.1067  
+!                                                                          FXCA3A.1068  
+         ENDIF                                                             FXCA3A.1069  
+!                                                                          FXCA3A.1070  
+!                                                                          FXCA3A.1071  
+!                                                                          FXCA3A.1072  
+!                                                                          FXCA3A.1073  
+!        PRELIMINARY CALCULATIONS FOR SOURCE TERMS:                        FXCA3A.1074  
+!                                                                          FXCA3A.1075  
+         IF (ISOLIR.EQ.IP_SOLAR) THEN                                      FXCA3A.1076  
+!           CONVERT NORMALIZED BAND FLUXES TO ACTUAL ENERGY FLUXES.        FXCA3A.1077  
+            DO L=1, N_PROFILE                                              FXCA3A.1078  
+               INC_SOLAR_FLUX_BAND(L)=SOLAR_TOA(L)                         FXCA3A.1079  
+     &            *SOLAR_FLUX_BAND(I_BAND)/SEC_0(L)                        FXCA3A.1080  
+            ENDDO                                                          FXCA3A.1081  
+!                                                                          FXCA3A.1082  
+         ELSE IF (ISOLIR.EQ.IP_INFRA_RED) THEN                             FXCA3A.1083  
+!                                                                          FXCA3A.1084  
+!           CALCULATE THE CHANGE IN THE THERMAL SOURCE FUNCTION            FXCA3A.1085  
+!           ACROSS EACH LAYER FOR THE INFRA-RED PART OF THE SPECTRUM.      FXCA3A.1086  
+!                                                                          FXCA3A.1087  
+            CALL DIFF_PLANCK_SOURCE(N_PROFILE, N_LAYER                     FXCA3A.1088  
+     &         , N_DEG_FIT, THERMAL_COEFFICIENT(0, I_BAND)                 FXCA3A.1089  
+     &         , T_REF_PLANCK, T_LEVEL, T_GROUND                           FXCA3A.1090  
+     &         , PLANCK_SOURCE_BAND, DIFF_PLANCK_BAND                      FXCA3A.1091  
+     &         , THERMAL_GROUND_BAND                                       FXCA3A.1092  
+     &         , L_IR_SOURCE_QUAD, T, DIFF_PLANCK_BAND_2                   FXCA3A.1093  
+     &         , N_FRAC_ICE_POINT, I_FRAC_ICE_POINT, ICE_FRACTION          ADB1F401.464   
+     &         , PLANCK_FREEZE_SEA                                         ADB1F401.465   
+     &         , NPD_PROFILE, NPD_LAYER, NPD_THERMAL_COEFF                 FXCA3A.1094  
+     &         )                                                           FXCA3A.1095  
+         ENDIF                                                             FXCA3A.1096  
+!                                                                          FXCA3A.1097  
+!                                                                          FXCA3A.1098  
+!                                                                          FXCA3A.1099  
+!                                                                          FXCA3A.1100  
+!        SET THE SURFACE PROPERTIES:                                       FXCA3A.1101  
+!                                                                          FXCA3A.1102  
+         CALL SET_SURFACE_PROPERTIES(N_POINT_TYPE, INDEX_SURFACE           FXCA3A.1103  
+     &      , I_SPEC_SURFACE                                               FXCA3A.1104  
+     &      , ISOLIR, I_BAND                                               FXCA3A.1105  
+     &      , SURFACE_ALBEDO                                               FXCA3A.1106  
+     &      , ALBEDO_FIELD_DIFF(1, I_BAND), ALBEDO_FIELD_DIR(1, I_BAND)    FXCA3A.1107  
+     &      , N_DIR_ALBEDO_FIT, DIRECT_ALBEDO_PARM, SEC_0                  FXCA3A.1108  
+     &      , EMISSIVITY_GROUND, EMISSIVITY_FIELD(1, I_BAND)               FXCA3A.1109  
+     &      , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                      FXCA3A.1110  
+     &      , THERMAL_GROUND_BAND                                          FXCA3A.1111  
+     &      , NPD_PROFILE, NPD_BAND, NPD_SURFACE, NPD_ALBEDO_PARM          FXCA3A.1112  
+     &      )                                                              FXCA3A.1113  
+!                                                                          FXCA3A.1114  
+!                                                                          FXCA3A.1115  
+!                                                                          FXCA3A.1116  
+!                                                                          FXCA3A.1117  
+!                                                                          FXCA3A.1118  
+!        CALL A SOLVER APPROPRIATE TO THE PRESENCE OF GASES AND            FXCA3A.1119  
+!        THE OVERLAP ASSUMED:                                              FXCA3A.1120  
+!                                                                          FXCA3A.1121  
+         IF (.NOT.L_GAS_BAND) THEN                                         FXCA3A.1122  
+!                                                                          FXCA3A.1123  
+!           THERE IS NO GASEOUS ABSORPTION. SOLVE FOR THE                  FXCA3A.1124  
+!           FLUXES DIRECTLY.                                               FXCA3A.1125  
+!                                                                          FXCA3A.1126  
+            CALL SOLVE_BAND_WITHOUT_GAS(IERR                               FXCA3A.1127  
+!                       Atmospheric Properties                             FXCA3A.1128  
+     &         , N_PROFILE, N_LAYER, D_MASS                                FXCA3A.1129  
+!                       Angular integration                                FXCA3A.1130  
+     &         , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT      FXCA3A.1131  
+     &         , L_RESCALE, N_ORDER_GAUSS                                  FXCA3A.1132  
+!                       Treatment of scattering                            FXCA3A.1133  
+     &         , I_SCATTER_METHOD_BAND                                     FXCA3A.1134  
+!                       Options for solver                                 FXCA3A.1135  
+     &         , I_SOLVER, L_NET, N_AUGMENT                                ADB1F405.301   
+!                       Spectral region                                    FXCA3A.1137  
+     &         , ISOLIR                                                    FXCA3A.1138  
+!                       Solar Properties                                   FXCA3A.1139  
+     &         , SEC_0, INC_SOLAR_FLUX_BAND                                FXCA3A.1140  
+!                       Infra-red Properties                               FXCA3A.1141  
+     &         , PLANCK_SOURCE_BAND(1, 0)                                  FXCA3A.1142  
+     &         , PLANCK_SOURCE_BAND(1, N_LAYER)                            FXCA3A.1143  
+     &         , DIFF_PLANCK_BAND, L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2    FXCA3A.1144  
+!                       Surface Properties                                 FXCA3A.1145  
+     &         , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                   FXCA3A.1146  
+     &         , THERMAL_GROUND_BAND                                       FXCA3A.1147  
+!                       Clear-sky optical properties                       FXCA3A.1148  
+     &         , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE          FXCA3A.1149  
+     &         , FORWARD_SCATTER_FREE                                      FXCA3A.1150  
+!                       Cloudy properties                                  FXCA3A.1151  
+     &         , L_CLOUD, I_CLOUD                                          FXCA3A.1152  
+!                       Cloudy Geometry                                    FXCA3A.1153  
+     &         , N_CLOUD_TOP                                               FXCA3A.1154  
+     &         , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION), FRAC_CLOUD         FXCA3A.1155  
+     &         , I_REGION_CLOUD, FRAC_REGION                               ADB1F402.474   
+     &         , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                    FXCA3A.1156  
+     &         , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE                 FXCA3A.1157  
+     &         , CLOUD_OVERLAP                                             FXCA3A.1158  
+     &         , N_COLUMN, L_COLUMN, AREA_COLUMN                           FXCA3A.1159  
+!                       Cloudy optical properties                          FXCA3A.1160  
+     &         , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                        FXCA3A.1161  
+     &         , ASYMMETRY_CLOUD, FORWARD_SCATTER_CLOUD                    FXCA3A.1162  
+!                       Calculated Fluxes                                  FXCA3A.1163  
+     &         , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                         FXCA3A.1164  
+!                       Flags for Clear-sky Fluxes                         FXCA3A.1165  
+     &         , L_CLEAR, I_SOLVER_CLEAR                                   FXCA3A.1166  
+!                       Calculated Clear-sky Fluxes                        FXCA3A.1167  
+     &         , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND             FXCA3A.1168  
+!                       Planckian Function                                 FXCA3A.1169  
+     &         , PLANCK_SOURCE_BAND                                        FXCA3A.1170  
+!                       Dimensions of Arrays                               FXCA3A.1171  
+     &         , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                        FXCA3A.1172  
+     &         )                                                           FXCA3A.1173  
+            IF (IERR.NE.I_NORMAL) RETURN                                   FXCA3A.1174  
+!                                                                          FXCA3A.1175  
+!                                                                          FXCA3A.1176  
+         ELSE                                                              FXCA3A.1177  
+!                                                                          FXCA3A.1178  
+!           GASES ARE INCLUDED.                                            FXCA3A.1179  
+!                                                                          FXCA3A.1180  
+!           INITIALIZE THE FLUX IN THE BAND TO ZERO.                       FXCA3A.1181  
+            CALL INITIALIZE_FLUX(N_PROFILE, N_LAYER, N_AUGMENT             FXCA3A.1182  
+     &         , ISOLIR                                                    FXCA3A.1183  
+     &         , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                         FXCA3A.1184  
+     &         , L_CLEAR                                                   FXCA3A.1185  
+     &         , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND             FXCA3A.1186  
+     &         , 0.0E+00                                                   FXCA3A.1187  
+     &         , NPD_PROFILE, NPD_LAYER                                    FXCA3A.1188  
+     &         , L_NET                                                     FXCA3A.1189  
+     &         )                                                           FXCA3A.1190  
+!                                                                          FXCA3A.1191  
+!           TREAT THE GASEOUS OVERLAPS AS DIRECTED BY                      FXCA3A.1192  
+!           THE OVERLAP SWITCH.                                            FXCA3A.1193  
+!                                                                          FXCA3A.1194  
+            IF (I_GAS_OVERLAP(I_BAND).EQ.IP_OVERLAP_SINGLE) THEN           FXCA3A.1195  
+!                                                                          FXCA3A.1196  
+               CALL SOLVE_BAND_ONE_GAS(IERR                                FXCA3A.1197  
+!                       Atmospheric Properties                             FXCA3A.1198  
+     &            , N_PROFILE, N_LAYER, L_LAYER, I_TOP, P, T, D_MASS       FXCA3A.1199  
+!                       Angular Integration                                FXCA3A.1200  
+     &            , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT   FXCA3A.1201  
+     &            , L_RESCALE, N_ORDER_GAUSS                               FXCA3A.1202  
+!                       Treatment of Scattering                            FXCA3A.1203  
+     &            , I_SCATTER_METHOD_BAND                                  FXCA3A.1204  
+!                       Options for solver                                 FXCA3A.1205  
+     &            , I_SOLVER, L_NET, N_AUGMENT                             ADB1F405.302   
+!                       Gaseous Properties                                 FXCA3A.1207  
+     &            , I_BAND, I_GAS                                          FXCA3A.1208  
+     &            , I_BAND_ESFT, I_SCALE_ESFT, I_SCALE_FNC                 FXCA3A.1209  
+     &            , K_ESFT, W_ESFT, SCALE_VECTOR                           FXCA3A.1210  
+     &            , P_REFERENCE, T_REFERENCE                               FXCA3A.1211  
+     &            , GAS_MIX_RATIO, GAS_FRAC_RESCALED                       FXCA3A.1212  
+     &            , L_DOPPLER, DOPPLER_CORRECTION                          FXCA3A.1213  
+!                       Spectral Region                                    FXCA3A.1214  
+     &            , ISOLIR                                                 FXCA3A.1215  
+!                       Solar Properties                                   FXCA3A.1216  
+     &            , SEC_0, INC_SOLAR_FLUX_BAND                             FXCA3A.1217  
+!                       Infra-red Properties                               FXCA3A.1218  
+     &            , PLANCK_SOURCE_BAND(1, 0)                               FXCA3A.1219  
+     &            , PLANCK_SOURCE_BAND(1, N_LAYER)                         FXCA3A.1220  
+     &            , DIFF_PLANCK_BAND                                       FXCA3A.1221  
+     &            , L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2                   FXCA3A.1222  
+!                       Surface Properties                                 FXCA3A.1223  
+     &            , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                FXCA3A.1224  
+     &            , THERMAL_GROUND_BAND                                    FXCA3A.1225  
+!                       Clear-sky optical Properties                       FXCA3A.1226  
+     &            , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE       FXCA3A.1227  
+     &            , FORWARD_SCATTER_FREE                                   FXCA3A.1228  
+!                       Cloudy properties                                  FXCA3A.1229  
+     &            , L_CLOUD, I_CLOUD                                       FXCA3A.1230  
+!                       Cloud Geometry                                     FXCA3A.1231  
+     &            , N_CLOUD_TOP                                            FXCA3A.1232  
+     &            , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION), FRAC_CLOUD      FXCA3A.1233  
+     &            , I_REGION_CLOUD, FRAC_REGION                            ADB1F402.475   
+     &            , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                 FXCA3A.1234  
+     &            , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE              FXCA3A.1235  
+     &            , CLOUD_OVERLAP                                          FXCA3A.1236  
+     &            , N_COLUMN, L_COLUMN, AREA_COLUMN                        FXCA3A.1237  
+!                       Cloudy Optical Properties                          FXCA3A.1238  
+     &            , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                     FXCA3A.1239  
+     &            , ASYMMETRY_CLOUD                                        FXCA3A.1240  
+     &            , FORWARD_SCATTER_CLOUD                                  FXCA3A.1241  
+!                       Fluxes Calculated                                  FXCA3A.1242  
+     &            , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                      FXCA3A.1243  
+!                       Flags for clear-sky calculations                   FXCA3A.1244  
+     &            , L_CLEAR, I_SOLVER_CLEAR                                FXCA3A.1245  
+!                       Clear-sky Fluxes                                   FXCA3A.1246  
+     &            , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND          FXCA3A.1247  
+!                       Planckian Function                                 FXCA3A.1248  
+     &            , PLANCK_SOURCE_BAND                                     FXCA3A.1249  
+!                       Dimensions of Arrays                               FXCA3A.1250  
+     &            , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                     FXCA3A.1251  
+     &            , NPD_BAND, NPD_SPECIES                                  FXCA3A.1252  
+     &            , NPD_ESFT_TERM, NPD_SCALE_VARIABLE, NPD_SCALE_FNC       FXCA3A.1253  
+     &            )                                                        FXCA3A.1254  
+!                                                                          FXCA3A.1255  
+            ELSE IF (I_GAS_OVERLAP(I_BAND).EQ.IP_OVERLAP_RANDOM) THEN      FXCA3A.1256  
+!                                                                          FXCA3A.1257  
+               CALL SOLVE_BAND_RANDOM_OVERLAP(IERR                         FXCA3A.1258  
+!                       Atmospheric Properties                             FXCA3A.1259  
+     &            , N_PROFILE, N_LAYER, L_LAYER, I_TOP, P, T, D_MASS       FXCA3A.1260  
+!                       Angular Integration                                FXCA3A.1261  
+     &            , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT   FXCA3A.1262  
+     &            , L_RESCALE, N_ORDER_GAUSS                               FXCA3A.1263  
+!                       Treatment of Scattering                            FXCA3A.1264  
+     &            , I_SCATTER_METHOD_BAND                                  FXCA3A.1265  
+!                       Options for solver                                 FXCA3A.1266  
+     &            , I_SOLVER, L_NET, N_AUGMENT                             ADB1F405.303   
+!                       Gaseous Properties                                 FXCA3A.1268  
+     &            , I_BAND, N_GAS                                          FXCA3A.1269  
+     &            , INDEX_ABSORB, I_BAND_ESFT, I_SCALE_ESFT, I_SCALE_FNC   FXCA3A.1270  
+     &            , K_ESFT, W_ESFT, SCALE_VECTOR                           FXCA3A.1271  
+     &            , P_REFERENCE, T_REFERENCE                               FXCA3A.1272  
+     &            , GAS_MIX_RATIO, GAS_FRAC_RESCALED                       FXCA3A.1273  
+     &            , L_DOPPLER, DOPPLER_CORRECTION                          FXCA3A.1274  
+!                       Spectral Region                                    FXCA3A.1275  
+     &            , ISOLIR                                                 FXCA3A.1276  
+!                       Solar Properties                                   FXCA3A.1277  
+     &            , SEC_0, INC_SOLAR_FLUX_BAND                             FXCA3A.1278  
+!                       Infra-red Properties                               FXCA3A.1279  
+     &            , PLANCK_SOURCE_BAND(1, 0)                               FXCA3A.1280  
+     &            , PLANCK_SOURCE_BAND(1, N_LAYER)                         FXCA3A.1281  
+     &            , DIFF_PLANCK_BAND                                       FXCA3A.1282  
+     &            , L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2                   FXCA3A.1283  
+!                       Surface Properties                                 FXCA3A.1284  
+     &            , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                FXCA3A.1285  
+     &            , THERMAL_GROUND_BAND                                    FXCA3A.1286  
+!                       Clear-sky optical Properties                       FXCA3A.1287  
+     &            , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE       FXCA3A.1288  
+     &            , FORWARD_SCATTER_FREE                                   FXCA3A.1289  
+!                       Cloudy Properties                                  FXCA3A.1290  
+     &            , L_CLOUD, I_CLOUD                                       FXCA3A.1291  
+!                       Cloud Geometry                                     FXCA3A.1292  
+     &            , N_CLOUD_TOP                                            FXCA3A.1293  
+     &            , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION), FRAC_CLOUD      FXCA3A.1294  
+     &            , I_REGION_CLOUD, FRAC_REGION                            ADB1F402.476   
+     &            , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                 FXCA3A.1295  
+     &            , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE              FXCA3A.1296  
+     &            , CLOUD_OVERLAP                                          FXCA3A.1297  
+     &            , N_COLUMN, L_COLUMN, AREA_COLUMN                        FXCA3A.1298  
+!                       Cloudy optical Properties                          FXCA3A.1299  
+     &            , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                     FXCA3A.1300  
+     &            , ASYMMETRY_CLOUD                                        FXCA3A.1301  
+     &            , FORWARD_SCATTER_CLOUD                                  FXCA3A.1302  
+!                       Fluxes Calculated                                  FXCA3A.1303  
+     &            , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                      FXCA3A.1304  
+!                       Flags for Clear-sky Calculations                   FXCA3A.1305  
+     &            , L_CLEAR, I_SOLVER_CLEAR                                FXCA3A.1306  
+!                       Clear-sky Fluxes                                   FXCA3A.1307  
+     &            , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND          FXCA3A.1308  
+!                       Planckian Function                                 FXCA3A.1309  
+     &            , PLANCK_SOURCE_BAND                                     FXCA3A.1310  
+!                       Dimensions of Arrays                               FXCA3A.1311  
+     &            , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                     FXCA3A.1312  
+     &            , NPD_BAND, NPD_SPECIES                                  FXCA3A.1313  
+     &            , NPD_ESFT_TERM, NPD_SCALE_VARIABLE, NPD_SCALE_FNC       FXCA3A.1314  
+     &            )                                                        FXCA3A.1315  
+!                                                                          FXCA3A.1316  
+            ELSE IF (I_GAS_OVERLAP(I_BAND).EQ.IP_OVERLAP_FESFT) THEN       FXCA3A.1317  
+!                                                                          FXCA3A.1318  
+               CALL SOLVE_BAND_FESFT(IERR                                  FXCA3A.1319  
+!                       Atmospheric Properties                             FXCA3A.1320  
+     &            , N_PROFILE, N_LAYER, L_LAYER, I_TOP, P, T, D_MASS       FXCA3A.1321  
+!                       Angular Integration                                FXCA3A.1322  
+     &            , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT   FXCA3A.1323  
+     &            , L_RESCALE, N_ORDER_GAUSS                               FXCA3A.1324  
+!                       Treatment of Scattering                            FXCA3A.1325  
+     &            , I_SCATTER_METHOD_BAND                                  FXCA3A.1326  
+!                       Options for solver                                 FXCA3A.1327  
+     &            , I_SOLVER, L_NET, N_AUGMENT                             ADB1F405.304   
+!                       Gaseous Properties                                 FXCA3A.1329  
+     &            , I_BAND, N_GAS                                          FXCA3A.1330  
+     &            , INDEX_ABSORB, I_BAND_ESFT, I_SCALE_ESFT, I_SCALE_FNC   FXCA3A.1331  
+     &            , K_ESFT, W_ESFT, SCALE_VECTOR                           FXCA3A.1332  
+     &            , P_REFERENCE, T_REFERENCE                               FXCA3A.1333  
+     &            , GAS_MIX_RATIO, GAS_FRAC_RESCALED                       FXCA3A.1334  
+     &            , L_DOPPLER, DOPPLER_CORRECTION                          FXCA3A.1335  
+!                       Spectral Region                                    FXCA3A.1336  
+     &            , ISOLIR                                                 FXCA3A.1337  
+!                       Solar Properties                                   FXCA3A.1338  
+     &            , SEC_0, INC_SOLAR_FLUX_BAND                             FXCA3A.1339  
+!                       Infra-red Properties                               FXCA3A.1340  
+     &            , PLANCK_SOURCE_BAND(1, 0)                               FXCA3A.1341  
+     &            , PLANCK_SOURCE_BAND(1, N_LAYER)                         FXCA3A.1342  
+     &            , DIFF_PLANCK_BAND                                       FXCA3A.1343  
+     &            , L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2                   FXCA3A.1344  
+!                       Surface Properties                                 FXCA3A.1345  
+     &            , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                FXCA3A.1346  
+     &            , THERMAL_GROUND_BAND                                    FXCA3A.1347  
+!                       Clear-sky Optical Properties                       FXCA3A.1348  
+     &            , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE       FXCA3A.1349  
+     &            , FORWARD_SCATTER_FREE                                   FXCA3A.1350  
+!                       Cloudy Properties                                  FXCA3A.1351  
+     &            , L_CLOUD, I_CLOUD                                       FXCA3A.1352  
+!                       Cloud Geometry                                     FXCA3A.1353  
+     &            , N_CLOUD_TOP                                            FXCA3A.1354  
+     &            , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION), FRAC_CLOUD      FXCA3A.1355  
+     &            , I_REGION_CLOUD, FRAC_REGION                            ADB1F402.477   
+     &            , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                 FXCA3A.1356  
+     &            , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE              FXCA3A.1357  
+     &            , CLOUD_OVERLAP                                          FXCA3A.1358  
+     &            , N_COLUMN, L_COLUMN, AREA_COLUMN                        FXCA3A.1359  
+!                       Cloudy Optical Properties                          FXCA3A.1360  
+     &            , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                     FXCA3A.1361  
+     &            , ASYMMETRY_CLOUD, FORWARD_SCATTER_CLOUD                 FXCA3A.1362  
+!                       Fluxes Calculated                                  FXCA3A.1363  
+     &            , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                      FXCA3A.1364  
+!                       Flags for Clear Fluxes                             FXCA3A.1365  
+     &            , L_CLEAR, I_SOLVER_CLEAR                                FXCA3A.1366  
+!                       Clear-sky Fluxes Calculated                        FXCA3A.1367  
+     &            , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND          FXCA3A.1368  
+!                       Planckian Source Function                          FXCA3A.1369  
+     &            , PLANCK_SOURCE_BAND                                     FXCA3A.1370  
+!                       Sizes of Arrays                                    FXCA3A.1371  
+     &            , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                     FXCA3A.1372  
+     &            , NPD_BAND, NPD_SPECIES                                  FXCA3A.1373  
+     &            , NPD_ESFT_TERM, NPD_SCALE_VARIABLE, NPD_SCALE_FNC       FXCA3A.1374  
+     &            )                                                        FXCA3A.1375  
+!                                                                          FXCA3A.1376  
+            ELSE IF (I_GAS_OVERLAP(I_BAND).EQ.IP_OVERLAP_CLR_FESFT) THEN   FXCA3A.1377  
+!                                                                          FXCA3A.1378  
+               CALL SOLVE_BAND_CLR_FESFT(IERR                              FXCA3A.1379  
+!                       Atmospheric Properties                             FXCA3A.1380  
+     &            , N_PROFILE, N_LAYER, L_LAYER, I_TOP, P, T, D_MASS       FXCA3A.1381  
+!                       Angular Integration                                FXCA3A.1382  
+     &            , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT   FXCA3A.1383  
+     &            , L_RESCALE, N_ORDER_GAUSS                               FXCA3A.1384  
+!                       Treatment of Scattering                            FXCA3A.1385  
+     &            , I_SCATTER_METHOD_BAND                                  FXCA3A.1386  
+!                       Options for Solver                                 FXCA3A.1387  
+     &            , I_SOLVER, L_NET, N_AUGMENT                             ADB1F405.305   
+!                       Gaseous Properties                                 FXCA3A.1389  
+     &            , I_BAND, N_GAS                                          FXCA3A.1390  
+     &            , INDEX_ABSORB, I_BAND_ESFT, I_SCALE_ESFT, I_SCALE_FNC   FXCA3A.1391  
+     &            , K_ESFT, W_ESFT, SCALE_VECTOR                           FXCA3A.1392  
+     &            , P_REFERENCE, T_REFERENCE                               FXCA3A.1393  
+     &            , GAS_MIX_RATIO, GAS_FRAC_RESCALED                       FXCA3A.1394  
+     &            , L_DOPPLER, DOPPLER_CORRECTION                          FXCA3A.1395  
+!                       Spectral Region                                    FXCA3A.1396  
+     &            , ISOLIR                                                 FXCA3A.1397  
+!                       Solar Properties                                   FXCA3A.1398  
+     &            , SEC_0, INC_SOLAR_FLUX_BAND                             FXCA3A.1399  
+!                       Infra-red Properties                               FXCA3A.1400  
+     &            , PLANCK_SOURCE_BAND                                     FXCA3A.1401  
+     &            , DIFF_PLANCK_BAND                                       FXCA3A.1402  
+     &            , L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2                   FXCA3A.1403  
+!                       Surface Properties                                 FXCA3A.1404  
+     &            , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                FXCA3A.1405  
+     &            , THERMAL_GROUND_BAND                                    FXCA3A.1406  
+!                       Clear-sky Optical Properties                       FXCA3A.1407  
+     &            , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE       FXCA3A.1408  
+     &            , FORWARD_SCATTER_FREE                                   FXCA3A.1409  
+!                       Cloudy Properties                                  FXCA3A.1410  
+     &            , L_CLOUD, I_CLOUD                                       FXCA3A.1411  
+!                       Cloud Geometry                                     FXCA3A.1412  
+     &            , N_CLOUD_TOP                                            FXCA3A.1413  
+     &            , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION), FRAC_CLOUD      FXCA3A.1414  
+     &            , I_REGION_CLOUD, FRAC_REGION                            ADB1F402.478   
+     &            , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                 FXCA3A.1415  
+     &            , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE              FXCA3A.1416  
+     &            , CLOUD_OVERLAP                                          FXCA3A.1417  
+     &            , N_COLUMN, L_COLUMN, AREA_COLUMN                        FXCA3A.1418  
+!                       Cloudy Optical Properties                          FXCA3A.1419  
+     &            , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                     FXCA3A.1420  
+     &            , ASYMMETRY_CLOUD                                        FXCA3A.1421  
+     &            , FORWARD_SCATTER_CLOUD                                  FXCA3A.1422  
+!                       Fluxes Calculated                                  FXCA3A.1423  
+     &            , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                      FXCA3A.1424  
+!                       Flags for Clear-sky Fluxes                         FXCA3A.1425  
+     &            , L_CLEAR, I_SOLVER_CLEAR                                FXCA3A.1426  
+!                       Clear-sky Fluxes Calculated                        FXCA3A.1427  
+     &            , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND          FXCA3A.1428  
+     &            , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                     FXCA3A.1429  
+     &            , NPD_BAND, NPD_SPECIES                                  FXCA3A.1430  
+     &            , NPD_ESFT_TERM, NPD_SCALE_VARIABLE, NPD_SCALE_FNC       FXCA3A.1431  
+     &            )                                                        FXCA3A.1432  
+!                                                                          FXCA3A.1433  
+            ELSE IF (I_GAS_OVERLAP(I_BAND).EQ.IP_OVERLAP_K_EQV) THEN       FXCA3A.1434  
+!                                                                          FXCA3A.1435  
+               CALL SOLVE_BAND_K_EQV(IERR                                  FXCA3A.1436  
+!                       Atmospheric Properties                             FXCA3A.1437  
+     &            , N_PROFILE, N_LAYER, L_LAYER, I_TOP, P, T, D_MASS       FXCA3A.1438  
+!                       Angular Integration                                FXCA3A.1439  
+     &            , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT   FXCA3A.1440  
+     &            , L_RESCALE, N_ORDER_GAUSS                               FXCA3A.1441  
+!                       Treatment of Scattering                            FXCA3A.1442  
+     &            , I_SCATTER_METHOD_BAND                                  FXCA3A.1443  
+!                       Options for Solver                                 FXCA3A.1444  
+     &            , I_SOLVER, L_NET, N_AUGMENT                             ADB1F405.306   
+!                       Gaseous Properties                                 FXCA3A.1446  
+     &            , I_BAND, N_GAS                                          FXCA3A.1447  
+     &            , INDEX_ABSORB, I_BAND_ESFT, I_SCALE_ESFT, I_SCALE_FNC   FXCA3A.1448  
+     &            , K_ESFT, W_ESFT, SCALE_VECTOR                           FXCA3A.1449  
+     &            , P_REFERENCE, T_REFERENCE                               FXCA3A.1450  
+     &            , GAS_MIX_RATIO, GAS_FRAC_RESCALED                       FXCA3A.1451  
+     &            , L_DOPPLER, DOPPLER_CORRECTION                          FXCA3A.1452  
+!                       Spectral Region                                    FXCA3A.1453  
+     &            , ISOLIR                                                 FXCA3A.1454  
+!                       Solar Properties                                   FXCA3A.1455  
+     &            , SEC_0, INC_SOLAR_FLUX_BAND                             FXCA3A.1456  
+!                       Infra-red Properties                               FXCA3A.1457  
+     &            , PLANCK_SOURCE_BAND                                     FXCA3A.1458  
+     &            , DIFF_PLANCK_BAND                                       FXCA3A.1459  
+     &            , L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2                   FXCA3A.1460  
+!                       Surface Properties                                 FXCA3A.1461  
+     &            , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                FXCA3A.1462  
+     &            , THERMAL_GROUND_BAND                                    FXCA3A.1463  
+!                       Clear-sky optical properties                       FXCA3A.1464  
+     &            , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE       FXCA3A.1465  
+     &            , FORWARD_SCATTER_FREE                                   FXCA3A.1466  
+!                       Cloudy Properties                                  FXCA3A.1467  
+     &            , L_CLOUD, I_CLOUD                                       FXCA3A.1468  
+!                       Cloud Geometry                                     FXCA3A.1469  
+     &            , N_CLOUD_TOP                                            FXCA3A.1470  
+     &            , NP_CLOUD_TYPE(I_CLOUD_REPRESENTATION), FRAC_CLOUD      FXCA3A.1471  
+     &            , I_REGION_CLOUD, FRAC_REGION                            ADB1F402.479   
+     &            , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                 FXCA3A.1472  
+     &            , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE              FXCA3A.1473  
+     &            , CLOUD_OVERLAP                                          FXCA3A.1474  
+     &            , N_COLUMN, L_COLUMN, AREA_COLUMN                        FXCA3A.1475  
+!                       Cloudy Optical Properties                          FXCA3A.1476  
+     &            , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                     FXCA3A.1477  
+     &            , ASYMMETRY_CLOUD                                        FXCA3A.1478  
+     &            , FORWARD_SCATTER_CLOUD                                  FXCA3A.1479  
+!                       Fluxes Calculated                                  FXCA3A.1480  
+     &            , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                      FXCA3A.1481  
+!                       Flags for Clear-sky Calculations                   FXCA3A.1482  
+     &            , L_CLEAR, I_SOLVER_CLEAR                                FXCA3A.1483  
+!                       Clear-sky Fluxes Calculated                        FXCA3A.1484  
+     &            , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND          FXCA3A.1485  
+!                       Dimensions of Arrays                               FXCA3A.1486  
+     &            , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                     FXCA3A.1487  
+     &            , NPD_BAND, NPD_SPECIES                                  FXCA3A.1488  
+     &            , NPD_ESFT_TERM, NPD_SCALE_VARIABLE, NPD_SCALE_FNC       FXCA3A.1489  
+     &            )                                                        FXCA3A.1490  
+!                                                                          FXCA3A.1491  
+            ENDIF                                                          FXCA3A.1492  
+         ENDIF                                                             FXCA3A.1493  
+!                                                                          FXCA3A.1494  
+!                                                                          FXCA3A.1495  
+!                                                                          FXCA3A.1496  
+!        INCREMENT THE TOTAL FLUXES.                                       FXCA3A.1497  
+!                                                                          FXCA3A.1498  
+         CALL AUGMENT_TOTAL_FLUX(N_PROFILE, N_LAYER, N_AUGMENT             FXCA3A.1499  
+     &      , ISOLIR, L_CLEAR, L_NET                                       FXCA3A.1500  
+     &      , WEIGHT_BAND(I_BAND), PLANCK_SOURCE_BAND                      FXCA3A.1501  
+     &      , FLUX_DIRECT, FLUX_TOTAL                                      FXCA3A.1502  
+     &      , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                            FXCA3A.1503  
+     &      , FLUX_DIRECT_CLEAR, FLUX_TOTAL_CLEAR                          FXCA3A.1504  
+     &      , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND                FXCA3A.1505  
+     &      , PLANCK_FLUX                                                  FXCA3A.1506  
+     &      , NPD_PROFILE, NPD_LAYER                                       FXCA3A.1507  
+     &      , ALBEDO_SURFACE_DIFF                                          FXCA3A.1508  
+     &      , ALBEDO_SURFACE_DIR                                           FXCA3A.1509  
+     &      )                                                              FXCA3A.1510  
+!                                                                          FXCA3A.1511  
+!                                                                          FXCA3A.1512  
+!                                                                          ADB1F401.466   
+!        INCREMENT THE BAND-DEPENDENT DIAGNOSTICS FOR THE                  FXCA3A.1513  
+!        UNIFIED MODEL.                                                    FXCA3A.1514  
+         CALL R2_COUPLE_DIAG(N_PROFILE, L_NET, ISOLIR                      FXCA3A.1515  
+     &      , ALBEDO_FIELD_DIFF(1, I_BAND), ALBEDO_FIELD_DIR(1, I_BAND)    FXCA3A.1516  
+     &      , ALBEDO_SEA_DIFF(1, I_BAND), ALBEDO_SEA_DIR(1, I_BAND)        FXCA3A.1517  
+     &      , N_FRAC_ICE_POINT, I_FRAC_ICE_POINT, ICE_FRACTION             ADB1F401.467   
+     &      , PLANCK_FREEZE_SEA                                            ADB1F401.468   
+     &      , PLANCK_SOURCE_BAND(1, N_LAYER), THERMAL_GROUND_BAND          ADB1F401.469   
+     &      , FLUX_TOTAL_BAND(1, N_AUGMENT)                                FXCA3A.1519  
+     &      , FLUX_TOTAL_BAND(1, N_AUGMENT-1)                              ADB1F401.470   
+     &      , FLUX_DIRECT_BAND(1, N_LAYER)                                 FXCA3A.1521  
+     &      , FLUX_TOTAL_CLEAR_BAND(1, N_AUGMENT)                          FXCA3A.1522  
+     &      , FLUX_TOTAL_CLEAR_BAND(1, N_AUGMENT-1)                        ADB1F401.471   
+     &      , FLUX_DIRECT_CLEAR_BAND(1, N_LAYER)                           FXCA3A.1524  
+     &      , WEIGHT_690NM(I_BAND)                                         ADB1F401.472   
+     &      , SEA_FLUX                                                     FXCA3A.1526  
+     &      , L_SURFACE_DOWN_FLUX, SURFACE_DOWN_FLUX                       FXCA3A.1527  
+     &      , L_SURF_DOWN_CLR, SURF_DOWN_CLR                               FXCA3A.1528  
+     &      , L_SURF_UP_CLR, SURF_UP_CLR                                   FXCA3A.1529  
+     &      , L_FLUX_BELOW_690NM_SURF, FLUX_BELOW_690NM_SURF               ADB1F401.473   
+     &      , NPD_PROFILE                                                  FXCA3A.1531  
+     &      )                                                              FXCA3A.1532  
+!                                                                          FXCA3A.1533  
+      ENDDO                                                                FXCA3A.1534  
+!                                                                          FXCA3A.1535  
+!                                                                          FXCA3A.1536  
+!                                                                          FXCA3A.1537  
+!                                                                          FXCA3A.1538  
+!     PASS THE CALCULATED FLUXES INTO THE OUTPUT ARRAYS.                   FXCA3A.1539  
+!                                                                          FXCA3A.1540  
+      CALL ASSIGN_FLUX(N_PROFILE, N_LAYER                                  FXCA3A.1541  
+     &   , FLUX_TOTAL, FLUX_TOTAL_CLEAR                                    FXCA3A.1542  
+     &   , ISOLIR                                                          FXCA3A.1543  
+     &   , PLANCK_FLUX                                                     FXCA3A.1544  
+     &   , L_CLEAR, L_NET                                                  FXCA3A.1545  
+     &   , FLUX_DOWN, FLUX_UP, FLUX_DOWN_CLEAR, FLUX_UP_CLEAR              FXCA3A.1546  
+     &   , NPD_PROFILE, NPD_LAYER                                          FXCA3A.1547  
+     &   )                                                                 FXCA3A.1548  
+!                                                                          FXCA3A.1549  
+!                                                                          FXCA3A.1550  
+!                                                                          FXCA3A.1551  
+      RETURN                                                               FXCA3A.1552  
+      END                                                                  FXCA3A.1553  
+*ENDIF DEF,A01_3A,OR,DEF,A02_3A                                            FXCA3A.1554  
+*ENDIF DEF,A70_1A,OR,DEF,A70_1B                                            APB4F405.26    

@@ -1,0 +1,687 @@
+*IF DEF,A70_1A                                                             ADB1F402.31    
+*IF DEF,A01_3A,OR,DEF,A02_3A                                               GREYK3A.2     
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.13314 
+C                                                                          GTS2F400.13315 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.13316 
+C restrictions as set forth in the contract.                               GTS2F400.13317 
+C                                                                          GTS2F400.13318 
+C                Meteorological Office                                     GTS2F400.13319 
+C                London Road                                               GTS2F400.13320 
+C                BRACKNELL                                                 GTS2F400.13321 
+C                Berkshire UK                                              GTS2F400.13322 
+C                RG12 2SZ                                                  GTS2F400.13323 
+C                                                                          GTS2F400.13324 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.13325 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.13326 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.13327 
+C Modelling at the above address.                                          GTS2F400.13328 
+C ******************************COPYRIGHT******************************    GTS2F400.13329 
+C                                                                          GTS2F400.13330 
+!+ Subroutine to calculate grey extinctions.                               GREYK3A.3     
+!                                                                          GREYK3A.4     
+! Method:                                                                  GREYK3A.5     
+!       For each activated optical process, excluding gaseous              GREYK3A.6     
+!       absorption, increments are calculated for the total and            GREYK3A.7     
+!       scattering extinctions, and the products of the asymmetry          GREYK3A.8     
+!       factor and the forward scattering factor in clear and              GREYK3A.9     
+!       cloudy regions. These increments are summed, and the grey          GREYK3A.10    
+!       total and scattering extinctions and the asymmetry and forward     GREYK3A.11    
+!       scattering factors are thus calculated.                            GREYK3A.12    
+!                                                                          GREYK3A.13    
+! Current Owner of Code: J. M. Edwards                                     GREYK3A.14    
+!                                                                          GREYK3A.15    
+! History:                                                                 GREYK3A.16    
+!       Version         Date                    Comment                    GREYK3A.17    
+!       4.0             27-07-95                Original Code              GREYK3A.18    
+!                                               (J. M. Edwards)            GREYK3A.19    
+!       4.1             06-06-96                Indentation made           ADB1F401.474   
+!                                               consistent                 ADB1F401.475   
+!                                               (J. M. Edwards)            ADB1F401.476   
+!       4.2             Nov. 96   T3E migration: CALL WHENFGT replaced     GSS2F402.193   
+!                                  by portable fortran code.               GSS2F402.194   
+!                                                S.J.Swarbrick             GSS2F402.195   
+!       4.4             30-09-96                Effective radius           ADB2F404.570   
+!                                               relabelled as              ADB2F404.571   
+!                                               characteristic             ADB2F404.572   
+!                                               dimension for              ADB2F404.573   
+!                                               generality to cover        ADB2F404.574   
+!                                               parametrizations           ADB2F404.575   
+!                                               of non-spherical           ADB2F404.576   
+!                                               ice.                       ADB2F404.577   
+!                                               (J. M. Edwards)            ADB2F404.578   
+!       4.5             18-05-98                Removal of test            ADB1F405.307   
+!                                               for deleted cloud          ADB1F405.308   
+!                                               scheme.                    ADB1F405.309   
+!                                               (J. M. Edwards)            ADB1F405.310   
+!LL  4.5  27/04/98  Add Fujitsu vectorization directive.                   GRB0F405.138   
+!LL                                           RBarnes@ecmwf.int            GRB0F405.139   
+!                                                                          GREYK3A.20    
+! Description of Code:                                                     GREYK3A.21    
+!   FORTRAN 77  with extensions listed in documentation.                   GREYK3A.22    
+!                                                                          GREYK3A.23    
+!- ---------------------------------------------------------------------   GREYK3A.24    
+! Fujitsu directive to encourage vectorization for whole routine           GRB0F405.140   
+!OCL NOVREC                                                                GRB0F405.141   
+      SUBROUTINE GREY_EXTINCTION(IERR                                      GREYK3A.25    
+     &   , N_PROFILE, N_LAYER, L_LAYER, P, T, DENSITY                      GREYK3A.26    
+     &   , L_RESCALE                                                       GREYK3A.27    
+     &   , L_RAYLEIGH, RAYLEIGH_COEFF                                      GREYK3A.28    
+     &   , L_CONTINUUM, N_CONTINUUM, I_CONTINUUM_POINTER, K_CONTINUUM      GREYK3A.29    
+     &   , AMOUNT_CONTINUUM                                                GREYK3A.30    
+     &   , L_AEROSOL, N_AEROSOL, AEROSOL_MIX_RATIO                         GREYK3A.31    
+     &   , I_AEROSOL_PARAMETRIZATION                                       GREYK3A.32    
+     &   , I_HUMIDITY_POINTER, HUMIDITIES, DELTA_HUMIDITY                  GREYK3A.33    
+     &   , MEAN_REL_HUMIDITY                                               GREYK3A.34    
+     &   , AEROSOL_ABSORPTION, AEROSOL_SCATTERING, AEROSOL_ASYMMETRY       GREYK3A.35    
+     &   , L_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE, N_CLOUD_TOP          GREYK3A.36    
+     &   , L_CLOUD_LAYER, I_CLOUD                                          GREYK3A.37    
+     &   , N_CONDENSED, L_CLOUD_CMP, I_PHASE_CMP                           GREYK3A.38    
+     &   , I_CONDENSED_PARAM, CONDENSED_PARAM_LIST                         GREYK3A.39    
+     &   , CONDENSED_MIX_RATIO, CONDENSED_DIM_CHAR                         ADB2F404.579   
+     &   , N_CLOUD_TYPE, I_CLOUD_TYPE                                      GREYK3A.41    
+     &   , K_EXT_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE                 GREYK3A.42    
+     &   , FORWARD_SCATTER_FREE                                            GREYK3A.43    
+     &   , K_EXT_TOT_CLOUD, K_EXT_SCAT_CLOUD                               GREYK3A.44    
+     &   , ASYMMETRY_CLOUD, FORWARD_SCATTER_CLOUD                          GREYK3A.45    
+     &   , NPD_PROFILE, NPD_LAYER, NPD_CONTINUUM                           GREYK3A.46    
+     &   , NPD_AEROSOL_SPECIES, NPD_HUMIDITIES                             GREYK3A.47    
+     &   , NPD_CLOUD_PARAMETER                                             GREYK3A.48    
+     &   )                                                                 GREYK3A.49    
+!                                                                          GREYK3A.50    
+!                                                                          GREYK3A.51    
+!                                                                          GREYK3A.52    
+      IMPLICIT NONE                                                        GREYK3A.53    
+!                                                                          GREYK3A.54    
+!                                                                          GREYK3A.55    
+      INTEGER   !, INTENT(IN)                                              GREYK3A.56    
+     &     NPD_PROFILE                                                     GREYK3A.57    
+!             MAXIMUM NUMBER OF PROFILES                                   GREYK3A.58    
+     &   , NPD_LAYER                                                       GREYK3A.59    
+!             MAXIMUM NUMBER OF LAYERS                                     GREYK3A.60    
+     &   , NPD_AEROSOL_SPECIES                                             GREYK3A.61    
+!             MAXIMUM NUMBER OF AEROSOLS                                   GREYK3A.62    
+     &   , NPD_HUMIDITIES                                                  GREYK3A.63    
+!             MAXIMUM NUMBER OF HUMIDITIES                                 GREYK3A.64    
+     &   , NPD_CONTINUUM                                                   GREYK3A.65    
+!             MAXIMUM NUMBER OF CONTINUA                                   GREYK3A.66    
+     &   , NPD_CLOUD_PARAMETER                                             GREYK3A.67    
+!             MAXIMUM NUMBER OF CLOUD PARAMETERS                           GREYK3A.68    
+!                                                                          GREYK3A.69    
+!     INCLUDE COMDECKS                                                     GREYK3A.70    
+*CALL STDIO3A                                                              GREYK3A.71    
+*CALL DIMFIX3A                                                             GREYK3A.72    
+*CALL PRMCH3A                                                              GREYK3A.73    
+*CALL PRECSN3A                                                             GREYK3A.74    
+*CALL AERPRM3A                                                             GREYK3A.75    
+*CALL CLSCHM3A                                                             GREYK3A.76    
+*CALL PHASE3A                                                              GREYK3A.77    
+*CALL ERROR3A                                                              GREYK3A.78    
+!                                                                          GREYK3A.79    
+!                                                                          GREYK3A.80    
+!                                                                          GREYK3A.81    
+!     DUMMY ARGUMENTS.                                                     GREYK3A.82    
+      INTEGER   !, INTENT(OUT)                                             GREYK3A.83    
+     &     IERR                                                            GREYK3A.84    
+!             ERROR FLAG                                                   GREYK3A.85    
+!                                                                          GREYK3A.86    
+!                                                                          GREYK3A.87    
+!     BASIC ATMOSPHERIC PROPERTIES:                                        GREYK3A.88    
+!                                                                          GREYK3A.89    
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.90    
+     &     L_LAYER                                                         GREYK3A.91    
+!             VARIABLES GIVEN IN LAYERS                                    GREYK3A.92    
+!                                                                          GREYK3A.93    
+      INTEGER   !, INTENT(IN)                                              GREYK3A.94    
+     &     N_PROFILE                                                       GREYK3A.95    
+!             NUMBER OF PROFILES                                           GREYK3A.96    
+     &   , N_LAYER                                                         GREYK3A.97    
+!             NUMBER OF LAYERS                                             GREYK3A.98    
+!                                                                          GREYK3A.99    
+      REAL      !, INTENT(IN)                                              GREYK3A.100   
+     &     P(NPD_PROFILE, 0: NPD_LAYER)                                    GREYK3A.101   
+!             PRESSURE                                                     GREYK3A.102   
+     &   , T(NPD_PROFILE, 0: NPD_LAYER)                                    GREYK3A.103   
+!             TEMPERATURE                                                  GREYK3A.104   
+     &   , DENSITY(NPD_PROFILE, 0: NPD_LAYER)                              GREYK3A.105   
+!             DENSITY AT LEVELS                                            GREYK3A.106   
+!                                                                          GREYK3A.107   
+!                                                                          GREYK3A.108   
+!     OPTICAL SWITCHES:                                                    GREYK3A.109   
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.110   
+     &     L_RESCALE                                                       GREYK3A.111   
+!             DELTA-RESCALING REQUIRED                                     GREYK3A.112   
+!                                                                          GREYK3A.113   
+!                                                                          GREYK3A.114   
+!     RAYLEIGH SCATTERING:                                                 GREYK3A.115   
+!                                                                          GREYK3A.116   
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.117   
+     &     L_RAYLEIGH                                                      GREYK3A.118   
+!             RAYLEIGH SCATTERING ACTIVATED                                GREYK3A.119   
+!                                                                          GREYK3A.120   
+      REAL      !, INTENT(IN)                                              GREYK3A.121   
+     &     RAYLEIGH_COEFF                                                  GREYK3A.122   
+!             RAYLEIGH COEFFICIENT                                         GREYK3A.123   
+!                                                                          GREYK3A.124   
+!                                                                          GREYK3A.125   
+!     CONTINUUM PROCESSES:                                                 GREYK3A.126   
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.127   
+     &     L_CONTINUUM                                                     GREYK3A.128   
+!             CONTINUUM ABSORPTION ACTIVATED                               GREYK3A.129   
+!                                                                          GREYK3A.130   
+      INTEGER   !, INTENT(IN)                                              GREYK3A.131   
+     &     N_CONTINUUM                                                     GREYK3A.132   
+!             NUMBER OF CONTINUA                                           GREYK3A.133   
+     &   , I_CONTINUUM_POINTER(NPD_CONTINUUM)                              GREYK3A.134   
+!             POINTERS TO ACTIVE CONTINUA                                  GREYK3A.135   
+!                                                                          GREYK3A.136   
+      REAL      !, INTENT(IN)                                              GREYK3A.137   
+     &     K_CONTINUUM(NPD_CONTINUUM)                                      GREYK3A.138   
+!             CONTINUUM EXTINCTION                                         GREYK3A.139   
+     &   , AMOUNT_CONTINUUM(NPD_PROFILE, 0: NPD_LAYER, NPD_CONTINUUM)      ADB2F404.580   
+!             AMOUNTS FOR CONTINUA                                         GREYK3A.142   
+!                                                                          GREYK3A.143   
+!                                                                          GREYK3A.144   
+!     PROPERTIES OF AEROSOLS:                                              GREYK3A.145   
+!                                                                          GREYK3A.146   
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.147   
+     &     L_AEROSOL                                                       GREYK3A.148   
+!             AEROSOLS ACTIVATED                                           GREYK3A.149   
+!                                                                          GREYK3A.150   
+      INTEGER   !, INTENT(IN)                                              GREYK3A.151   
+     &     N_AEROSOL                                                       GREYK3A.152   
+!             NUMBER OF AEROSOL SPECIES                                    GREYK3A.153   
+     &   , I_AEROSOL_PARAMETRIZATION(NPD_AEROSOL_SPECIES)                  GREYK3A.154   
+!             PARAMETRIZATIONS OF AEROSOLS                                 GREYK3A.155   
+     &   , I_HUMIDITY_POINTER(NPD_PROFILE,  NPD_LAYER)                     GREYK3A.156   
+!             POINTER TO AEROSOL LOOK-UP TABLE                             GREYK3A.157   
+!                                                                          GREYK3A.158   
+      REAL      !, INTENT(IN)                                              GREYK3A.159   
+     &     AEROSOL_MIX_RATIO(NPD_PROFILE, 0: NPD_LAYER                     GREYK3A.160   
+     &        , NPD_AEROSOL_SPECIES)                                       GREYK3A.161   
+!             NUMBER DENSTY OF AEROSOLS                                    GREYK3A.162   
+     &   , AEROSOL_ABSORPTION(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES)         GREYK3A.163   
+!             AEROSOL ABSORPTION IN BAND/MIX RT.                           GREYK3A.164   
+     &   , AEROSOL_SCATTERING(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES)         GREYK3A.165   
+!             AEROSOL SCATTERING IN BAND/MIX RT.                           GREYK3A.166   
+     &   , AEROSOL_ASYMMETRY(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES)          GREYK3A.167   
+!             AEROSOL ASYMMETRY IN BAND                                    GREYK3A.168   
+     &   , HUMIDITIES(NPD_HUMIDITIES, NPD_AEROSOL_SPECIES)                 GREYK3A.169   
+!             ARRAY OF HUMIDITIES                                          GREYK3A.170   
+     &   , DELTA_HUMIDITY                                                  GREYK3A.171   
+!             INCREMENT IN HUMIDITY                                        GREYK3A.172   
+     &   , MEAN_REL_HUMIDITY(NPD_PROFILE, NPD_LAYER)                       GREYK3A.173   
+!             MIXING RATIO OF WATER VAPOUR                                 GREYK3A.174   
+!                                                                          GREYK3A.175   
+!                                                                          GREYK3A.176   
+!                                                                          GREYK3A.177   
+!     PROPERTIES OF CLOUDS:                                                GREYK3A.178   
+!                                                                          GREYK3A.179   
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.180   
+     &     L_CLOUD                                                         GREYK3A.181   
+!             CLOUDS ACTIVATED                                             GREYK3A.182   
+!                                                                          GREYK3A.183   
+!     GEOMETRY OF CLOUDS:                                                  GREYK3A.184   
+!                                                                          GREYK3A.185   
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.186   
+     &     L_CLOUD_LAYER                                                   GREYK3A.187   
+!             CLOUD VARIABLES GIVEN IN LAYERS                              GREYK3A.188   
+!                                                                          GREYK3A.189   
+      INTEGER   !, INTENT(IN)                                              GREYK3A.190   
+     &     N_CLOUD_TOP                                                     GREYK3A.191   
+!             TOPMOST CLOUDY LAYER                                         GREYK3A.192   
+     &   , I_CLOUD                                                         GREYK3A.193   
+!             CLOUD SCHEME TO BE USED                                      GREYK3A.194   
+     &   , N_CLOUD_TYPE                                                    GREYK3A.195   
+!             NUMBER OF TYPES OF CLOUDS                                    ADB1F401.477   
+     &   , N_CLOUD_PROFILE(NPD_LAYER)                                      GREYK3A.197   
+!             NUMBER OF CLOUDY PROFILES IN EACH LAYER                      GREYK3A.198   
+     &   , I_CLOUD_PROFILE(NPD_PROFILE, NPD_LAYER)                         GREYK3A.199   
+!             PROFILES CONTAINING CLOUDS                                   GREYK3A.200   
+     &   , I_CLOUD_TYPE(NPD_CLOUD_COMPONENT)                               GREYK3A.201   
+!             TYPES OF CLOUD TO WHICH EACH COMPONENT CONTRIBUTES           GREYK3A.202   
+!                                                                          GREYK3A.203   
+!     MICROPHYSICAL QUANTITIES:                                            GREYK3A.204   
+      INTEGER   !, INTENT(IN)                                              GREYK3A.205   
+     &     N_CONDENSED                                                     GREYK3A.206   
+!             NUMBER OF CONDENSED COMPONENTS                               GREYK3A.207   
+     &   , I_PHASE_CMP(NPD_CLOUD_COMPONENT)                                GREYK3A.208   
+!             PHASES OF CLOUDY COMPONENTS                                  GREYK3A.209   
+     &   , I_CONDENSED_PARAM(NPD_CLOUD_COMPONENT)                          GREYK3A.210   
+!             PARAMETRIZATION SCHEMES FOR CLOUDY COMPONENTS                GREYK3A.211   
+!                                                                          GREYK3A.212   
+      LOGICAL   !, INTENT(IN)                                              GREYK3A.213   
+     &     L_CLOUD_CMP(NPD_CLOUD_COMPONENT)                                GREYK3A.214   
+!             FLAGS TO ACTIVATE CLOUDY COMPONENTS                          GREYK3A.215   
+!                                                                          GREYK3A.216   
+      REAL      !, INTENT(IN)                                              GREYK3A.217   
+     &     CONDENSED_PARAM_LIST(NPD_CLOUD_PARAMETER                        GREYK3A.218   
+     &        , NPD_CLOUD_COMPONENT)                                       GREYK3A.219   
+!             COEFFICIENTS IN PARAMETRIZATION SCHEMES                      GREYK3A.220   
+     &   , CONDENSED_MIX_RATIO(NPD_PROFILE, 0: NPD_LAYER                   GREYK3A.221   
+     &        , NPD_CLOUD_COMPONENT)                                       GREYK3A.222   
+!             MIXING RATIOS OF CLOUDY COMPONENTS                           GREYK3A.223   
+     &   , CONDENSED_DIM_CHAR(NPD_PROFILE, 0: NPD_LAYER                    ADB2F404.581   
+     &      , NPD_CLOUD_COMPONENT)                                         ADB2F404.582   
+!             EFFECTIVE RADII OF CLOUDY COMPONENTS                         GREYK3A.225   
+!                                                                          GREYK3A.226   
+!                                                                          GREYK3A.227   
+!                                                                          GREYK3A.228   
+!     CALCULATED OPTICAL PROPETIES:                                        GREYK3A.229   
+!                                                                          GREYK3A.230   
+      REAL      !, INTENT(OUT)                                             GREYK3A.231   
+     &     K_EXT_SCAT_FREE(NPD_PROFILE, NPD_LAYER)                         GREYK3A.232   
+!             FREE SCATTERING EXTINCTION                                   GREYK3A.233   
+     &   , K_EXT_TOT_FREE(NPD_PROFILE, NPD_LAYER)                          GREYK3A.234   
+!             TOTAL FREE EXTINCTION                                        GREYK3A.235   
+     &   , ASYMMETRY_FREE(NPD_PROFILE, NPD_LAYER)                          GREYK3A.236   
+!             FREE ASYMMETRIES                                             GREYK3A.237   
+     &   , FORWARD_SCATTER_FREE(NPD_PROFILE, NPD_LAYER)                    GREYK3A.238   
+!             FREE FORWARD SCATTERING                                      GREYK3A.239   
+     &   , K_EXT_SCAT_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)        GREYK3A.240   
+!             CLOUDY SCATTERING EXTINCTION                                 GREYK3A.241   
+     &   , K_EXT_TOT_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)         GREYK3A.242   
+!             TOTAL CLOUDY EXTINCTION                                      GREYK3A.243   
+     &   , ASYMMETRY_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)         GREYK3A.244   
+!             CLOUDY ASYMMETRIES                                           GREYK3A.245   
+     &   , FORWARD_SCATTER_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)   GREYK3A.246   
+!             CLOUDY FORWARD SCATTERING                                    GREYK3A.247   
+!                                                                          GREYK3A.248   
+!                                                                          GREYK3A.249   
+!                                                                          GREYK3A.250   
+!     LOCAL VARIABLES.                                                     GREYK3A.251   
+      INTEGER                                                              GREYK3A.252   
+     &     I_CONTINUUM                                                     GREYK3A.253   
+!             TEMPORARY CONTINUUM INDEX                                    GREYK3A.254   
+     &   , I_POINTER                                                       GREYK3A.255   
+!             TEMPORARY POINTER                                            GREYK3A.256   
+     &   , L                                                               GREYK3A.257   
+!             LOOP VARIABLE                                                GREYK3A.258   
+     &   , LL                                                              GREYK3A.259   
+!             LOOP VARIABLE                                                GREYK3A.260   
+     &   , I                                                               GREYK3A.261   
+!             LOOP VARIABLE                                                GREYK3A.262   
+     &   , J                                                               GREYK3A.263   
+!             LOOP VARIABLE                                                GREYK3A.264   
+     &   , K                                                               GREYK3A.265   
+!             LOOP VARIABLE                                                GREYK3A.266   
+     &   , N_INDEX                                                         GREYK3A.267   
+!             NUMBER OF INDICES SATISFYING TEST                            GREYK3A.268   
+     &   , INDEX(NPD_PROFILE)                                              GREYK3A.269   
+!             INDICES OF TESTED POINTS                                     GREYK3A.270   
+!                                                                          GREYK3A.271   
+!     TEMPORARY OPTICAL PROPERTIES:                                        GREYK3A.272   
+!                                                                          GREYK3A.273   
+      REAL                                                                 GREYK3A.274   
+     &     K_EXT_SCAT_CLOUD_COMP(NPD_PROFILE, NPD_LAYER)                   GREYK3A.275   
+!             SCATTERING EXTINCTION OF CLOUDY COMPONENT                    GREYK3A.276   
+     &   , K_EXT_TOT_CLOUD_COMP(NPD_PROFILE, NPD_LAYER)                    GREYK3A.277   
+!             TOTAL EXTINCTION OF CLOUDY COMPONENT                         GREYK3A.278   
+     &   , ASYMMETRY_CLOUD_COMP(NPD_PROFILE, NPD_LAYER)                    GREYK3A.279   
+!             ASYMMETRIES OF CLOUDY COMPONENT                              GREYK3A.280   
+     &   , FORWARD_SCATTER_CLOUD_COMP(NPD_PROFILE, NPD_LAYER)              GREYK3A.281   
+!             FORWARD SCATTERING OF CLOUDY COMPONENT                       GREYK3A.282   
+     &   , K_SCATTER(NPD_PROFILE)                                          GREYK3A.283   
+!             SCATTERING VARIABLE                                          GREYK3A.284   
+     &   , ASYMMETRY_PROCESS(NPD_PROFILE)                                  GREYK3A.285   
+!             ASYMMETRY FACTOR FOR CURRENT PROC.                           GREYK3A.286   
+!                                                                          GREYK3A.287   
+!                                                                          GREYK3A.288   
+      REAL                                                                 GREYK3A.289   
+     &     WEIGHT_UPPER                                                    GREYK3A.290   
+!             UPPER WEIGHT FOR INTERPOLATION                               GREYK3A.291   
+     &   , WEIGHT_LOWER                                                    GREYK3A.292   
+!             LOWER WEIGHT FOR INTERPOLATION                               GREYK3A.293   
+!                                                                          GREYK3A.294   
+!     SUBROUTINES CALLED:                                                  GREYK3A.295   
+      EXTERNAL                                                             GREYK3A.296   
+     &     OPT_PROP_WATER_CLOUD, OPT_PROP_ICE_CLOUD                        GREYK3A.297   
+!                                                                          GREYK3A.299   
+!     CRAY DIRECTIVES FOR THE WHOLE ROUTINE:                               ADB1F402.480   
+!     POINTS ARE NOT REPEATED IN THE INDEXING ARRAY, SO IT IS SAFE         ADB1F402.481   
+!     TO VECTORIZE OVER INDIRECTLY ADDRESSED ARRAYS.                       ADB1F402.482   
+Cfpp$ NODEPCHK R                                                           ADB1F402.483   
+!                                                                          ADB1F402.484   
+!                                                                          GREYK3A.300   
+!                                                                          GREYK3A.301   
+!     INITIALIZE THE EXTINCTION COEFFICIENTS AND THE ASYMMETRY PRODUCT.    GREYK3A.302   
+      DO I=1, N_LAYER                                                      GREYK3A.303   
+         DO L=1, N_PROFILE                                                 GREYK3A.304   
+            K_EXT_TOT_FREE(L, I)=0.0E+00                                   GREYK3A.305   
+            K_EXT_SCAT_FREE(L, I)=0.0E+00                                  GREYK3A.306   
+            ASYMMETRY_FREE(L, I)=0.0E+00                                   GREYK3A.307   
+         ENDDO                                                             GREYK3A.308   
+      ENDDO                                                                GREYK3A.309   
+!     FORWARD SCATTERING IS REQUIRED ONLY IN THE VISIBLE WHERE             GREYK3A.310   
+!     DELTA-RESCALING IS PERFORMED.                                        GREYK3A.311   
+      IF (L_RESCALE) THEN                                                  GREYK3A.312   
+         DO I=1, N_LAYER                                                   GREYK3A.313   
+            DO L=1, N_PROFILE                                              GREYK3A.314   
+               FORWARD_SCATTER_FREE(L, I)=0.0E+00                          GREYK3A.315   
+            ENDDO                                                          GREYK3A.316   
+         ENDDO                                                             GREYK3A.317   
+      ENDIF                                                                GREYK3A.318   
+!                                                                          GREYK3A.319   
+      IF (L_RAYLEIGH) THEN                                                 GREYK3A.320   
+!        INCLUDE RAYLEIGH SCATTERING.                                      GREYK3A.321   
+         DO I=1, N_LAYER                                                   GREYK3A.322   
+            DO L=1, N_PROFILE                                              GREYK3A.323   
+               K_EXT_SCAT_FREE(L, I)                                       GREYK3A.324   
+     &             =K_EXT_SCAT_FREE(L, I)+RAYLEIGH_COEFF                   GREYK3A.325   
+            ENDDO                                                          GREYK3A.326   
+         ENDDO                                                             GREYK3A.327   
+      ENDIF                                                                GREYK3A.328   
+!                                                                          GREYK3A.329   
+      IF (L_AEROSOL) THEN                                                  GREYK3A.330   
+!        INCLUDE THE EFFECTS OF AEROSOL.                                   GREYK3A.331   
+         DO J=1, N_AEROSOL                                                 GREYK3A.332   
+            IF (I_AEROSOL_PARAMETRIZATION(J)                               GREYK3A.333   
+     &         .EQ.IP_AEROSOL_PARAM_DRY) THEN                              GREYK3A.334   
+               DO I=1, N_LAYER                                             GREYK3A.335   
+                  DO L=1, N_PROFILE                                        GREYK3A.336   
+                     K_EXT_TOT_FREE(L, I)=K_EXT_TOT_FREE(L, I)             GREYK3A.337   
+     &                  +AEROSOL_MIX_RATIO(L, I, J)                        GREYK3A.338   
+     &                  *AEROSOL_ABSORPTION(1, J)                          GREYK3A.339   
+                     K_SCATTER(L)=AEROSOL_MIX_RATIO(L, I, J)               GREYK3A.340   
+     &                  *AEROSOL_SCATTERING(1, J)                          GREYK3A.341   
+                     K_EXT_SCAT_FREE(L, I)=K_EXT_SCAT_FREE(L, I)           GREYK3A.342   
+     &                  +K_SCATTER(L)                                      GREYK3A.343   
+                     ASYMMETRY_FREE(L, I)=ASYMMETRY_FREE(L, I)             GREYK3A.344   
+     &                  +K_SCATTER(L)*AEROSOL_ASYMMETRY(1, J)              GREYK3A.345   
+                  ENDDO                                                    GREYK3A.346   
+                  IF (L_RESCALE) THEN                                      GREYK3A.347   
+!                    THIS BLOCK IS PLACED WITHIN THE LOOP OVER I TO SAVE   GREYK3A.348   
+!                    STORAGE. THE COST OF RE-EXECUTING THE TEST IS QUITE   GREYK3A.349   
+!                    SMALL.                                                GREYK3A.350   
+                     DO L=1, N_PROFILE                                     GREYK3A.351   
+                        FORWARD_SCATTER_FREE(L, I)                         GREYK3A.352   
+     &                     =FORWARD_SCATTER_FREE(L, I)+K_SCATTER(L)        GREYK3A.353   
+     &                     *(AEROSOL_ASYMMETRY(1, J))**2                   GREYK3A.354   
+                     ENDDO                                                 GREYK3A.355   
+                  ENDIF                                                    GREYK3A.356   
+               ENDDO                                                       GREYK3A.357   
+            ELSE IF (I_AEROSOL_PARAMETRIZATION(J)                          GREYK3A.358   
+     &         .EQ.IP_AEROSOL_PARAM_MOIST) THEN                            GREYK3A.359   
+               DO I=1, N_LAYER                                             GREYK3A.360   
+! Optimizer precomputes 1/DELTA_HUMIDITY and causes zero divide, so:-      GRB0F405.142   
+!OCL NOPREEX,NOEVAL                                                        GRB0F405.143   
+                  DO L=1, N_PROFILE                                        GREYK3A.361   
+                     I_POINTER=I_HUMIDITY_POINTER(L, I)                    GREYK3A.362   
+                     WEIGHT_UPPER=(MEAN_REL_HUMIDITY(L, I)                 GREYK3A.363   
+     &                 -HUMIDITIES(I_POINTER, J))                          GREYK3A.364   
+     &                 /DELTA_HUMIDITY                                     GREYK3A.365   
+                     WEIGHT_LOWER=1.0E+00-WEIGHT_UPPER                     GREYK3A.366   
+                     K_EXT_TOT_FREE(L, I)=K_EXT_TOT_FREE(L, I)             GREYK3A.367   
+     &                  +AEROSOL_MIX_RATIO(L, I, J)                        GREYK3A.368   
+     &                  *(AEROSOL_ABSORPTION(I_POINTER, J)                 GREYK3A.369   
+     &                  *WEIGHT_LOWER+WEIGHT_UPPER                         GREYK3A.370   
+     &                  *AEROSOL_ABSORPTION(I_POINTER+1, J))               GREYK3A.371   
+                     K_SCATTER(L)=                                         GREYK3A.372   
+     &                  AEROSOL_MIX_RATIO(L, I, J)                         GREYK3A.373   
+     &                  *(AEROSOL_SCATTERING(I_POINTER, J)                 GREYK3A.374   
+     &                  *WEIGHT_LOWER+WEIGHT_UPPER                         GREYK3A.375   
+     &                  *AEROSOL_SCATTERING(I_POINTER+1, J))               GREYK3A.376   
+                     K_EXT_SCAT_FREE(L, I)=K_EXT_SCAT_FREE(L, I)           GREYK3A.377   
+     &                  +K_SCATTER(L)                                      GREYK3A.378   
+                     ASYMMETRY_PROCESS(L)=                                 GREYK3A.379   
+     &                  AEROSOL_ASYMMETRY(I_POINTER, J)                    GREYK3A.380   
+     &                  *WEIGHT_LOWER+WEIGHT_UPPER                         GREYK3A.381   
+     &                  *AEROSOL_ASYMMETRY(I_POINTER+1, J)                 GREYK3A.382   
+                     ASYMMETRY_FREE(L, I)=ASYMMETRY_FREE(L, I)             GREYK3A.383   
+     &                  +K_SCATTER(L)*ASYMMETRY_PROCESS(L)                 GREYK3A.384   
+                  ENDDO                                                    GREYK3A.385   
+                  IF (L_RESCALE) THEN                                      GREYK3A.386   
+                     DO L=1, N_PROFILE                                     GREYK3A.387   
+                        FORWARD_SCATTER_FREE(L, I)                         GREYK3A.388   
+     &                     =FORWARD_SCATTER_FREE(L, I)+K_SCATTER(L)        GREYK3A.389   
+     &                     *(ASYMMETRY_PROCESS(L))**2                      GREYK3A.390   
+                     ENDDO                                                 GREYK3A.391   
+                  ENDIF                                                    GREYK3A.392   
+               ENDDO                                                       GREYK3A.393   
+            ELSE                                                           ADB1F401.478   
+               WRITE(IU_ERR, '(/A, I3, A)')                                ADB1F401.479   
+     &            '*** ERROR : I_AEROSOL_PARAMETRIZATION FOR SPECIES '     ADB1F401.480   
+     &            , J, ' HAS BEEN SET TO AN ILLEGAL VALUE.'                ADB1F401.481   
+               IERR=I_ERR_FATAL                                            ADB1F401.482   
+               RETURN                                                      ADB1F401.483   
+                                                                           GREYK3A.400   
+            ENDIF                                                          GREYK3A.401   
+         ENDDO                                                             GREYK3A.402   
+      ENDIF                                                                GREYK3A.403   
+!                                                                          GREYK3A.404   
+      IF (L_CONTINUUM) THEN                                                GREYK3A.405   
+!        INCLUDE CONTINUUM ABSORPTION.                                     GREYK3A.406   
+         DO J=1, N_CONTINUUM                                               GREYK3A.407   
+            I_CONTINUUM=I_CONTINUUM_POINTER(J)                             GREYK3A.408   
+            DO I=1, N_LAYER                                                GREYK3A.409   
+               DO L=1, N_PROFILE                                           GREYK3A.410   
+                  K_EXT_TOT_FREE(L, I)=K_EXT_TOT_FREE(L, I)                GREYK3A.411   
+     &               +K_CONTINUUM(I_CONTINUUM)                             GREYK3A.412   
+     &               *AMOUNT_CONTINUUM(L, I, I_CONTINUUM)                  GREYK3A.413   
+               ENDDO                                                       GREYK3A.414   
+            ENDDO                                                          GREYK3A.415   
+         ENDDO                                                             GREYK3A.416   
+      ENDIF                                                                GREYK3A.417   
+!                                                                          GREYK3A.418   
+!                                                                          GREYK3A.419   
+!     ADD THE SCATTERING ON TO THE TOTAL EXTINCTION. THE FINAL FREE        GREYK3A.420   
+!     ASYMMETRY IS NOT CALCULATED HERE SINCE THE PRODUCT OF ASYMMETRY      GREYK3A.421   
+!     AND SCATTERING IS ALSO NEEDED TO CALCULATE THE CLOUDY ASYMMETRY.     GREYK3A.422   
+      DO I=1, N_LAYER                                                      GREYK3A.423   
+         DO L=1, N_PROFILE                                                 GREYK3A.424   
+            K_EXT_TOT_FREE(L, I)=K_EXT_TOT_FREE(L, I)                      GREYK3A.425   
+     &         +K_EXT_SCAT_FREE(L, I)                                      GREYK3A.426   
+         ENDDO                                                             GREYK3A.427   
+      ENDDO                                                                GREYK3A.428   
+!                                                                          GREYK3A.429   
+!                                                                          GREYK3A.430   
+!     IF THERE ARE NO CLOUDS CALCULATE THE FINAL OPTICAL PROPERTIES        GREYK3A.431   
+!     AND RETURN TO THE CALLING ROUTINE.                                   GREYK3A.432   
+!                                                                          GREYK3A.433   
+      IF (.NOT.L_CLOUD) THEN                                               GREYK3A.434   
+!                                                                          GREYK3A.435   
+         DO I=1, N_LAYER                                                   GREYK3A.436   
+            DO L=1, N_PROFILE                                              GREYK3A.437   
+               IF (K_EXT_SCAT_FREE(L, I).GT.TOL_DIV) THEN                  GREYK3A.438   
+                  ASYMMETRY_FREE(L, I)=ASYMMETRY_FREE(L, I)                GREYK3A.439   
+     &               /K_EXT_SCAT_FREE(L, I)                                GREYK3A.440   
+               ENDIF                                                       GREYK3A.441   
+            ENDDO                                                          GREYK3A.442   
+         ENDDO                                                             GREYK3A.443   
+         IF (L_RESCALE) THEN                                               GREYK3A.444   
+            DO I=1, N_LAYER                                                GREYK3A.445   
+               DO L=1, N_PROFILE                                           GREYK3A.446   
+                  IF (K_EXT_SCAT_FREE(L, I).GT.TOL_DIV) THEN               GREYK3A.447   
+                     FORWARD_SCATTER_FREE(L, I)                            GREYK3A.448   
+     &                  =FORWARD_SCATTER_FREE(L, I)                        GREYK3A.449   
+     &                  /K_EXT_SCAT_FREE(L, I)                             GREYK3A.450   
+                  ENDIF                                                    GREYK3A.451   
+               ENDDO                                                       GREYK3A.452   
+            ENDDO                                                          GREYK3A.453   
+!                                                                          GREYK3A.454   
+         ENDIF                                                             GREYK3A.455   
+!                                                                          GREYK3A.456   
+         RETURN                                                            GREYK3A.457   
+!                                                                          GREYK3A.458   
+      ENDIF                                                                GREYK3A.459   
+!                                                                          GREYK3A.460   
+!                                                                          GREYK3A.461   
+!                                                                          GREYK3A.462   
+!                                                                          GREYK3A.463   
+!     ADDITION OF CLOUDY PROPERTIES:                                       GREYK3A.464   
+!                                                                          GREYK3A.465   
+!                                                                          GREYK3A.466   
+!     ADD IN BACKGROUND CONTIBUTIONS:                                      GREYK3A.467   
+!                                                                          GREYK3A.468   
+!                                                                          GREYK3A.470   
+!     ALL THE PROCESSES OCCURRING OUTSIDE CLOUDS ALSO OCCUR                ADB1F405.311   
+!     WITHIN THEM.                                                         ADB1F405.312   
+      DO K=1, N_CLOUD_TYPE                                                 ADB1F405.313   
+         DO I=1, N_LAYER                                                   ADB1F405.314   
+            DO L=1, N_PROFILE                                              ADB1F405.315   
+               K_EXT_TOT_CLOUD(L, I, K)=K_EXT_TOT_FREE(L, I)               ADB1F405.316   
+               K_EXT_SCAT_CLOUD(L, I, K)=K_EXT_SCAT_FREE(L, I)             ADB1F405.317   
+               ASYMMETRY_CLOUD(L, I, K)=ASYMMETRY_FREE(L, I)               ADB1F405.318   
+               FORWARD_SCATTER_CLOUD(L, I, K)                              ADB1F405.319   
+     &            =FORWARD_SCATTER_FREE(L, I)                              ADB1F405.320   
+            ENDDO                                                          GREYK3A.482   
+         ENDDO                                                             GREYK3A.483   
+      ENDDO                                                                ADB1F405.321   
+!                                                                          GREYK3A.484   
+!                                                                          GREYK3A.503   
+!                                                                          GREYK3A.504   
+!     ADD ON THE TERMS REPRESENTING PROCESSES WITHIN CLOUDS.               GREYK3A.505   
+!                                                                          GREYK3A.506   
+!     LOOP OVER THE CONDENSED COMPONENTS, CALCULATING THEIR OPTICAL        ADB1F401.484   
+!     PROPERTIES AND THEN ASSIGN THEM TO THE ARRAYS FOR THE TYPES OF       GREYK3A.508   
+!     CLOUD.                                                               GREYK3A.509   
+!                                                                          GREYK3A.510   
+      DO K=1, N_CONDENSED                                                  GREYK3A.511   
+!                                                                          GREYK3A.512   
+!        FLAGS FOR DEALING WITH COMPONENTS WERE SET IN THE SUBROUTINE      GREYK3A.513   
+!        SET_CLOUD_POINTER. WE NOW DETERMINE WHETHER THE COMPONENT IS      GREYK3A.514   
+!        TO BE INCLUDED AND CALCULATE ITS OPTICAL PROPERTIES ACCORDING     GREYK3A.515   
+!        TO THE PHASE OF THE COMPONENT. THESE CONTRIBUTIONS ARE ADDED      GREYK3A.516   
+!        TO THE ARRAYS FOR THE SELECTED TYPE OF CLOUD.                     GREYK3A.517   
+!                                                                          GREYK3A.518   
+         IF (L_CLOUD_CMP(K)) THEN                                          GREYK3A.519   
+!                                                                          GREYK3A.520   
+            IF (I_PHASE_CMP(K).EQ.IP_PHASE_WATER) THEN                     GREYK3A.521   
+!                                                                          GREYK3A.522   
+!              INCLUDE SCATTERING BY WATER DROPLETS.                       GREYK3A.523   
+!                                                                          GREYK3A.524   
+               CALL OPT_PROP_WATER_CLOUD(IERR                              GREYK3A.525   
+     &            , N_PROFILE, N_LAYER, N_CLOUD_TOP                        GREYK3A.526   
+     &            , N_CLOUD_PROFILE, I_CLOUD_PROFILE                       GREYK3A.527   
+     &            , L_RESCALE, L_LAYER, L_CLOUD_LAYER                      GREYK3A.528   
+     &            , I_CONDENSED_PARAM(K), CONDENSED_PARAM_LIST(1, K)       GREYK3A.529   
+     &            , CONDENSED_MIX_RATIO(1, 0, K)                           ADB2F404.583   
+     &            , CONDENSED_DIM_CHAR(1, 0, K)                            ADB2F404.584   
+     &            , K_EXT_TOT_CLOUD_COMP, K_EXT_SCAT_CLOUD_COMP            GREYK3A.531   
+     &            , ASYMMETRY_CLOUD_COMP, FORWARD_SCATTER_CLOUD_COMP       GREYK3A.532   
+     &            , NPD_PROFILE, NPD_LAYER                                 GREYK3A.533   
+     &            , NPD_CLOUD_PARAMETER                                    GREYK3A.534   
+     &            )                                                        GREYK3A.535   
+!                                                                          GREYK3A.536   
+            ELSE IF (I_PHASE_CMP(K).EQ.IP_PHASE_ICE) THEN                  GREYK3A.537   
+!                                                                          GREYK3A.538   
+!              INCLUDE SCATTERING BY ICE CRYSTALS.                         GREYK3A.539   
+!                                                                          GREYK3A.540   
+               CALL OPT_PROP_ICE_CLOUD(IERR                                GREYK3A.541   
+     &            , N_PROFILE, N_LAYER, N_CLOUD_TOP                        GREYK3A.542   
+     &            , N_CLOUD_PROFILE, I_CLOUD_PROFILE                       GREYK3A.543   
+     &            , L_RESCALE, L_LAYER, L_CLOUD_LAYER                      GREYK3A.544   
+     &            , I_CONDENSED_PARAM(K), CONDENSED_PARAM_LIST(1, K)       GREYK3A.545   
+     &            , CONDENSED_MIX_RATIO(1, 0, K)                           ADB2F404.585   
+     &            , CONDENSED_DIM_CHAR(1, 0, K)                            ADB2F404.586   
+     &            , T, DENSITY                                             GREYK3A.547   
+     &            , K_EXT_TOT_CLOUD_COMP, K_EXT_SCAT_CLOUD_COMP            GREYK3A.548   
+     &            , ASYMMETRY_CLOUD_COMP, FORWARD_SCATTER_CLOUD_COMP       GREYK3A.549   
+     &            , NPD_PROFILE, NPD_LAYER                                 GREYK3A.550   
+     &            , NPD_CLOUD_PARAMETER                                    GREYK3A.551   
+     &            )                                                        GREYK3A.552   
+!                                                                          GREYK3A.553   
+            ENDIF                                                          GREYK3A.554   
+!                                                                          GREYK3A.555   
+!                                                                          GREYK3A.556   
+!                                                                          GREYK3A.557   
+!           INCREMENT THE ARRAYS OF OPTICAL PROPERTIES.                    GREYK3A.558   
+!                                                                          GREYK3A.559   
+!                                                                          GREYK3A.560   
+            DO I=N_CLOUD_TOP, N_LAYER                                      GREYK3A.561   
+               DO LL=1, N_CLOUD_PROFILE(I)                                 GREYK3A.562   
+                  L=I_CLOUD_PROFILE(LL, I)                                 GREYK3A.563   
+                  K_EXT_TOT_CLOUD(L, I, I_CLOUD_TYPE(K))                   GREYK3A.564   
+     &               =K_EXT_TOT_CLOUD(L, I, I_CLOUD_TYPE(K))               GREYK3A.565   
+     &               +K_EXT_TOT_CLOUD_COMP(L, I)                           GREYK3A.566   
+                  K_EXT_SCAT_CLOUD(L, I, I_CLOUD_TYPE(K))                  GREYK3A.567   
+     &               =K_EXT_SCAT_CLOUD(L, I, I_CLOUD_TYPE(K))              GREYK3A.568   
+     &               +K_EXT_SCAT_CLOUD_COMP(L, I)                          GREYK3A.569   
+                  ASYMMETRY_CLOUD(L, I, I_CLOUD_TYPE(K))                   GREYK3A.570   
+     &               =ASYMMETRY_CLOUD(L, I, I_CLOUD_TYPE(K))               GREYK3A.571   
+     &               +ASYMMETRY_CLOUD_COMP(L, I)                           GREYK3A.572   
+               ENDDO                                                       GREYK3A.573   
+            ENDDO                                                          GREYK3A.574   
+            IF (L_RESCALE) THEN                                            GREYK3A.575   
+               DO I=N_CLOUD_TOP, N_LAYER                                   GREYK3A.576   
+                  DO LL=1, N_CLOUD_PROFILE(I)                              GREYK3A.577   
+                     L=I_CLOUD_PROFILE(LL, I)                              GREYK3A.578   
+                     FORWARD_SCATTER_CLOUD(L, I, I_CLOUD_TYPE(K))          GREYK3A.579   
+     &                  =FORWARD_SCATTER_CLOUD(L, I, I_CLOUD_TYPE(K))      GREYK3A.580   
+     &                  +FORWARD_SCATTER_CLOUD_COMP(L, I)                  GREYK3A.581   
+                  ENDDO                                                    GREYK3A.582   
+               ENDDO                                                       GREYK3A.583   
+            ENDIF                                                          GREYK3A.584   
+!                                                                          GREYK3A.585   
+         ENDIF                                                             GREYK3A.586   
+!                                                                          GREYK3A.587   
+      ENDDO                                                                GREYK3A.588   
+!                                                                          GREYK3A.589   
+!                                                                          GREYK3A.590   
+!                                                                          GREYK3A.591   
+!                                                                          GREYK3A.592   
+!     CALCULATE THE FINAL OPTICAL PROPERTIES.                              GREYK3A.593   
+!     THE SCATTERING WAS INCLUDED IN THE FREE TOTAL EXTINCTION EARLIER,    GREYK3A.594   
+!     BUT WE HAVE YET TO DIVIDE THE PRODUCT OF THE ASYMMETRY AND THE       GREYK3A.595   
+!     SCATTERING BY THE MEAN SCATTERING.                                   GREYK3A.596   
+!                                                                          GREYK3A.597   
+      DO I=1, N_LAYER                                                      GREYK3A.598   
+!                                                                          GREYK3A.599   
+         N_INDEX=0                                                         GSS2F402.199   
+         DO L   =1,N_PROFILE                                               GSS2F402.200   
+           IF (K_EXT_SCAT_FREE(L,I).GT.TOL_DIV) THEN                       GSS2F402.201   
+             N_INDEX       =N_INDEX+1                                      GSS2F402.202   
+             INDEX(N_INDEX)=L                                              GSS2F402.203   
+           END IF                                                          GSS2F402.204   
+         END DO                                                            GSS2F402.205   
+!                                                                          GSS2F402.206   
+         DO K=1, N_INDEX                                                   GREYK3A.602   
+               ASYMMETRY_FREE(INDEX(K), I)=ASYMMETRY_FREE(INDEX(K), I)     GREYK3A.603   
+     &            /K_EXT_SCAT_FREE(INDEX(K), I)                            GREYK3A.604   
+         ENDDO                                                             GREYK3A.605   
+!                                                                          GREYK3A.606   
+         IF (L_RESCALE) THEN                                               GREYK3A.607   
+            DO K=1, N_INDEX                                                GREYK3A.608   
+               FORWARD_SCATTER_FREE(INDEX(K), I)                           GREYK3A.609   
+     &            =FORWARD_SCATTER_FREE(INDEX(K), I)                       GREYK3A.610   
+     &            /K_EXT_SCAT_FREE(INDEX(K), I)                            GREYK3A.611   
+            ENDDO                                                          GREYK3A.612   
+         ENDIF                                                             GREYK3A.613   
+      ENDDO                                                                GREYK3A.614   
+!                                                                          GREYK3A.615   
+!                                                                          GREYK3A.616   
+!     REPEAT FOR CLOUDS.                                                   GREYK3A.617   
+      DO K=1, N_CLOUD_TYPE                                                 GREYK3A.618   
+         DO I=N_CLOUD_TOP, N_LAYER                                         GREYK3A.619   
+!                                                                          GSS2F402.207   
+            J      =1                                                      GSS2F402.211   
+            N_INDEX=0                                                      GSS2F402.212   
+            DO L   =1,N_PROFILE                                            GSS2F402.213   
+              IF (K_EXT_SCAT_CLOUD(L,I,K).GT.TOL_DIV) THEN                 GSS2F402.214   
+                INDEX(J)=L                                                 GSS2F402.215   
+                J       =J+1                                               GSS2F402.216   
+                N_INDEX =N_INDEX+1                                         GSS2F402.217   
+              END IF                                                       GSS2F402.218   
+            END DO                                                         GSS2F402.219   
+                                                                           GSS2F402.220   
+            DO J=1, N_INDEX                                                GREYK3A.622   
+               ASYMMETRY_CLOUD(INDEX(J), I, K)                             GREYK3A.623   
+     &            =ASYMMETRY_CLOUD(INDEX(J), I, K)                         GREYK3A.624   
+     &            /K_EXT_SCAT_CLOUD(INDEX(J), I, K)                        GREYK3A.625   
+            ENDDO                                                          GREYK3A.626   
+            IF (L_RESCALE) THEN                                            GREYK3A.627   
+               DO J=1, N_INDEX                                             GREYK3A.628   
+                  FORWARD_SCATTER_CLOUD(INDEX(J), I, K)                    GREYK3A.629   
+     &               =FORWARD_SCATTER_CLOUD(INDEX(J), I, K)                GREYK3A.630   
+     &               /K_EXT_SCAT_CLOUD(INDEX(J), I, K)                     GREYK3A.631   
+               ENDDO                                                       GREYK3A.632   
+            ENDIF                                                          GREYK3A.633   
+         ENDDO                                                             GREYK3A.634   
+      ENDDO                                                                GREYK3A.635   
+!                                                                          GREYK3A.636   
+!                                                                          GREYK3A.637   
+!                                                                          GREYK3A.638   
+!                                                                          GREYK3A.639   
+      RETURN                                                               GREYK3A.640   
+      END                                                                  GREYK3A.641   
+*ENDIF DEF,A01_3A,OR,DEF,A02_3A                                            GREYK3A.642   
+*ENDIF DEF,A70_1A                                                          ADB1F402.32    

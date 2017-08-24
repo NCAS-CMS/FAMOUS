@@ -1,0 +1,771 @@
+*IF DEF,A12_1C,OR,DEF,A12_1D                                               ATJ0F402.17    
+*IF DEF,MPP                                                                ATJ0F402.18    
+C *****************************COPYRIGHT******************************     ADVPGD1C.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    ADVPGD1C.4     
+C                                                                          ADVPGD1C.5     
+C Use, duplication or disclosure of this code is subject to the            ADVPGD1C.6     
+C restrictions as set forth in the contract.                               ADVPGD1C.7     
+C                                                                          ADVPGD1C.8     
+C                Meteorological Office                                     ADVPGD1C.9     
+C                London Road                                               ADVPGD1C.10    
+C                BRACKNELL                                                 ADVPGD1C.11    
+C                Berkshire UK                                              ADVPGD1C.12    
+C                RG12 2SZ                                                  ADVPGD1C.13    
+C                                                                          ADVPGD1C.14    
+C If no contract has been raised with this copy of the code, the use,      ADVPGD1C.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      ADVPGD1C.16    
+C to do so must first be obtained in writing from the Head of Numerical    ADVPGD1C.17    
+C Modelling at the above address.                                          ADVPGD1C.18    
+C ******************************COPYRIGHT******************************    ADVPGD1C.19    
+CLL   SUBROUTINE ADV_P_GD -------------------------------------------      ADVPGD1C.20    
+CLL                                                                        ADVPGD1C.21    
+CLL   PURPOSE:   CALCULATES ADVECTION INCREMENTS TO A FIELD AT A           ADVPGD1C.22    
+CLL              SINGLE MODEL LEVEL USING AN EQUATION OF THE FORM(36).     ADVPGD1C.23    
+CLL              NOT SUITABLE FOR SINGLE COLUMN USE.                       ADVPGD1C.24    
+CLL                                                                        ADVPGD1C.25    
+CLL   VERSION FOR CRAY Y-MP                                                ADVPGD1C.26    
+CLL                                                                        ADVPGD1C.27    
+CLL   WRITTEN  BY M.H MAWSON.                                              ADVPGD1C.28    
+CLL   MPP CODE ADDED BY P.BURTON                                           ADVPGD1C.29    
+CLL                                                                        ADVPGD1C.30    
+CLL  Model            Modification history from model version 3.0:         ADVPGD1C.31    
+CLL version  Date                                                          ADVPGD1C.32    
+CLL 4.1      29/11/95 New version of routine specifically for MPP          ADVPGD1C.33    
+CLL                   Fourth order MPP code by Roar Skalin                 ADVPGD1C.34    
+CLL                                                      P.Burton          ADVPGD1C.35    
+!LL 4.2      10/01/97 Amend calculation to prevent different answers       ADR2F402.34    
+!LL                   with different compiler options. D. Robinson.        ADR2F402.35    
+!     4.3    22/04/97 Added optimised vector shift                         GSS2F403.1     
+!                     B. Carruthers                                        GSS2F403.2     
+C     vn4.3    Mar. 97   T3E migration : optimisation changes              GSS1F403.734   
+C                                       D.Salmond                          GSS1F403.735   
+CLL 4.5      31/03/98 Correct uninitialised value of U_TERM which can      ARR4F405.1     
+CLL                   cause failures for LAM with 4th order advection.     ARR4F405.2     
+CLL                   R. Rawlins.                                          ARR4F405.3     
+CLL                                                                        ADVPGD1C.36    
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       ADVPGD1C.37    
+CLL                         STANDARD B. VERSION 2, DATED 18/01/90          ADVPGD1C.38    
+CLL                                                                        ADVPGD1C.39    
+CLL   LOGICAL COMPONENTS COVERED: P121                                     ADVPGD1C.40    
+CLL                                                                        ADVPGD1C.41    
+CLL   PROJECT TASK: P1                                                     ADVPGD1C.42    
+CLL                                                                        ADVPGD1C.43    
+CLL   DOCUMENTATION:       THE EQUATION USED IS (35)                       ADVPGD1C.44    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER NO. 10     ADVPGD1C.45    
+CLL                        M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON           ADVPGD1C.46    
+CLLEND-------------------------------------------------------------        ADVPGD1C.47    
+C                                                                          ADVPGD1C.48    
+C*L   ARGUMENTS:---------------------------------------------------        ADVPGD1C.49    
+      SUBROUTINE ADV_P_GD                                                  ADVPGD1C.50    
+     1                   (FIELD_LOWER,FIELD,FIELD_UPPER,U,V,               ADVPGD1C.51    
+     1                   ETADOT_LOWER,ETADOT_UPPER,                        ADVPGD1C.52    
+     2                   SEC_P_LATITUDE,FIELD_INC,NUX,NUY,P_FIELD,         ADVPGD1C.53    
+     3                   U_FIELD,ROW_LENGTH,                               ADVPGD1C.54    
+*CALL ARGFLDPT                                                             ADVPGD1C.55    
+     4                   ADVECTION_TIMESTEP,                               ADVPGD1C.56    
+     5                   LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,     ADVPGD1C.57    
+     6                   SEC_U_LATITUDE,BRSP,                              ADVPGD1C.58    
+     7                   L_SECOND,LWHITBROM,                               ADVPGD1C.59    
+     &                   extended_FIELD,                                   ADVPGD1C.60    
+     &                   extended_P_FIELD,extended_U_FIELD,                GSS1F403.736   
+     &                   extended_address)                                 GSS1F403.737   
+                                                                           ADVPGD1C.62    
+      IMPLICIT NONE                                                        ADVPGD1C.63    
+                                                                           ADVPGD1C.64    
+      INTEGER                                                              ADVPGD1C.65    
+     *  P_FIELD             !IN DIMENSION OF FIELDS ON PRESSSURE GRID.     ADVPGD1C.66    
+     *, U_FIELD             !IN DIMENSION OF FIELDS ON VELOCITY GRID       ADVPGD1C.67    
+     &, extended_P_FIELD    !IN DIMESNION of P fields with extra halo      ADVPGD1C.68    
+     &, extended_U_FIELD    !IN DIMESNION of U fields with extra halo      ADVPGD1C.69    
+     *, ROW_LENGTH          !IN NUMBER OF POINTS PER ROW                   ADVPGD1C.70    
+                                                                           ADVPGD1C.71    
+! All TYPFLDPT arguments are intent IN                                     ADVPGD1C.72    
+*CALL TYPFLDPT                                                             ADVPGD1C.73    
+                                                                           ADVPGD1C.74    
+      LOGICAL                                                              ADVPGD1C.75    
+     *  L_SECOND     ! SET TO TRUE IF NU_BASIC IS ZERO.                    ADVPGD1C.76    
+     * ,LWHITBROM    ! SWITCH FOR WHITE & BROMLEY TERMS                    ADVPGD1C.77    
+                                                                           ADVPGD1C.78    
+      REAL                                                                 ADVPGD1C.79    
+     * U(extended_U_FIELD)  !IN ADVECTING U FIELD, MASS-WEIGHTED.          ADVPGD1C.80    
+     *,V(extended_U_FIELD)  !IN ADVECTING V FIELD, MASS-WEIGHTED.          ADVPGD1C.81    
+     *,ETADOT_UPPER(P_FIELD)!IN ADVECTING VERTICAL VELOC AT K+1/2,         ADVPGD1C.82    
+     *                      !   MASS-WEIGHTED.                             ADVPGD1C.83    
+     *,ETADOT_LOWER(P_FIELD)!IN ADVECTING VERTICAL VELOC AT K-1/2,         ADVPGD1C.84    
+     *                      !   MASS-WEIGHTED.                             ADVPGD1C.85    
+     *,FIELD(P_FIELD)       !IN FIELD TO BE ADVECTED.                      ADVPGD1C.86    
+     *,FIELD_UPPER(P_FIELD) !IN FIELD TO BE ADVECTED AT LEVEL + 1 .        ADVPGD1C.87    
+     *,FIELD_LOWER(P_FIELD) !IN FIELD TO BE ADVECTED AT LEVEL - 1 .        ADVPGD1C.88    
+     *,NUX(P_FIELD)   !IN HOLDS PARAMETER NU FOR EAST-WEST ADVECTION.      ADVPGD1C.89    
+     *,NUY(P_FIELD)   !IN HOLDS PARAMETER NU FOR NORTH-SOUTH ADVECTION.    ADVPGD1C.90    
+     *,SEC_P_LATITUDE(P_FIELD) !IN HOLDS 1/COS(PHI) AT P POINTS.           ADVPGD1C.91    
+     *,SEC_U_LATITUDE(U_FIELD) !IN HOLDS 1/COS(PHI) AT U POINTS.           ADVPGD1C.92    
+     *,ADVECTION_TIMESTEP   !IN                                            ADVPGD1C.93    
+     *,LATITUDE_STEP_INVERSE  !IN 1/(DELTA PHI)                            ADVPGD1C.94    
+     *,LONGITUDE_STEP_INVERSE !IN 1/(DELTA LAMDA)                          ADVPGD1C.95    
+                                                                           ADVPGD1C.96    
+      REAL                                                                 ADVPGD1C.97    
+     * BRSP(P_FIELD)  !IN BRSP TERM AT LEVEL (SEE DOC.PAPER NO 10)         ADVPGD1C.98    
+                                                                           ADVPGD1C.99    
+      REAL                                                                 ADVPGD1C.100   
+     * FIELD_INC(P_FIELD)   !OUT HOLDS INCREMENT TO FIELD.                 ADVPGD1C.101   
+                                                                           ADVPGD1C.102   
+      REAL                                                                 ADVPGD1C.103   
+     & extended_FIELD(extended_P_FIELD) ! IN field to be advected with     ADVPGD1C.104   
+  !                                     !    extra halos for 4th order     ADVPGD1C.105   
+      INTEGER extended_address(P_FIELD)                                    GSS1F403.738   
+C                                                                          ADVPGD1C.106   
+                                                                           ADVPGD1C.107   
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    ADVPGD1C.108   
+C DEFINE LOCAL ARRAYS: 3 ARE REQUIRED                                      ADVPGD1C.109   
+                                                                           ADVPGD1C.110   
+      REAL                                                                 ADVPGD1C.111   
+     * WORK(P_FIELD)        ! GENERAL WORK-SPACE.                          ADVPGD1C.112   
+     *,U_TERM(P_FIELD)      ! HOLDS U ADVECTION TERM FROM EQUATION (35)    ADVPGD1C.113   
+     *,V_TERM(P_FIELD)      ! HOLDS V ADVECTION TERM FROM EQUATION (35)    ADVPGD1C.114   
+C*---------------------------------------------------------------------    ADVPGD1C.115   
+C DEFINE LOCAL VARIABLES                                                   ADVPGD1C.116   
+                                                                           ADVPGD1C.117   
+C REAL SCALARS                                                             ADVPGD1C.118   
+      REAL                                                                 ADVPGD1C.119   
+     * SCALAR1,SCALAR2                                                     ADVPGD1C.120   
+                                                                           ADVPGD1C.121   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        ADVPGD1C.122   
+      INTEGER                                                              ADVPGD1C.123   
+     *  I,IJ,IK,IL,IM,J                                                    ADVPGD1C.124   
+                                                                           ADVPGD1C.125   
+! Work space and scalars for the MPP Fourth Order Advection                ADVPGD1C.126   
+       INTEGER  info,            ! return code from comms operations       ADVPGD1C.127   
+     &          extended_index,  ! index for position in extended array    ADVPGD1C.128   
+     &          extended_START_POINT_NO_HALO,                              ADVPGD1C.129   
+!                                ! start position in extended array        ADVPGD1C.130   
+     &          extended_END_P_POINT_NO_HALO,                              ADVPGD1C.131   
+!                                ! end position in extended array          ADVPGD1C.132   
+     &          extended_ROW_LENGTH    ! row length of extended array      ADVPGD1C.133   
+*IF DEF,MPP,AND,DEF,T3E                                                    GSS2F403.3     
+                                                                           GSS2F403.4     
+*CALL AMAXSIZE                                                             GSS2F403.5     
+*ENDIF                                                                     GSS2F403.6     
+                                                                           ADVPGD1C.134   
+      REAL                                                                 ADR2F402.36    
+*IF DEF,MPP,AND,DEF,T3E                                                    GSS2F403.7     
+     &          rot_work(row_length_max),     ! work space for rotated p   GSS2F403.8     
+     &          rot_work_out(row_length_max), ! work space for rotated p   GSS2F403.9     
+*ELSE                                                                      GSS2F403.10    
+     &          rot_work(ROW_LENGTH), ! work space for rotated pole rows   ADVPGD1C.136   
+*ENDIF                                                                     GSS2F403.11    
+     &          extended_WORK(extended_P_FIELD)  ! extended work space     ADVPGD1C.137   
+*IF DEF,MPP,AND,DEF,T3E                                                    GSS2F403.12    
+      integer ipad1(32), ipad2(32)                                         GSS2F403.13    
+c                                                                          GSS2F403.14    
+      common/adv_p_gd_shmem/ ipad1, rot_work, ipad2                        GSS2F403.15    
+c                                                                          GSS2F403.16    
+*CALL PARVARS                                                              GSS2F403.17    
+      integer g_start(maxproc), g_new_start, l_new_length,                 GSS2F403.18    
+     2 l_iadd, current_length, l_rem_iadd, my_row_pe                       GSS2F403.19    
+*ENDIF                                                                     GSS2F403.20    
+                                                                           ADVPGD1C.138   
+                                                                           ADVPGD1C.142   
+C*L   NO EXTERNAL SUBROUTINE CALLS:------------------------------------    ADVPGD1C.143   
+C*---------------------------------------------------------------------    ADVPGD1C.144   
+                                                                           ADVPGD1C.145   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS                                     ADVPGD1C.146   
+CL    END_P_POINT_NO_HALO-START_POINT_NO_HALO+1                            ADVPGD1C.147   
+CL---------------------------------------------------------------------    ADVPGD1C.148   
+                                                                           ADVPGD1C.149   
+      IF (.NOT. L_SECOND) THEN                                             ADVPGD1C.150   
+! Calculate indexes in extended_arrays                                     ADVPGD1C.151   
+                                                                           ADVPGD1C.152   
+      extended_ROW_LENGTH=ROW_LENGTH+2*extra_EW_Halo                       ADVPGD1C.154   
+                                                                           ADVPGD1C.170   
+        extended_START_POINT_NO_HALO=                                      ADVPGD1C.171   
+     &    extended_address(START_POINT_NO_HALO)                            ADVPGD1C.172   
+                                                                           ADVPGD1C.173   
+        extended_END_P_POINT_NO_HALO=                                      ADVPGD1C.174   
+     &    extended_address(END_P_POINT_NO_HALO)                            ADVPGD1C.175   
+                                                                           ADVPGD1C.176   
+      ENDIF                                                                ADVPGD1C.177   
+CL                                                                         ADVPGD1C.178   
+CL---------------------------------------------------------------------    ADVPGD1C.179   
+CL    SECTION 1.     CALCULATE U_TERM IN EQUATION (35).                    ADVPGD1C.180   
+CL---------------------------------------------------------------------    ADVPGD1C.181   
+                                                                           ADVPGD1C.182   
+C----------------------------------------------------------------------    ADVPGD1C.183   
+CL    SECTION 1.1    CALCULATE TERM U D(FIELD)/D(LAMDA).                   ADVPGD1C.184   
+C----------------------------------------------------------------------    ADVPGD1C.185   
+                                                                           ADVPGD1C.186   
+C CALCULATE TERM AT ALL POINTS EXCEPT LAST AND STORE IN WORK.              ADVPGD1C.187   
+                                                                           ADVPGD1C.188   
+      IF (L_SECOND) THEN                                                   ADVPGD1C.189   
+! Loop over field missing top and bottom rows and halos and last point     ADVPGD1C.190   
+        DO 110 I=START_POINT_NO_HALO,END_P_POINT_NO_HALO-1                 ADVPGD1C.191   
+          WORK(I) = .5*(U(I)+U(I-ROW_LENGTH))*LONGITUDE_STEP_INVERSE*      ADVPGD1C.192   
+     *               (FIELD(I+1) - FIELD(I))                               ADVPGD1C.193   
+ 110    CONTINUE                                                           ADVPGD1C.194   
+                                                                           ADVPGD1C.195   
+*IF DEF,GLOBAL                                                             ADVPGD1C.196   
+        WORK(END_P_POINT_NO_HALO)=WORK(END_P_POINT_NO_HALO-1)              ADVPGD1C.197   
+*ENDIF                                                                     ADVPGD1C.198   
+                                                                           ADVPGD1C.199   
+      ELSE ! fourth order                                                  ADVPGD1C.200   
+! Loop over extended field, missing top and bottom rows and halos rows     ADVPGD1C.201   
+        DO I=extended_START_POINT_NO_HALO-1,                               ADVPGD1C.202   
+     &       extended_END_P_POINT_NO_HALO+1                                ADVPGD1C.203   
+          extended_WORK(I)=0.5*(U(I)+U(I-extended_ROW_LENGTH))*            ADVPGD1C.204   
+     &                     LONGITUDE_STEP_INVERSE*                         ADVPGD1C.205   
+     &                     (extended_FIELD(I+1)-extended_FIELD(I))         ADVPGD1C.206   
+        ENDDO                                                              ADVPGD1C.207   
+                                                                           ADVPGD1C.208   
+      ENDIF ! IF (L_SECOND)                                                ADVPGD1C.209   
+                                                                           ADVPGD1C.210   
+                                                                           ADVPGD1C.211   
+C----------------------------------------------------------------------    ADVPGD1C.212   
+CL    SECTION 1.2    CALCULATE U ADVECTION TERM IN EQUATION (35).          ADVPGD1C.213   
+CL                   IF L_SECOND = TRUE PERFORM SECOND ORDER ADVECTION     ADVPGD1C.214   
+CL                   ONLY.                                                 ADVPGD1C.215   
+C----------------------------------------------------------------------    ADVPGD1C.216   
+                                                                           ADVPGD1C.217   
+      IF(L_SECOND) THEN                                                    ADVPGD1C.218   
+*IF DEF,GLOBAL                                                             ADVPGD1C.219   
+C LOOP OVER ALL POINTS.                                                    ADVPGD1C.220   
+                                                                           ADVPGD1C.221   
+! Loop over field, missing top and bottom rows and halos, and              ADVPGD1C.222   
+! first point.                                                             ADVPGD1C.223   
+        DO J=START_POINT_NO_HALO+1,END_P_POINT_NO_HALO                     ADVPGD1C.224   
+           U_TERM(J) = .5*(WORK(J)+WORK(J-1))                              ADVPGD1C.225   
+        END DO                                                             ADVPGD1C.226   
+                                                                           ADVPGD1C.227   
+C CALCULATE  VALUES AT FIRST,SECOND AND LAST POINTS ON A ROW.              ADVPGD1C.228   
+C WHERE FIRST LOOP CALCULATED THEM INCORRECTLY.                            ADVPGD1C.229   
+                                                                           ADVPGD1C.230   
+        U_TERM(START_POINT_NO_HALO)=U_TERM(START_POINT_NO_HALO+1)          ADVPGD1C.231   
+! MPP Code : No need to do recalculations of end points because cyclic     ADVPGD1C.232   
+! boundary conditions means that halos do this for us automatically        ADVPGD1C.233   
+                                                                           ADVPGD1C.234   
+*ELSE                                                                      ADVPGD1C.235   
+C LIMITED AREA MODEL.                                                      ADVPGD1C.236   
+                                                                           ADVPGD1C.237   
+! Loop over field, missing top and bottom rows and halos, and              ADVPGD1C.238   
+! first and last points.                                                   ADVPGD1C.239   
+        DO J=START_POINT_NO_HALO+1,END_P_POINT_NO_HALO-1                   ADVPGD1C.240   
+          U_TERM(J) = .5*(WORK(J)+WORK(J-1))                               ADVPGD1C.241   
+        END DO                                                             ADVPGD1C.242   
+                                                                           ADVPGD1C.243   
+C CORNER VALUES                                                            ADVPGD1C.244   
+                                                                           ADVPGD1C.245   
+        U_TERM(START_POINT_NO_HALO)=0.0                                    ADVPGD1C.246   
+        U_TERM(END_P_POINT_NO_HALO)=0.0                                    ADVPGD1C.247   
+                                                                           ADVPGD1C.248   
+*ENDIF                                                                     ADVPGD1C.249   
+      ELSE ! Fourth order                                                  ADVPGD1C.250   
+                                                                           ADVPGD1C.251   
+C LOOP OVER ALL POINTS.                                                    ADVPGD1C.252   
+                                                                           ADVPGD1C.253   
+! Loop over field, missing top and bottom rows and halos, and              ADVPGD1C.254   
+! first point.                                                             ADVPGD1C.255   
+        DO 120 J=START_POINT_NO_HALO+1,END_P_POINT_NO_HALO                 ADVPGD1C.256   
+          extended_index=extended_address(J)                               ADVPGD1C.257   
+                                                                           ADVPGD1C.258   
+          U_TERM(J) = (1.+NUX(J))*.5*(extended_WORK(extended_index)+       ADVPGD1C.259   
+     &                                extended_WORK(extended_index-1))     ADVPGD1C.260   
+     &                 -  NUX(J) *.5*(extended_WORK(extended_index+1)+     ADVPGD1C.261   
+     &                                extended_WORK(extended_index-2))     ADVPGD1C.262   
+ 120    CONTINUE                                                           ADVPGD1C.263   
+                                                                           ADVPGD1C.264   
+*IF DEF,GLOBAL                                                             ADVPGD1C.265   
+        U_TERM(START_POINT_NO_HALO)= U_TERM(START_POINT_NO_HALO+1)         ADVPGD1C.266   
+                                                                           ADVPGD1C.267   
+*ELSE                                                                      ADVPGD1C.268   
+                                                                           ARR4F405.4     
+! Initialise first value to avoid potential flop exception failure         ARR4F405.5     
+                                                                           ARR4F405.6     
+        U_TERM(START_POINT_NO_HALO)= 0.0                                   ARR4F405.7     
+                                                                           ARR4F405.8     
+                                                                           ADVPGD1C.269   
+C CALCULATE  VALUES AT SECOND AND NEXT TO LAST POINTS ON A ROW.            ADVPGD1C.270   
+C THESE VALUES ARE JUST SECOND ORDER.                                      ADVPGD1C.271   
+                                                                           ADVPGD1C.272   
+        IF (at_left_of_LPG) THEN                                           ADVPGD1C.273   
+! Do second point along each row                                           ADVPGD1C.274   
+          DO I=START_POINT_NO_HALO+FIRST_ROW_PT,END_P_POINT_NO_HALO,       ADVPGD1C.275   
+     &         ROW_LENGTH                                                  ADVPGD1C.276   
+            extended_index=extended_address(I)                             ADVPGD1C.277   
+                                                                           ADVPGD1C.278   
+            U_TERM(I)= 0.5*(extended_WORK(extended_index)+                 ADVPGD1C.279   
+     &                      extended_WORK(extended_index-1))               ADVPGD1C.280   
+          ENDDO                                                            ADVPGD1C.281   
+        ENDIF                                                              ADVPGD1C.282   
+                                                                           ADVPGD1C.283   
+! Do penultimate point along each row                                      ADVPGD1C.284   
+                                                                           ADVPGD1C.285   
+        IF (at_right_of_LPG) THEN                                          ADVPGD1C.286   
+          DO I=START_POINT_NO_HALO+LAST_ROW_PT-2,END_P_POINT_NO_HALO,      ADVPGD1C.287   
+     &         ROW_LENGTH                                                  ADVPGD1C.288   
+            extended_index=extended_address(I)                             ADVPGD1C.289   
+                                                                           ADVPGD1C.290   
+            U_TERM(I)= 0.5*(extended_WORK(extended_index)+                 ADVPGD1C.291   
+     &                      extended_WORK(extended_index-1))               ADVPGD1C.292   
+          ENDDO                                                            ADVPGD1C.293   
+        ENDIF                                                              ADVPGD1C.294   
+                                                                           ADVPGD1C.295   
+*ENDIF                                                                     ADVPGD1C.296   
+      END IF                                                               ADVPGD1C.297   
+                                                                           ADVPGD1C.298   
+CL                                                                         ADVPGD1C.299   
+CL---------------------------------------------------------------------    ADVPGD1C.300   
+CL    SECTION 2.     CALCULATE V_TERM IN EQUATION (35).                    ADVPGD1C.301   
+CL---------------------------------------------------------------------    ADVPGD1C.302   
+                                                                           ADVPGD1C.303   
+C----------------------------------------------------------------------    ADVPGD1C.304   
+CL    SECTION 2.1    CALCULATE TERM V D(FIELD)/D(PHI).                     ADVPGD1C.305   
+C----------------------------------------------------------------------    ADVPGD1C.306   
+                                                                           ADVPGD1C.307   
+C CALCULATE TERM AT ALL POINTS EXCEPT FIRST AND STORE IN WORK.             ADVPGD1C.308   
+                                                                           ADVPGD1C.309   
+      IF (L_SECOND) THEN                                                   ADVPGD1C.310   
+                                                                           ADVPGD1C.311   
+! Loop over field, missing bottom row and top and bottom halos, and        ADVPGD1C.312   
+! first point                                                              ADVPGD1C.313   
+        DO 210 I=START_POINT_NO_HALO-ROW_LENGTH+1,END_P_POINT_NO_HALO      ADVPGD1C.314   
+          WORK(I) = .5*(V(I)+V(I-1))*LATITUDE_STEP_INVERSE*                ADVPGD1C.315   
+     *               (FIELD(I) - FIELD(I+ROW_LENGTH))                      ADVPGD1C.316   
+ 210    CONTINUE                                                           ADVPGD1C.317   
+                                                                           ADVPGD1C.318   
+*IF DEF,GLOBAL                                                             ADVPGD1C.319   
+        WORK(START_POINT_NO_HALO-ROW_LENGTH)=                              ADVPGD1C.320   
+     &    WORK(START_POINT_NO_HALO-ROW_LENGTH+1)                           ADVPGD1C.321   
+*ENDIF                                                                     ADVPGD1C.322   
+                                                                           ADVPGD1C.323   
+      ELSE ! Fourth order                                                  ADVPGD1C.324   
+! Calculate WORK at the Southern halo too. This is needed for the          ADVPGD1C.325   
+! computation of the Southern row                                          ADVPGD1C.326   
+                                                                           ADVPGD1C.327   
+        DO I=extended_START_POINT_NO_HALO-2*extended_ROW_LENGTH,           ADVPGD1C.328   
+     &       extended_END_P_POINT_NO_HALO+extended_ROW_LENGTH              ADVPGD1C.329   
+          extended_WORK(I)=0.5*(V(I)+V(I-1))*LATITUDE_STEP_INVERSE*        ADVPGD1C.330   
+     &      (extended_FIELD(I)-extended_FIELD(I+extended_ROW_LENGTH))      ADVPGD1C.331   
+        ENDDO                                                              ADVPGD1C.332   
+                                                                           ADVPGD1C.333   
+      ENDIF ! L_SECOND                                                     ADVPGD1C.334   
+                                                                           ADVPGD1C.335   
+                                                                           ADVPGD1C.336   
+C----------------------------------------------------------------------    ADVPGD1C.337   
+CL    SECTION 2.2    CALCULATE V ADVECTION TERM IN EQUATION (35).          ADVPGD1C.338   
+CL                   IF L_SECOND = TRUE PERFORM SECOND ORDER ADVECTION     ADVPGD1C.339   
+CL                   ONLY.                                                 ADVPGD1C.340   
+C----------------------------------------------------------------------    ADVPGD1C.341   
+                                                                           ADVPGD1C.342   
+      IF(L_SECOND) THEN                                                    ADVPGD1C.343   
+*IF DEF,GLOBAL                                                             ADVPGD1C.344   
+C GLOBAL MODEL.                                                            ADVPGD1C.345   
+C CALCULATE ALL VALUES EXCEPT ON ROWS NEXT TO POLES.                       ADVPGD1C.346   
+                                                                           ADVPGD1C.347   
+! Loop over field, missing top and bottom rows and halos                   ADVPGD1C.348   
+        DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                       ADVPGD1C.349   
+          V_TERM(I) = .5*(WORK(I-ROW_LENGTH)+WORK(I))                      ADVPGD1C.350   
+        END DO                                                             ADVPGD1C.351   
+                                                                           ADVPGD1C.352   
+C CALCULATE VALUES ON SLICES NEXT TO POLES.                                ADVPGD1C.353   
+                                                                           ADVPGD1C.354   
+        IF (at_top_of_LPG) THEN                                            ADVPGD1C.355   
+          DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                    ADVPGD1C.356   
+            V_TERM(I)=WORK(I)*0.5                                          ADVPGD1C.357   
+          ENDDO                                                            ADVPGD1C.358   
+        ENDIF                                                              ADVPGD1C.359   
+                                                                           ADVPGD1C.360   
+        IF (at_base_of_LPG) THEN                                           ADVPGD1C.361   
+          DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                ADVPGD1C.362   
+            V_TERM(I)=WORK(I-ROW_LENGTH)*0.5                               ADVPGD1C.363   
+          ENDDO                                                            ADVPGD1C.364   
+        ENDIF                                                              ADVPGD1C.365   
+                                                                           ADVPGD1C.366   
+                                                                           ADVPGD1C.367   
+*ELSE                                                                      ADVPGD1C.368   
+C LIMITED AREA MODEL.                                                      ADVPGD1C.369   
+                                                                           ADVPGD1C.370   
+! Loop over field, missing top and bottom rows and halos, and              ADVPGD1C.371   
+! first and last points.                                                   ADVPGD1C.372   
+        DO I=START_POINT_NO_HALO+1,END_P_POINT_NO_HALO-1                   ADVPGD1C.373   
+          V_TERM(I) = .5*(WORK(I-ROW_LENGTH)+WORK(I))                      ADVPGD1C.374   
+        END DO                                                             ADVPGD1C.375   
+                                                                           ADVPGD1C.376   
+        V_TERM(START_POINT_NO_HALO) = 0.0                                  ADVPGD1C.377   
+        V_TERM(END_P_POINT_NO_HALO) = 0.0                                  ADVPGD1C.378   
+                                                                           ADVPGD1C.379   
+*ENDIF                                                                     ADVPGD1C.380   
+      ELSE                                                                 ADVPGD1C.381   
+*IF DEF,GLOBAL                                                             ADVPGD1C.382   
+C GLOBAL MODEL.                                                            ADVPGD1C.383   
+! Calculate all values except on rows next to poles and next to the        ADVPGD1C.384   
+! processor interfaces                                                     ADVPGD1C.385   
+                                                                           ADVPGD1C.386   
+        DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                       ADVPGD1C.387   
+          extended_index=extended_address(I)                               ADVPGD1C.388   
+                                                                           ADVPGD1C.389   
+          V_TERM(I) = (1.0+NUY(I))*0.5*                                    ADVPGD1C.390   
+     &     (extended_WORK(extended_index-extended_ROW_LENGTH)              ADVPGD1C.391   
+     &    + extended_WORK(extended_index))                                 ADVPGD1C.392   
+     &                   - NUY(I) *0.5*                                    ADVPGD1C.393   
+     &     (extended_WORK(extended_index+extended_ROW_LENGTH)              ADVPGD1C.394   
+     &    + extended_WORK(extended_index-2*extended_ROW_LENGTH))           ADVPGD1C.395   
+        ENDDO                                                              ADVPGD1C.396   
+*IF DEF,MPP,AND,DEF,T3E                                                    GSS2F403.21    
+c                                                                          GSS2F403.22    
+c--for MPP Code, check that we have enough processors                      GSS2F403.23    
+        if(nproc_x.eq.1 .or. nproc_y.eq.1) then                            GSS2F403.24    
+*ENDIF                                                                     GSS2F403.25    
+                                                                           ADVPGD1C.397   
+        IF (at_top_of_LPG) THEN                                            ADVPGD1C.398   
+! North Pole Rows                                                          ADVPGD1C.399   
+! We want to advect across the pole - which requires us to know the        ADVPGD1C.400   
+! values on the opposite side of the pole. To do this we rotate the        ADVPGD1C.401   
+! polar row by half a row in a work array - so each point in the           ADVPGD1C.402   
+! original array matches its opposite point in the rotated array           ADVPGD1C.403   
+                                                                           ADVPGD1C.404   
+          DO I=1,ROW_LENGTH                                                ADVPGD1C.405   
+!            rot_work(I)=extended_WORK(halo_4th*extended_ROW_LENGTH+I+1)   ADVPGD1C.406   
+            rot_work(I)=                                                   ADVPGD1C.407   
+     &        extended_WORK(extended_address(TOP_ROW_START+I-1))           ADVPGD1C.408   
+          ENDDO                                                            ADVPGD1C.409   
+                                                                           ADVPGD1C.410   
+          CALL GCG_RVECSHIFT(ROW_LENGTH,ROW_LENGTH-2*EW_Halo,              ADVPGD1C.411   
+     &                       halo_4th,1,                                   ADVPGD1C.412   
+     &                       GLOBAL_ROW_LENGTH/2,.TRUE.,rot_work,          ADVPGD1C.413   
+     &                       GC_ROW_GROUP,info)                            ADVPGD1C.414   
+                                                                           ADVPGD1C.415   
+          DO I=1,ROW_LENGTH                                                ADVPGD1C.416   
+            IK=START_POINT_NO_HALO-1+I ! point in row beneath polar row    ADVPGD1C.417   
+            extended_index=extended_address(IK)                            ADVPGD1C.418   
+!            extended_index=(Offy+2)*extended_ROW_LENGTH +I+1              ADVPGD1C.419   
+!                                    ! same point in extended field        ADVPGD1C.420   
+                                                                           ADVPGD1C.421   
+! Calculate V_TERM in row beneath polar row                                ADVPGD1C.422   
+            V_TERM(IK)= (1.0+NUY(IK))*0.5*                                 ADVPGD1C.423   
+     &        (extended_WORK(extended_index-extended_ROW_LENGTH)           ADVPGD1C.424   
+     &       + extended_WORK(extended_index))                              ADVPGD1C.425   
+     &                     - NUY(IK) *0.5*                                 ADVPGD1C.426   
+     &        (extended_WORK(extended_index+extended_ROW_LENGTH)           ADVPGD1C.427   
+     &       + rot_work(I))                                                ADVPGD1C.428   
+                                                                           ADVPGD1C.429   
+! Calculate V_TERM in polar row                                            ADVPGD1C.430   
+            V_TERM(IK-ROW_LENGTH) = (1.0+NUY(IK))*0.5*                     ADVPGD1C.431   
+     &         extended_WORK(extended_index-extended_ROW_LENGTH)           ADVPGD1C.432   
+     &      - NUY(IK)*0.5*extended_WORK(extended_index)                    ADVPGD1C.433   
+                                                                           ADVPGD1C.434   
+          ENDDO                                                            ADVPGD1C.435   
+                                                                           ADVPGD1C.436   
+        ENDIF ! (attop)                                                    ADVPGD1C.437   
+                                                                           ADVPGD1C.438   
+        IF (at_base_of_LPG) THEN                                           ADVPGD1C.439   
+! South Pole Rows : similar code to that for North Pole                    ADVPGD1C.440   
+                                                                           ADVPGD1C.441   
+          DO I=1,ROW_LENGTH                                                ADVPGD1C.442   
+            extended_index=                                                ADVPGD1C.443   
+     &        extended_address(P_BOT_ROW_START-ROW_LENGTH+I-1)             ADVPGD1C.444   
+!            extended_index=extended_P_FIELD-                              ADVPGD1C.445   
+!     &                      (Offy+3)*extended_ROW_LENGTH +I+1             ADVPGD1C.446   
+            rot_work(I)=extended_WORK(extended_index)                      ADVPGD1C.447   
+          ENDDO                                                            ADVPGD1C.448   
+                                                                           ADVPGD1C.449   
+          CALL GCG_RVECSHIFT(ROW_LENGTH,ROW_LENGTH-2*EW_Halo,              ADVPGD1C.450   
+     &                       halo_4th,1,                                   ADVPGD1C.451   
+     &                       GLOBAL_ROW_LENGTH/2,.TRUE.,rot_work,          ADVPGD1C.452   
+     &                       GC_ROW_GROUP,info)                            ADVPGD1C.453   
+                                                                           ADVPGD1C.454   
+          DO I=1,ROW_LENGTH                                                ADVPGD1C.455   
+            IJ=END_P_POINT_NO_HALO-ROW_LENGTH+I ! row above South Pole     ADVPGD1C.456   
+            extended_index=extended_address(IJ)                            ADVPGD1C.457   
+!            IJ=P_FIELD-(Offy+2)*ROW_LENGTH+I ! row above South Pole       ADVPGD1C.458   
+!            extended_index=extended_P_FIELD-                              ADVPGD1C.459   
+!     &                       (Offy+3)*extended_ROW_LENGTH +I+1            ADVPGD1C.460   
+                                                                           ADVPGD1C.461   
+! Calculate V_TERM in row above polar row                                  ADVPGD1C.462   
+            V_TERM(IJ)= (1.0+NUY(IJ))*0.5*                                 ADVPGD1C.463   
+     &        (extended_WORK(extended_index-extended_ROW_LENGTH)           ADVPGD1C.464   
+     &       + extended_WORK(extended_index))                              ADVPGD1C.465   
+     &                     - NUY(IJ) *0.5*                                 ADVPGD1C.466   
+     &        (rot_work(I)+                                                ADVPGD1C.467   
+     &         extended_WORK(extended_index-2*extended_ROW_LENGTH))        ADVPGD1C.468   
+                                                                           ADVPGD1C.469   
+! Calculate V_TERM in polar row                                            ADVPGD1C.470   
+            V_TERM(IJ+ROW_LENGTH) = (1.0+NUY(IJ))*0.5*                     ADVPGD1C.471   
+     &         extended_WORK(extended_index) - NUY(IJ)*0.5*                ADVPGD1C.472   
+     &         extended_WORK(extended_index-extended_ROW_LENGTH)           ADVPGD1C.473   
+                                                                           ADVPGD1C.474   
+          ENDDO                                                            ADVPGD1C.475   
+                                                                           ADVPGD1C.476   
+        ENDIF ! (atbase)                                                   ADVPGD1C.477   
+*IF DEF,MPP,AND,DEF,T3E                                                    GSS2F403.26    
+c                                                                          GSS2F403.27    
+        else ! MPP/T3E and only 1 processor along either direction         GSS2F403.28    
+c                                                                          GSS2F403.29    
+        call barrier()                                                     GSS2F403.30    
+c                                                                          GSS2F403.31    
+        IF (at_top_of_LPG) THEN                                            GSS2F403.32    
+! North Pole Rows                                                          GSS2F403.33    
+                                                                           GSS2F403.34    
+          DO I=1,ROW_LENGTH                                                GSS2F403.35    
+!            rot_work(I)=extended_WORK(halo_4th*extended_ROW_LENGTH+I+1)   GSS2F403.36    
+            rot_work(I)=                                                   GSS2F403.37    
+     &        extended_WORK(extended_address(TOP_ROW_START+I-1))           GSS2F403.38    
+          ENDDO                                                            GSS2F403.39    
+        ENDIF ! (attop)                                                    GSS2F403.40    
+                                                                           GSS2F403.41    
+        IF (at_base_of_LPG) THEN                                           GSS2F403.42    
+! South Pole Rows : similar code to that for North Pole                    GSS2F403.43    
+                                                                           GSS2F403.44    
+          DO I=1,ROW_LENGTH                                                GSS2F403.45    
+            extended_index=                                                GSS2F403.46    
+     &        extended_address(P_BOT_ROW_START-ROW_LENGTH+I-1)             GSS2F403.47    
+!            extended_index=extended_P_FIELD-                              GSS2F403.48    
+!     &                      (Offy+3)*extended_ROW_LENGTH +I+1             GSS2F403.49    
+            rot_work(I)=extended_WORK(extended_index)                      GSS2F403.50    
+          ENDDO                                                            GSS2F403.51    
+        ENDIF ! (atbase)                                                   GSS2F403.52    
+c                                                                          GSS2F403.53    
+        call barrier()                                                     GSS2F403.54    
+c                                                                          GSS2F403.55    
+c--process North and South Rows together                                   GSS2F403.56    
+        IF (at_top_of_LPG .or. at_base_of_LPG) THEN                        GSS2F403.57    
+c--work out the PE at the start of my Row                                  GSS2F403.58    
+          my_row_pe=(mype/nproc_x)*nproc_x                                 GSS2F403.59    
+          g_start(1)=1                                                     GSS2F403.60    
+c--find the global start addresses for PE's in my row                      GSS2F403.61    
+          do i=2, nproc_x+1                                                GSS2F403.62    
+            g_start(i)=g_start(i-1)+g_blsizep(1,i-2)                       GSS2F403.63    
+          end do                                                           GSS2F403.64    
+c          write(0,*) my_pe(), (g_start(i), i=1, nproc_x+1)                GSS2F403.65    
+c                                                                          GSS2F403.66    
+c--set the global start address for the start of my exchange               GSS2F403.67    
+          g_new_start=g_start(mype-my_row_pe+1)+global_row_length/2        GSS2F403.68    
+c--set the length of the data to exchange                                  GSS2F403.69    
+          l_new_length=row_length-2*ew_halo                                GSS2F403.70    
+c--set the start address                                                   GSS2F403.71    
+          l_iadd=halo_4th                                                  GSS2F403.72    
+c--loop until we have moved all the segments for this PE                   GSS2F403.73    
+1000    continue                                                           GSS2F403.74    
+c--check we not off the end                                                GSS2F403.75    
+            if(g_new_start.gt.glsize(1)) g_new_start=                      GSS2F403.76    
+     2       g_new_start-glsize(1)                                         GSS2F403.77    
+c--loop over the PE's in a row                                             GSS2F403.78    
+            do i=1, nproc_x                                                GSS2F403.79    
+c--check if this glocal address is on the the current remote PE            GSS2F403.80    
+              if(g_new_start.ge.g_start(i) .and.                           GSS2F403.81    
+     2         g_new_start.lt.g_start(i+1)) then                           GSS2F403.82    
+c--compute the new local address on the remote PE                          GSS2F403.83    
+                l_rem_iadd=g_new_start-g_start(i)                          GSS2F403.84    
+c--compute the number of words to move on this get                         GSS2F403.85    
+                current_length=min(l_new_length,                           GSS2F403.86    
+     2           g_start(i+1)-g_new_start)                                 GSS2F403.87    
+c                write(0,*) my_pe(), ' fetch ', current_length,            GSS2F403.88    
+c     2           ' from PE ',i-1, ' from ',l_rem_iadd+halo_4th,           GSS2F403.89    
+c     3           ' to ', l_iadd                                           GSS2F403.90    
+c--get the data                                                            GSS2F403.91    
+                call shmem_get(rot_work_out(l_iadd),                       GSS2F403.92    
+     2           rot_work(l_rem_iadd+halo_4th), current_length,            GSS2F403.93    
+     3           my_row_pe+i-1)                                            GSS2F403.94    
+                                                                           GSS2F403.95    
+c--update the global address and local addresses and lengths               GSS2F403.96    
+                g_new_start=g_new_start+current_length                     GSS2F403.97    
+                l_iadd=l_iadd+current_length                               GSS2F403.98    
+                l_new_length=l_new_length-current_length                   GSS2F403.99    
+c--check if we have finished                                               GSS2F403.100   
+                if(l_new_length.gt.0) goto 1000                            GSS2F403.101   
+                goto 1100                                                  GSS2F403.102   
+              endif                                                        GSS2F403.103   
+            end do                                                         GSS2F403.104   
+            write(0,*)'PE ', my_pe(), ' is Lost in ADV_P_GD ',             GSS2F403.105   
+     2       l_new_length, current_length, l_rem_iadd+halo_4th, l_iadd,    GSS2F403.106   
+     3       g_new_start, (g_start(i), i=1, nproc_x+1)                     GSS2F403.107   
+            call abort('Lost in ADV_P_GD')                                 GSS2F403.108   
+                                                                           GSS2F403.109   
+1100        continue                                                       GSS2F403.110   
+            rot_work_out(1)=rot_work(1)                                    GSS2F403.111   
+            rot_work_out(row_length)=rot_work(row_length)                  GSS2F403.112   
+c            write(0,*) my_pe(), (rot_work_out(i), i=1,                    GSS2F403.113   
+c     2       row_length)                                                  GSS2F403.114   
+                                                                           GSS2F403.115   
+        ENDIF ! (at_top_of_LPG .or. at_base_of_LPG)                        GSS2F403.116   
+c                                                                          GSS2F403.117   
+        IF (at_top_of_LPG) THEN                                            GSS2F403.118   
+! North Pole                                                               GSS2F403.119   
+                                                                           GSS2F403.120   
+          DO I=1,ROW_LENGTH                                                GSS2F403.121   
+            IK=START_POINT_NO_HALO-1+I ! point in row beneath polar row    GSS2F403.122   
+            extended_index=extended_address(IK)                            GSS2F403.123   
+!            extended_index=(Offy+2)*extended_ROW_LENGTH +I+1              GSS2F403.124   
+!                                    ! same point in extended field        GSS2F403.125   
+                                                                           GSS2F403.126   
+! Calculate V_TERM in row beneath polar row                                GSS2F403.127   
+            V_TERM(IK)= (1.0+NUY(IK))*0.5*                                 GSS2F403.128   
+     &        (extended_WORK(extended_index-extended_ROW_LENGTH)           GSS2F403.129   
+     &       + extended_WORK(extended_index))                              GSS2F403.130   
+     &                     - NUY(IK) *0.5*                                 GSS2F403.131   
+     &        (extended_WORK(extended_index+extended_ROW_LENGTH)           GSS2F403.132   
+     &       + rot_work_out(I))                                            GSS2F403.133   
+                                                                           GSS2F403.134   
+! Calculate V_TERM in polar row                                            GSS2F403.135   
+            V_TERM(IK-ROW_LENGTH) = (1.0+NUY(IK))*0.5*                     GSS2F403.136   
+     &         extended_WORK(extended_index-extended_ROW_LENGTH)           GSS2F403.137   
+     &      - NUY(IK)*0.5*extended_WORK(extended_index)                    GSS2F403.138   
+                                                                           GSS2F403.139   
+          ENDDO                                                            GSS2F403.140   
+        ENDIF ! (IF at_top_of_LPG)                                         GSS2F403.141   
+c                                                                          GSS2F403.142   
+        IF (at_base_of_LPG) THEN                                           GSS2F403.143   
+! South Pole                                                               GSS2F403.144   
+                                                                           GSS2F403.145   
+          DO I=1,ROW_LENGTH                                                GSS2F403.146   
+            IJ=END_P_POINT_NO_HALO-ROW_LENGTH+I ! row above South Pole     GSS2F403.147   
+            extended_index=extended_address(IJ)                            GSS2F403.148   
+!            IJ=P_FIELD-(Offy+2)*ROW_LENGTH+I ! row above South Pole       GSS2F403.149   
+!            extended_index=extended_P_FIELD-                              GSS2F403.150   
+!     &                       (Offy+3)*extended_ROW_LENGTH +I+1            GSS2F403.151   
+                                                                           GSS2F403.152   
+! Calculate V_TERM in row above polar row                                  GSS2F403.153   
+            V_TERM(IJ)= (1.0+NUY(IJ))*0.5*                                 GSS2F403.154   
+     &        (extended_WORK(extended_index-extended_ROW_LENGTH)           GSS2F403.155   
+     &       + extended_WORK(extended_index))                              GSS2F403.156   
+     &                     - NUY(IJ) *0.5*                                 GSS2F403.157   
+     &       (rot_work_out(I)+                                             GSS2F403.158   
+     &         extended_WORK(extended_index-2*extended_ROW_LENGTH))        GSS2F403.159   
+                                                                           GSS2F403.160   
+! Calculate V_TERM in polar row                                            GSS2F403.161   
+            V_TERM(IJ+ROW_LENGTH) = (1.0+NUY(IJ))*0.5*                     GSS2F403.162   
+     &         extended_WORK(extended_index) - NUY(IJ)*0.5*                GSS2F403.163   
+     &         extended_WORK(extended_index-extended_ROW_LENGTH)           GSS2F403.164   
+                                                                           GSS2F403.165   
+          ENDDO                                                            GSS2F403.166   
+        ENDIF ! (IF at_base_of_LPG)                                        GSS2F403.167   
+c                                                                          GSS2F403.168   
+        endif ! Code for more then one processor in each direction         GSS2F403.169   
+c                                                                          GSS2F403.170   
+*ENDIF                                                                     GSS2F403.171   
+                                                                           ADVPGD1C.478   
+*ELSE                                                                      ADVPGD1C.479   
+C LIMITED AREA MODEL.                                                      ADVPGD1C.480   
+! Calculate all values except on rows next to poles and next to the        ADVPGD1C.481   
+! processor interfaces                                                     ADVPGD1C.482   
+                                                                           ADVPGD1C.483   
+! Loop over field, missing top and bottom rows and halos                   ADVPGD1C.484   
+        DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                       ADVPGD1C.485   
+          extended_index=extended_address(I)                               ADVPGD1C.486   
+                                                                           ADVPGD1C.487   
+          V_TERM(I) = (1.0+NUY(I))*0.5*                                    ADVPGD1C.488   
+     &     (extended_WORK(extended_index-extended_ROW_LENGTH)              ADVPGD1C.489   
+     &    + extended_WORK(extended_index))                                 ADVPGD1C.490   
+     &                   - NUY(I) *0.5*                                    ADVPGD1C.491   
+     &     (extended_WORK(extended_index+extended_ROW_LENGTH)              ADVPGD1C.492   
+     &    + extended_WORK(extended_index-2*extended_ROW_LENGTH))           ADVPGD1C.493   
+        ENDDO                                                              ADVPGD1C.494   
+                                                                           ADVPGD1C.495   
+                                                                           ADVPGD1C.496   
+C CALCULATE VALUES ON SLICES NEXT TO BOUNDARIES AS SECOND ORDER.           ADVPGD1C.497   
+                                                                           ADVPGD1C.498   
+        IF (at_top_of_LPG) THEN                                            ADVPGD1C.499   
+! Loop over row beneath top row, missing halos                             ADVPGD1C.500   
+          DO I=START_POINT_NO_HALO+FIRST_ROW_PT-1,                         ADVPGD1C.501   
+     &         START_POINT_NO_HALO+LAST_ROW_PT-1                           ADVPGD1C.502   
+            extended_index=extended_address(I)                             ADVPGD1C.503   
+                                                                           ADVPGD1C.504   
+            V_TERM(I)=0.5*                                                 ADVPGD1C.505   
+     &        (extended_WORK(extended_index-extended_ROW_LENGTH)           ADVPGD1C.506   
+     &       + extended_WORK(extended_index))                              ADVPGD1C.507   
+          ENDDO                                                            ADVPGD1C.508   
+        ENDIF                                                              ADVPGD1C.509   
+                                                                           ADVPGD1C.510   
+        IF (at_base_of_LPG) THEN                                           ADVPGD1C.511   
+! Loop over row above bottom row, missing halos                            ADVPGD1C.512   
+          DO I=END_P_POINT_NO_HALO-ROW_LENGTH+FIRST_ROW_PT,                ADVPGD1C.513   
+     &         END_P_POINT_NO_HALO-ROW_LENGTH+LAST_ROW_PT                  ADVPGD1C.514   
+            extended_index=extended_address(I)                             ADVPGD1C.515   
+            V_TERM(I)=0.5*                                                 ADVPGD1C.516   
+     &        (extended_WORK(extended_index-extended_ROW_LENGTH)           ADVPGD1C.517   
+     &       + extended_WORK(extended_index))                              ADVPGD1C.518   
+          ENDDO                                                            ADVPGD1C.519   
+        ENDIF                                                              ADVPGD1C.520   
+                                                                           ADVPGD1C.521   
+*ENDIF                                                                     ADVPGD1C.522   
+      END IF                                                               ADVPGD1C.523   
+                                                                           ADVPGD1C.524   
+CL                                                                         ADVPGD1C.525   
+CL---------------------------------------------------------------------    ADVPGD1C.526   
+CL    SECTION 3.     CALCULATE VERTICAL FLUX AND COMBINE WITH U AND V      ADVPGD1C.527   
+CL                   TERMS TO FORM INCREMENT.                              ADVPGD1C.528   
+CL---------------------------------------------------------------------    ADVPGD1C.529   
+                                                                           ADVPGD1C.530   
+CL    VERTICAL FLUX ON INPUT IS .5*TIMESTEP*ETADOT*D(FIELD)/D(ETA)         ADVPGD1C.531   
+CL    AT LEVEL K-1/2. AT THE END OF THIS SECTION IT IS THE SAME            ADVPGD1C.532   
+CL    QUANTITY BUT AT LEVEL K+1/2.                                         ADVPGD1C.533   
+                                                                           ADVPGD1C.534   
+! Loop over field, missing top and bottom rows and halos                   ADVPGD1C.535   
+      DO 300 I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                     ADVPGD1C.536   
+        SCALAR1 = .5 * ADVECTION_TIMESTEP *                                ADVPGD1C.537   
+     *         ETADOT_UPPER(I) * (FIELD_UPPER(I) - FIELD(I))               ADVPGD1C.538   
+        SCALAR2 = .5 * ADVECTION_TIMESTEP *                                ADVPGD1C.539   
+     *         ETADOT_LOWER(I) * (FIELD(I) - FIELD_LOWER(I))               ADVPGD1C.540   
+        FIELD_INC(I) = ADVECTION_TIMESTEP * SEC_P_LATITUDE(I) *            ADVPGD1C.541   
+     *                  (U_TERM(I)+V_TERM(I))                              ADVPGD1C.542   
+     &                   + SCALAR1+SCALAR2                                 ADVPGD1C.543   
+      IF (LWHITBROM) THEN                                                  ADVPGD1C.544   
+        FIELD_INC(I) = FIELD_INC(I)                                        ADVPGD1C.545   
+     *                  + FIELD(I)*BRSP(I)                                 ADVPGD1C.546   
+      END IF                                                               ADVPGD1C.547   
+ 300  CONTINUE                                                             ADVPGD1C.548   
+                                                                           ADVPGD1C.549   
+*IF DEF,GLOBAL                                                             ADVPGD1C.550   
+      IF (at_top_of_LPG) THEN                                              ADVPGD1C.551   
+! North Pole Flux                                                          ADVPGD1C.552   
+        DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                      ADVPGD1C.553   
+          SCALAR1 = 0.5 * ADVECTION_TIMESTEP *                             ADVPGD1C.554   
+     &              ETADOT_UPPER(I) * (FIELD_UPPER(I) - FIELD(I))          ADVPGD1C.555   
+          SCALAR2 = 0.5 * ADVECTION_TIMESTEP *                             ADVPGD1C.556   
+     &              ETADOT_LOWER(I) * (FIELD(I) - FIELD_LOWER(I))          ADVPGD1C.557   
+          FIELD_INC(I) = ADVECTION_TIMESTEP * SEC_P_LATITUDE(I) *          ADVPGD1C.558   
+     &                   V_TERM(I) + SCALAR1 + SCALAR2                     ADVPGD1C.559   
+                                                                           ADVPGD1C.560   
+          IF (LWHITBROM) FIELD_INC(I) = FIELD_INC(I)+FIELD(I)*BRSP(I)      ADVPGD1C.561   
+        ENDDO                                                              ADVPGD1C.562   
+      ENDIF ! (attop)                                                      ADVPGD1C.563   
+                                                                           ADVPGD1C.564   
+      IF (at_base_of_LPG) THEN                                             ADVPGD1C.565   
+! South Pole Flux                                                          ADVPGD1C.566   
+        DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                  ADVPGD1C.567   
+          SCALAR1 = 0.5 * ADVECTION_TIMESTEP *                             ADVPGD1C.568   
+     &              ETADOT_UPPER(I) * (FIELD_UPPER(I) - FIELD(I))          ADVPGD1C.569   
+          SCALAR2 = .5 * ADVECTION_TIMESTEP *                              ADVPGD1C.570   
+     &              ETADOT_LOWER(I) * (FIELD(I) - FIELD_LOWER(I))          ADVPGD1C.571   
+          FIELD_INC(I) = ADVECTION_TIMESTEP * SEC_P_LATITUDE(I) *          ADVPGD1C.572   
+     &                   V_TERM(I) + SCALAR1 + SCALAR2                     ADVPGD1C.573   
+                                                                           ADVPGD1C.574   
+          IF (LWHITBROM) FIELD_INC(I) = FIELD_INC(I)+FIELD(I)*BRSP(I)      ADVPGD1C.575   
+        ENDDO                                                              ADVPGD1C.576   
+      ENDIF ! (atbase)                                                     ADVPGD1C.577   
+                                                                           ADVPGD1C.578   
+*ELSE                                                                      ADVPGD1C.579   
+                                                                           ADVPGD1C.580   
+CL   LIMITED AREA MODEL SET BOUNDARY INCREMENTS                            ADVPGD1C.581   
+CL   TO ZERO.                                                              ADVPGD1C.582   
+                                                                           ADVPGD1C.583   
+       IF (at_left_of_LPG) THEN                                            ADVPGD1C.584   
+          DO I=START_POINT_NO_HALO+FIRST_ROW_PT-1,                         ADVPGD1C.585   
+     &         END_P_POINT_NO_HALO,ROW_LENGTH                              ADVPGD1C.586   
+            FIELD_INC(I)=0.                                                ADVPGD1C.587   
+          ENDDO                                                            ADVPGD1C.588   
+        ENDIF                                                              ADVPGD1C.589   
+                                                                           ADVPGD1C.590   
+        IF (at_right_of_LPG) THEN                                          ADVPGD1C.591   
+          DO I=START_POINT_NO_HALO+LAST_ROW_PT-1,                          ADVPGD1C.592   
+     &         END_P_POINT_NO_HALO,ROW_LENGTH                              ADVPGD1C.593   
+            FIELD_INC(I)=0.                                                ADVPGD1C.594   
+          ENDDO                                                            ADVPGD1C.595   
+        ENDIF                                                              ADVPGD1C.596   
+                                                                           ADVPGD1C.597   
+*ENDIF                                                                     ADVPGD1C.598   
+                                                                           ADVPGD1C.599   
+CL    END OF ROUTINE ADV_P_GD                                              ADVPGD1C.600   
+                                                                           ADVPGD1C.601   
+      RETURN                                                               ADVPGD1C.602   
+      END                                                                  ADVPGD1C.603   
+*ENDIF                                                                     ATJ0F402.19    
+*ENDIF                                                                     ADVPGD1C.604   

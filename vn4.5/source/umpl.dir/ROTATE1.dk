@@ -1,0 +1,629 @@
+*IF DEF,RECON                                                              ROTATE1.2     
+C ******************************COPYRIGHT******************************    ROTATE1.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    ROTATE1.4     
+C                                                                          ROTATE1.5     
+C Use, duplication or disclosure of this code is subject to the            ROTATE1.6     
+C restrictions as set forth in the contract.                               ROTATE1.7     
+C                                                                          ROTATE1.8     
+C                Meteorological Office                                     ROTATE1.9     
+C                London Road                                               ROTATE1.10    
+C                BRACKNELL                                                 ROTATE1.11    
+C                Berkshire UK                                              ROTATE1.12    
+C                RG12 2SZ                                                  ROTATE1.13    
+C                                                                          ROTATE1.14    
+C If no contract has been raised with this copy of the code, the use,      ROTATE1.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      ROTATE1.16    
+C to do so must first be obtained in writing from the Head of Numerical    ROTATE1.17    
+C Modelling at the above address.                                          ROTATE1.18    
+C ******************************COPYRIGHT******************************    ROTATE1.19    
+C                                                                          ROTATE1.20    
+CLL  SUBROUTINE ROTATE------------------------------------------------     ROTATE1.21    
+CLL                                                                        ROTATE1.22    
+CLL  Purpose:Read in  U & V fields from unit NFT, rotate winds to          ROTATE1.23    
+CLL          standard grid (MODE=0) or equatorial lat-lon grid (MODE=1)    ROTATE1.24    
+CLL          then write back U & V fields to unit NFT.                     ROTATE1.25    
+CLL                                                                        ROTATE1.26    
+CLL AD, MC      <- programmer of some or all of previous code or changes   ROTATE1.27    
+CLL                                                                        ROTATE1.28    
+CLL  Model            Modification history from model version 3.0:         ROTATE1.29    
+CLL version  Date                                                          ROTATE1.30    
+CLL                                                                        ROTATE1.31    
+CLL   3.2  20/05/93   Wind staggering for C-grid added supporting          ROTATE1.32    
+CLL                   interpolations B->C; B->B; C->C; C->B.               ROTATE1.33    
+CLL                   Author: A.Dickinson      Reviewer: T.Davies          ROTATE1.34    
+CLL   3.3  08/12/93   Extra argument for READFLDS and WRITFLDS.            ROTATE1.35    
+CLL                   Author: D. Robinson      Reviewer: M. Bell           ROTATE1.36    
+CLL   4.1  25/04/96   u,v dimensioned separately to take account of the    ROTATE1.37    
+CLL                   one extra u row than v rows that exists on a C gri   ROTATE1.38    
+CLL                   Author: I. Edmond        Reviewer: D. Goddard        ROTATE1.39    
+CLL   4.4   25/04/96  Calculating u,v  on a rotated grid from a            UIE2F404.356   
+CLL   standard lat-lon grid and vise versa using equations 5.13 and        UIE2F404.357   
+CLL   5.14 UMDPS1 assumes that u and v are on the same grid point. On      UIE2F404.358   
+CLL   the C grid, a horizontal interpolation of u onto the position of     UIE2F404.359   
+CLL   the v points is required when calculating the v on the new grid      UIE2F404.360   
+CLL   and v onto the position of the u points when calculating the u on    UIE2F404.361   
+CLL   the new grid. VAR                                                    UIE2F404.362   
+CLL                   Author: I. Edmond                                    UIE2F404.363   
+CLL                                                                        ROTATE1.40    
+CLL  Documentation: None                                                   ROTATE1.41    
+CLL                                                                        ROTATE1.42    
+CLL  -----------------------------------------------------------------     ROTATE1.43    
+C*L  Arguments:-------------------------------------------------------     ROTATE1.44    
+      SUBROUTINE ROTATE(                                                   ROTATE1.45    
+*CALL ARGPPX                                                               ROTATE1.46    
+     *                  PP_ITEMC,PP_NUM,PP_POS,N_TYPES,LOOKUP,             ROTATE1.47    
+     *                  FIXHD,U_FIELD,COEFFA,COEFFB,NFT,MODE,              ROTATE1.48    
+     *                  C_GRID_OUT,C_GRID_IN,N_FIELDS,                     ROTATE1.49    
+     *                  U_ROWS_IN,U_ROWS_OUT,REALHD,                       UIE2F404.364   
+     *                  ROW_LENGTH_OUT,ROW_LENGTH_IN,POSU,POSV)            ROTATE1.50    
+                                                                           ROTATE1.51    
+      IMPLICIT NONE                                                        ROTATE1.52    
+                                                                           ROTATE1.53    
+      INTEGER                                                              ROTATE1.54    
+     * U_FIELD            !IN Number of u points                           ROTATE1.55    
+     *,V_FIELD            !IN Number of v points                           ROTATE1.56    
+     *,N_TYPES            !IN Number of different STASH item codes         ROTATE1.57    
+     *,N_FIELDS           !IN Number of u/v fields                         ROTATE1.58    
+     *,U_ROWS_IN          !IN Row length of input grid                     UIE2F404.365   
+     &,POINTS_PHI_SRCE                                                     UIE2F404.366   
+     *,ROW_LENGTH_IN      !IN Row length of input grid                     ROTATE1.59    
+     *,U_ROWS_OUT         !IN Row length of input grid                     UIE2F404.367   
+     *,ROW_LENGTH_OUT     !IN Row length of output grid                    ROTATE1.60    
+     *,MODE               !IN =0 eq -> latlon; =1 latlon -> eq             ROTATE1.61    
+     *,PP_ITEMC(N_TYPES)  !IN Item codes                                   ROTATE1.62    
+     *,PP_NUM(N_TYPES)    !IN No of fields                                 ROTATE1.63    
+     *,PP_POS(N_TYPES)    !IN Position                                     ROTATE1.64    
+     *,LOOKUP(*)          !IN Lookup tables                                ROTATE1.65    
+     *,FIXHD(*)           !IN Fixed length header                          ROTATE1.66    
+     *,NFT                !IN Unit number                                  ROTATE1.67    
+                                                                           ROTATE1.68    
+      REAL                                                                 ROTATE1.69    
+     * COEFFA(U_FIELD,2)    !IN Coeff of rotation. 1=upt;2=vpt             ROTATE1.70    
+     *,COEFFB(U_FIELD,2)    !IN Coeff of rotation. 1=upt;2=vpt             ROTATE1.71    
+     *,REALHD(*)                                                           UIE2F404.368   
+                                                                           ROTATE1.72    
+C Local arrays:--------------------------------------------------------    ROTATE1.73    
+      REAL                                                                 ROTATE1.74    
+     * U(U_FIELD*N_FIELDS)     !   u comp of wind before rotation          ROTATE1.75    
+     *,V(U_FIELD*N_FIELDS)     !   v comp of wind before rotation          ROTATE1.76    
+     *,U_ROT(U_FIELD*N_FIELDS) !   u comp of wind after rotation           ROTATE1.77    
+     *,V_ROT(U_FIELD*N_FIELDS) !   v comp of wind after rotation           ROTATE1.78    
+     *,U_TMP(U_FIELD*N_FIELDS) ! Used to prevent overwriting of U_ROT      ROTATE1.79    
+     *,U_TMP2(U_FIELD)                                                     UIE2F404.369   
+     *,V_TMP(U_FIELD) ! Used to prevent overwriting of U_ROT               UIE2F404.370   
+     *                      ! on second calls to W_EQTOLL & W_LLTOEQ       ROTATE1.80    
+                                                                           ROTATE1.81    
+!   Array  arguments with intent(Out):                                     UIE2F404.371   
+                                                                           UIE2F404.372   
+      INTEGER      INDEX_B_L(U_FIELD)                                      UIE2F404.373   
+      INTEGER      INDEX_B_R(U_FIELD)                                      UIE2F404.374   
+      REAL         WEIGHT_T_R(U_FIELD) ! Weights for bilinear              UIE2F404.375   
+      REAL         WEIGHT_B_R(U_FIELD) !\horizontal interpolatn            UIE2F404.376   
+      REAL         WEIGHT_T_L(U_FIELD) !/ 1=P-pts; 2=U-pts;                UIE2F404.377   
+      REAL         WEIGHT_B_L(U_FIELD) ! 3=V-pts;4=zonal mea               UIE2F404.378   
+      REAL         D_LAMBDA_IN(2)                                          UIE2F404.379   
+      REAL         D_LAMBDA_OUT(2)                                         UIE2F404.380   
+      REAL         D_PHI_IN(2)                                             UIE2F404.381   
+      REAL         D_PHI_OUT(2)                                            UIE2F404.382   
+      REAL         LAMBDA_IN_U(U_FIELD)                                    UIE2F404.383   
+      REAL         LAMBDA_IN_V(U_FIELD)                                    UIE2F404.384   
+      REAL         PHI_IN_U(U_FIELD)                                       UIE2F404.385   
+      REAL         PHI_IN_V(U_FIELD)                                       UIE2F404.386   
+      REAL         LAMBDA_OUT_U(U_FIELD)                                   UIE2F404.387   
+      REAL         LAMBDA_OUT_V(U_FIELD)                                   UIE2F404.388   
+      REAL         PHI_OUT_U(U_FIELD)                                      UIE2F404.389   
+      REAL         PHI_OUT_V(U_FIELD)                                      UIE2F404.390   
+! Dynamic arrays for horizontal interpolation                              UIE2F404.391   
+      INTEGER      AW_INDEX_TARG_LHS(ROW_LENGTH_OUT+1)                     UIE2F404.392   
+                                    !Index of source box overlapping       UIE2F404.393   
+                                    !lhs of target grid-box                UIE2F404.394   
+      INTEGER      AW_INDEX_TARG_TOP(U_ROWS_OUT+1)                         UIE2F404.395   
+                                    !Index of source box overlapping       UIE2F404.396   
+                                    !top of target grid-box                UIE2F404.397   
+      REAL         AW_AREA_BOX                                             UIE2F404.398   
+                                    !area of grid box in sq units of       UIE2F404.399   
+      REAL         AW_COLAT_T(U_ROWS_OUT+1)                                UIE2F404.400   
+                                    !Colatitude of top of target grd-box   UIE2F404.401   
+                                    ! (in units of DELTA_LAT_SRCE)         UIE2F404.402   
+      REAL         AW_LONG_L(ROW_LENGTH_OUT+1)                             UIE2F404.403   
+                                    !Left longitude of target grid-box     UIE2F404.404   
+                                    ! (in units of DELTA_LONG_SRCE)        UIE2F404.405   
+      REAL         DELTA_LAT_SOURCE !\                                     UIE2F404.406   
+      REAL         DELTA_LAT_TARGET ! \Grid spacing                        UIE2F404.407   
+      REAL         DELTA_LON_SOURCE ! /                                    UIE2F404.408   
+      REAL         DELTA_LON_TARGET                                        UIE2F404.409   
+      REAL         NPOLE_LAT_SOURCE !\                                     UIE2F404.410   
+      REAL         NPOLE_LAT_TARGET ! \North pole coordinatest             UIE2F404.411   
+      REAL         NPOLE_LON_SOURCE ! /                                    UIE2F404.412   
+      REAL         NPOLE_LON_TARGET !/                                     UIE2F404.413   
+      REAL         START_LAT_SOURCE !\                                     UIE2F404.414   
+      REAL         START_LAT_TARGET ! \Coordinates of first data point     UIE2F404.415   
+      REAL         START_LON_SOURCE ! /                                    UIE2F404.416   
+      REAL         START_LON_TARGET !/                                     UIE2F404.417   
+      LOGICAL      ROT_IN           !T= Source grid has rotated coords     UIE2F404.418   
+      LOGICAL      ROT_OUT                                                 UIE2F404.419   
+                                                                           UIE2F404.420   
+                                                                           UIE2F404.421   
+                                                                           UIE2F404.422   
+C*L External subroutines called:---------------------------------------    ROTATE1.82    
+      EXTERNAL LOCATE,READFLDS,W_EQTOLL, W_LLTOEQ,WRITFLDS,ABORT_IO        ROTATE1.83    
+C*---------------------------------------------------------------------    ROTATE1.84    
+! Comdecks:------------------------------------------------------------    ROTATE1.85    
+*CALL CSUBMODL                                                             ROTATE1.86    
+*CALL CPPXREF                                                              ROTATE1.87    
+*CALL PPXLOOK                                                              ROTATE1.88    
+*CALL CPHINT                                                               UIE2F404.423   
+C Local variables:-----------------------------------------------------    ROTATE1.89    
+      INTEGER                                                              ROTATE1.90    
+     * POSU               !   Position of u field on file                  ROTATE1.91    
+     *,POSV               !   Position of v field on file                  ROTATE1.92    
+     &,POSLU              !   Position (level) in u field.                 ROTATE1.93    
+     &,POSLV              !   Position (level) in v field.                 ROTATE1.94    
+     *,I,J,K,IJ           !   Do loop index                                UIE2F404.424   
+     *,ICODE              !   Return code; successful=0; error > 0         ROTATE1.96    
+                                                                           ROTATE1.97    
+      CHARACTER*100                                                        ROTATE1.98    
+     * CMESSAGE           !   Error message if ICODE > 0                   ROTATE1.99    
+                                                                           ROTATE1.100   
+      LOGICAL                                                              ROTATE1.101   
+     * C_GRID_IN                                                           ROTATE1.102   
+     *,C_GRID_OUT                                                          ROTATE1.103   
+C----------------------------------------------------------------------    ROTATE1.104   
+                                                                           ROTATE1.105   
+CL 1. Calculate dimensions of v field                                      ROTATE1.106   
+      IF(C_GRID_OUT.AND.(MODE.EQ.1)) THEN                                  ROTATE1.107   
+        V_FIELD = U_FIELD -ROW_LENGTH_OUT                                  ROTATE1.108   
+      ELSE IF(C_GRID_IN.AND.(MODE.EQ.0)) THEN                              ROTATE1.109   
+        V_FIELD = U_FIELD -ROW_LENGTH_IN                                   ROTATE1.110   
+      ELSE                                                                 ROTATE1.111   
+        V_FIELD = U_FIELD                                                  ROTATE1.112   
+      ENDIF                                                                ROTATE1.113   
+                                                                           ROTATE1.114   
+CL 2. Loop over number of levels processing each level in turn             ROTATE1.115   
+                                                                           ROTATE1.116   
+                                                                           ROTATE1.117   
+*IF DEF,TIMER                                                              ROTATE1.118   
+      CALL TIMER('READFLDS',3)                                             ROTATE1.119   
+*ENDIF                                                                     ROTATE1.120   
+                                                                           ROTATE1.121   
+      CALL READFLDS(NFT,N_FIELDS,PP_POS(POSU),                             ROTATE1.122   
+     &          LOOKUP,64,U,U_FIELD,FIXHD,                                 ROTATE1.123   
+*CALL ARGPPX                                                               ROTATE1.124   
+     &          ICODE,CMESSAGE)                                            ROTATE1.125   
+      IF(ICODE.NE.0)CALL ABORT_IO('CONTROL',CMESSAGE,ICODE,NFT)            ROTATE1.126   
+      CALL READFLDS(NFT,N_FIELDS,PP_POS(POSV),                             ROTATE1.127   
+     &          LOOKUP,64,V,U_FIELD,FIXHD,                                 ROTATE1.128   
+*CALL ARGPPX                                                               ROTATE1.129   
+     &          ICODE,CMESSAGE)                                            ROTATE1.130   
+      IF(ICODE.NE.0)CALL ABORT_IO('CONTROL',CMESSAGE,ICODE,NFT)            ROTATE1.131   
+                                                                           ROTATE1.132   
+*IF DEF,TIMER                                                              ROTATE1.133   
+      CALL TIMER('READFLDS',4)                                             ROTATE1.134   
+*ENDIF                                                                     ROTATE1.135   
+                                                                           ROTATE1.136   
+      DO K=1,N_FIELDS                                                      UIE2F404.425   
+                                                                           ROTATE1.138   
+      POSLU =(K-1)*U_FIELD                                                 UIE2F404.426   
+      POSLV =(K-1)*V_FIELD                                                 UIE2F404.427   
+                                                                           ROTATE1.141   
+      IF(MODE.EQ.0)THEN                                                    ROTATE1.142   
+                                                                           UIE2F404.428   
+      IF (C_GRID_IN) THEN                                                  UIE2F404.429   
+                                                                           UIE2F404.430   
+!  Initialise local constants                                              UIE2F404.431   
+                                                                           UIE2F404.432   
+!  Coordinates of top left hand  p-point on grid                           UIE2F404.433   
+         START_LAT_SOURCE=REALHD(ISLAT)                                    UIE2F404.434   
+         START_LON_SOURCE=REALHD(ISLON)                                    UIE2F404.435   
+                                                                           UIE2F404.436   
+!  Coordinates of north pole on grid                                       UIE2F404.437   
+         NPOLE_LAT_SOURCE=REALHD(IPLAT)                                    UIE2F404.438   
+         NPOLE_LON_SOURCE=REALHD(IPLON)                                    UIE2F404.439   
+                                                                           UIE2F404.440   
+!  Grid spacing                                                            UIE2F404.441   
+         DELTA_LAT_SOURCE=REALHD(IDLAT)                                    UIE2F404.442   
+         DELTA_LON_SOURCE=REALHD(IDLON)                                    UIE2F404.443   
+                                                                           UIE2F404.444   
+!  Logical to indicate input grid is rotated                               UIE2F404.445   
+         ROT_IN=NPOLE_LAT_SOURCE.NE.90..OR.NPOLE_LON_SOURCE.NE.0.          UIE2F404.446   
+                                                                           UIE2F404.447   
+!  Weights and indices for UV points on C grid:                            UIE2F404.448   
+                                                                           UIE2F404.449   
+         D_LAMBDA_IN(1)=0.5                                                UIE2F404.450   
+         D_PHI_IN(1)=0.0                                                   UIE2F404.451   
+         D_LAMBDA_IN(2)=0.0                                                UIE2F404.452   
+         D_PHI_IN(2)=0.5                                                   UIE2F404.453   
+                                                                           UIE2F404.454   
+!  Lat and lon of target grid u,v points.                                  UIE2F404.455   
+                                                                           UIE2F404.456   
+        IJ=0                                                               UIE2F404.457   
+        DO J=1,U_ROWS_IN                                                   UIE2F404.458   
+          DO I=1,ROW_LENGTH_IN                                             UIE2F404.459   
+            IJ=IJ+1                                                        UIE2F404.460   
+            LAMBDA_IN_U(IJ)=START_LON_SOURCE+DELTA_LON_SOURCE              UIE2F404.461   
+     &                   *(I-1+D_LAMBDA_IN(1))                             UIE2F404.462   
+            LAMBDA_IN_V(IJ)=START_LON_SOURCE+DELTA_LON_SOURCE              UIE2F404.463   
+     &                  *(I-1+D_LAMBDA_IN(2))                              UIE2F404.464   
+          END DO                                                           UIE2F404.465   
+        END DO                                                             UIE2F404.466   
+        IJ=0                                                               UIE2F404.467   
+        DO I=1,ROW_LENGTH_IN                                               UIE2F404.468   
+          DO J=1,U_ROWS_IN                                                 UIE2F404.469   
+            IJ=IJ+1                                                        UIE2F404.470   
+            PHI_IN_V(IJ)=START_LAT_SOURCE-DELTA_LAT_SOURCE                 UIE2F404.471   
+     &               *(J-1+D_PHI_IN(2))                                    UIE2F404.472   
+          END DO                                                           UIE2F404.473   
+        END DO                                                             UIE2F404.474   
+        IJ=0                                                               UIE2F404.475   
+        DO J=1,U_ROWS_IN                                                   UIE2F404.476   
+          DO I=1,ROW_LENGTH_IN                                             UIE2F404.477   
+            IJ=IJ+1                                                        UIE2F404.478   
+            PHI_IN_U(IJ)=START_LAT_SOURCE-DELTA_LAT_SOURCE                 UIE2F404.479   
+     &                *(J-1+D_PHI_IN(1))                                   UIE2F404.480   
+          END DO                                                           UIE2F404.481   
+        END DO                                                             UIE2F404.482   
+        POINTS_PHI_SRCE=U_ROWS_IN                                          UIE2F404.483   
+                                                                           UIE2F404.484   
+!  Scale longitude of LAM input grid to make it monotonically increasing   UIE2F404.485   
+          IF(ROT_IN)THEN                                                   UIE2F404.486   
+            DO J=1,U_FIELD                                                 UIE2F404.487   
+              IF(LAMBDA_IN_U(J).GT.180.)THEN                               UIE2F404.488   
+                LAMBDA_IN_U(J)=LAMBDA_IN_U(J)-360.                         UIE2F404.489   
+              ELSE                                                         UIE2F404.490   
+                LAMBDA_IN_U(J)=LAMBDA_IN_U(J)                              UIE2F404.491   
+              ENDIF                                                        UIE2F404.492   
+                                                                           UIE2F404.493   
+              IF(LAMBDA_IN_V(J).GT.180.)THEN                               UIE2F404.494   
+                LAMBDA_IN_V(J)=LAMBDA_IN_V(J)-360.                         UIE2F404.495   
+              ELSE                                                         UIE2F404.496   
+                LAMBDA_IN_V(J)=LAMBDA_IN_V(J)                              UIE2F404.497   
+              ENDIF                                                        UIE2F404.498   
+                                                                           UIE2F404.499   
+            END DO                                                         UIE2F404.500   
+          END IF                                                           UIE2F404.501   
+                                                                           UIE2F404.502   
+!  Indices and weights for horizontal interpolation                        UIE2F404.503   
+                                                                           UIE2F404.504   
+*IF DEF,TIMER                                                              UIE2F404.505   
+      CALL TIMER('HINTCO1  ',3)                                            UIE2F404.506   
+*ENDIF                                                                     UIE2F404.507   
+         CALL H_INT_CO(INDEX_B_L,INDEX_B_R                                 UIE2F404.508   
+     &,               WEIGHT_T_R,WEIGHT_B_R                                UIE2F404.509   
+     &,               WEIGHT_T_L,WEIGHT_B_L                                UIE2F404.510   
+     &,               LAMBDA_IN_V,PHI_IN_V,LAMBDA_IN_U,PHI_IN_U            UIE2F404.511   
+     &,               ROW_LENGTH_IN,POINTS_PHI_SRCE-1,U_FIELD,.FALSE.)     UIE2F404.512   
+*IF DEF,TIMER                                                              UIE2F404.513   
+      CALL TIMER('HINTCO1  ',4)                                            UIE2F404.514   
+*ENDIF                                                                     UIE2F404.515   
+                                                                           UIE2F404.516   
+!  Interpolate C grid v points onto the positions of u points              UIE2F404.517   
+!  to be consistent with equations 5.19 and 5.20.                          UIE2F404.518   
+                                                                           UIE2F404.519   
+*IF DEF,TIMER                                                              UIE2F404.520   
+      CALL TIMER('HINTCTL',3)                                              UIE2F404.521   
+*ENDIF                                                                     UIE2F404.522   
+         CALL H_INT_CTL(1,U_FIELD,ROW_LENGTH_IN,ROW_LENGTH_IN              UIE2F404.523   
+     &,              U_ROWS_IN-1,U_ROWS_IN,AW_AREA_BOX                     UIE2F404.524   
+     &,              .FALSE.,.FALSE.                                       UIE2F404.525   
+     &,              AW_INDEX_TARG_LHS,AW_INDEX_TARG_TOP                   UIE2F404.526   
+     &,              INDEX_B_L,INDEX_B_R                                   UIE2F404.527   
+     &,              AW_COLAT_T,AW_LONG_L                                  UIE2F404.528   
+     &,              V(POSLV+1)                                            UIE2F404.529   
+     &,              WEIGHT_T_R,WEIGHT_B_R                                 UIE2F404.530   
+     &,              WEIGHT_T_L,WEIGHT_B_L                                 UIE2F404.531   
+     &,              V_TMP(1))                                             UIE2F404.532   
+*IF DEF,TIMER                                                              UIE2F404.533   
+      CALL TIMER('HINTCTL',4)                                              UIE2F404.534   
+*ENDIF                                                                     UIE2F404.535   
+                                                                           UIE2F404.536   
+      ELSE                                                                 UIE2F404.537   
+                                                                           UIE2F404.538   
+! u,v data on B grid points have the same location.                        UIE2F404.539   
+        DO J=1,V_FIELD                                                     UIE2F404.540   
+         V_TMP(J) = V(POSLV+J)                                             UIE2F404.541   
+        END DO                                                             UIE2F404.542   
+                                                                           UIE2F404.543   
+      ENDIF                                                                UIE2F404.544   
+                                                                           UIE2F404.545   
+*IF DEF,TIMER                                                              ROTATE1.143   
+      CALL TIMER('W_EQTOLL',3)                                             ROTATE1.144   
+*ENDIF                                                                     ROTATE1.145   
+      CALL W_EQTOLL(COEFFA,COEFFB,U(POSLU+1),V_TMP(1),                     UIE2F404.546   
+     &             U_ROT(POSLU+1),V_ROT(POSLV+1),U_FIELD,V_FIELD)          ROTATE1.148   
+*IF DEF,TIMER                                                              UIE2F404.547   
+      CALL TIMER('W_EQTOLL',4)                                             UIE2F404.548   
+*ENDIF                                                                     UIE2F404.549   
+                                                                           UIE2F404.550   
+      IF (C_GRID_IN) THEN                                                  UIE2F404.551   
+                                                                           UIE2F404.552   
+!  Recalculate Latitude of target grid u,v points for input to             UIE2F404.553   
+!  routine H_INT_CO .                                                      UIE2F404.554   
+        IJ=0                                                               UIE2F404.555   
+        DO J=1,U_ROWS_IN                                                   UIE2F404.556   
+          DO I=1,ROW_LENGTH_IN                                             UIE2F404.557   
+            IJ=IJ+1                                                        UIE2F404.558   
+            PHI_IN_V(IJ)=START_LAT_SOURCE-DELTA_LAT_SOURCE                 UIE2F404.559   
+     &               *(J-1+D_PHI_IN(2))                                    UIE2F404.560   
+          END DO                                                           UIE2F404.561   
+        END DO                                                             UIE2F404.562   
+        IJ=0                                                               UIE2F404.563   
+        DO I=1,ROW_LENGTH_IN                                               UIE2F404.564   
+          DO J=1,U_ROWS_IN                                                 UIE2F404.565   
+            IJ=IJ+1                                                        UIE2F404.566   
+            PHI_IN_U(IJ)=START_LAT_SOURCE-DELTA_LAT_SOURCE                 UIE2F404.567   
+     &                *(J-1+D_PHI_IN(1))                                   UIE2F404.568   
+          END DO                                                           UIE2F404.569   
+        END DO                                                             UIE2F404.570   
+                                                                           UIE2F404.571   
+!  Indices and weights for horizontal interpolation                        UIE2F404.572   
+*IF DEF,TIMER                                                              UIE2F404.573   
+      CALL TIMER('HINTCO1  ',3)                                            UIE2F404.574   
+*ENDIF                                                                     UIE2F404.575   
+         CALL H_INT_CO(INDEX_B_L,INDEX_B_R                                 UIE2F404.576   
+     &,               WEIGHT_T_R,WEIGHT_B_R                                UIE2F404.577   
+     &,               WEIGHT_T_L,WEIGHT_B_L                                UIE2F404.578   
+     &,               LAMBDA_IN_U,PHI_IN_U,LAMBDA_IN_V,PHI_IN_V            UIE2F404.579   
+     &,               ROW_LENGTH_IN,POINTS_PHI_SRCE,V_FIELD,.FALSE.)       UIE2F404.580   
+*IF DEF,TIMER                                                              UIE2F404.581   
+      CALL TIMER('HINTCO1  ',4)                                            UIE2F404.582   
+*ENDIF                                                                     UIE2F404.583   
+                                                                           UIE2F404.584   
+      ! Interpolate C grid u points onto the positions of v points         UIE2F404.585   
+      ! to be consistent with equations 5.19 and 5.20.                     UIE2F404.586   
+*IF DEF,TIMER                                                              UIE2F404.587   
+      CALL TIMER('HINTCTL',3)                                              UIE2F404.588   
+*ENDIF                                                                     UIE2F404.589   
+      CALL H_INT_CTL(1,V_FIELD,ROW_LENGTH_IN,ROW_LENGTH_IN                 UIE2F404.590   
+     &,              U_ROWS_IN,U_ROWS_IN-1,AW_AREA_BOX                     UIE2F404.591   
+     &,              .FALSE.,.FALSE.                                       UIE2F404.592   
+     &,              AW_INDEX_TARG_LHS,AW_INDEX_TARG_TOP                   UIE2F404.593   
+     &,              INDEX_B_L,INDEX_B_R                                   UIE2F404.594   
+     &,              AW_COLAT_T,AW_LONG_L                                  UIE2F404.595   
+     &,              U(POSLU+1)                                            UIE2F404.596   
+     &,              WEIGHT_T_R,WEIGHT_B_R                                 UIE2F404.597   
+     &,              WEIGHT_T_L,WEIGHT_B_L                                 UIE2F404.598   
+     &,              U_TMP2(1))                                            UIE2F404.599   
+*IF DEF,TIMER                                                              UIE2F404.600   
+      CALL TIMER('HINTCTL',4)                                              UIE2F404.601   
+*ENDIF                                                                     UIE2F404.602   
+                                                                           UIE2F404.603   
+      ELSE                                                                 UIE2F404.604   
+                                                                           UIE2F404.605   
+! u,v data on B grid points have the same location.                        UIE2F404.606   
+        DO J=1,U_FIELD                                                     UIE2F404.607   
+         U_TMP2(J) = U(POSLU+J)                                            UIE2F404.608   
+        END DO                                                             UIE2F404.609   
+                                                                           UIE2F404.610   
+      ENDIF                                                                UIE2F404.611   
+                                                                           UIE2F404.612   
+*IF DEF,TIMER                                                              UIE2F404.613   
+      CALL TIMER('W_EQTOLL',3)                                             UIE2F404.614   
+*ENDIF                                                                     UIE2F404.615   
+      CALL W_EQTOLL(COEFFA(1,2),COEFFB(1,2),U_TMP2(1),V(POSLV+1),          UIE2F404.616   
+     &              U_TMP(POSLU+1),V_ROT(POSLV+1),V_FIELD,V_FIELD)         UIE2F404.617   
+                                                                           ROTATE1.151   
+*IF DEF,TIMER                                                              ROTATE1.152   
+      CALL TIMER('W_EQTOLL',4)                                             ROTATE1.153   
+*ENDIF                                                                     ROTATE1.154   
+       ENDIF                                                               ROTATE1.155   
+                                                                           ROTATE1.156   
+      IF(MODE.EQ.1)THEN                                                    ROTATE1.157   
+                                                                           UIE2F404.618   
+      IF (C_GRID_OUT) THEN                                                 UIE2F404.619   
+                                                                           UIE2F404.620   
+!  Initialise local constants                                              UIE2F404.621   
+                                                                           UIE2F404.622   
+!  Coordinates of top left hand  p-point on grid                           UIE2F404.623   
+      START_LAT_TARGET=REALHD(ISLAT)                                       UIE2F404.624   
+      START_LON_TARGET=REALHD(ISLON)                                       UIE2F404.625   
+                                                                           UIE2F404.626   
+!  Coordinates of north pole on grid                                       UIE2F404.627   
+      NPOLE_LAT_TARGET=REALHD(IPLAT)                                       UIE2F404.628   
+      NPOLE_LON_TARGET=REALHD(IPLON)                                       UIE2F404.629   
+                                                                           UIE2F404.630   
+!  Grid spacing                                                            UIE2F404.631   
+      DELTA_LAT_TARGET=REALHD(IDLAT)                                       UIE2F404.632   
+      DELTA_LON_TARGET=REALHD(IDLON)                                       UIE2F404.633   
+                                                                           UIE2F404.634   
+!  Logical to indicate output grid is rotated                              UIE2F404.635   
+      ROT_OUT=NPOLE_LAT_TARGET.NE.90..OR.NPOLE_LON_TARGET.NE.0.            UIE2F404.636   
+                                                                           UIE2F404.637   
+!  Weights and indices for UV points on C grid:                            UIE2F404.638   
+      D_LAMBDA_OUT(1)=0.5                                                  UIE2F404.639   
+      D_PHI_OUT(1)=0.0                                                     UIE2F404.640   
+      D_LAMBDA_OUT(2)=0.0                                                  UIE2F404.641   
+      D_PHI_OUT(2)=0.5                                                     UIE2F404.642   
+                                                                           UIE2F404.643   
+!  Lat and lon of target grid u,v points.                                  UIE2F404.644   
+        IJ=0                                                               UIE2F404.645   
+        DO J=1,U_ROWS_OUT                                                  UIE2F404.646   
+          DO I=1,ROW_LENGTH_OUT                                            UIE2F404.647   
+            IJ=IJ+1                                                        UIE2F404.648   
+            LAMBDA_OUT_U(IJ)=START_LON_TARGET+DELTA_LON_TARGET             UIE2F404.649   
+     &                   *(I-1+D_LAMBDA_OUT(1))                            UIE2F404.650   
+            LAMBDA_OUT_V(IJ)=START_LON_TARGET+DELTA_LON_TARGET             UIE2F404.651   
+     &                  *(I-1+D_LAMBDA_OUT(2))                             UIE2F404.652   
+          END DO                                                           UIE2F404.653   
+        END DO                                                             UIE2F404.654   
+        IJ=0                                                               UIE2F404.655   
+        DO I=1,ROW_LENGTH_OUT                                              UIE2F404.656   
+          DO J=1,U_ROWS_OUT                                                UIE2F404.657   
+            IJ=IJ+1                                                        UIE2F404.658   
+            PHI_OUT_V(IJ)=START_LAT_TARGET-DELTA_LAT_TARGET                UIE2F404.659   
+     &               *(J-1+D_PHI_OUT(2))                                   UIE2F404.660   
+          END DO                                                           UIE2F404.661   
+        END DO                                                             UIE2F404.662   
+        IJ=0                                                               UIE2F404.663   
+        DO J=1,U_ROWS_OUT                                                  UIE2F404.664   
+          DO I=1,ROW_LENGTH_OUT                                            UIE2F404.665   
+            IJ=IJ+1                                                        UIE2F404.666   
+            PHI_OUT_U(IJ)=START_LAT_TARGET-DELTA_LAT_TARGET                UIE2F404.667   
+     &                *(J-1+D_PHI_OUT(1))                                  UIE2F404.668   
+          END DO                                                           UIE2F404.669   
+        END DO                                                             UIE2F404.670   
+        POINTS_PHI_SRCE=U_ROWS_OUT                                         UIE2F404.671   
+                                                                           UIE2F404.672   
+!  Scale longitude of LAM target grid to make it monotonically increasin   UIE2F404.673   
+          IF(ROT_OUT)THEN                                                  UIE2F404.674   
+            DO J=1,U_FIELD                                                 UIE2F404.675   
+              IF(LAMBDA_OUT_U(J).GT.180.)THEN                              UIE2F404.676   
+                LAMBDA_OUT_U(J)=LAMBDA_OUT_U(J)-360.                       UIE2F404.677   
+              ELSE                                                         UIE2F404.678   
+                LAMBDA_OUT_U(J)=LAMBDA_OUT_U(J)                            UIE2F404.679   
+              ENDIF                                                        UIE2F404.680   
+                                                                           UIE2F404.681   
+              IF(LAMBDA_OUT_V(J).GT.180.)THEN                              UIE2F404.682   
+                LAMBDA_OUT_V(J)=LAMBDA_OUT_V(J)-360.                       UIE2F404.683   
+              ELSE                                                         UIE2F404.684   
+                LAMBDA_OUT_V(J)=LAMBDA_OUT_V(J)                            UIE2F404.685   
+              ENDIF                                                        UIE2F404.686   
+                                                                           UIE2F404.687   
+            END DO                                                         UIE2F404.688   
+          END IF                                                           UIE2F404.689   
+                                                                           UIE2F404.690   
+                                                                           UIE2F404.691   
+! Indices and weights for horizontal interpolation                         UIE2F404.692   
+*IF DEF,TIMER                                                              UIE2F404.693   
+      CALL TIMER('HINTCO1  ',3)                                            UIE2F404.694   
+*ENDIF                                                                     UIE2F404.695   
+         CALL H_INT_CO(INDEX_B_L,INDEX_B_R                                 UIE2F404.696   
+     &,               WEIGHT_T_R,WEIGHT_B_R                                UIE2F404.697   
+     &,               WEIGHT_T_L,WEIGHT_B_L                                UIE2F404.698   
+     &,               LAMBDA_OUT_V,PHI_OUT_V,LAMBDA_OUT_U,PHI_OUT_U        UIE2F404.699   
+     &,               ROW_LENGTH_OUT,POINTS_PHI_SRCE-1,U_FIELD,.FALSE.)    UIE2F404.700   
+*IF DEF,TIMER                                                              UIE2F404.701   
+      CALL TIMER('HINTCO1  ',4)                                            UIE2F404.702   
+*ENDIF                                                                     UIE2F404.703   
+                                                                           UIE2F404.704   
+! Interpolate C grid v points onto the positions of u points               UIE2F404.705   
+! to be consistent with equations 5.19 and 5.20.                           UIE2F404.706   
+*IF DEF,TIMER                                                              UIE2F404.707   
+      CALL TIMER('HINTCTL',3)                                              UIE2F404.708   
+*ENDIF                                                                     UIE2F404.709   
+      CALL H_INT_CTL(1,U_FIELD,ROW_LENGTH_OUT,ROW_LENGTH_OUT               UIE2F404.710   
+     &,              U_ROWS_OUT-1,U_ROWS_OUT,AW_AREA_BOX                   UIE2F404.711   
+     &,              .FALSE.,.FALSE.                                       UIE2F404.712   
+     &,              AW_INDEX_TARG_LHS,AW_INDEX_TARG_TOP                   UIE2F404.713   
+     &,              INDEX_B_L,INDEX_B_R                                   UIE2F404.714   
+     &,              AW_COLAT_T,AW_LONG_L                                  UIE2F404.715   
+     &,              V(POSLV+1)                                            UIE2F404.716   
+     &,              WEIGHT_T_R,WEIGHT_B_R                                 UIE2F404.717   
+     &,              WEIGHT_T_L,WEIGHT_B_L                                 UIE2F404.718   
+     &,              V_TMP(1))                                             UIE2F404.719   
+*IF DEF,TIMER                                                              UIE2F404.720   
+      CALL TIMER('HINTCTL',4)                                              UIE2F404.721   
+*ENDIF                                                                     UIE2F404.722   
+                                                                           UIE2F404.723   
+      ELSE                                                                 UIE2F404.724   
+                                                                           UIE2F404.725   
+! u,v data on B grid points have the same location.                        UIE2F404.726   
+        DO J=1,V_FIELD                                                     UIE2F404.727   
+         V_TMP(J) = V(POSLV+J)                                             UIE2F404.728   
+        END DO                                                             UIE2F404.729   
+                                                                           UIE2F404.730   
+      ENDIF                                                                UIE2F404.731   
+                                                                           UIE2F404.732   
+*IF DEF,TIMER                                                              ROTATE1.158   
+      CALL TIMER('W_LLTOEQ',3)                                             ROTATE1.159   
+*ENDIF                                                                     ROTATE1.160   
+      CALL W_LLTOEQ(COEFFA,COEFFB,U(POSLU+1),V_TMP(1),                     UIE2F404.733   
+     &              U_ROT(POSLU+1),V_ROT(POSLV+1),U_FIELD,V_FIELD)         ROTATE1.163   
+*IF DEF,TIMER                                                              UIE2F404.734   
+      CALL TIMER('W_LLTOEQ',4)                                             UIE2F404.735   
+*ENDIF                                                                     UIE2F404.736   
+                                                                           UIE2F404.737   
+!  Recalculate Latitude of target grid u,v points for input to             UIE2F404.738   
+!  routine H_INT_CO .                                                      UIE2F404.739   
+      IF (C_GRID_OUT) THEN                                                 UIE2F404.740   
+        IJ=0                                                               UIE2F404.741   
+        DO J=1,U_ROWS_OUT                                                  UIE2F404.742   
+          DO I=1,ROW_LENGTH_OUT                                            UIE2F404.743   
+            IJ=IJ+1                                                        UIE2F404.744   
+            PHI_OUT_V(IJ)=START_LAT_TARGET-DELTA_LAT_TARGET                UIE2F404.745   
+     &               *(J-1+D_PHI_OUT(2))                                   UIE2F404.746   
+          END DO                                                           UIE2F404.747   
+        END DO                                                             UIE2F404.748   
+        IJ=0                                                               UIE2F404.749   
+        DO I=1,ROW_LENGTH_OUT                                              UIE2F404.750   
+          DO J=1,U_ROWS_OUT                                                UIE2F404.751   
+            IJ=IJ+1                                                        UIE2F404.752   
+            PHI_OUT_U(IJ)=START_LAT_TARGET-DELTA_LAT_TARGET                UIE2F404.753   
+     &                *(J-1+D_PHI_OUT(1))                                  UIE2F404.754   
+          END DO                                                           UIE2F404.755   
+        END DO                                                             UIE2F404.756   
+                                                                           UIE2F404.757   
+!  Indices and weights for horizontal interpolation                        UIE2F404.758   
+*IF DEF,TIMER                                                              UIE2F404.759   
+      CALL TIMER('HINTCO1  ',3)                                            UIE2F404.760   
+*ENDIF                                                                     UIE2F404.761   
+         CALL H_INT_CO(INDEX_B_L,INDEX_B_R                                 UIE2F404.762   
+     &,               WEIGHT_T_R,WEIGHT_B_R                                UIE2F404.763   
+     &,               WEIGHT_T_L,WEIGHT_B_L                                UIE2F404.764   
+     &,               LAMBDA_OUT_U,PHI_OUT_U,LAMBDA_OUT_V,PHI_OUT_V        UIE2F404.765   
+     &,               ROW_LENGTH_OUT,POINTS_PHI_SRCE,V_FIELD,.FALSE.)      UIE2F404.766   
+*IF DEF,TIMER                                                              UIE2F404.767   
+      CALL TIMER('HINTCO1  ',4)                                            UIE2F404.768   
+*ENDIF                                                                     UIE2F404.769   
+                                                                           UIE2F404.770   
+!  Interpolate C grid u points onto the positions of v points              UIE2F404.771   
+!  to be consistent with equations 5.19 and 5.20.                          UIE2F404.772   
+*IF DEF,TIMER                                                              UIE2F404.773   
+      CALL TIMER('HINTCTL',3)                                              UIE2F404.774   
+*ENDIF                                                                     UIE2F404.775   
+      CALL H_INT_CTL(1,V_FIELD,ROW_LENGTH_OUT,ROW_LENGTH_OUT               UIE2F404.776   
+     &,              U_ROWS_OUT,U_ROWS_OUT-1,AW_AREA_BOX                   UIE2F404.777   
+     &,              .FALSE.,.FALSE.                                       UIE2F404.778   
+     &,              AW_INDEX_TARG_LHS,AW_INDEX_TARG_TOP                   UIE2F404.779   
+     &,              INDEX_B_L,INDEX_B_R                                   UIE2F404.780   
+     &,              AW_COLAT_T,AW_LONG_L                                  UIE2F404.781   
+     &,              U(POSLU+1)                                            UIE2F404.782   
+     &,              WEIGHT_T_R,WEIGHT_B_R                                 UIE2F404.783   
+     &,              WEIGHT_T_L,WEIGHT_B_L                                 UIE2F404.784   
+     &,              U_TMP2(1))                                            UIE2F404.785   
+*IF DEF,TIMER                                                              UIE2F404.786   
+      CALL TIMER('HINTCTL',4)                                              UIE2F404.787   
+*ENDIF                                                                     UIE2F404.788   
+      ELSE                                                                 UIE2F404.789   
+                                                                           UIE2F404.790   
+! u,v data on B grid points have the same location.                        UIE2F404.791   
+        DO J=1,U_FIELD                                                     UIE2F404.792   
+         U_TMP2(J) = U(POSLU+J)                                            UIE2F404.793   
+        END DO                                                             UIE2F404.794   
+                                                                           UIE2F404.795   
+      ENDIF                                                                UIE2F404.796   
+                                                                           UIE2F404.797   
+*IF DEF,TIMER                                                              UIE2F404.798   
+      CALL TIMER('W_LLTOEQ',3)                                             UIE2F404.799   
+*ENDIF                                                                     UIE2F404.800   
+      CALL W_LLTOEQ(COEFFA(1,2),COEFFB(1,2),U_TMP2(1),V(POSLV+1),          UIE2F404.801   
+     &              U_TMP(POSLU+1),V_ROT(POSLV+1),V_FIELD,V_FIELD)         UIE2F404.802   
+                                                                           ROTATE1.166   
+*IF DEF,TIMER                                                              ROTATE1.167   
+      CALL TIMER('W_LLTOEQ',4)                                             ROTATE1.168   
+*ENDIF                                                                     ROTATE1.169   
+       ENDIF                                                               ROTATE1.170   
+                                                                           ROTATE1.171   
+      ENDDO                                                                ROTATE1.172   
+                                                                           ROTATE1.173   
+*IF DEF,TIMER                                                              ROTATE1.174   
+      CALL TIMER('WRITFLDS',3)                                             ROTATE1.175   
+*ENDIF                                                                     ROTATE1.176   
+                                                                           ROTATE1.177   
+      CALL WRITFLDS(NFT,N_FIELDS,PP_POS(POSU),                             ROTATE1.178   
+     &          LOOKUP,64,U_ROT,U_FIELD,FIXHD,                             ROTATE1.179   
+*CALL ARGPPX                                                               ROTATE1.180   
+     &          ICODE,CMESSAGE)                                            ROTATE1.181   
+      IF(ICODE.NE.0)CALL ABORT_IO('CONTROL',CMESSAGE,ICODE,NFT)            ROTATE1.182   
+      CALL WRITFLDS(NFT,N_FIELDS,PP_POS(POSV),                             ROTATE1.183   
+     &          LOOKUP,64,V_ROT,U_FIELD,FIXHD,                             ROTATE1.184   
+*CALL ARGPPX                                                               ROTATE1.185   
+     &          ICODE,CMESSAGE)                                            ROTATE1.186   
+      IF(ICODE.NE.0)CALL ABORT_IO('CONTROL',CMESSAGE,ICODE,NFT)            ROTATE1.187   
+                                                                           ROTATE1.188   
+*IF DEF,TIMER                                                              ROTATE1.189   
+      CALL TIMER('WRITFLDS',4)                                             ROTATE1.190   
+*ENDIF                                                                     ROTATE1.191   
+                                                                           ROTATE1.192   
+      RETURN                                                               ROTATE1.193   
+      END                                                                  ROTATE1.194   
+*ENDIF                                                                     ROTATE1.195   

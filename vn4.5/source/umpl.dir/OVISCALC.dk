@@ -1,0 +1,251 @@
+*IF DEF,OCEAN                                                              OVISCALC.2     
+C *****************************COPYRIGHT******************************     OVISCALC.3     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    OVISCALC.4     
+C                                                                          OVISCALC.5     
+C Use, duplication or disclosure of this code is subject to the            OVISCALC.6     
+C restrictions as set forth in the contract.                               OVISCALC.7     
+C                                                                          OVISCALC.8     
+C                Meteorological Office                                     OVISCALC.9     
+C                London Road                                               OVISCALC.10    
+C                BRACKNELL                                                 OVISCALC.11    
+C                Berkshire UK                                              OVISCALC.12    
+C                RG12 2SZ                                                  OVISCALC.13    
+C                                                                          OVISCALC.14    
+C If no contract has been raised with this copy of the code, the use,      OVISCALC.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      OVISCALC.16    
+C to do so must first be obtained in writing from the Head of Numerical    OVISCALC.17    
+C Modelling at the above address.                                          OVISCALC.18    
+C ******************************COPYRIGHT******************************    OVISCALC.19    
+      SUBROUTINE VISBECK_CALC(                                             OVISCALC.20    
+     & athkdft                                                             OVISCALC.21    
+*CALL ARGOC2DG                                                             OVISCALC.22    
+     &,CST,DXT,DYT                                                         OVISCALC.23    
+     &,IMT,JMT,IMT_VIS,JMT_VIS,IMT_IPD,IMTM2,JMT_GLOBAL                    OVISCALC.24    
+     &,JST,JFIN,J_1,J_JMT,O_MYPE,L_OVISHADCM4                              OVISCALC.25    
+     &)                                                                    OVISCALC.26    
+! Description: This subroutine handles the main length scale               OVISCALC.27    
+!              calculations for the VISBECK scheme. Use of this            OVISCALC.28    
+!              subroutine allows memory reuse which is important           OVISCALC.29    
+!              because several large arrays are only needed                OVISCALC.30    
+!              temporarily.                                                OVISCALC.31    
+!              Calculate length scale for Visbeck scheme if this           OVISCALC.32    
+!              is a mixing timestep. lscale is the min number of           OVISCALC.33    
+!              grid points needed to find a value of tmin1 le              OVISCALC.34    
+!              tmin1_max (set to min 1 max 7).                             OVISCALC.35    
+!                                                                          OVISCALC.36    
+! Author:      R. Hill                                                     OVISCALC.37    
+!                                                                          OVISCALC.38    
+! Date:        June 1998                                                   OVISCALC.39    
+!                                                                          OVISCALC.40    
+! Modification History                                                     OVISCALC.41    
+!                                                                          OVISCALC.42    
+! Date     Name        Description                                         OVISCALC.43    
+! ------   ----------  ------------------------------------------          OVISCALC.44    
+!                                                                          OVISCALC.45    
+!###################################################################       OVISCALC.46    
+      IMPLICIT NONE                                                        OVISCALC.47    
+                                                                           OVISCALC.48    
+*CALL PARVARS                                                              OVISCALC.49    
+                                                                           OVISCALC.51    
+!-----------------------------------------------------------------         OVISCALC.52    
+!     Input dimensions etc                                                 OVISCALC.53    
+!-----------------------------------------------------------------         OVISCALC.54    
+      INTEGER                                                              OVISCALC.55    
+     & IMT,JMT,IMT_VIS,JMT_VIS,IMT_IPD,IMTM2,JMT_GLOBAL                    OVISCALC.56    
+     &,JST,JFIN,J_1,J_JMT,O_MYPE                                           OVISCALC.57    
+                                                                           OVISCALC.58    
+      REAL                                                                 OVISCALC.59    
+     & athkdft(imt_vis,jmt_vis) ! IN/OUT diffsn coeff on T grid            OVISCALC.60    
+     &,CST(JMT)                 ! IN                                       OVISCALC.61    
+     &,DXT(IMT)                 ! IN                                       OVISCALC.62    
+     &,DYT(JMT)                 ! IN                                       OVISCALC.63    
+                                                                           OVISCALC.64    
+      LOGICAL                                                              OVISCALC.65    
+     & L_OVISHADCM4             ! hadcm4 version of visbeck scheme         OVISCALC.66    
+                                                                           OVISCALC.67    
+*CALL TYPOC2DG                                                             PXORDER.40    
+                                                                           PXORDER.41    
+!======================================================================    OVISCALC.68    
+! Local variables to this routine.                                         OVISCALC.69    
+!======================================================================    OVISCALC.70    
+      INTEGER I                                                            OVISCALC.71    
+     &,       J                                                            OVISCALC.72    
+     &,ngap         ! \   gaps to N,S,E and W resp. used for               OVISCALC.73    
+     &,sgap         !  |  calculating length scale for Visbeck             OVISCALC.74    
+     &,egap         !  |  scheme                                           OVISCALC.75    
+     &,wgap         ! /                                                    OVISCALC.76    
+     &,ipos,jpos    ! \  used for calculating length scale                 OVISCALC.77    
+     &,nstot,ewtot  ! /  for Visbeck scheme                                OVISCALC.78    
+     &,info      ! return code from scatter_field,gather_field             OVISCALC.79    
+                                                                           OVISCALC.80    
+      REAL tmin1_max ! lscale=min no. grdpts to find tmin1 < tmin1_max     OVISCALC.81    
+     &,CST_GLOBAL(jmt_global) ! global version of CST                      OVISCALC.82    
+     &,DYT_GLOBAL(jmt_global) ! global version of DYT                      OVISCALC.83    
+     &,tmin1_global(imt,jmt_global) ! global field of tmin1                OVISCALC.84    
+     &,fract                ! used for calculating length scale            OVISCALC.85    
+     &,athkdft_max                                                         OVISCALC.86    
+     &,athkdft_min ! Max and min values allowed for athkdft                OVISCALC.87    
+     &,lscale(imt_vis,jmt_vis)           ! length scale                    OVISCALC.88    
+     &,lscale_global(imt_ipd,jmt_global) ! global field of lscale          OVISCALC.89    
+!======================================================================    OVISCALC.90    
+                                                                           OVISCALC.91    
+c The value for tmin1_max is hardwired at the moment and was               OVISCALC.92    
+c chosen as a result of experimentation. This needs further work           OVISCALC.93    
+c and may be altered in the future.                                        OVISCALC.94    
+      IF (L_OVISHADCM4) THEN                                               OVISCALC.95    
+         tmin1_max=1.7e-6                                                  OVISCALC.96    
+      ELSE                                                                 OVISCALC.97    
+         tmin1_max=1.4e-6                                                  OVISCALC.98    
+      ENDIF                                                                OVISCALC.99    
+                                                                           OVISCALC.100   
+*IF DEF,MPP                                                                OVISCALC.101   
+c The following calculation needs to be on 1PE for MPP machine             OVISCALC.102   
+c since requires several rows to N or S                                    OVISCALC.103   
+c Create a global copy of CST and DYT                                      OVISCALC.104   
+      CALL O_SMARTPASS(1,1,CST(J_1),CST_GLOBAL                             OVISCALC.105   
+     &                ,JFIN-JST+1,JMT_GLOBAL,JST,2)                        OVISCALC.106   
+      CALL O_SMARTPASS(1,1,DYT(J_1),DYT_GLOBAL                             OVISCALC.107   
+     &                ,JFIN-JST+1,JMT_GLOBAL,JST,2)                        OVISCALC.108   
+c Gather field tmin1 onto processor 0                                      OVISCALC.109   
+      CALL GATHER_FIELD(tmin1,tmin1_global,imt,jmt,imt,                    OVISCALC.110   
+     &                 jmt_global,0,GC_ALL_PROC_GROUP,info)                OVISCALC.111   
+*ELSE                                                                      OVISCALC.112   
+C Set up for non mpp code.                                                 OVISCALC.113   
+      DO J = J_1, J_JMT                                                    OVISCALC.114   
+         CST_GLOBAL(J)=CST(J)                                              OVISCALC.115   
+         DYT_GLOBAL(J)=DYT(J)                                              OVISCALC.116   
+         do i=1,imt                                                        OVISCALC.117   
+            tmin1_global(i,j)=tmin1(i,j)                                   OVISCALC.118   
+         enddo                                                             OVISCALC.119   
+      ENDDO                                                                OVISCALC.120   
+*ENDIF                                                                     OVISCALC.121   
+c Calculate length scale                                                   OVISCALC.122   
+*IF DEF,MPP                                                                OVISCALC.123   
+      IF (O_MYPE.EQ.0) THEN                                                OVISCALC.124   
+*ENDIF                                                                     OVISCALC.125   
+          do j=1,jmt_global                                                OVISCALC.126   
+            do i=1,imt                                                     OVISCALC.127   
+              if (tmin1_global(i,j) .le. tmin1_max) then                   OVISCALC.128   
+                if (L_OVISHADCM4) THEN                                     OVISCALC.129   
+                  lscale_global(i,j)=DYT_GLOBAL(j)                         OVISCALC.130   
+                else                                                       OVISCALC.131   
+                  lscale_global(i,j)=1.                                    OVISCALC.132   
+                endif                                                      OVISCALC.133   
+              else                                                         OVISCALC.134   
+c  scan north                                                              OVISCALC.135   
+                ngap=0                                                     OVISCALC.136   
+  100           continue                                                   OVISCALC.137   
+                  ngap=ngap+1                                              OVISCALC.138   
+                  jpos=j+ngap                                              OVISCALC.139   
+                  if (jpos .gt. jmt_global .or. ngap .gt. 10) then         OVISCALC.140   
+                    goto 200                                               OVISCALC.141   
+                  else                                                     OVISCALC.142   
+                    if (tmin1_global(i,jpos) .le. tmin1_max                OVISCALC.143   
+     &                 ) goto 200                                          OVISCALC.144   
+                  endif                                                    OVISCALC.145   
+                goto 100                                                   OVISCALC.146   
+  200           continue                                                   OVISCALC.147   
+c  scan south                                                              OVISCALC.148   
+                sgap=0                                                     OVISCALC.149   
+  300           continue                                                   OVISCALC.150   
+                  sgap=sgap+1                                              OVISCALC.151   
+                  jpos=j-sgap                                              OVISCALC.152   
+                  if (jpos .lt. 1 .or. sgap .gt. 10) then                  OVISCALC.153   
+                    goto 400                                               OVISCALC.154   
+                  else                                                     OVISCALC.155   
+                    if (tmin1_global(i,jpos) .le. tmin1_max                OVISCALC.156   
+     &                 ) goto 400                                          OVISCALC.157   
+                  endif                                                    OVISCALC.158   
+                goto 300                                                   OVISCALC.159   
+  400           continue                                                   OVISCALC.160   
+c  scan west                                                               OVISCALC.161   
+                wgap=0                                                     OVISCALC.162   
+  500           continue                                                   OVISCALC.163   
+                  wgap=wgap+1                                              OVISCALC.164   
+                  ipos=i-wgap                                              OVISCALC.165   
+                  if (wgap .gt. 10) goto 600                               OVISCALC.166   
+                  if (ipos .lt. 1 ) ipos=ipos+imtm2                        OVISCALC.167   
+                    if (tmin1_global(ipos,j) .le. tmin1_max                OVISCALC.168   
+     &                 ) goto 600                                          OVISCALC.169   
+                goto 500                                                   OVISCALC.170   
+  600           continue                                                   OVISCALC.171   
+c  scan east                                                               OVISCALC.172   
+                egap=0                                                     OVISCALC.173   
+  700             continue                                                 OVISCALC.174   
+                  egap=egap+1                                              OVISCALC.175   
+                  ipos=i+egap                                              OVISCALC.176   
+                  if (egap .gt. 10) goto 800                               OVISCALC.177   
+                  if (ipos .gt. imt) ipos=ipos-imt                         OVISCALC.178   
+                    if (tmin1_global(ipos,j) .le. tmin1_max                OVISCALC.179   
+     &                 )  goto 800                                         OVISCALC.180   
+                goto 700                                                   OVISCALC.181   
+  800           continue                                                   OVISCALC.182   
+                                                                           OVISCALC.183   
+c Now find out which dirn is the least NS or EW                            OVISCALC.184   
+                                                                           OVISCALC.185   
+                nstot=DYT_GLOBAL(j)*float(ngap+sgap)                       OVISCALC.186   
+                ewtot=CST_GLOBAL(j)*DXT(i)*float(egap+wgap)                OVISCALC.187   
+                                                                           OVISCALC.188   
+                if (nstot .lt. ewtot) then                                 OVISCALC.189   
+                  fract=min(float(ngap),float(sgap))/                      OVISCALC.190   
+     &                  max(float(ngap),float(sgap))                       OVISCALC.191   
+                  lscale_global(i,j)=fract*nstot                           OVISCALC.192   
+                else                                                       OVISCALC.193   
+                  fract=min(float(egap),float(wgap))/                      OVISCALC.194   
+     &                  max(float(egap),float(wgap))                       OVISCALC.195   
+                  lscale_global(i,j)=fract*ewtot                           OVISCALC.196   
+                endif                                                      OVISCALC.197   
+                if (L_OVISHADCM4) THEN                                     OVISCALC.198   
+             lscale_global(i,j)=max(dyt_global(j),lscale_global(i,j))      OVISCALC.199   
+                endif                                                      OVISCALC.200   
+              endif                                                        OVISCALC.201   
+            enddo                                                          OVISCALC.202   
+          enddo                                                            OVISCALC.203   
+*IF DEF,MPP                                                                OVISCALC.204   
+      ENDIF ! if O_MYPE=0                                                  OVISCALC.205   
+*ENDIF                                                                     OVISCALC.206   
+*IF DEF,MPP                                                                OVISCALC.207   
+c Scatter lscale and tmin1 back to individual processors                   OVISCALC.208   
+      CALL SCATTER_FIELD(lscale,lscale_global,imt,jmt,imt,                 OVISCALC.209   
+     &                   jmt_global,0,GC_ALL_PROC_GROUP,info)              OVISCALC.210   
+      CALL SCATTER_FIELD(tmin1,tmin1_global,imt,jmt,imt,                   OVISCALC.211   
+     &                   jmt_global,0,GC_ALL_PROC_GROUP,info)              OVISCALC.212   
+*ELSE                                                                      OVISCALC.213   
+C Set up for non mpp code.                                                 OVISCALC.214   
+      DO J = J_1, J_JMT                                                    OVISCALC.215   
+         do i=1,imt                                                        OVISCALC.216   
+            lscale(i,j)=lscale_global(i,j)                                 OVISCALC.217   
+            tmin1(i,j)=tmin1_global(i,j)                                   OVISCALC.218   
+          enddo                                                            OVISCALC.219   
+      ENDDO                                                                OVISCALC.220   
+*ENDIF                                                                     OVISCALC.221   
+c Set the thickness diffusion coefficent.                                  OVISCALC.222   
+c The length scale just calculated is the number of grid points            OVISCALC.223   
+c multiplied by the length of each grid point so the length scale          OVISCALC.224   
+c is now in centimetres.                                                   OVISCALC.225   
+c The value 0.015 is given by Visbeck et. al.                              OVISCALC.226   
+c The minimum and maximum allowed thickness diffusion is also set.         OVISCALC.227   
+c (hardwired here at the moment)                                           OVISCALC.228   
+c Reference: Visbeck, M. et al, On the specification of eddy               OVISCALC.229   
+c            transfer coefficients in coarse resolution ocean              OVISCALC.230   
+c            circulation models. J. Phys. Oceanogr.,27, p 381-402.         OVISCALC.231   
+c                                                                          OVISCALC.232   
+      if (L_OVISHADCM4) THEN                                               OVISCALC.233   
+          athkdft_min=100.e4                                               OVISCALC.234   
+      else                                                                 OVISCALC.235   
+          athkdft_min=350.e4                                               OVISCALC.236   
+      endif                                                                OVISCALC.237   
+                                                                           OVISCALC.238   
+      athkdft_max=2000.e4                                                  OVISCALC.239   
+                                                                           OVISCALC.240   
+      do j=j_1,j_jmt                                                       OVISCALC.241   
+         do i=1,imt                                                        OVISCALC.242   
+            ATHKDFT(i,j)=0.015*tmin1(i,j)*lscale(i,j)*lscale(i,j)          OVISCALC.243   
+            if (ATHKDFT(i,j).lt.athkdft_min) ATHKDFT(i,j)=athkdft_min      OVISCALC.244   
+            if (ATHKDFT(i,j).gt.athkdft_max) ATHKDFT(i,j)=athkdft_max      OVISCALC.245   
+         enddo                                                             OVISCALC.246   
+      enddo                                                                OVISCALC.247   
+                                                                           OVISCALC.248   
+      RETURN                                                               OVISCALC.249   
+      END                                                                  OVISCALC.250   
+*ENDIF                                                                     OVISCALC.251   

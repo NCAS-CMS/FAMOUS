@@ -1,0 +1,786 @@
+*IF DEF,OCEAN                                                              @DYALLOC.4056  
+C ******************************COPYRIGHT******************************    GTS3F400.88    
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS3F400.89    
+C                                                                          GTS3F400.90    
+C Use, duplication or disclosure of this code is subject to the            GTS3F400.91    
+C restrictions as set forth in the contract.                               GTS3F400.92    
+C                                                                          GTS3F400.93    
+C                Meteorological Office                                     GTS3F400.94    
+C                London Road                                               GTS3F400.95    
+C                BRACKNELL                                                 GTS3F400.96    
+C                Berkshire UK                                              GTS3F400.97    
+C                RG12 2SZ                                                  GTS3F400.98    
+C                                                                          GTS3F400.99    
+C If no contract has been raised with this copy of the code, the use,      GTS3F400.100   
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS3F400.101   
+C to do so must first be obtained in writing from the Head of Numerical    GTS3F400.102   
+C Modelling at the above address.                                          GTS3F400.103   
+C ******************************COPYRIGHT******************************    GTS3F400.104   
+C ****************************ACKNOWLEDGMENT***************************    GTS3F400.105   
+C This code is derived from Public Domain code (the Cox 1984 Ocean         GTS3F400.106   
+C Model) distributed by the Geophysical Fluid Dynamics Laboratory.         GTS3F400.107   
+C               NOAA                                                       GTS3F400.108   
+C               PO Box 308                                                 GTS3F400.109   
+C               Princeton                                                  GTS3F400.110   
+C               New Jersey USA                                             GTS3F400.111   
+C If you wish to obtain a copy of the original code that does not have     GTS3F400.112   
+C Crown Copyright use, duplication or disclosure restrictions, please      GTS3F400.113   
+C contact them at the above address.                                       GTS3F400.114   
+C ****************************ACKNOWLEDGMENT***************************    GTS3F400.115   
+C                                                                          GTS3F400.116   
+      SUBROUTINE RELAX(                                                    RELAX.2     
+*CALL ARGSIZE                                                              @DYALLOC.4057  
+*CALL ARGOCALL                                                             @DYALLOC.4058  
+*CALL ARGOINDX                                                             ORH7F402.105   
+     & P,PB,PTD,PTDB                                                       ORH3F405.84    
+     &,ZTD                                                                 RELAX.5     
+     & )                                                                   RELAX.6     
+!                                                                          ORH8F404.1     
+!    MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.4          ORH8F404.2     
+!   VERSION  DATE                                                          ORH8F404.3     
+!    3.4  25/10/94 :REPLACES CRAY-SPECIFIC CVMGZ CALL WITH IF STATEMENT    ORH8F404.4     
+!                  (N FARNON)                                              ORH8F404.5     
+!    4.4  11/08/97  Remove non-chequerboarding option since this will      ORH8F404.6     
+!                   not work in mpp mode and nobody requires it anyway.    ORH8F404.7     
+!                   Also tidy up the code generally to help readability    ORH8F404.8     
+!                   and maintenance.                                       ORH8F404.9     
+!                   R. Hill                                                ORH8F404.10    
+C=======================================================================   RELAX.8     
+C                                                                    ===   RELAX.9     
+C  RELAX TAKES AS INPUT THE VORTICITY DRIVING FUNCTION COMPUTED IN   ===   RELAX.10    
+C        "CLINIC" (ZTD) AND, USING SEQUENTIAL OVER-RELAXATION,       ===   RELAX.11    
+C        SOLVES THE LAPLACIAN EQUATION FOR THE EXTERNAL MODE OF      ===   RELAX.12    
+C        VELOCITY IN TERMS OF A MASS TRANSPORT STREAM FUNCTION (P).  ===   RELAX.13    
+C                                                                    ===   RELAX.14    
+C=======================================================================   RELAX.15    
+C                                                                          RELAX.16    
+      IMPLICIT NONE                                                        RH011293.200   
+C---------------------------------------------------------------------     RELAX.17    
+C  DEFINE GLOBAL DATA                                                      RELAX.18    
+C---------------------------------------------------------------------     RELAX.19    
+C                                                                          RELAX.20    
+*CALL OARRYSIZ                                                             ORH6F401.27    
+*CALL TYPSIZE                                                              @DYALLOC.4059  
+*CALL TYPOINDX                                                             PXORDER.44    
+*CALL TYPOCALL                                                             @DYALLOC.4060  
+*CALL UMSCALAR                                                             RELAX.23    
+*CALL CNTLOCN                                                              ORH1F305.2629  
+*CALL OTIMER                                                               ORH1F305.2631  
+C-----------------------------------------------------------------------   RELAX.26    
+C DEFINE ARGUMENT LIST                                                     RELAX.27    
+C-----------------------------------------------------------------------   RELAX.28    
+C                                                                          RELAX.29    
+      REAL P(IMT_STREAM,0:JMT_STREAM+1),PB(IMT_STREAM,0:JMT_STREAM+1)      ORH3F405.85    
+     &,PTD(IMT_STREAM,JMT_STREAM),PTDB(IMT_STREAM,JMT_STREAM)              ORH1F305.2633  
+     &,ZTD(IMT_STREAM,JMT_STREAM),  ! Vorticity change across timesteps    ORH1F305.2634  
+     & FX,            ! Temporary value                                    RH011293.202   
+     & FXA,           ! Temporary value                                    RH011293.203   
+     & FXB,           ! Temporary value                                    RH011293.204   
+     & FXC,           ! Temporary value                                    RH011293.205   
+     & CRTP,          ! Altered val of CRIT (convergence criteria)         RH011293.206   
+     &                ! for computational efficiency                       RH011293.207   
+     & RESMAX         ! Max of residuals at all grid points                RH011293.208   
+C                                                                          RH011293.209   
+C                                                                          RH011293.210   
+C                                                                          RH011293.211   
+C          DECLARE INTEGER VARIABLES                                       RH011293.212   
+C                                                                          RH011293.213   
+      INTEGER                                                              ORH3F405.86    
+     & I,             ! Grid point index (Zonal)                           RH011293.215   
+     & J,             ! Grid point index (Meridonal)                       RH011293.216   
+     & L,             ! Loop control for ocean segment                     RH011293.217   
+     & IE,            ! End index for I loop                               RH011293.218   
+     & IS             ! Start index for I loop                             RH011293.219   
+      INTEGER INFO    ! Dummy variable for message passing use             ORH2F403.1     
+      INTEGER GID,ISTAT                                                    ORH2F403.2     
+C                                                                          RH011293.220   
+C                                                                          RELAX.34    
+C                                                                          RELAX.35    
+C---------------------------------------------------------------------     RELAX.36    
+C  DIMENSION LOCAL DATA                                                    RELAX.37    
+C---------------------------------------------------------------------     RELAX.38    
+C                                                                          RELAX.39    
+                                                                           ORH1F305.2635  
+      REAL                                                                 RELAX.41    
+     & FXD,           ! Temporary value                                    RH011293.221   
+     & RESIS_ROW(JMT,NISLE),                                               ORH2F403.3     
+     & RESIS(NISLE),         ! Residual of relaxation of island            ORH2F403.4     
+     & TEST1,         ! Product of reciprocals of 4 surrounding depths     RH011293.223   
+     & TEST2,         ! Sum of reciprocals of 4 surrounding depths         RH011293.224   
+     & COF(IMT,JMT),COFIS(NISLE)                                           ORH1F305.2636  
+     &,COFIS_ROW(JMT)                                                      ORH2F403.5     
+                                                                           ORH1F305.2637  
+      REAL                                                                 RELAX.44    
+     & CFN(IMT,JMT),CFS(IMT,JMT),CFE(IMT,JMT),CFW(IMT,JMT)                 RELAX.45    
+     &,RES(IMT,JMT),CPF(IMT)                                               RELAX.46    
+     &,WORKP(IMT,JMT),H(IMT,JMT)                                           RELAX.47    
+                                                                           ORH1F305.2638  
+      INTEGER                                                              RELAX.49    
+     & ISLE,          ! Do loop index indicates current island             RH011293.225   
+     & JE,            ! End index for J loop                               RH011293.226   
+     & JS,            ! Start index for J loop                             RH011293.227   
+     & N,             ! Do loop index for island segments                  RH011293.228   
+     & NSEG,          ! End index for island segment DO loops              RH011293.229   
+     & ISMASK(IMT,JMT)                                                     ORH1F305.2639  
+                                                                           ORH1F305.2640  
+C---------------------------------------------------------------           RELAX.53    
+C    Define local variables used solely for red-black SOR                  RELAX.54    
+C---------------------------------------------------------------           RELAX.55    
+C                                                                          RELAX.56    
+      INTEGER NWCNT,NWMAX,IHOP,ISTART                                      RELAX.57    
+      REAL REMASK(IMT,JMT),SOR1,SORP,MUMSQR                                ORH3F405.87    
+      LOGICAL EX1,EX2                                                      RELAX.59    
+                                                                           ORH1F305.2643  
+C                                                                          RELAX.61    
+C---------------------------------------------------------------------     RELAX.62    
+C  BEGIN EXECUTABLE CODE                                                   RELAX.63    
+C---------------------------------------------------------------------     RELAX.64    
+      IF (L_OTIMER) CALL TIMER('RELAX   ',3)                               ORH1F305.2644  
+C                                                                          RELAX.68    
+C=======================================================================   RELAX.69    
+C  BEGIN INTRODUCTORY SECTION TO PREPARE FOR THE RELAXATION  ===========   RELAX.70    
+C=======================================================================   RELAX.71    
+C                                                                          RELAX.72    
+      GID=0  ! temporary should use GC_ALL_GROUP really                    ORH2F403.6     
+C---------------------------------------------------------------------     RELAX.73    
+C  INITIALIZE THE WORK AREA                                                RELAX.74    
+C---------------------------------------------------------------------     RELAX.75    
+C                                                                          RELAX.76    
+      FX=0.0                                                               RELAX.77    
+      DO J=J_1,J_JMT                                                       ORH8F404.11    
+         DO I=1,IMT                                                        ORH8F404.12    
+            CFN(I,J)=FX                                                    ORH8F404.13    
+            CFS(I,J)=FX                                                    ORH8F404.14    
+            CFE(I,J)=FX                                                    ORH8F404.15    
+            CFW(I,J)=FX                                                    ORH8F404.16    
+            IF (L_OISLANDS) THEN                                           ORH8F404.17    
+               COF(I,J)=FX                                                 ORH8F404.18    
+               ISMASK(I,J)=0                                               ORH8F404.19    
+            ENDIF                                                          ORH8F404.20    
+                                                                           ORH8F404.21    
+            REMASK(I,J) = FX                                               ORH8F404.22    
+         ENDDO ! Over I                                                    ORH8F404.23    
+      ENDDO ! Over J                                                       ORH8F404.24    
+                                                                           ORH8F404.25    
+                                                                           ORH8F404.26    
+      IF (L_OISLANDS) THEN                                                 ORH1F305.2652  
+C---------------------------------------------------------------------     RELAX.94    
+C  FORM ISLAND MASK  (ISMASK=0 OVER INTERIOR OCEAN POINTS                  RELAX.95    
+C                     ISMASK=1 OVER PERIMETER OCEAN POINTS                 RELAX.96    
+C                     ISMASK=2 OVER LAND POINTS)                           RELAX.97    
+C---------------------------------------------------------------------     RELAX.98    
+C                                                                          RELAX.99    
+        DO I=2,IMU                                                         ORH8F404.27    
+           DO J=J_2,J_JMTM1                                                ORH8F404.28    
+              TEST1=HR(I,J)*HR(I-1,J)*HR(I,J-1)*HR(I-1,J-1)                ORH8F404.29    
+              TEST2=HR(I,J)+HR(I-1,J)+HR(I,J-1)+HR(I-1,J-1)                ORH8F404.30    
+              IF(TEST1.EQ.0.0) ISMASK(I,J)=1                               ORH8F404.31    
+              IF(TEST2.EQ.0.0) ISMASK(I,J)=2                               ORH8F404.32    
+           ENDDO                                                           ORH8F404.33    
+        ENDDO                                                              ORH8F404.34    
+                                                                           ORH8F404.35    
+C                                                                          RELAX.119   
+      ENDIF                                                                ORH1F305.2660  
+C---------------------------------------------------------------------     RELAX.121   
+C  CALCULATE DEPTH FIELD FROM ITS RECIPROCAL                               RELAX.122   
+C---------------------------------------------------------------------     RELAX.123   
+C                                                                          RELAX.124   
+C  COMPUTE RECIPROCALS WITH AN EPSILON ADDED TO AVOID ZERO DIVIDE          RELAX.125   
+C                                                                          RELAX.126   
+      FXA=1.0                                                              RELAX.127   
+      FXB=1.E-20                                                           RELAX.128   
+      DO J=J_2,J_JMTM1                                                     ORH8F404.36    
+         DO I=1,IMT                                                        ORH8F404.37    
+             H(I,J)=FXA/(HR(I,J)+FXB)                                      ORH8F404.38    
+         ENDDO                                                             ORH8F404.39    
+      ENDDO                                                                ORH8F404.40    
+                                                                           ORH1F305.2661  
+      IF (L_OISLANDS) THEN                                                 ORH1F305.2662  
+C                                                                          RELAX.134   
+C  THEN RESET H OVER LAND TO ZERO                                          RELAX.135   
+C                                                                          RELAX.136   
+         FX=0.0                                                            ORH8F404.41    
+         DO J=J_1,J_JMT                                                    ORH8F404.42    
+            DO I=1,IMT                                                     ORH8F404.43    
+               IF(HR(I,J).EQ.FX)H(I,J)=FX                                  ORH8F404.44    
+            ENDDO                                                          ORH8F404.45    
+         ENDDO                                                             ORH8F404.46    
+                                                                           ORH1F305.2663  
+      ENDIF                                                                ORH1F305.2664  
+                                                                           ORH1F305.2665  
+      IF (L_OCYCLIC) THEN                                                  ORH1F305.2666  
+C                                                                          RELAX.144   
+C  THEN SET CYCLIC BOUNDARY CONDITIONS ON H                                RELAX.145   
+C                                                                          RELAX.146   
+         DO J=J_1,J_JMT                                                    ORH8F404.47    
+            H(1,J)=H(IMUM1,J)                                              ORH1F305.2668  
+         ENDDO                                                             ORH8F404.48    
+                                                                           ORH1F305.2670  
+      ENDIF                                                                ORH1F305.2671  
+*IF DEF,MPP                                                                ORH4F402.67    
+C=====================================================================     ORH4F402.68    
+C CALL TO SWAPBOUNDS FOR HALO UPDATE IN MPP VERSION                        ORH4F402.69    
+C=====================================================================     ORH4F402.70    
+                                                                           ORH4F402.71    
+*IF DEF,T3E                                                                ORH2F403.12    
+      CALL SWAP_1D(H,IMT,JMT,O_EW_HALO,O_NS_HALO,1)                        ORH2F403.13    
+*ELSE                                                                      ORH2F403.14    
+      CALL SWAPBOUNDS(H,IMT,JMT,O_EW_HALO,O_NS_HALO,1)                     ORH2F403.15    
+*ENDIF                                                                     ORH2F403.16    
+                                                                           ORH4F402.73    
+*ENDIF                                                                     ORH4F402.74    
+                                                                           ORH4F402.75    
+C                                                                          RELAX.151   
+C---------------------------------------------------------------------     RELAX.152   
+C  GENERATE ARRAYS OF COEFFICIENTS FOR RELAXATION                          RELAX.153   
+C---------------------------------------------------------------------     RELAX.154   
+C                                                                          RELAX.155   
+C  1ST, COMPUTE COEFFICIENTS OF THE LAPLACIAN STAR                         RELAX.156   
+C  (HOLD NON-INTERIOR POINTS TO ZERO USING START AND END INDICES)          RELAX.157   
+C                                                                          RELAX.158   
+      DO J=J_3,J_JMTM1                                                     ORH8F404.49    
+         DO L=1,LSEG                                                       ORH8F404.50    
+            IS=ISZ(J,L)                                                    ORH8F404.51    
+            IF(IS.EQ.0) GO TO 130                                          ORH8F404.52    
+            IE=IEZ(J,L)                                                    ORH8F404.53    
+            FXA=2.0*CSTR(J)*CSTR(J)                                        ORH8F404.54    
+            FXB=2.0*CS(J  )*CSTR(J)*DYTR(J)*DYUR(J  )                      ORH8F404.55    
+            FXC=2.0*CS(J-1)*CSTR(J)*DYTR(J)*DYUR(J-1)                      ORH8F404.56    
+            FX=1.0                                                         ORH8F404.57    
+            DO I=IS,IE                                                     ORH8F404.58    
+               CFN(I,J)=FXB/(H(I-1,J)+H(I,J))                              ORH8F404.59    
+               CFS(I,J)=FXC/(H(I-1,J-1)+H(I,J-1))                          ORH8F404.60    
+               CFE(I,J)=FXA*DXUR(I)*DXTR(I)/(H(I,J)+H(I,J-1))              ORH8F404.61    
+               CFW(I,J)=FXA*DXUR(I-1)*DXTR(I)/(H(I-1,J)+H(I-1,J-1))        ORH8F404.62    
+               CPF(I)=FX/(CFN(I,J)+CFS(I,J)+CFE(I,J)+CFW(I,J))             ORH8F404.63    
+                                                                           ORH8F404.64    
+               REMASK(I,J) = FX                                            ORH8F404.65    
+            ENDDO                                                          ORH8F404.66    
+                                                                           ORH8F404.67    
+C                                                                          RELAX.178   
+C  2ND, AUGMENT COEFFICIENTS FOR IMPLICIT TREATMENT OF CORIOLIS TERM       RELAX.179   
+C                                                                          RELAX.180   
+            IF (ACOR.NE.0.0) THEN                                          ORH8F404.68    
+                                                                           ORH1F305.2675  
+               IF (L_OROTATE) THEN                                         ORH8F404.69    
+                  FX=-0.5*C2DTSF*ACOR*CSTR(J)*DYTR(J)                      ORH8F404.70    
+                  DO I=IS,IE                                               ORH8F404.71    
+                     CFN(I,J)=CFN(I,J)                                     ORH8F404.72    
+     &                        +(HR(I,J)*CORIOLIS(I,J)-HR(I-1,J)*           ORH8F404.73    
+     &                        CORIOLIS(I-1,J))*FX*DXTR(I)                  ORH8F404.74    
+                     CFS(I,J)=CFS(I,J)                                     ORH8F404.75    
+     &                        -(HR(I,J-1)*CORIOLIS(I,J-1)-HR(I-1,J-1)*     ORH8F404.76    
+     &                        CORIOLIS(I-1,J-1))*FX*DXTR(I)                ORH8F404.77    
+                     CFE(I,J)=CFE(I,J)                                     ORH8F404.78    
+     &                        -(HR(I,J)*CORIOLIS(I,J)-HR(I,J-1)*           ORH8F404.79    
+     &                        CORIOLIS(I,J-1))*FX*DXTR(I)                  ORH8F404.80    
+                     CFW(I,J)=CFW(I,J)                                     ORH8F404.81    
+     &                        +(HR(I-1,J)*CORIOLIS(I-1,J)-HR(I-1,J-1)*     ORH8F404.82    
+     &                        CORIOLIS(I-1,J-1))*FX*DXTR(I)                ORH8F404.83    
+                  ENDDO     ! over I                                       ORH8F404.84    
+               ELSE                                                        ORH8F404.85    
+                  FX=-C2DTSF*ACOR*CSTR(J)*DYTR(J)*OMEGA                    ORH8F404.86    
+                  DO I=IS,IE                                               ORH8F404.87    
+                                                                           ORH1F305.2693  
+                     CFN(I,J)=CFN(I,J)+(HR(I,J  )-HR(I-1,J  ))*SINE(J  )   ORH8F404.88    
+     &                        *FX*DXTR(I)                                  ORH8F404.89    
+                     CFS(I,J)=CFS(I,J)-(HR(I,J-1)-HR(I-1,J-1))*SINE(J-1)   ORH8F404.90    
+     &                        *FX*DXTR(I)                                  ORH8F404.91    
+                     CFE(I,J)=CFE(I,J)-(HR(I  ,J)*SINE(J)-HR(I  ,J-1)*     ORH8F404.92    
+     &                       SINE(J-1))*FX*DXTR(I)                         ORH8F404.93    
+                     CFW(I,J)=CFW(I,J)+(HR(I-1,J)*SINE(J)-HR(I-1,J-1)*     ORH8F404.94    
+     &                       SINE(J-1))*FX*DXTR(I)                         ORH8F404.95    
+                  ENDDO     ! over I                                       ORH8F404.96    
+               ENDIF         ! L_OROTATE = false                           ORH8F404.97    
+                                                                           ORH1F305.2700  
+            ENDIF                                                          ORH8F404.98    
+C                                                                          RELAX.223   
+C  3RD, NORMALIZE COEFFICIENTS AND FORCING TERM FOR EFFICIENCY             RELAX.224   
+C                                                                          RELAX.225   
+            DO I=IS,IE                                                     ORH8F404.99    
+               CFN(I,J)=CFN(I,J)*CPF(I)                                    ORH8F404.100   
+               CFS(I,J)=CFS(I,J)*CPF(I)                                    ORH8F404.101   
+               CFE(I,J)=CFE(I,J)*CPF(I)                                    ORH8F404.102   
+               CFW(I,J)=CFW(I,J)*CPF(I)                                    ORH8F404.103   
+               ZTD(I,J)=ZTD(I,J)*CPF(I)                                    ORH8F404.104   
+            ENDDO                                                          ORH8F404.105   
+ 130        CONTINUE                                                       ORH8F404.106   
+         ENDDO ! Over L                                                    ORH8F404.107   
+      ENDDO ! Over J                                                       ORH8F404.108   
+                                                                           ORH8F404.109   
+      IF (L_OISLANDS) THEN                                                 ORH1F305.2701  
+C                                                                          RELAX.235   
+C  4TH, COMPUTE COEFFICIENTS ON ISLAND PERIMETER POINTS                    RELAX.236   
+C                                                                          RELAX.237   
+         DO ISLE=1,NISLE                                                   ORH8F404.110   
+            DO J=J_1,J_JMT                                                 ORH8F404.111   
+               COFIS_ROW(J)=0.0                                            ORH8F404.112   
+            ENDDO                                                          ORH8F404.113   
+            COFIS(ISLE)=0.0                                                ORH8F404.114   
+            NSEG=ISEG(ISLE)                                                ORH8F404.115   
+            DO N=1,NSEG                                                    ORH8F404.116   
+               IS=ISIS(ISLE,N)                                             ORH8F404.117   
+               IE=IEIS(ISLE,N)                                             ORH8F404.118   
+               JS=JSIS(ISLE,N)                                             ORH8F404.119   
+               JE=JEIS(ISLE,N)                                             ORH8F404.120   
+*IF DEF,MPP                                                                ORH2F403.21    
+c Adjust J indices to be relative to local values for each PE              ORH2F403.22    
+               IF ((JST.GT.JE).OR.(JFIN.LT.JS)) THEN                       ORH8F404.121   
+c Make sure the J loop doesn't get executed                                ORH2F403.24    
+                  JS = 1                                                   ORH8F404.122   
+                  JE = 0                                                   ORH8F404.123   
+                                                                           ORH2F403.27    
+               ELSE                                                        ORH8F404.124   
+                                                                           ORH2F403.29    
+                  IF (JST.GT.JS) THEN                                      ORH8F404.125   
+                     JS = JST                                              ORH8F404.126   
+                  ENDIF                                                    ORH8F404.127   
+                  IF (JFIN.LT.JE) THEN                                     ORH8F404.128   
+                     JE = JFIN                                             ORH8F404.129   
+                  ENDIF                                                    ORH8F404.130   
+c Adjust to local versions of indices.                                     ORH2F403.36    
+                  JS = JS - J_OFFSET                                       ORH8F404.131   
+                  JE = JE - J_OFFSET                                       ORH8F404.132   
+               ENDIF                                                       ORH8F404.133   
+*ENDIF                                                                     ORH2F403.40    
+               DO J=JS,JE                                                  ORH8F404.134   
+                  FXA=2.0*CSTR(J)*CSTR(J)                                  ORH8F404.135   
+                  FXB=2.0*CS(J  )*DYUR(J  )*DYTR(J)*CSTR(J)                ORH8F404.136   
+                  FXC=2.0*CS(J-1)*DYUR(J-1)*DYTR(J)*CSTR(J)                ORH8F404.137   
+                  IF (L_OROTATE) THEN                                      ORH8F404.138   
+                     FXD=-0.5*C2DTSF*ACOR*CSTR(J)*DYTR(J)                  ORH8F404.139   
+                  ELSE                                                     ORH8F404.140   
+                     FXD=-C2DTSF*ACOR*CSTR(J)*DYTR(J)*OMEGA                ORH8F404.141   
+                  ENDIF                                                    ORH8F404.142   
+                                                                           ORH1F305.2707  
+                  DO I=IS,IE                                               ORH8F404.143   
+                     IF(ISMASK(I,J).NE.1) GO TO 175                        ORH8F404.144   
+                                                                           ORH1F305.2708  
+                     IF (L_OROTATE) THEN                                   ORH8F404.145   
+                                                                           ORH1F305.2710  
+                        IF(HR(I-1,J  ).NE.0.0 .OR. HR(I  ,J  ).NE.0.0)     ORH8F404.146   
+     &                  CFN(I,J)=FXB/(H(I-1,J)+H(I,J))                     ORH8F404.147   
+     &                           +FXD*DXTR(I)*(HR(I,J)*                    ORH8F404.148   
+     &                           CORIOLIS(I,J)-HR(I-1,J)*                  ORH8F404.149   
+     &                           CORIOLIS(I-1,J))                          ORH8F404.150   
+                                                                           ORH1F305.2714  
+                        IF(HR(I-1,J-1).NE.0.0 .OR. HR(I  ,J-1).NE.0.0)     ORH8F404.151   
+     &                  CFS(I,J)=FXC/(H(I-1,J-1)+H(I,J-1))                 ORH8F404.152   
+     &                           -FXD*DXTR(I)                              ORH8F404.153   
+     &                           *(HR(I,J-1)*CORIOLIS(I,J-1)-              ORH8F404.154   
+     &                           HR(I-1,J-1)*CORIOLIS(I-1,J-1))            ORH8F404.155   
+                                                                           ORH1F305.2719  
+                        IF(HR(I  ,J  ).NE.0.0 .OR. HR(I  ,J-1).NE.0.0)     ORH8F404.156   
+     &                  CFE(I,J)=FXA*DXTR(I)*DXUR(I)/(H(I,J)+H(I,J-1))     ORH8F404.157   
+     &                           -FXD*DXTR(I)                              ORH8F404.158   
+     &                           *(HR(I,J)*CORIOLIS(I,J)-HR(I,J-1)*        ORH8F404.159   
+     &                           CORIOLIS(I,J-1))                          ORH8F404.160   
+                                                                           ORH1F305.2724  
+                        IF(HR(I-1,J  ).NE.0.0 .OR. HR(I-1,J-1).NE.0.0)     ORH8F404.161   
+     &                  CFW(I,J)=FXA*DXTR(I)*DXUR(I-1)/(H(I-1,J)+          ORH8F404.162   
+     &                           H(I-1,J-1))                               ORH8F404.163   
+     &                           +FXD*DXTR(I)                              ORH8F404.164   
+     &                           *(HR(I-1,J)*CORIOLIS(I-1,J)-              ORH8F404.165   
+     &                           HR(I-1,J-1)*CORIOLIS(I-1,J-1))            ORH8F404.166   
+                     ELSE                                                  ORH8F404.167   
+                                                                           ORH1F305.2730  
+                        IF(HR(I-1,J  ).NE.0.0 .OR. HR(I  ,J  ).NE.0.0)     ORH8F404.168   
+     &                  CFN(I,J)=FXB/(H(I-1,J)+H(I,J))                     ORH8F404.169   
+     &                           +FXD*DXTR(I)*(HR(I,J)-HR(I-1,J))*         ORH8F404.170   
+     &                           SINE(J)                                   ORH8F404.171   
+                                                                           ORH1F305.2733  
+                        IF(HR(I-1,J-1).NE.0.0 .OR. HR(I  ,J-1).NE.0.0)     ORH8F404.172   
+     &                  CFS(I,J)=FXC/(H(I-1,J-1)+H(I,J-1))                 ORH8F404.173   
+     &                           -FXD*DXTR(I)*(HR(I,J-1)-HR(I-1,J-1))*     ORH8F404.174   
+     &                           SINE(J-1)                                 ORH8F404.175   
+                                                                           ORH1F305.2736  
+                        IF(HR(I  ,J  ).NE.0.0 .OR. HR(I  ,J-1).NE.0.0)     ORH8F404.176   
+     &                  CFE(I,J)=FXA*DXTR(I)*DXUR(I)/(H(I,J)+H(I,J-1))     ORH8F404.177   
+     &                           -FXD*DXTR(I)*(HR(I,J)*SINE(J)-            ORH8F404.178   
+     &                           HR(I,J-1)*SINE(J-1))                      ORH8F404.179   
+                                                                           ORH1F305.2739  
+                        IF(HR(I-1,J  ).NE.0.0 .OR. HR(I-1,J-1).NE.0.0)     ORH8F404.180   
+     &                  CFW(I,J)=FXA*DXTR(I)*DXUR(I-1)/                    ORH8F404.181   
+     &                           (H(I-1,J)+H(I-1,J-1))                     ORH8F404.182   
+     &                           +FXD*DXTR(I)*(HR(I-1,J)*SINE(J)-          ORH8F404.183   
+     &                           HR(I-1,J-1)*SINE(J-1))                    ORH8F404.184   
+                     ENDIF                                                 ORH8F404.185   
+                                                                           ORH1F305.2743  
+                                                                           ORH1F305.2744  
+                     COF(I,J)=1.0/(CFN(I,J)+CFS(I,J)+CFE(I,J)+CFW(I,J))    ORH8F404.186   
+                     CFN(I,J)=CFN(I,J)*COF(I,J)                            ORH8F404.187   
+                     CFS(I,J)=CFS(I,J)*COF(I,J)                            ORH8F404.188   
+                     CFE(I,J)=CFE(I,J)*COF(I,J)                            ORH8F404.189   
+                     CFW(I,J)=CFW(I,J)*COF(I,J)                            ORH8F404.190   
+                     ZTD(I,J)=ZTD(I,J)*COF(I,J)                            ORH8F404.191   
+                     COF(I,J)=CST(J)*DXT(I)*DYT(J)/COF(I,J)                ORH8F404.192   
+                     COFIS_ROW(J)=COFIS_ROW(J)+COF(I,J)                    ORH8F404.193   
+ 175                 CONTINUE                                              ORH8F404.194   
+                  ENDDO ! Over I                                           ORH8F404.195   
+               ENDDO ! Over J                                              ORH8F404.196   
+            ENDDO ! Over N                                                 ORH8F404.197   
+*IF DEF,MPP                                                                ORH2F403.42    
+      ! Now we must add all COFIS values for this island                   ORH2F403.43    
+      ! in a manner which will allow bit comparison.                       ORH2F403.44    
+            CALL OISLESUMA(COFIS_ROW,JMT,COFIS(ISLE))                      ORH8F404.198   
+*ELSE                                                                      ORH2F403.46    
+            DO J = J_1, J_JMT                                              ORH8F404.199   
+               COFIS(ISLE) = COFIS(ISLE) + COFIS_ROW(J)                    ORH8F404.200   
+            ENDDO                                                          ORH8F404.201   
+*ENDIF                                                                     ORH2F403.50    
+            COFIS(ISLE)=1./COFIS(ISLE)                                     ORH8F404.202   
+         ENDDO ! Over ISLE                                                 ORH8F404.203   
+                                                                           ORH1F305.2745  
+      ENDIF     ! L_OISLANDS = true                                        ORH1F305.2746  
+C                                                                          RELAX.315   
+C---------------------------------------------------------------------     RELAX.328   
+C  COMPUTE A FIRST GUESS FOR THE RELAXATION BY EXTRAPOLATING THE TWO       RELAX.329   
+C  PREVIOUS SOLUTIONS FORWARD IN TIME.                                     RELAX.330   
+C---------------------------------------------------------------------     RELAX.331   
+C                                                                          RELAX.332   
+C  1ST, SAVE VALUES IN PTD IN ARRAY WORKP                                  RELAX.333   
+C                                                                          RELAX.334   
+      DO J=J_1,J_JMT                                                       ORH8F404.204   
+         DO I=1,IMT                                                        ORH8F404.205   
+            WORKP(I,J)=PTD(I,J)                                            ORH8F404.206   
+         ENDDO                                                             ORH8F404.207   
+      ENDDO                                                                ORH8F404.208   
+C                                                                          RELAX.339   
+C  2ND, PERFORM TIME EXTRAPOLATION (ACCOUNTING FOR MIXING TIMESTEP)        RELAX.340   
+C                                                                          RELAX.341   
+      FXA=1.0                                                              RELAX.342   
+      FXB=2.0                                                              RELAX.343   
+      IF(MIX.EQ.1) FXA=0.5                                                 RELAX.344   
+      DO J=J_1,J_JMT                                                       ORH8F404.209   
+         DO I=1,IMT                                                        ORH8F404.210   
+            PTD(I,J)=FXA*(FXB*PTD(I,J)-PTDB(I,J))                          ORH8F404.211   
+         ENDDO                                                             ORH8F404.212   
+      ENDDO                                                                ORH8F404.213   
+C                                                                          RELAX.349   
+C  3RD, NOW COPY ORIGINAL VALUES FROM PTD (NOW IN WORKP) INTO PTDB         RELAX.350   
+C                                                                          RELAX.351   
+      DO J=J_1,J_JMT                                                       ORH8F404.214   
+         DO I=1,IMT                                                        ORH8F404.215   
+            PTDB(I,J)=WORKP(I,J)                                           ORH8F404.216   
+         ENDDO                                                             ORH8F404.217   
+      ENDDO                                                                ORH8F404.218   
+C                                                                          RELAX.356   
+C     DETERMINE MAX PTD OVER ALL POINTS AND USE THIS                       ORH8F404.219   
+C     TO COMPUTE CRITERION FOR CONVERGENCE                                 ORH8F404.220   
+      CRTP = 0.0                                                           ORH8F404.221   
+      DO I=1,IMT                                                           ORH8F404.222   
+         DO J=J_1,J_JMT                                                    ORH8F404.223   
+            CRTP = MAX(ABS(PTD(I,J)),CRTP)                                 ORH1F305.2755  
+         ENDDO                                                             ORH8F404.224   
+      ENDDO                                                                ORH8F404.225   
+                                                                           ORH8F404.226   
+*IF DEF,MPP                                                                ORH2F403.56    
+      CALL GC_RMAX (1,O_NPROC,INFO,CRTP)                                   ORH8F404.227   
+*ENDIF                                                                     ORH2F403.58    
+      CRTP=CRTP*CRIT                                                       ORH8F404.228   
+C                                                                          RELAX.370   
+      FX=0.0                                                               RELAX.371   
+      DO J=J_1,J_JMT                                                       ORH8F404.229   
+         DO I=1,IMT                                                        ORH8F404.230   
+            RES(I,J)=FX                                                    ORH8F404.231   
+         ENDDO                                                             ORH8F404.232   
+      ENDDO                                                                ORH8F404.233   
+C                                                                          RELAX.376   
+C=======================================================================   RELAX.377   
+C  END INTRODUCTORY SECTION  ===========================================   RELAX.378   
+C=======================================================================   RELAX.379   
+C                                                                          RELAX.380   
+C=======================================================================   RELAX.381   
+C  BEGIN SECTION TO DO THE RELAXATION  =================================   RELAX.382   
+C=======================================================================   RELAX.383   
+C                                                                          RELAX.384   
+      MSCAN=0                                                              RELAX.385   
+      SORP=1.0                                                             ORH2F403.153   
+      MUMSQR=1.0-(2.0/SOR-1.0)*(2.0/SOR-1.0)  ! max eigenval**2            ORH2F403.154   
+      EX1 = .FALSE.                                                        ORH8F404.234   
+      EX2 = .FALSE.                                                        ORH8F404.235   
+      NWCNT = 0                                                            ORH8F404.236   
+      NWMAX = MXSCAN                                                       ORH8F404.237   
+C    Use a mask to set residuals to zero over land                         ORH8F404.238   
+                                                                           ORH1F305.2765  
+ 300  MSCAN=MSCAN+1                                                        RELAX.394   
+                                                                           ORH1F305.2766  
+      DO IHOP = 1,2                                                        ORH8F404.239   
+*IF DEF,MPP                                                                ORH2F403.60    
+C=====================================================================     ORH2F403.61    
+C CALL TO SWAPBOUNDS FOR HALO UPDATE IN MPP VERSION                        ORH2F403.62    
+C=====================================================================     ORH2F403.63    
+*IF DEF,T3E                                                                ORH2F403.64    
+      CALL SWAP_1D(PTD,IMT,JMT,O_EW_HALO,O_NS_HALO,1)                      ORH2F403.65    
+*ELSE                                                                      ORH2F403.66    
+      CALL SWAPBOUNDS(PTD,IMT,JMT,O_EW_HALO,O_NS_HALO,1)                   ORH2F403.67    
+*ENDIF                                                                     ORH2F403.68    
+*ENDIF                                                                     ORH2F403.69    
+C                                                                          RELAX.398   
+C---------------------------------------------------------------------     RELAX.399   
+C  COMPUTE ENTIRE FIELD OF RESIDUALS AS IN SIMULTANEOUS RELAXATION         RELAX.400   
+C  (..NOTE.. RESIDUALS WILL REMAIN 0 OVER NON-INTERIOR POINTS)             RELAX.402   
+C   WHEN L_OISLANDS = false.                                               ORH1F305.2769  
+C---------------------------------------------------------------------     RELAX.404   
+C                                                                          RELAX.405   
+      DO J =J_3,JSCAN                                                      ORH8F404.240   
+         ISTART=3-MOD(IHOP+J+J_OFFSET,2)                                   ORH2F403.71    
+                                                                           ORH1F305.2770  
+         DO I=ISTART,IMTM1,2                                               ORH8F404.241   
+           RES(I,J) = REMASK(I,J)*(CFN(I,J)*PTD(I,J+1)                     ORH1F305.2771  
+     *        +CFS(I,J)*PTD(I,J-1)                                         RELAX.425   
+     *        +CFE(I,J)*PTD(I+1,J)                                         RELAX.426   
+     *        +CFW(I,J)*PTD(I-1,J)                                         RELAX.427   
+     &        -PTD(I,J)-ZTD(I,J))                                          ORH8F404.242   
+         ENDDO                                                             ORH8F404.243   
+                                                                           ORH8F404.244   
+         IF (L_OCYCLIC) THEN                                               ORH8F404.245   
+C                                                                          ORH1F305.2775  
+C---------------------------------------------------------------------     ORH1F305.2776  
+C  SET CYCLIC BOUNDARY CONDITIONS ON THE RESIDUALS                         ORH1F305.2777  
+C---------------------------------------------------------------------     ORH1F305.2778  
+C                                                                          ORH1F305.2779  
+           RES(1,J)=RES(IMUM1,J)                                           ORH1F305.2780  
+           RES(IMT,J)=RES(2,J)                                             ORH1F305.2781  
+                                                                           ORH1F305.2782  
+         ENDIF                                                             ORH8F404.246   
+C                                                                          ORH1F305.2784  
+C---------------------------------------------------------------------     ORH1F305.2785  
+C  MAKE A CORRECTION TO PTD BASED ON THE RESIDUALS                         ORH1F305.2786  
+C---------------------------------------------------------------------     ORH1F305.2787  
+C                                                                          ORH1F305.2788  
+         ISTART=1+MOD(IHOP+J+J_OFFSET,2)                                   ORH2F403.72    
+         DO I=ISTART,IMT,2                                                 ORH8F404.247   
+            PTD(I,J) = PTD(I,J)+SORP*RES(I,J)                              ORH8F404.248   
+         ENDDO                                                             ORH8F404.249   
+                                                                           ORH1F305.2793  
+      ENDDO ! Over J                                                       ORH8F404.250   
+                                                                           ORH1F305.2796  
+      ENDDO ! Over IHOP                                                    ORH8F404.251   
+                                                                           ORH1F305.2813  
+                                                                           ORH1F305.2857  
+C---------------------------------------------------------------------     RELAX.554   
+C  FIND THE MAXIMUM ABSOLUTE RESIDUAL TO DETERMINE CONVERGENCE             RELAX.555   
+C---------------------------------------------------------------------     RELAX.556   
+C                                                                          RELAX.557   
+      RESMAX=0.0                                                           RELAX.558   
+      DO J=J_3,JSCAN                                                       ORH8F404.252   
+         DO I=2,IMTM1                                                      ORH8F404.253   
+            RESMAX=MAX(ABS(RES(I,J)),RESMAX)                               ORH8F404.254   
+         ENDDO                                                             ORH8F404.255   
+      ENDDO                                                                ORH8F404.256   
+                                                                           ORH1F305.2858  
+      IF (L_OISLANDS) THEN                                                 ORH1F305.2859  
+C                                                                          RELAX.564   
+C---------------------------------------------------------------------     RELAX.565   
+C  DO HOLE RELAXATION FOR EACH ISLAND                                      RELAX.566   
+C---------------------------------------------------------------------     RELAX.567   
+C                                                                          RELAX.568   
+*IF DEF,MPP                                                                ORH2F403.74    
+C=====================================================================     ORH2F403.75    
+C CALL TO SWAPBOUNDS FOR HALO UPDATE IN MPP VERSION                        ORH2F403.76    
+C=====================================================================     ORH2F403.77    
+*IF DEF,T3E                                                                ORH2F403.78    
+      CALL SWAP_1D(PTD,IMT,JMT,O_EW_HALO,O_NS_HALO,1)                      ORH2F403.79    
+*ELSE                                                                      ORH2F403.80    
+      CALL SWAPBOUNDS(PTD,IMT,JMT,O_EW_HALO,O_NS_HALO,1)                   ORH2F403.81    
+*ENDIF                                                                     ORH2F403.82    
+*ENDIF                                                                     ORH2F403.83    
+      FX=0.0                                                               RELAX.569   
+      DO ISLE=1,NISLE                                                      ORH2F403.84    
+         DO J = J_1, J_JMT                                                 ORH2F403.85    
+            RESIS_ROW(J,ISLE)=FX                                           ORH2F403.86    
+         ENDDO                                                             ORH2F403.87    
+         NSEG=ISEG(ISLE)                                                   ORH8F404.257   
+         DO N=1,NSEG                                                       ORH8F404.258   
+            IS=ISIS(ISLE,N)                                                ORH8F404.259   
+            IE=IEIS(ISLE,N)                                                ORH8F404.260   
+            JS=JSIS(ISLE,N)                                                ORH8F404.261   
+            JE=JEIS(ISLE,N)                                                ORH8F404.262   
+*IF DEF,MPP                                                                ORH2F403.88    
+c Adjust J indices to be relative to local values for each PE              ORH2F403.89    
+            IF ((JST.GT.JE).OR.(JFIN.LT.JS)) THEN                          ORH8F404.263   
+c Make sure the J loop doesn't get executed                                ORH2F403.91    
+               JS = 1                                                      ORH8F404.264   
+               JE = 0                                                      ORH8F404.265   
+            ELSE                                                           ORH8F404.266   
+               IF (JST.GT.JS) THEN                                         ORH8F404.267   
+                  JS = JST                                                 ORH8F404.268   
+               ENDIF                                                       ORH8F404.269   
+               IF (JFIN.LT.JE) THEN                                        ORH8F404.270   
+                  JE = JFIN                                                ORH8F404.271   
+               ENDIF                                                       ORH8F404.272   
+c Adjust to local versions of indices.                                     ORH2F403.101   
+               JS = JS - J_OFFSET                                          ORH8F404.273   
+               JE = JE - J_OFFSET                                          ORH8F404.274   
+            ENDIF                                                          ORH8F404.275   
+*ENDIF                                                                     ORH2F403.105   
+            DO J=JS,JE                                                     ORH1F305.2861  
+               DO I=IS,IE                                                  ORH1F305.2862  
+                  IF(ISMASK(I,J).EQ.1) THEN                                ORH1F305.2863  
+                     RESIS_ROW(J,ISLE)=RESIS_ROW(J,ISLE)                   ORH2F403.106   
+     &                          +(CFN(I,J)*PTD(I  ,J+1)                    ORH2F403.107   
+     &                          +CFS(I,J)*PTD(I  ,J-1)                     ORH1F305.2865  
+     &                          +CFE(I,J)*PTD(I+1,J  )                     ORH1F305.2866  
+     &                          +CFW(I,J)*PTD(I-1,J  )                     ORH1F305.2867  
+     &                          -(PTD(I,J)+ZTD(I,J)))*COF(I,J)             ORH1F305.2868  
+                  ENDIF                                                    ORH1F305.2869  
+               ENDDO  ! over I                                             ORH1F305.2870  
+            ENDDO     ! over J                                             ORH1F305.2871  
+         ENDDO ! Over N                                                    ORH8F404.276   
+      ENDDO ! over ISLE                                                    ORH2F403.111   
+                                                                           ORH2F403.112   
+C                                                                          RELAX.596   
+C  NORMALIZE THE ISLAND RESIDUAL AND UPDATE THE MAXIMUM                    RELAX.597   
+C  ABSOLUTE RESIDUAL OF THE RELAXATION IF NECESSARY                        RELAX.598   
+C                                                                          RELAX.599   
+      ! We now need global sums for RESIS(ISLE)                            ORH2F403.113   
+      ! (we could use REVECSUMR here - buth this is slow,                  ORH2F403.114   
+      ! so we use our own version of the summation).                       ORH2F403.115   
+                                                                           ORH2F403.116   
+      ! Perform island sums on RESIS_ROW and max of RESMAX                 ORH2F403.117   
+      CALL OISLESUM(RESIS_ROW,JMT,NISLE,RESIS,RESMAX)                      ORH2F403.118   
+                                                                           ORH2F403.119   
+      DO ISLE=1,NISLE                                                      ORH2F403.120   
+        RESIS(ISLE)=RESIS(ISLE)*COFIS(ISLE)                                ORH2F403.121   
+        RESMAX=MAX(ABS(RESIS(ISLE)),RESMAX)                                ORH2F403.122   
+        RESIS(ISLE)=RESIS(ISLE)*SORP                                       ORH8F404.277   
+      ENDDO                                                                ORH2F403.124   
+                                                                           ORH2F403.125   
+C                                                                          RELAX.607   
+C  MAKE A CORRECTION TO PTD OVER THE ISLAND AND ITS PERIMETER POINTS       RELAX.608   
+C                                                                          RELAX.609   
+      DO ISLE=1,NISLE                                                      ORH2F403.126   
+         NSEG=ISEG(ISLE)                                                   ORH2F403.127   
+         DO N=1,NSEG                                                       ORH8F404.278   
+            IS=ISIS(ISLE,N)                                                ORH8F404.279   
+            IE=IEIS(ISLE,N)                                                ORH8F404.280   
+            JS=JSIS(ISLE,N)                                                ORH8F404.281   
+            JE=JEIS(ISLE,N)                                                ORH8F404.282   
+*IF DEF,MPP                                                                ORH2F403.128   
+c Adjust J indices to be relative to local values for each PE              ORH2F403.129   
+            IF ((JST.GT.JE).OR.(JFIN.LT.JS)) THEN                          ORH8F404.283   
+c Make sure the J loop doesn't get executed                                ORH2F403.131   
+              JS = 1                                                       ORH8F404.284   
+              JE = 0                                                       ORH8F404.285   
+            ELSE                                                           ORH8F404.286   
+              IF (JST.GT.JS) THEN                                          ORH8F404.287   
+                JS = JST                                                   ORH8F404.288   
+              ENDIF                                                        ORH8F404.289   
+              IF (JFIN.LT.JE) THEN                                         ORH8F404.290   
+                JE = JFIN                                                  ORH8F404.291   
+              ENDIF                                                        ORH8F404.292   
+c Adjust to local versions of indices.                                     ORH2F403.141   
+              JS = JS - J_OFFSET                                           ORH8F404.293   
+              JE = JE - J_OFFSET                                           ORH8F404.294   
+            ENDIF                                                          ORH8F404.295   
+*ENDIF                                                                     ORH2F403.145   
+            DO J=JS,JE                                                     ORH8F404.296   
+               DO I=IS,IE                                                  ORH8F404.297   
+                 IF (ISMASK(I,J).GE.1) THEN                                ORH8F404.298   
+                     PTD(I,J)=PTD(I,J)+RESIS(ISLE)                         ORH8F404.299   
+                 ENDIF                                                     ORH8F404.300   
+               ENDDO                                                       ORH8F404.301   
+            ENDDO                                                          ORH8F404.302   
+         ENDDO ! Over N                                                    ORH8F404.303   
+      ENDDO  ! over ISLE                                                   ORH2F403.147   
+                                                                           ORH1F305.2886  
+*IF DEF,MPP                                                                ORH0F405.7     
+      ELSE                                                                 ORH0F405.8     
+         ! No islands, but we still need the global value                  ORH0F405.9     
+         ! of RESMAX.                                                      ORH0F405.10    
+         CALL GC_RMAX(1,O_NPROC,INFO,RESMAX)                               ORH0F405.11    
+*ENDIF                                                                     ORH0F405.12    
+      ENDIF ! L_OISLANDS = true                                            ORH1F305.2887  
+                                                                           ORH1F305.2888  
+      IF (L_OSYMM) THEN                                                    ORH1F305.2889  
+C                                                                          RELAX.625   
+C---------------------------------------------------------------------     RELAX.626   
+C  SET SYMMETRY BOUNDARY CONDITION                                         RELAX.627   
+C---------------------------------------------------------------------     RELAX.628   
+C                                                                          RELAX.629   
+         DO I=1,IMT                                                        ORH8F404.304   
+            PTD(I,JMT)=-PTD(I,JMTM1)                                       ORH1F305.2891  
+         ENDDO                                                             ORH8F404.305   
+      ENDIF                                                                ORH1F305.2893  
+                                                                           ORH1F305.2894  
+      IF (L_OCYCLIC) THEN                                                  ORH1F305.2895  
+C                                                                          RELAX.635   
+C---------------------------------------------------------------------     RELAX.636   
+C  SET CYCLIC BOUNDARY CONDITION                                           RELAX.637   
+C---------------------------------------------------------------------     RELAX.638   
+C                                                                          RELAX.639   
+         DO J=J_1,J_JMT                                                    ORH8F404.306   
+            PTD(1,J)=PTD(IMUM1,J)                                          ORH1F305.2897  
+            PTD(IMU,J)=PTD(2,J)                                            ORH1F305.2898  
+         ENDDO                                                             ORH8F404.307   
+      ENDIF                                                                ORH1F305.2900  
+C                                                                          RELAX.645   
+C---------------------------------------------------------------------     RELAX.646   
+C  TEST MAXIMUM RESIDUAL FOR CONVERGENCE OF THE RELAXATION.                RELAX.647   
+C  IF NOT CONVERGED, PROCEED WITH ANOTHER SCAN.                            RELAX.648   
+C  (..NOTE.. IF THE NUMBER OF SCANS REACHES MXSCAN, LEAVE THE LOOP)        RELAX.649   
+C---------------------------------------------------------------------     RELAX.650   
+C                                                                          RELAX.651   
+      IF (MSCAN.EQ.1) THEN                                                 ORH2F403.158   
+        SORP=1.0/(1.0-0.5*SORP*MUMSQR)                                     ORH2F403.159   
+      ELSE                                                                 ORH2F403.160   
+        SORP=1.0/(1.0-0.25*SORP*MUMSQR)                                    ORH2F403.161   
+      ENDIF                                                                ORH2F403.162   
+                                                                           ORH8F404.308   
+      IF (.NOT.EX1) EX1=(RESMAX.LT.CRTP.OR.MSCAN.GT.MXSCAN)                ORH8F404.309   
+                                                                           ORH8F404.310   
+      IF (.NOT.EX1) GOTO 300                                               ORH8F404.311   
+                                                                           ORH8F404.312   
+      IF (NWCNT.EQ.0) THEN                                                 ORH8F404.313   
+          SOR1=SOR                                                         ORH8F404.314   
+C         SOR=1.0  ! This probably slows convergence so remove it          ORH8F404.315   
+      ENDIF                                                                ORH8F404.316   
+                                                                           ORH8F404.317   
+      NWCNT=NWCNT+1                                                        ORH8F404.318   
+                                                                           ORH8F404.319   
+      IF (NWCNT.GT.NWMAX.OR.RESMAX.EQ.0.OR.                                ORH8F404.320   
+     *        (NWCNT.GT.10.AND.RESMAX.LT.0.8*CRTP))  EX2=.TRUE.            RELAX.665   
+                                                                           ORH8F404.321   
+      IF (.NOT.EX2) GO TO 300                                              ORH8F404.322   
+                                                                           ORH8F404.323   
+      IF (SOR.EQ.1.0) SOR=SOR1                                             ORH8F404.324   
+C                                                                          RELAX.669   
+C=======================================================================   RELAX.670   
+C  END OF THE RELAXATION  ==============================================   RELAX.671   
+C=======================================================================   RELAX.672   
+C                                                                          RELAX.673   
+C---------------------------------------------------------------------     RELAX.674   
+C  UPDATE THE STREAM FUNCTION BASED UPON THE RELAXATION SOLUTION           RELAX.675   
+C     TIME FILTERING THE STREAMFUNCTION AT TIME LEVEL TAU                  RELAX.676   
+C     THE UNFILTERED FIELD HELD ON 'DISK' IS OVERWRITTEN WITH THE          RELAX.677   
+C     VALUES FROM THE FILTERED FIELD PB                                    RELAX.678   
+C---------------------------------------------------------------------     RELAX.679   
+C                                                                          RELAX.680   
+      DO J=J_1,J_JMT                                                       ORH8F404.325   
+         DO I=1,IMT                                                        ORH8F404.326   
+            WORKP(I,J)=PB(I,J)+PTD(I,J)                                    ORH8F404.327   
+            PB(I,J)=PNU2M*P(I,J)+PNU*(PB(I,J)+WORKP(I,J))                  ORH8F404.328   
+            P(I,J)=WORKP(I,J)                                              ORH8F404.329   
+         ENDDO                                                             ORH8F404.330   
+      ENDDO                                                                ORH8F404.331   
+C                                                                          RELAX.687   
+C---------------------------------------------------------------------     RELAX.688   
+C  ON A MIXING TIMESTEP, ALTER PTD TO BE CONSISTENT WITH                   RELAX.689   
+C  NORMAL, LEAP-FROG STEPPING                                              RELAX.690   
+C---------------------------------------------------------------------     RELAX.691   
+C                                                                          RELAX.692   
+      IF(MIX.NE.0) THEN                                                    RELAX.693   
+        FX=2.0                                                             RELAX.694   
+        DO J=J_1,J_JMT                                                     ORH8F404.332   
+           DO I=1,IMT                                                      ORH8F404.333   
+              PTD(I,J)=FX*PTD(I,J)                                         ORH8F404.334   
+           ENDDO                                                           ORH8F404.335   
+        ENDDO                                                              ORH8F404.336   
+      ENDIF                                                                RELAX.699   
+                                                                           ORH1F305.2905  
+      IF (L_OTIMER) CALL TIMER('RELAX   ',4)                               ORH1F305.2906  
+                                                                           ORH1F305.2907  
+      RETURN                                                               RELAX.704   
+      END                                                                  RELAX.705   
+*ENDIF                                                                     @DYALLOC.4062  

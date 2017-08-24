@@ -1,0 +1,583 @@
+*IF DEF,A15_1A                                                             CALCPV1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.721   
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.722   
+C                                                                          GTS2F400.723   
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.724   
+C restrictions as set forth in the contract.                               GTS2F400.725   
+C                                                                          GTS2F400.726   
+C                Meteorological Office                                     GTS2F400.727   
+C                London Road                                               GTS2F400.728   
+C                BRACKNELL                                                 GTS2F400.729   
+C                Berkshire UK                                              GTS2F400.730   
+C                RG12 2SZ                                                  GTS2F400.731   
+C                                                                          GTS2F400.732   
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.733   
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.734   
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.735   
+C Modelling at the above address.                                          GTS2F400.736   
+C ******************************COPYRIGHT******************************    GTS2F400.737   
+C                                                                          GTS2F400.738   
+CLL Subroutine calc_pv -------------------------------------------------   CALCPV1A.3     
+CLL                                                                        CALCPV1A.4     
+CLL Purpose: To compute Ertel potential vorticity on isentropic            CALCPV1A.5     
+CLL          surfaces.                                                     CALCPV1A.6     
+CLL          Uses the Quasi-Hydrostatic equations, with complete           CALCPV1A.7     
+CLL          representation of the Coriolis terms, and no metric           CALCPV1A.8     
+CLL          terms omitted.                                                CALCPV1A.9     
+CLL          The shallow atmosphere approximation is not made.             CALCPV1A.10    
+CLL          Under UPDATE identifier GLOBAL, the data is                   CALCPV1A.11    
+CLL          assumed periodic along the rows. Note that because            CALCPV1A.12    
+CLL          it is a diagnostic routine care needs to be taken             CALCPV1A.13    
+CLL          with missing data.                                            CALCPV1A.14    
+CLL          Subroutine CALCRS1 is called to compute the psuedo radius.    CALCPV1A.15    
+CLL          Values of p, rs, u, v and DTheta/Dp on theta surfaces         CALCPV1A.16    
+CLL          are then computed assuming a cubic variation,                 CALCPV1A.17    
+CLL          where possible.                                               CALCPV1A.18    
+CLL          Two other subroutines then calculate the remaining            CALCPV1A.19    
+CLL          terms in the potential vorticity expression.                  CALCPV1A.20    
+CLL          The final part of the calc_pv routine then                    CALCPV1A.21    
+CLL          adds in the rotational component and                          CALCPV1A.22    
+CLL          checks for missing data.                                      CALCPV1A.23    
+CLL                                                                        CALCPV1A.24    
+CLL Not suitable for single column use.                                    CALCPV1A.25    
+CLL                                                                        CALCPV1A.26    
+CLL  7/10/92 Written by Simon Anderson                                     CALCPV1A.27    
+CLL                                                                        CALCPV1A.28    
+CLL  Model            Modification history from model version 3.0:         CALCPV1A.29    
+CLL version  Date                                                          CALCPV1A.30    
+CLL   3.1   14/01/93  Parameter list tidied up.                            MM180193.161   
+CLL   3.2   28/07/93  Change subroutine name to uppercase for              TS280793.1     
+CLL                   portability.    Tracey Smith                         TS280793.2     
+CLL   3.4   26/05/94  Logical llints added to s/r args and passed to       GSS1F304.142   
+CLL                                   calc_rs          S.J.Swarbrick       GSS1F304.143   
+!LL   4.3   14/02/97  Added ARGFLDPT arguments and MPP code  P.Burton      GSM3F403.469   
+CLL                                                                        CALCPV1A.31    
+CLL Programming Standard: UM DOC Paper3, Version 4 (05/02/92)              CALCPV1A.32    
+CLL                                                                        CALCPV1A.33    
+CLL Logical Component Covered: D415                                        CALCPV1A.34    
+CLL                                                                        CALCPV1A.35    
+CLL System Task: D4                                                        CALCPV1A.36    
+CLL                                                                        CALCPV1A.37    
+CLL Documentation: U.M.D.P No 13. Derivation and Calculation of            CALCPV1A.38    
+CLL                Unified Model Potential Vorticity.                      CALCPV1A.39    
+CLL                by Simon Anderson and Ian Roulstone.                    CALCPV1A.40    
+CLL                                                                        CALCPV1A.41    
+CLLEND                                                                     CALCPV1A.42    
+                                                                           CALCPV1A.43    
+C*L ARGUMENTS: ---------------------------------------------------------   CALCPV1A.44    
+      SUBROUTINE CALC_PV                                                   TS280793.3     
+     1                  (pstar,theta,u,v,p_field,u_field,                  CALCPV1A.46    
+     2                   p_levels,row_length,                              CALCPV1A.47    
+*CALL ARGFLDPT                                                             GSM3F403.470   
+     3                   rmdi,ak,bk,des_theta,f3,                          CALCPV1A.48    
+     & e_levels,n_levels,                                                  TD141293.58    
+     & dth_dph,                                                            TD141293.59    
+     4                   latitude_step_inverse,longitude_step_inverse,     CALCPV1A.49    
+     5                   cos_u_latitude,sec_p_latitude,                    CALCPV1A.50    
+     6                   pvort,llints)                                     GSS1F304.144   
+                                                                           CALCPV1A.53    
+                                                                           CALCPV1A.54    
+      implicit none                                                        CALCPV1A.55    
+      logical  llints                                                      GSS1F304.145   
+                                                                           CALCPV1A.56    
+C Input variables ------------------------------------------------------   CALCPV1A.57    
+                                                                           CALCPV1A.58    
+      integer                                                              CALCPV1A.59    
+     & p_field                 !IN    Size of field on pressure points.    CALCPV1A.60    
+     &,u_field                 !IN    Size of field on velocity points.    CALCPV1A.61    
+     &,p_levels                !IN    Number of pressure levels.           CALCPV1A.62    
+     &,row_length              !IN    Number of points in a row.           CALCPV1A.63    
+     & ,n_levels       !IN Number of levels of dtheta/dp                   TD141293.60    
+                                                                           CALCPV1A.64    
+                                                                           GSM3F403.471   
+*CALL TYPFLDPT                                                             GSM3F403.472   
+      real                                                                 CALCPV1A.65    
+     & pstar(p_field)          !IN    Surface pressure field.              CALCPV1A.66    
+     &,u(u_field,p_levels)     !IN    Primary model array for u field.     CALCPV1A.67    
+     &,v(u_field,p_levels)     !IN    Primary model array for v field.     CALCPV1A.68    
+     &,theta(p_field,p_levels) !IN       "      "     "     theta field.   CALCPV1A.69    
+                                                                           CALCPV1A.70    
+      real                                                                 CALCPV1A.71    
+     & rmdi                    !IN    Real missing data indicator.         CALCPV1A.72    
+     &,ak(p_levels)            !IN    A coefficient of hybrid              CALCPV1A.73    
+     &                         !      coordinates at full levels.          CALCPV1A.74    
+     &,bk(p_levels)            !IN    B coefficient of hybrid              CALCPV1A.75    
+     &                         !      coordinates at full levels.          CALCPV1A.76    
+     & ,e_levels(n_levels)       !IN half-levels over range                TD141293.61    
+     & ,dth_dph(p_field,n_levels)  !IN dtheta/dp half-levels               TD141293.62    
+     &,des_theta               !IN    Value of theta we want pv on.        CALCPV1A.77    
+     &,f3(u_field)             !IN    Coriolis term.                       CALCPV1A.78    
+     &,latitude_step_inverse   !IN    1/latitude increment.                CALCPV1A.79    
+     &,longitude_step_inverse  !IN    1/longitude increment.               CALCPV1A.80    
+     &,cos_u_latitude(u_field) !IN    Cosine of latitude on u field.       CALCPV1A.81    
+     &,sec_p_latitude(p_field) !IN    Secant of latitude on p field.       CALCPV1A.82    
+                                                                           CALCPV1A.83    
+                                                                           CALCPV1A.84    
+C Output variables -----------------------------------------------------   CALCPV1A.85    
+                                                                           CALCPV1A.86    
+      real                                                                 CALCPV1A.87    
+     & pvort(p_field)          !  OUT Value of potential vorticity         CALCPV1A.88    
+     &                         !      on isentropic surface with           CALCPV1A.89    
+     &                         !      theta=des_theta.                     CALCPV1A.90    
+                                                                           CALCPV1A.91    
+                                                                           CALCPV1A.97    
+C*----------------------------------------------------------------------   CALCPV1A.98    
+C*L Workspace Usage: 13 arrays are required.                               CALCPV1A.99    
+      logical                                                              CALCPV1A.100   
+     & mask(p_field)           ! Logical mask used to make                 CALCPV1A.101   
+     &                         ! vectorising of a loop possible.           CALCPV1A.102   
+      real                                                                 CALCPV1A.103   
+     & rs(p_field,p_levels)    ! Calculated pseudo radius of Earth.        CALCPV1A.104   
+     &,eta_level(p_field)    ! Interpolated eta-value of theta level       TD141293.63    
+     &,u_on_theta(u_field)     ! Interpolated value of  u on theta surf.   CALCPV1A.106   
+     &,u_p_on_theta(p_field)   ! Interpolated value of  u on theta surf.   CALCPV1A.107   
+     &,v_on_theta(u_field)     ! Interpolated value of  v on theta surf.   CALCPV1A.108   
+     &,v_p_on_theta(p_field)   ! Interpolated value of  v on theta surf.   CALCPV1A.109   
+     &,rs_on_theta(p_field)    ! Interpolated value of rs on theta surf.   CALCPV1A.110   
+     &,rs_uv_on_theta(u_field) ! Interpolated value of rs on theta surf.   CALCPV1A.111   
+     &,dtheta_dp(p_field)      ! D(theta)/D(p) on theta surface.           CALCPV1A.112   
+     &,vorticity1(p_field)     ! 1st Calculated term in the pv equation.   CALCPV1A.113   
+     &,vorticity2(p_field)     ! 2nd Calculated term in the pv equation.   CALCPV1A.114   
+     &,f3_p(p_field)           ! Interpolated f3 field on p field.         CALCPV1A.115   
+                                                                           CALCPV1A.116   
+C*----------------------------------------------------------------------   CALCPV1A.117   
+C*L External subroutine calls:                                             CALCPV1A.118   
+      external calc_rs         ! Compute pseudo radius.                    CALCPV1A.119   
+      external pv_thint        ! Interpolate variables to theta level.     CALCPV1A.120   
+      external vortic1         ! Compute the 1st vorticity term.           CALCPV1A.121   
+      external vortic2         ! Compute the 2nd vorticity term.           CALCPV1A.122   
+      external uv_to_p         ! Interpolate u grid field to p grid fld.   CALCPV1A.123   
+                                                                           CALCPV1A.124   
+C*----------------------------------------------------------------------   CALCPV1A.125   
+C*L Call comdecks to get required variables:                               CALCPV1A.126   
+*CALL C_G                                                                  CALCPV1A.127   
+*CALL C_OMEGA                                                              CALCPV1A.128   
+                                                                           CALCPV1A.129   
+C*----------------------------------------------------------------------   CALCPV1A.130   
+C*L Define local variables.                                                CALCPV1A.131   
+      integer i,j,k          ! Loop variables.                             CALCPV1A.132   
+      real mn                ! Mean value used in computing pole values.   CALCPV1A.133   
+      real work1(p_field)    ! General workspace.                          CALCPV1A.134   
+*IF DEF,MPP                                                                GSM3F403.473   
+      INTEGER info !GCG return code                                        GSM3F403.474   
+*IF -DEF,GLOBAL                                                            GSM3F403.475   
+      INTEGER                                                              GSM3F403.476   
+     &  START ! Work variables                                             GSM3F403.477   
+     &  ,END                                                               GSM3F403.478   
+*ENDIF                                                                     GSM3F403.479   
+*ENDIF                                                                     GSM3F403.480   
+                                                                           CALCPV1A.135   
+                                                                           CALCPV1A.136   
+C ----------------------------------------------------------------------   CALCPV1A.137   
+CL Section 1 Compute rs, the pseudo radius.                                CALCPV1A.138   
+CL ~~~~~~~~~                                                               CALCPV1A.139   
+C ----------------------------------------------------------------------   CALCPV1A.140   
+                                                                           CALCPV1A.141   
+CL Section 1.1 Call CALC_RS to get rs for level 1.                         CALCPV1A.142   
+CL ~~~~~~~~~~~ Rs is returned in rs(1,k).                                  CALCPV1A.143   
+CL             Ts is returned in work1. Rs at level k-1 is input as        CALCPV1A.144   
+CL             rs(1,2) as at k-1=0 the input is not used by calc_rs.       CALCPV1A.145   
+                                                                           CALCPV1A.146   
+      k=1                                                                  CALCPV1A.147   
+      call calc_rs                                                         CALCPV1A.148   
+     1            (pstar,ak,bk,work1,rs(1,2),rs(1,k),p_field,k,p_levels,   GSS1F304.146   
+     2             llints)                                                 GSS1F304.147   
+                                                                           CALCPV1A.150   
+CL Section 1.2 Call CALC_RS to get rs for level k.                         CALCPV1A.151   
+CL             Rs is returned in rs(1,k).                                  CALCPV1A.152   
+CL             Ts is returned in work1. Rs at level k-1 is input as        CALCPV1A.153   
+CL             rs(1,k-1).                                                  CALCPV1A.154   
+CL             Loop from 2 to p_levels.                                    CALCPV1A.155   
+                                                                           CALCPV1A.156   
+      do 100 k=2,p_levels                                                  CALCPV1A.157   
+                                                                           CALCPV1A.158   
+        call calc_rs                                                       CALCPV1A.159   
+     1          (pstar,ak,bk,work1,rs(1,k-1),rs(1,k),p_field,k,p_levels,   GSS1F304.148   
+     2           llints)                                                   GSS1F304.149   
+ 100  continue                                                             CALCPV1A.162   
+                                                                           CALCPV1A.163   
+C ----------------------------------------------------------------------   CALCPV1A.164   
+CL Section 2 Interpolate p, u, v and rs onto desired theta level,          CALCPV1A.165   
+CL ~~~~~~~~~ and compute Dtheta/Dp assuming cubic variation if possible.   CALCPV1A.166   
+C ----------------------------------------------------------------------   CALCPV1A.167   
+                                                                           CALCPV1A.168   
+      call pv_thint                                                        CALCPV1A.169   
+     1             (pstar,theta,rs,u,v,p_field,u_field,                    CALCPV1A.170   
+     2              p_levels,row_length,                                   CALCPV1A.171   
+*CALL ARGFLDPT                                                             GSM3F403.481   
+     3              rmdi,ak,bk,des_theta,                                  CALCPV1A.172   
+     4 eta_level,rs_on_theta,rs_uv_on_theta,                               TD141293.64    
+     & e_levels,dth_dph,n_levels,                                          TD141293.65    
+     5              u_on_theta,v_on_theta,dtheta_dp)                       CALCPV1A.174   
+                                                                           CALCPV1A.175   
+                                                                           CALCPV1A.176   
+C ----------------------------------------------------------------------   CALCPV1A.177   
+CL Section 3 Compute the various terms in the potential vorticity          CALCPV1A.178   
+CL ~~~~~~~~~ equation for desired theta surface.                           CALCPV1A.179   
+C ----------------------------------------------------------------------   CALCPV1A.180   
+                                                                           CALCPV1A.181   
+CL Section 3.1 Compute -2*omega*cos(phi)/rs D(rs)/D(phi).                  CALCPV1A.182   
+CL ~~~~~~~~~~~                                                             CALCPV1A.183   
+      call vortic1                                                         CALCPV1A.184   
+     1            (rs_on_theta,                                            CALCPV1A.185   
+     2             sec_p_latitude,vorticity1,                              CALCPV1A.186   
+     3             p_field,row_length,                                     CALCPV1A.187   
+*CALL ARGFLDPT                                                             GSM3F403.482   
+     4             latitude_step_inverse,longitude_step_inverse)           CALCPV1A.188   
+                                                                           CALCPV1A.189   
+                                                                           CALCPV1A.190   
+CL Section 3.2 Compute 1/(rs*rs*cos(phi)) *                                CALCPV1A.191   
+CL ~~~~~~~~~~~         (D(rs.v)/D(lambda)-D(rs.cos(phi).u)/D(phi)).        CALCPV1A.192   
+      call vortic2                                                         CALCPV1A.193   
+     1            (u_on_theta,v_on_theta,rs_on_theta,                      CALCPV1A.194   
+     2             rs_uv_on_theta,cos_u_latitude,                          CALCPV1A.195   
+     3             sec_p_latitude,vorticity2,                              CALCPV1A.196   
+     4             p_field,u_field,row_length,                             CALCPV1A.197   
+*CALL ARGFLDPT                                                             GSM3F403.483   
+     5             latitude_step_inverse,longitude_step_inverse)           CALCPV1A.198   
+                                                                           CALCPV1A.199   
+                                                                           CALCPV1A.200   
+C ----------------------------------------------------------------------   CALCPV1A.201   
+CL Section 4 Compute the potential vorticity using the vorticity terms,    CALCPV1A.202   
+CL ~~~~~~~~~ D(theta)/D(p) and the value of the coriolis term.             CALCPV1A.203   
+CL           Care needs to be taken for rmdi.                              CALCPV1A.204   
+C ----------------------------------------------------------------------   CALCPV1A.205   
+                                                                           CALCPV1A.206   
+CL Section 4.1 Firstly, find which points we can actually calculate        CALCPV1A.207   
+CL ~~~~~~~~~~~ potential vorticity on. To do this we test for missing      CALCPV1A.208   
+CL             data at all points in a 3x3 stencil around each point.      CALCPV1A.209   
+CL             Special care is taken at the boundaries and poles.          CALCPV1A.210   
+                                                                           CALCPV1A.211   
+C Set logical mask default to .TRUE.                                       CALCPV1A.212   
+      do i = FIRST_FLD_PT,LAST_P_FLD_PT                                    GSM3F403.484   
+        mask(i) = .true.                                                   CALCPV1A.214   
+      end do                                                               CALCPV1A.215   
+                                                                           CALCPV1A.216   
+C Check points on non-polar rows:                                          CALCPV1A.217   
+      do j=FIRST_ROW,P_LAST_ROW                                            GSM3F403.485   
+C First point on each row:                                                 CALCPV1A.219   
+        i=(j-1)*row_length+FIRST_ROW_PT                                    GSM3F403.486   
+*IF DEF,GLOBAL                                                             CALCPV1A.221   
+*IF -DEF,MPP                                                               GSM3F403.487   
+        if (   eta_level(i-1           ).eq.rmdi.                          TD141293.66    
+     &      or.eta_level(i-row_length  ).eq.rmdi.                          TD141293.67    
+     &      or.eta_level(i-row_length+1).eq.rmdi.                          TD141293.68    
+     &      or.eta_level(i+row_length-1).eq.rmdi.                          TD141293.69    
+     &      or.eta_level(i             ).eq.rmdi.                          TD141293.70    
+     &      or.eta_level(i+1           ).eq.rmdi.                          TD141293.71    
+     &      or.eta_level(i+2*row_length-1).eq.rmdi.                        TD141293.72    
+     &      or.eta_level(i+row_length  ).eq.rmdi.                          TD141293.73    
+     &      or.eta_level(i+row_length+1).eq.rmdi)   mask(i)=.false.        TD141293.74    
+*ENDIF                                                                     GSM3F403.488   
+*ELSE                                                                      GSM3F403.489   
+*IF DEF,MPP                                                                GSM3F403.490   
+        IF (at_left_of_LPG) THEN                                           GSM3F403.491   
+          mask(i+EW_Halo)=.false.                                          GSM3F403.492   
+        ENDIF                                                              GSM3F403.493   
+*ELSE                                                                      CALCPV1A.231   
+        mask(i)=.false.                                                    CALCPV1A.232   
+*ENDIF                                                                     CALCPV1A.233   
+*ENDIF                                                                     GSM3F403.494   
+                                                                           GSM3F403.495   
+C Inner points on each row:                                                CALCPV1A.234   
+*IF DEF,MPP                                                                GSM3F403.496   
+*IF -DEF,GLOBAL                                                            GSM3F403.497   
+C Borders of area done separately                                          GSM3F403.498   
+        START=EW_Halo+1                                                    GSM3F403.499   
+        END=EW_Halo                                                        GSM3F403.500   
+        IF (at_left_of_LPG) START=START+1                                  GSM3F403.501   
+        IF (at_right_of_LPG) END=END+1                                     GSM3F403.502   
+        do i=(j-1)*row_length+START,(j-1)*row_length+row_length-END        GSM3F403.503   
+*ELSE                                                                      GSM3F403.504   
+        do i=(j-1)*row_length+1+EW_Halo,                                   GSM3F403.505   
+     &      j*row_length-EW_Halo                                           GSM3F403.506   
+*ENDIF                                                                     GSM3F403.507   
+*ELSE                                                                      GSM3F403.508   
+        do i=(j-1)*row_length+2,(j-1)*row_length+row_length-1              CALCPV1A.235   
+*ENDIF                                                                     GSM3F403.509   
+        if (   eta_level(i-row_length-1).eq.rmdi.                          TD141293.75    
+     &      or.eta_level(i-row_length  ).eq.rmdi.                          TD141293.76    
+     &      or.eta_level(i-row_length+1).eq.rmdi.                          TD141293.77    
+     &      or.eta_level(i-1           ).eq.rmdi.                          TD141293.78    
+     &      or.eta_level(i             ).eq.rmdi.                          TD141293.79    
+     &      or.eta_level(i+1           ).eq.rmdi.                          TD141293.80    
+     &      or.eta_level(i+row_length-1).eq.rmdi.                          TD141293.81    
+     &      or.eta_level(i+row_length  ).eq.rmdi.                          TD141293.82    
+     &      or.eta_level(i+row_length+1).eq.rmdi)   mask(i)=.false.        TD141293.83    
+        end do                                                             CALCPV1A.245   
+C Last point on each row:                                                  CALCPV1A.246   
+        i=(j-1)*row_length+LAST_ROW_PT                                     GSM3F403.510   
+*IF DEF,GLOBAL                                                             CALCPV1A.248   
+*IF -DEF,MPP                                                               GSM3F403.511   
+        if (   eta_level(i-row_length-1).eq.rmdi.                          TD141293.84    
+     &      or.eta_level(i-row_length  ).eq.rmdi.                          TD141293.85    
+     &      or.eta_level(i-2*row_length+1).eq.rmdi.                        TD141293.86    
+     &      or.eta_level(i-1           ).eq.rmdi.                          TD141293.87    
+     &      or.eta_level(i             ).eq.rmdi.                          TD141293.88    
+     &      or.eta_level(i-row_length+1).eq.rmdi.                          TD141293.89    
+     &      or.eta_level(i+row_length-1).eq.rmdi.                          TD141293.90    
+     &      or.eta_level(i+row_length  ).eq.rmdi.                          TD141293.91    
+     &      or.eta_level(i+1           ).eq.rmdi)   mask(i)=.false.        TD141293.92    
+*ENDIF                                                                     GSM3F403.512   
+*ELSE                                                                      GSM3F403.513   
+*IF DEF,MPP                                                                GSM3F403.514   
+        IF (at_right_of_LPG) THEN                                          GSM3F403.515   
+          mask(i-EW_Halo)=.false.                                          GSM3F403.516   
+        ENDIF                                                              GSM3F403.517   
+*ELSE                                                                      CALCPV1A.258   
+        mask(i)=.false.                                                    CALCPV1A.259   
+*ENDIF                                                                     GSM3F403.518   
+*ENDIF                                                                     CALCPV1A.260   
+      end do                                                               CALCPV1A.261   
+                                                                           CALCPV1A.262   
+*IF DEF,GLOBAL                                                             CALCPV1A.263   
+C Check North pole:                                                        CALCPV1A.264   
+      j=0                                                                  CALCPV1A.265   
+*IF DEF,MPP                                                                GSM3F403.519   
+      IF (at_top_of_LPG) THEN                                              GSM3F403.520   
+*ENDIF                                                                     GSM3F403.521   
+      if (eta_level(TOP_ROW_START+LAST_ROW_PT-1) .eq. rmdi) then           GSM3F403.522   
+        j=1                                                                GSM3F403.523   
+      ELSE                                                                 GSM3F403.524   
+        do i=TOP_ROW_START+ROW_LENGTH,                                     GSM3F403.525   
+     &       TOP_ROW_START+ROW_LENGTH+LAST_ROW_PT-1                        GSM3F403.526   
+          if(eta_level(i).eq.rmdi) j=1                                     GSM3F403.527   
+        enddo                                                              GSM3F403.528   
+      endif                                                                GSM3F403.529   
+*IF DEF,MPP                                                                GSM3F403.530   
+      CALL GCG_IMAX(1,GC_ROW_GROUP,info,j)                                 GSM3F403.531   
+*ENDIF                                                                     GSM3F403.532   
+      if (j.eq.1) then                                                     GSM3F403.533   
+        do i=TOP_ROW_START,TOP_ROW_START+LAST_ROW_PT-1                     GSM3F403.534   
+          mask(i)=.false.                                                  GSM3F403.535   
+        enddo                                                              GSM3F403.536   
+      endif                                                                GSM3F403.537   
+*IF DEF,MPP                                                                GSM3F403.538   
+      endif ! if at_top_of_LPG                                             GSM3F403.539   
+*ENDIF                                                                     GSM3F403.540   
+                                                                           CALCPV1A.273   
+C Check South pole:                                                        CALCPV1A.274   
+      j=0                                                                  CALCPV1A.275   
+*IF DEF,MPP                                                                GSM3F403.541   
+      IF (at_base_of_LPG) THEN                                             GSM3F403.542   
+*ENDIF                                                                     GSM3F403.543   
+      if (eta_level(P_BOT_ROW_START) .eq. rmdi) then                       GSM3F403.544   
+        j=1                                                                GSM3F403.545   
+      else                                                                 GSM3F403.546   
+        do i=P_BOT_ROW_START-ROW_LENGTH,                                   GSM3F403.547   
+     &       P_BOT_ROW_START-ROW_LENGTH+LAST_ROW_PT-1                      GSM3F403.548   
+          if (eta_level(i) .eq. rmdi) j=1                                  GSM3F403.549   
+        enddo                                                              GSM3F403.550   
+      endif                                                                GSM3F403.551   
+*IF DEF,MPP                                                                GSM3F403.552   
+      CALL GCG_IMAX(1,GC_ROW_GROUP,info,j)                                 GSM3F403.553   
+*ENDIF                                                                     GSM3F403.554   
+                                                                           GSM3F403.555   
+      if (j.eq.1) then                                                     GSM3F403.556   
+        do i=P_BOT_ROW_START,P_BOT_ROW_START+LAST_ROW_PT-1                 GSM3F403.557   
+          mask(i)=.false.                                                  GSM3F403.558   
+        enddo                                                              GSM3F403.559   
+      endif                                                                GSM3F403.560   
+*IF DEF,MPP                                                                GSM3F403.561   
+      endif ! if at_base_of_LPG                                            GSM3F403.562   
+*ENDIF                                                                     GSM3F403.563   
+*ELSE                                                                      CALCPV1A.283   
+C Set mask on Northern and Southern boundaries:                            CALCPV1A.284   
+*IF DEF,MPP                                                                GSM3F403.564   
+      IF (at_top_of_LPG) THEN                                              GSM3F403.565   
+*ENDIF                                                                     GSM3F403.566   
+        do i=TOP_ROW_START,TOP_ROW_START+LAST_ROW_PT-1                     GSM3F403.567   
+          mask(i)=.false.                                                  GSM3F403.568   
+        enddo                                                              GSM3F403.569   
+*IF DEF,MPP                                                                GSM3F403.570   
+      ENDIF ! if at_top_of_LPG                                             GSM3F403.571   
+                                                                           GSM3F403.572   
+      IF (at_base_of_LPG) THEN                                             GSM3F403.573   
+*ENDIF                                                                     GSM3F403.574   
+        do i=P_BOT_ROW_START,P_BOT_ROW_START+LAST_ROW_PT-1                 GSM3F403.575   
+          mask(i)=.false.                                                  GSM3F403.576   
+        enddo                                                              GSM3F403.577   
+*IF DEF,MPP                                                                GSM3F403.578   
+      ENDIF ! if at_base_of_LPG                                            GSM3F403.579   
+*ENDIF                                                                     GSM3F403.580   
+*ENDIF                                                                     GSM3F403.581   
+*IF DEF,MPP                                                                GSM3F403.582   
+! Set all the halos to false                                               GSM3F403.583   
+      if (at_top_of_lpg) then                                              GSM3F403.584   
+        do j=1,NS_Halo                                                     GSM3F403.585   
+          do i=(j-1)*row_length+1,j*row_length                             GSM3F403.586   
+            mask(i)=.false.                                                GSM3F403.587   
+          enddo                                                            GSM3F403.588   
+        enddo                                                              GSM3F403.589   
+      endif ! if at_top_of_lpg                                             GSM3F403.590   
+                                                                           GSM3F403.591   
+      if (at_base_of_lpg) then                                             GSM3F403.592   
+        do j=tot_P_ROWS-NS_Halo+1,tot_P_ROWS                               GSM3F403.593   
+          do i=(j-1)*row_length+1,j*row_length                             GSM3F403.594   
+            mask(i)=.false.                                                GSM3F403.595   
+          enddo                                                            GSM3F403.596   
+        enddo                                                              GSM3F403.597   
+      endif ! if at_base_of_lpg                                            GSM3F403.598   
+                                                                           GSM3F403.599   
+      if (at_left_of_lpg) THEN                                             GSM3F403.600   
+        do j=NS_Halo+1,tot_P_ROWS-NS_Halo                                  GSM3F403.601   
+          do i=(j-1)*row_length+1,(j-1)*row_length+EW_Halo                 GSM3F403.602   
+            mask(i)=.false.                                                GSM3F403.603   
+          enddo                                                            GSM3F403.604   
+        enddo                                                              GSM3F403.605   
+      endif ! if at_left_of_lpg                                            GSM3F403.606   
+                                                                           GSM3F403.607   
+      if (at_right_of_lpg) THEN                                            GSM3F403.608   
+        do j=NS_Halo+1,tot_P_ROWS-NS_Halo                                  GSM3F403.609   
+          do i=j*row_length-EW_Halo+1,j*row_length                         GSM3F403.610   
+            mask(i)=.false.                                                GSM3F403.611   
+          enddo                                                            GSM3F403.612   
+        enddo                                                              GSM3F403.613   
+      endif                                                                GSM3F403.614   
+*ENDIF                                                                     CALCPV1A.291   
+                                                                           CALCPV1A.292   
+                                                                           CALCPV1A.293   
+CL Section 4.2 Interpolate fields u, v, and F3 (the Coriolis term)         CALCPV1A.294   
+CL ~~~~~~~~~~~ to the p-grid.                                              CALCPV1A.295   
+                                                                           CALCPV1A.296   
+*IF DEF,MPP                                                                GSM3F403.615   
+      call uv_to_p                                                         GSM3F403.616   
+     1           (u_on_theta,u_p_on_theta(row_length+1),u_field,           GSM3F403.617   
+     2            p_field-row_length,row_length,U_LAST_ROW+1)              GSM3F403.618   
+      call uv_to_p                                                         GSM3F403.619   
+     1           (v_on_theta,v_p_on_theta(row_length+1),u_field,           GSM3F403.620   
+     2            p_field-row_length,row_length,U_LAST_ROW+1)              GSM3F403.621   
+      call uv_to_p                                                         GSM3F403.622   
+     1           (f3,f3_p(row_length+1),u_field,                           GSM3F403.623   
+     2            p_field-row_length,row_length,U_LAST_ROW+1)              GSM3F403.624   
+*ELSE                                                                      GSM3F403.625   
+      call uv_to_p                                                         CALCPV1A.297   
+     1           (u_on_theta,u_p_on_theta(row_length+1),u_field,p_field,   CALCPV1A.298   
+     2            row_length,u_field/row_length)                           CALCPV1A.299   
+      call uv_to_p                                                         CALCPV1A.300   
+     1           (v_on_theta,v_p_on_theta(row_length+1),u_field,p_field,   CALCPV1A.301   
+     2            row_length,u_field/row_length)                           CALCPV1A.302   
+      call uv_to_p                                                         CALCPV1A.303   
+     1           (f3,f3_p(row_length+1),u_field,p_field,                   CALCPV1A.304   
+     2            row_length,u_field/row_length)                           CALCPV1A.305   
+*ENDIF                                                                     GSM3F403.626   
+                                                                           CALCPV1A.307   
+CL Section 4.3 Calculate the potential vorticity.                          CALCPV1A.308   
+CL ~~~~~~~~~~~                                                             CALCPV1A.309   
+                                                                           CALCPV1A.310   
+      do i = START_POINT_NO_HALO,END_P_POINT_NO_HALO                       GSM3F403.627   
+        if (mask(i)) then                                                  CALCPV1A.312   
+                                                                           CALCPV1A.313   
+          pvort(i) = (vorticity1(i) + f3_p(i) + vorticity2(i)) *           CALCPV1A.314   
+     &               dtheta_dp(i) *                                        CALCPV1A.315   
+     &               ((2.*omega + u_p_on_theta(i)*                         CALCPV1A.316   
+     &                 sec_p_latitude(i)/rs_on_theta(i))*                  CALCPV1A.317   
+     &               (u_p_on_theta(i)/sec_p_latitude(i)) +                 CALCPV1A.318   
+     &               (v_p_on_theta(i)*v_p_on_theta(i)/rs_on_theta(i))-g)   CALCPV1A.319   
+                                                                           CALCPV1A.320   
+        else                                                               CALCPV1A.321   
+          pvort(i) = rmdi                                                  CALCPV1A.322   
+        end if                                                             CALCPV1A.323   
+      enddo                                                                CALCPV1A.324   
+                                                                           CALCPV1A.325   
+CL Section 4.3.1 Compute the potential vorticity at the Northern           CALCPV1A.326   
+CL ~~~~~~~~~~~~~ and Southern boundaries.                                  CALCPV1A.327   
+CL               Note that under UPDATE identifier GLOBAL, as pv           CALCPV1A.328   
+CL               is a scaler this is defined to be the mean of             CALCPV1A.329   
+CL               the near pole row.                                        CALCPV1A.330   
+CL               If any rmdi is present in the row next to the pole,       CALCPV1A.331   
+CL               then the pole has a value rmdi.                           CALCPV1A.332   
+CL               ELSE, the value returned is missing data.                 CALCPV1A.333   
+                                                                           CALCPV1A.334   
+C Work out the Northern boundary.                                          CALCPV1A.335   
+*IF DEF,MPP                                                                GSM3F403.628   
+      if (at_top_of_LPG) then                                              GSM3F403.629   
+*ENDIF                                                                     GSM3F403.630   
+        if (mask(TOP_ROW_START+LAST_ROW_PT-1)) then                        GSM3F403.631   
+                                                                           CALCPV1A.352   
+          mn=0                                                             GSM3F403.632   
+*IF -DEF,MPP                                                               GSM3F403.633   
+          do i=TOP_ROW_START+row_length,                                   GSM3F403.634   
+     &         TOP_ROW_START+2*row_length-1                                GSM3F403.635   
+            mn=mn+pvort(i)                                                 GSM3F403.636   
+          enddo                                                            GSM3F403.637   
+*ELSE                                                                      GSM3F403.638   
+*IF DEF,REPROD                                                             GSM3F403.639   
+          call GCG_RVECSUMR(                                               GSM3F403.640   
+*ELSE                                                                      GSM3F403.641   
+          call GCG_RVECSUMF(                                               GSM3F403.642   
+*ENDIF                                                                     GSM3F403.643   
+     &      row_length-2*EW_Halo,row_length-2*EW_Halo,1,1,                 GSM3F403.644   
+     &      pvort(TOP_ROW_START+FIRST_ROW_PT-1+row_length),                GSM3F403.645   
+     &      GC_ROW_GROUP,info,mn)                                          GSM3F403.646   
+*ENDIF                                                                     GSM3F403.647   
+          mn=mn/GLOBAL_ROW_LENGTH                                          GSM3F403.648   
+                                                                           GSM3F403.649   
+          do i=TOP_ROW_START,TOP_ROW_START+row_length-1                    GSM3F403.650   
+            pvort(i)=mn                                                    GSM3F403.651   
+          enddo                                                            GSM3F403.652   
+        else                                                               GSM3F403.653   
+! Missing data                                                             GSM3F403.654   
+          do i=TOP_ROW_START,TOP_ROW_START+row_length-1                    GSM3F403.655   
+            pvort(i)=rmdi                                                  GSM3F403.656   
+          enddo                                                            GSM3F403.657   
+        endif                                                              GSM3F403.658   
+*IF DEF,MPP                                                                GSM3F403.659   
+      endif ! if at_top_of_LPG                                             GSM3F403.660   
+*ENDIF                                                                     GSM3F403.661   
+                                                                           GSM3F403.662   
+! Southern boundary                                                        GSM3F403.663   
+*IF DEF,MPP                                                                GSM3F403.664   
+                                                                           GSM3F403.665   
+      if (at_base_of_LPG) then                                             GSM3F403.666   
+*ENDIF                                                                     GSM3F403.667   
+        if (mask(P_BOT_ROW_START+FIRST_ROW_PT-1)) then                     GSM3F403.668   
+                                                                           GSM3F403.669   
+          mn=0                                                             GSM3F403.670   
+*IF -DEF,MPP                                                               GSM3F403.671   
+          do i=P_BOT_ROW_START-ROW_LENGTH,                                 GSM3F403.672   
+     &         P_BOT_ROW_START-1                                           GSM3F403.673   
+            mn=mn+pvort(i)                                                 GSM3F403.674   
+          enddo                                                            GSM3F403.675   
+*ELSE                                                                      GSM3F403.676   
+*IF DEF,REPROD                                                             GSM3F403.677   
+          call GCG_RVECSUMR(                                               GSM3F403.678   
+*ELSE                                                                      GSM3F403.679   
+          call GCG_RVECSUMF(                                               GSM3F403.680   
+*ENDIF                                                                     GSM3F403.681   
+     &      row_length-2*EW_Halo,row_length-2*EW_Halo,1,1,                 GSM3F403.682   
+     &      pvort(P_BOT_ROW_START+FIRST_ROW_PT-1-row_length),              GSM3F403.683   
+     &      GC_ROW_GROUP,info,mn)                                          GSM3F403.684   
+*ENDIF                                                                     GSM3F403.685   
+          mn=mn/GLOBAL_ROW_LENGTH                                          GSM3F403.686   
+                                                                           GSM3F403.687   
+          do i=P_BOT_ROW_START,P_BOT_ROW_START+row_length-1                GSM3F403.688   
+            pvort(i)=mn                                                    GSM3F403.689   
+          enddo                                                            GSM3F403.690   
+        else                                                               GSM3F403.691   
+! Missing data                                                             GSM3F403.692   
+          do i=P_BOT_ROW_START,P_BOT_ROW_START+row_length-1                GSM3F403.693   
+            pvort(i)=rmdi                                                  GSM3F403.694   
+          enddo                                                            GSM3F403.695   
+        endif                                                              GSM3F403.696   
+*IF DEF,MPP                                                                GSM3F403.697   
+      endif ! if at_base_of_LPG                                            GSM3F403.698   
+*ENDIF                                                                     GSM3F403.699   
+                                                                           GSM3F403.700   
+*IF DEF,MPP                                                                GSM3F403.701   
+! Fill in the N+S halo areas with rmdi                                     GSM3F403.702   
+      do i=1,FIRST_FLD_PT-1                                                GSM3F403.703   
+        pvort(i)=rmdi                                                      GSM3F403.704   
+      enddo                                                                GSM3F403.705   
+      do i=LAST_P_FLD_PT+1,p_field                                         GSM3F403.706   
+        pvort(i)=rmdi                                                      GSM3F403.707   
+      enddo                                                                GSM3F403.708   
+      CALL SWAPBOUNDS(pvort,ROW_LENGTH,tot_P_ROWS,EW_Halo,                 GSM3F403.709   
+     &  NS_Halo,1)                                                         GSM3F403.710   
+*ENDIF                                                                     GSM3F403.711   
+                                                                           CALCPV1A.370   
+                                                                           CALCPV1A.371   
+      return                                                               CALCPV1A.372   
+      end                                                                  CALCPV1A.373   
+                                                                           CALCPV1A.374   
+*ENDIF                                                                     CALCPV1A.375   

@@ -1,0 +1,212 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script:  qsfinal
+#LL---------------------------------------------------------------------
+#LL
+#LL  Purpose: Performs history file post-processing and resubmits
+#LL           jobscript if appropriate.
+#LL
+#LL  Author:   T C Johns          Date:           08 November 1989
+#LL  Reviewer: M A Smith          Date of review:
+#LL
+#LL  Tested under OS version: UNICOS 5.1.10
+#LL
+#LL  Code version no: 2.1         Date: 15 July 1991
+#LL
+#LL  Modification History:
+#LL    21/05/90 - All error exits changed to abort (code 135);
+#LL      Extra file $RSUB introduced to pass job resubmit details
+#LL      from histprint to resubmit scripts.
+#LL    28/10/90 - In-line documentation improved.
+#LL    15/07/91 - Import EXITSTAT file; if non-null append THIST to
+#LL               PHIST, else append IHIST to PHIST using qspickup.
+#LL               qserror_pickup renamed as qspickup.
+#LL     9/09/91 - Added comments for variables imported for use
+#LL               by qsresubmit
+#LL     8/02/93 -
+#LL    17/02/96 - Added assigns and edits to namelists for t3e.LCWiles
+#LL  15/10/97  4.4  Keep copy of thist file to help error recovery.
+#LL                 K Rogers
+#LL    10/07/97 - Added dependence on OASIS. R Brugge
+#LL
+#LL    28/08/97 - Vn4.4 protect assign statements with *DEF CRAYF90
+#LL               L C Wiles
+#LL  Programming standard: UM Doc Paper 3A, version 1 (29/10/90)
+#LL
+#LL  Project task: C0
+#LL
+#LL  Logical components covered: J03
+#LL
+#LL  External documentation:
+#LL    UM Doc Paper C0 - The top-level control system
+#LL
+#L   Interface and arguments: ------------------------------------------
+#L
+#L   qsfinal run_id
+#L
+#L     {run_id} ::= 5 character run identifier
+#L
+#L   -------------------------------------------------------------------
+#L
+#L   Called by: qsmaster
+#L   Calls    : qspickup script
+#L              qshistprint script
+#L              qshistreset script
+#L              qsresubmit script
+#L
+#L   Imports:
+#L     SETOPT        - Shell options
+#L     TEMP          - Temporary directory name
+#L     XHIST         - Interim history filename (on exit from model)
+#L     THIST         - Temporary history filename
+#L     PHIST         - Permanent history filename
+#L     EXITSTAT      - Exit processing status file (created in qsmain)
+#L     OPERATIONAL   - Operational flag
+#L     JOBSCRIPT     - Jobscript filename
+#L     CRAYJOB       - location of jobscript on Cray
+#L     AUTOMATIC_PP  - true if post processing
+#L     ERRFLAG       - location of error flag file
+#L     OASIS         - Indicator for running of OASIS
+#L     OMASTER       - Indicator of master script for oasis coupler
+#L
+#L   Exports:
+#L
+#L   Local variables:
+#L     RSUB          - Filename of local file for resubmit details
+#L     FROMHIST      - Which history file to pickup from (blank if none)
+#L
+#L----------------------------------------------------------------------
+#L Step 0 - Set up environment variables
+#L
+set -$SETOPT
+RSUB=$TEMP/rsub.$$           # Resubmit details
+#L----------------------------------------------------------------------
+#L Step 1 - History file processing and stranded output handling
+#L
+#L Step 1.1 - Update PHIST using XHIST or THIST according to exit
+#L            processing return status from qsmain and OPERATIONAL flag
+#L
+FROMHIST=
+if test -s $THIST
+then
+  # keep a copy of the thist file if it exists with a unique suffix
+  # - this can be copied back to $RUNID.thist to aid error recovery
+  # with some kinds of failures.
+  cp $THIST $THIST.$$
+  echo -e qsfinal: thist file copied to $THIST.$$
+fi
+
+if $OPERATIONAL
+then
+  if test -f $XHIST
+  then
+    if test -s $XHIST
+    then
+      FROMHIST=$XHIST                # pickup from XHIST if available
+    fi
+  else
+    if test -f $THIST
+    then
+      if test -s $THIST
+      then
+        FROMHIST=$THIST              # .. otherwise from THIST
+      fi
+    fi
+  fi
+else
+  if test -s $EXITSTAT               # Error occurred in exit processing
+  then
+    echo -e "$0: Error in exit processing after model run"
+    cat $EXITSTAT
+    echo -e
+    if test -f $THIST
+    then
+      if test -s $THIST
+      then
+        FROMHIST=$THIST              # .. pickup from THIST not XHIST
+      fi
+    fi
+  else                               # No error in exit processing
+    if test -f $XHIST
+    then
+      if test -s $XHIST
+      then
+        FROMHIST=$XHIST              # .. pickup from XHIST if available
+      fi
+    else
+      if test -f $THIST
+      then
+        if test -s $THIST
+        then
+          FROMHIST=$THIST            # .. pickup from THIST if not
+        fi
+      fi
+    fi
+  fi
+fi
+if test -z "$FROMHIST"
+then
+  :                                 # No history update to make
+else
+  qspickup $FROMHIST $PHIST         # Update permanent history
+  if test $? -eq 0
+  then
+    rm $THIST 2>/dev/null           # Delete temporary history
+  fi
+fi
+#L
+#L Step 1.2 - Reset and printout record from PHIST
+#L
+if test -f $PHIST
+then                                           # PHIST existing file
+  if $OPERATIONAL
+  then                                         # Operational model
+    qshistreset $PHIST
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e "$0: Model $1 - Failure in histreset"
+      exit 135                                 # Abort if failure
+    fi
+  fi
+  qshistprint $PHIST $RSUB
+  CC=$?
+  if test $CC -ne 0
+  then
+    echo -e "$0: Model $1 - Failure in histprint"
+    exit 135                                   # Abort if failure
+  fi
+else
+  echo -e "$0: Model $1 - Error: No history files"
+  exit 135                                     # Abort if no hist files
+fi
+#L----------------------------------------------------------------------
+#L Step 2 - Model resubmission (details picked up from file $RSUB)
+#L
+if $OPERATIONAL
+then
+  :
+else
+   if [ $OASIS = 'true' ]
+   then
+      if [ $OMASTER = 'false' ]
+      then
+         echo -e " No resubmission since OASIS=true, OMASTER=false "
+      else
+         qsresubmit $JOBSCRIPT $RSUB
+      fi
+   else
+      qsresubmit $JOBSCRIPT $RSUB
+   fi
+
+fi
+#L----------------------------------------------------------------------

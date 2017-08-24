@@ -1,0 +1,241 @@
+*IF DEF,C84_1A                                                             TEMPRL1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.10099 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.10100 
+C                                                                          GTS2F400.10101 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.10102 
+C restrictions as set forth in the contract.                               GTS2F400.10103 
+C                                                                          GTS2F400.10104 
+C                Meteorological Office                                     GTS2F400.10105 
+C                London Road                                               GTS2F400.10106 
+C                BRACKNELL                                                 GTS2F400.10107 
+C                Berkshire UK                                              GTS2F400.10108 
+C                RG12 2SZ                                                  GTS2F400.10109 
+C                                                                          GTS2F400.10110 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.10111 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.10112 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.10113 
+C Modelling at the above address.                                          GTS2F400.10114 
+C ******************************COPYRIGHT******************************    GTS2F400.10115 
+C                                                                          GTS2F400.10116 
+CLL  Routine: TEMPORAL -------------------------------------------------   TEMPRL1A.3     
+CLL                                                                        TEMPRL1A.4     
+CLL  Purpose: Control routine to handle temporal processing options        TEMPRL1A.5     
+CLL           within STASH.  Its input and output arguments look like      TEMPRL1A.6     
+CLL           1D arrays (ie. all the data should be in contiguous areas    TEMPRL1A.7     
+CLL           of memory).  Lower level service routines are called to      TEMPRL1A.8     
+CLL           perform the individual processing options.                   TEMPRL1A.9     
+CLL                                                                        TEMPRL1A.10    
+CLL  Tested under compiler:   cft77                                        TEMPRL1A.11    
+CLL  Tested under OS version: UNICOS 5.1                                   TEMPRL1A.12    
+CLL                                                                        TEMPRL1A.13    
+CLL  Author:   S.Tett                                                      TEMPRL1A.14    
+CLL                                                                        TEMPRL1A.15    
+CLL  Model            Modification history from model version 3.0:         TEMPRL1A.16    
+CLL version  date                                                          TEMPRL1A.17    
+CLL   3.1  24/02/93  Change name of variable 'end' to 'last_ts' (ST).      TJ140193.89    
+!     4.4  25/11/96  Add processing code option 8 - daily mean             GRS1F404.142   
+!                    timeseries. R A Stratton.                             GRS1F404.143   
+CLL                                                                        TEMPRL1A.18    
+CLL  Programming standard: UM Doc Paper 3, version 2 (7/9/90)              TEMPRL1A.19    
+CLL                                                                        TEMPRL1A.20    
+CLL  Logical components covered: D72                                       TEMPRL1A.21    
+CLL                                                                        TEMPRL1A.22    
+CLL  Project task: D7                                                      TEMPRL1A.23    
+CLL                                                                        TEMPRL1A.24    
+CLL  External documentation:                                               TEMPRL1A.25    
+CLL    Unified Model Doc Paper C4 - Storage handling and diagnostic        TEMPRL1A.26    
+CLL                                 system (STASH)                         TEMPRL1A.27    
+CLL                                                                        TEMPRL1A.28    
+C*L  Interface and arguments: ------------------------------------------   TEMPRL1A.29    
+C                                                                          TEMPRL1A.30    
+      SUBROUTINE TEMPORAL(variable,result,size,extra_size,                 TEMPRL1A.31    
+     &  control,control_size,ocean,                                        TEMPRL1A.32    
+     +  timestep,error,errmssg,start,amdi)                                 TEMPRL1A.33    
+C                                                                          TEMPRL1A.34    
+      IMPLICIT NONE                                                        TEMPRL1A.35    
+C                                                                          TEMPRL1A.36    
+      INTEGER size                  ! IN  size of arrays                   TEMPRL1A.37    
+      REAL variable(size)           ! IN  data array                       TEMPRL1A.38    
+      REAL result(size)             ! OUT output array                     TEMPRL1A.39    
+      INTEGER extra_size            ! IN size of extra data                TEMPRL1A.40    
+      INTEGER control_size          ! IN  size of control                  TEMPRL1A.41    
+      INTEGER control(control_size) ! IN  control                          TEMPRL1A.42    
+      INTEGER timestep              ! IN  present value of timestep        TEMPRL1A.43    
+      INTEGER error                 ! OUT error code                       TEMPRL1A.44    
+      CHARACTER*(*) errmssg         ! OUT error message                    TEMPRL1A.45    
+      REAL amdi                     ! IN  missing data indicator           TEMPRL1A.46    
+      LOGICAL ocean                 ! IN  true if ocean diagnostic         TEMPRL1A.47    
+      LOGICAL start                 ! OUT true if start timestep           TEMPRL1A.48    
+C*----------------------------------------------------------------------   TEMPRL1A.49    
+*CALL STERR                                                                TEMPRL1A.50    
+*CALL STPARAM                                                              TEMPRL1A.51    
+C                                                                          TEMPRL1A.52    
+C Subroutines called                                                       TEMPRL1A.53    
+C                                                                          TEMPRL1A.54    
+      EXTERNAL staccum,stmax,stmin                                         TEMPRL1A.55    
+C                                                                          TEMPRL1A.56    
+C Local variables                                                          TEMPRL1A.57    
+C                                                                          TEMPRL1A.58    
+      LOGICAL masking        ! indicator for masking (ie. missing data)    TEMPRL1A.59    
+      INTEGER proc_code      ! value of processing code                    TEMPRL1A.60    
+      INTEGER mask_code      ! value of masking code                       TEMPRL1A.61    
+      REAL divisor           ! divisor for the time mean (1/period)        TEMPRL1A.62    
+      INTEGER mod_period     ! timesteps since start modulo period.        TEMPRL1A.63    
+      INTEGER start_time     ! value of start time                         TEMPRL1A.64    
+      INTEGER i              ! loop counter                                TEMPRL1A.65    
+      LOGICAL last_ts        ! true if end timestep                        TJ140193.90    
+      INTEGER proc_size      ! size of data to be processed                TEMPRL1A.67    
+CL---------------------------------------------------------------------    TEMPRL1A.68    
+CL 1. Set processing option code and select appropriate service routine    TEMPRL1A.69    
+CL                                                                         TEMPRL1A.70    
+      proc_size=size-extra_size                                            TEMPRL1A.71    
+      proc_code=control(st_proc_no_code)                                   TEMPRL1A.72    
+C                                                                          TEMPRL1A.73    
+C  Replace (null processing)                                               TEMPRL1A.74    
+C                                                                          TEMPRL1A.75    
+      IF (proc_code.eq.st_replace_code) THEN                               TEMPRL1A.76    
+        DO i=1,size                                                        TEMPRL1A.77    
+          result(i)=variable(i)                                            TEMPRL1A.78    
+        ENDDO                                                              TEMPRL1A.79    
+        start=(control(st_start_time_code).eq.timestep)                    TEMPRL1A.80    
+C                                                                          TEMPRL1A.81    
+C  Mean/accumulation                                                       TEMPRL1A.82    
+C                                                                          TEMPRL1A.83    
+      ELSEIF (proc_code.eq.st_accum_code.or.                               TEMPRL1A.84    
+     +        proc_code.eq.st_time_mean_code) THEN                         TEMPRL1A.85    
+        start_time=control(st_start_time_code)                             TEMPRL1A.86    
+        IF (control(st_period_code).EQ.st_infinite_time) THEN              TEMPRL1A.87    
+          start=(timestep.eq.start_time)                                   TEMPRL1A.88    
+          last_ts=.FALSE.                                                  TJ140193.91    
+        ELSE                                                               TEMPRL1A.90    
+          mod_period=mod(timestep-start_time,control(st_period_code))      TEMPRL1A.91    
+          start=(mod_period.eq.0)                                          TEMPRL1A.92    
+          last_ts=(mod_period.eq.(control(st_period_code)-                 TJ140193.92    
+     &                        control(st_freq_code)))                      TEMPRL1A.94    
+        ENDIF                                                              TEMPRL1A.95    
+        mask_code=control(st_gridpoint_code)                               TEMPRL1A.96    
+        mask_code=mod(mask_code,block_size)                                TEMPRL1A.97    
+        masking=(mask_code.ne.stash_null_mask_code).or.ocean               TEMPRL1A.98    
+        IF (start) THEN      ! first timestep.                             TEMPRL1A.99    
+          DO i=1,size                                                      TEMPRL1A.100   
+            result(i)=variable(i)                                          TEMPRL1A.101   
+          ENDDO                                                            TEMPRL1A.102   
+        ELSE                                                               TEMPRL1A.103   
+          CALL STACCUM(variable,result,proc_size,masking,amdi)             TEMPRL1A.104   
+          DO i=proc_size+1,size                                            TEMPRL1A.105   
+            result(i)=variable(i) ! copy over the extra data (if any)      TEMPRL1A.106   
+          ENDDO                                                            TEMPRL1A.107   
+        ENDIF                                                              TEMPRL1A.108   
+C  Normalise at end of mean period                                         TEMPRL1A.109   
+        IF (last_ts.and.proc_code.eq.st_time_mean_code) THEN               TJ140193.93    
+          divisor=(float(control(st_freq_code))/                           TEMPRL1A.111   
+     &             float(control(st_period_code)))                         TEMPRL1A.112   
+C If field is masked test for MDI, otherwise don't                         TEMPRL1A.113   
+          IF (masking) THEN                                                TEMPRL1A.114   
+            DO i=1,proc_size                                               TEMPRL1A.115   
+              IF (result(i).ne.amdi) THEN                                  TEMPRL1A.116   
+                result(i)=result(i)*divisor                                TEMPRL1A.117   
+              ENDIF                                                        TEMPRL1A.118   
+            ENDDO                                                          TEMPRL1A.119   
+          ELSE                                                             TEMPRL1A.120   
+            DO i=1,proc_size                                               TEMPRL1A.121   
+              result(i)=result(i)*divisor                                  TEMPRL1A.122   
+            ENDDO                                                          TEMPRL1A.123   
+          ENDIF                                                            TEMPRL1A.124   
+        ENDIF                                                              TEMPRL1A.125   
+C                                                                          TEMPRL1A.126   
+C  Maximum                                                                 TEMPRL1A.127   
+C                                                                          TEMPRL1A.128   
+      ELSEIF (proc_code.eq.st_max_code) THEN                               TEMPRL1A.129   
+        start_time=control(st_start_time_code)                             TEMPRL1A.130   
+        mod_period=mod(timestep-start_time,control(st_period_code))        TEMPRL1A.131   
+        start=(mod_period.eq.0)                                            TEMPRL1A.132   
+        IF (start) THEN                                                    TEMPRL1A.133   
+          DO i=1,size                                                      TEMPRL1A.134   
+            result(i)=variable(i)                                          TEMPRL1A.135   
+          ENDDO                                                            TEMPRL1A.136   
+        ELSE                                                               TEMPRL1A.137   
+          mask_code=control(st_gridpoint_code)                             TEMPRL1A.138   
+          mask_code=mod(mask_code,block_size)                              TEMPRL1A.139   
+          masking=(mask_code.ne.stash_null_mask_code).or.ocean             TEMPRL1A.140   
+          CALL STMAX(variable,result,proc_size,masking,amdi)               TEMPRL1A.141   
+          DO i=proc_size+1,size                                            TEMPRL1A.142   
+            result(i)=variable(i) ! copy over the extra data (if any)      TEMPRL1A.143   
+          ENDDO                                                            TEMPRL1A.144   
+        ENDIF                                                              TEMPRL1A.145   
+C                                                                          TEMPRL1A.146   
+C  Minimum                                                                 TEMPRL1A.147   
+C                                                                          TEMPRL1A.148   
+      ELSEIF (proc_code.eq.st_min_code) THEN                               TEMPRL1A.149   
+        start_time=control(st_start_time_code)                             TEMPRL1A.150   
+        mod_period=mod(timestep-start_time,control(st_period_code))        TEMPRL1A.151   
+        start=(mod_period.eq.0)                                            TEMPRL1A.152   
+        IF (start) THEN                                                    TEMPRL1A.153   
+          DO i=1,size                                                      TEMPRL1A.154   
+            result(i)=variable(i)                                          TEMPRL1A.155   
+          ENDDO                                                            TEMPRL1A.156   
+        ELSE                                                               TEMPRL1A.157   
+          mask_code=control(st_gridpoint_code)                             TEMPRL1A.158   
+          mask_code=mod(mask_code,block_size)                              TEMPRL1A.159   
+          masking=(mask_code.ne.stash_null_mask_code).or.ocean             TEMPRL1A.160   
+          CALL STMIN(variable,result,proc_size,masking,amdi)               TEMPRL1A.161   
+          DO i=proc_size+1,size                                            TEMPRL1A.162   
+            result(i)=variable(i) ! copy over the extra data (if any)      TEMPRL1A.163   
+          ENDDO                                                            TEMPRL1A.164   
+        ENDIF                                                              TEMPRL1A.165   
+C                                                                          TEMPRL1A.166   
+C  Timeseries (append)                                                     TEMPRL1A.167   
+C                                                                          TEMPRL1A.168   
+      ELSEIF (proc_code.eq.st_time_series_code) THEN                       TEMPRL1A.169   
+        DO i=1,size                                                        TEMPRL1A.170   
+C Note that on start timestep this will include the extra data             TJ140193.94    
+          result(i)=variable(i)                                            TEMPRL1A.172   
+        ENDDO                                                              TEMPRL1A.173   
+        start_time=control(st_start_time_code)                             TEMPRL1A.174   
+        mod_period=mod(timestep-start_time,control(st_period_code))        TEMPRL1A.175   
+        start=(mod_period.eq.0)                                            TEMPRL1A.176   
+        last_ts=(mod_period.eq.(control(st_period_code)-                   TJ140193.95    
+     &                      control(st_freq_code)))                        TEMPRL1A.178   
+C                                                                          TEMPRL1A.179   
+C  Append trajectories                                                     TEMPRL1A.180   
+C                                                                          TEMPRL1A.181   
+      ELSEIF (proc_code.eq.st_append_traj_code) THEN                       TEMPRL1A.182   
+        start_time=control(st_start_time_code)                             TEMPRL1A.183   
+        mod_period=mod(timestep-start_time,control(st_period_code))        TEMPRL1A.184   
+        start=(mod_period.eq.0)                                            TEMPRL1A.185   
+        last_ts=(mod_period.eq.(control(st_period_code)-                   TJ140193.96    
+     &                      control(st_freq_code)))                        TEMPRL1A.187   
+        error=st_not_supported                                             TEMPRL1A.188   
+        write(errmssg,100)' do not support append trajects'                TEMPRL1A.189   
+        goto 999                                                           TEMPRL1A.190   
+!                                                                          GRS1F404.144   
+!  Timeseries (append) - option 8 daily mean                               GRS1F404.145   
+!                                                                          GRS1F404.146   
+      ELSEIF (proc_code.eq.st_time_series_mean) THEN                       GRS1F404.147   
+                                                                           GRS1F404.148   
+        DO i=1,size                                                        GRS1F404.149   
+C Note that on start timestep this will include the extra data             GRS1F404.150   
+          result(i)=variable(i)                                            GRS1F404.151   
+        ENDDO                                                              GRS1F404.152   
+        start_time=control(st_start_time_code)                             GRS1F404.153   
+        mod_period=mod(timestep-start_time,control(st_period_code))        GRS1F404.154   
+        start=(mod_period.eq.0)                                            GRS1F404.155   
+        last_ts=(mod_period.eq.(control(st_period_code)-                   GRS1F404.156   
+     &                      control(st_freq_code)))                        GRS1F404.157   
+C                                                                          TEMPRL1A.191   
+C  Error condition                                                         TEMPRL1A.192   
+C                                                                          TEMPRL1A.193   
+      ELSE                                                                 TEMPRL1A.194   
+        error=unknown_processing                                           TEMPRL1A.195   
+        write(errmssg,101)' unknown processing code',proc_code             TEMPRL1A.196   
+        goto 999                                                           TEMPRL1A.203   
+      ENDIF                                                                TEMPRL1A.204   
+C                                                                          TEMPRL1A.205   
+999   CONTINUE   ! jump for errors                                         TEMPRL1A.206   
+C                                                                          TEMPRL1A.207   
+100   FORMAT('TEMPORAL : >>> FATAL ERROR <<<',a30)                         TEMPRL1A.208   
+101   FORMAT('TEMPORAL : >>> FATAL ERROR <<<',a30,i5)                      TEMPRL1A.209   
+C                                                                          TEMPRL1A.210   
+      RETURN                                                               TEMPRL1A.211   
+      END                                                                  TEMPRL1A.212   
+*ENDIF                                                                     TEMPRL1A.213   

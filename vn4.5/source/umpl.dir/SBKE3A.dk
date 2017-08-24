@@ -1,0 +1,846 @@
+*IF DEF,A70_1A,OR,DEF,A70_1B                                               APB4F405.79    
+*IF DEF,A01_3A,OR,DEF,A02_3A                                               SBKE3A.2     
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.13790 
+C                                                                          GTS2F400.13791 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.13792 
+C restrictions as set forth in the contract.                               GTS2F400.13793 
+C                                                                          GTS2F400.13794 
+C                Meteorological Office                                     GTS2F400.13795 
+C                London Road                                               GTS2F400.13796 
+C                BRACKNELL                                                 GTS2F400.13797 
+C                Berkshire UK                                              GTS2F400.13798 
+C                RG12 2SZ                                                  GTS2F400.13799 
+C                                                                          GTS2F400.13800 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.13801 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.13802 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.13803 
+C Modelling at the above address.                                          GTS2F400.13804 
+C ******************************COPYRIGHT******************************    GTS2F400.13805 
+C                                                                          GTS2F400.13806 
+!+ Subroutine to calculate fluxes using equivalent extinction.             SBKE3A.3     
+!                                                                          SBKE3A.4     
+! Method:                                                                  SBKE3A.5     
+!       For each minor gas an equivalent extinction is calculated          SBKE3A.6     
+!       from a clear-sky calculation. These equivalent extinctions         SBKE3A.7     
+!       are then used in a full calculation involving the major gas.       SBKE3A.8     
+!                                                                          SBKE3A.9     
+! Current Owner of Code: J. M. Edwards                                     SBKE3A.10    
+!                                                                          SBKE3A.11    
+! History:                                                                 SBKE3A.12    
+!       Version         Date                    Comment                    SBKE3A.13    
+!       4.0             27-07-95                Original Code              SBKE3A.14    
+!                                               (J. M. Edwards)            SBKE3A.15    
+!       4.1             04-03-96                Calculation of equival-    ADB1F401.845   
+!                                               ent extinction removed     ADB1F401.846   
+!                                               from within the loop       ADB1F401.847   
+!                                               over the major gas since   ADB1F401.848   
+!                                               no dependence on           ADB1F402.656   
+!                                               the ESFT                   ADB1F402.657   
+!                                               coefficient of the major   ADB1F401.850   
+!                                               gas is currently used.     ADB1F401.851   
+!                                               Half-precision exponent-   ADB1F401.852   
+!                                               ial introduced.            ADB1F401.853   
+!                                               (J. M. Edwards)            ADB1F401.854   
+!       4.2             08-08-96                Code for vertically        ADB1F402.652   
+!                                               coherent convective        ADB1F402.653   
+!                                               cloud added.               ADB1F402.654   
+!                                               (J. M. Edwards)            ADB1F402.655   
+!       4.2             Oct. 96     T3E migration: EXPHF function          GSS3F402.326   
+!                                   replaced.   (S.J.Swarbrick)            GSS3F402.327   
+!       4.5             18-05-98                Variable for obsolete      ADB1F405.579   
+!                                               solver removed.            ADB1F405.580   
+!                                               (J. M. Edwards)            ADB1F405.581   
+!                                                                          SBKE3A.16    
+! Description of Code:                                                     SBKE3A.17    
+!   FORTRAN 77  with extensions listed in documentation.                   SBKE3A.18    
+!                                                                          SBKE3A.19    
+!- ---------------------------------------------------------------------   SBKE3A.20    
+      SUBROUTINE SOLVE_BAND_K_EQV(IERR                                     SBKE3A.21    
+!                       Atmospheric Properties                             SBKE3A.22    
+     &   , N_PROFILE, N_LAYER, L_LAYER, I_TOP, P, T, D_MASS                SBKE3A.23    
+!                       Angular Integration                                SBKE3A.24    
+     &   , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT            SBKE3A.25    
+     &   , L_RESCALE, N_ORDER_GAUSS                                        SBKE3A.26    
+!                       Treatment of Scattering                            SBKE3A.27    
+     &   , I_SCATTER_METHOD_BAND                                           SBKE3A.28    
+!                       Options for Solver                                 SBKE3A.29    
+     &   , I_SOLVER, L_NET, N_AUGMENT                                      ADB1F405.582   
+!                       Gaseous Properties                                 ADB1F401.855   
+     &   , I_BAND, N_GAS                                                   SBKE3A.32    
+     &   , INDEX_ABSORB, I_BAND_ESFT, I_SCALE_ESFT, I_SCALE_FNC            SBKE3A.33    
+     &   , K_ESFT, W_ESFT, SCALE_VECTOR                                    SBKE3A.34    
+     &   , P_REFERENCE, T_REFERENCE                                        SBKE3A.35    
+     &   , GAS_MIX_RATIO, GAS_FRAC_RESCALED                                SBKE3A.36    
+     &   , L_DOPPLER, DOPPLER_CORRECTION                                   SBKE3A.37    
+!                       Spectral Region                                    SBKE3A.38    
+     &   , ISOLIR                                                          SBKE3A.39    
+!                       Solar Properties                                   ADB1F401.856   
+     &   , SEC_0, SOLAR_FLUX                                               SBKE3A.41    
+!                       Infra-red Properties                               ADB1F401.857   
+     &   , PLANCK_SOURCE_BAND                                              SBKE3A.43    
+     &   , DIFF_PLANCK_BAND                                                SBKE3A.44    
+     &   , L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2                            SBKE3A.45    
+!                       Surface Properties                                 SBKE3A.46    
+     &   , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR, THERMAL_GROUND_BAND    SBKE3A.47    
+!                       Clear-sky Optical Properties                       SBKE3A.48    
+     &   , K_GREY_TOT_FREE, K_EXT_SCAT_FREE, ASYMMETRY_FREE                SBKE3A.49    
+     &   , FORWARD_SCATTER_FREE                                            SBKE3A.50    
+!                       Cloudy Properties                                  ADB1F401.858   
+     &   , L_CLOUD, I_CLOUD                                                SBKE3A.52    
+!                       Cloud Geometry                                     SBKE3A.53    
+     &   , N_CLOUD_TOP                                                     SBKE3A.54    
+     &   , N_CLOUD_TYPE, FRAC_CLOUD                                        SBKE3A.55    
+     &   , I_REGION_CLOUD, FRAC_REGION                                     ADB1F402.658   
+     &   , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                          SBKE3A.56    
+     &   , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE                       SBKE3A.57    
+     &   , CLOUD_OVERLAP                                                   SBKE3A.58    
+     &   , N_COLUMN, L_COLUMN, AREA_COLUMN                                 SBKE3A.59    
+!                       Cloudy Optical Properties                          SBKE3A.60    
+     &   , K_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                              SBKE3A.61    
+     &   , ASYMMETRY_CLOUD, FORWARD_SCATTER_CLOUD                          SBKE3A.62    
+!                       Fluxes Calculated                                  SBKE3A.63    
+     &   , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                               SBKE3A.64    
+!                       Flags for Clear-sky Fluxes                         SBKE3A.65    
+     &   , L_CLEAR, I_SOLVER_CLEAR                                         SBKE3A.66    
+!                       Clear-sky Fluxes Calculated                        SBKE3A.67    
+     &   , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND                   SBKE3A.68    
+!                       Dimensions of Arrays                               SBKE3A.69    
+     &   , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                              SBKE3A.70    
+     &   , NPD_BAND, NPD_SPECIES                                           SBKE3A.71    
+     &   , NPD_ESFT_TERM, NPD_SCALE_VARIABLE, NPD_SCALE_FNC                SBKE3A.72    
+     &   )                                                                 SBKE3A.73    
+!                                                                          SBKE3A.74    
+!                                                                          SBKE3A.75    
+!                                                                          SBKE3A.76    
+      IMPLICIT NONE                                                        SBKE3A.77    
+!                                                                          SBKE3A.78    
+!                                                                          SBKE3A.79    
+!     SIZES OF DUMMY ARRAYS.                                               SBKE3A.80    
+      INTEGER   !, INTENT(IN)                                              SBKE3A.81    
+     &     NPD_PROFILE                                                     SBKE3A.82    
+!             MAXIMUM NUMBER OF PROFILES                                   SBKE3A.83    
+     &   , NPD_LAYER                                                       SBKE3A.84    
+!             MAXIMUM NUMBER OF LAYERS                                     SBKE3A.85    
+     &   , NPD_BAND                                                        SBKE3A.86    
+!             MAXIMUM NUMBER OF SPECTRAL BANDS                             SBKE3A.87    
+     &   , NPD_SPECIES                                                     SBKE3A.88    
+!             MAXIMUM NUMBER OF SPECIES                                    SBKE3A.89    
+     &   , NPD_ESFT_TERM                                                   SBKE3A.90    
+!             MAXIMUM NUMBER OF ESFT TERMS                                 SBKE3A.91    
+     &   , NPD_SCALE_VARIABLE                                              SBKE3A.92    
+!             MAXIMUM NUMBER OF SCALE VARIABLES                            SBKE3A.93    
+     &   , NPD_SCALE_FNC                                                   SBKE3A.94    
+!             MAXIMUM NUMBER OF SCALING FUNCTIONS                          SBKE3A.95    
+     &   , NPD_COLUMN                                                      SBKE3A.96    
+!             NUMBER OF COLUMNS PER POINT                                  SBKE3A.97    
+!                                                                          SBKE3A.98    
+!     INCLUDE COMDECKS.                                                    SBKE3A.99    
+*CALL DIMFIX3A                                                             SBKE3A.100   
+*CALL ESFTSC3A                                                             SBKE3A.101   
+*CALL PRMCH3A                                                              SBKE3A.102   
+*CALL PRECSN3A                                                             SBKE3A.103   
+*CALL SPCRG3A                                                              SBKE3A.104   
+*CALL DIFFKE3A                                                             SBKE3A.105   
+*CALL ERROR3A                                                              SBKE3A.106   
+!                                                                          SBKE3A.107   
+!                                                                          SBKE3A.108   
+!                                                                          SBKE3A.109   
+!     DUMMY ARGUMENTS.                                                     SBKE3A.110   
+      INTEGER   !, INTENT(OUT)                                             SBKE3A.111   
+     &     IERR                                                            SBKE3A.112   
+!             ERROR FLAG                                                   SBKE3A.113   
+!                                                                          SBKE3A.114   
+!                       Atmospheric Properties                             SBKE3A.115   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.116   
+     &     N_PROFILE                                                       SBKE3A.117   
+!             NUMBER OF PROFILES                                           SBKE3A.118   
+     &   , N_LAYER                                                         SBKE3A.119   
+!             NUMBER OF LAYERS                                             SBKE3A.120   
+     &   , I_TOP                                                           SBKE3A.121   
+!             TOP OF VERTICAL GRID                                         SBKE3A.122   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.123   
+     &     L_LAYER                                                         SBKE3A.124   
+!             PROPERTIES GIVEN IN LAYERS                                   SBKE3A.125   
+      REAL  !, INTENT(IN)                                                  SBKE3A.126   
+     &     D_MASS(NPD_PROFILE, NPD_LAYER)                                  SBKE3A.127   
+!             MASS THICKNESS OF EACH LAYER                                 SBKE3A.128   
+     &   , P(NPD_PROFILE, 0: NPD_LAYER)                                    SBKE3A.129   
+!             PRESSURE                                                     SBKE3A.130   
+     &   , T(NPD_PROFILE, 0: NPD_LAYER)                                    SBKE3A.131   
+!             TEMPERATURE                                                  SBKE3A.132   
+!                                                                          SBKE3A.133   
+!                       Angular Integration                                SBKE3A.134   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.135   
+     &     I_ANGULAR_INTEGRATION                                           SBKE3A.136   
+!             ANGULAR INTEGRATION SCHEME                                   SBKE3A.137   
+     &   , I_2STREAM                                                       SBKE3A.138   
+!             TWO-STREAM SCHEME                                            SBKE3A.139   
+     &   , N_ORDER_GAUSS                                                   SBKE3A.140   
+!             ORDER OF GAUSSIAN INTEGRATION                                SBKE3A.141   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.142   
+     &     L_2_STREAM_CORRECT                                              SBKE3A.143   
+!             USE AN EDGE CORRECTION                                       SBKE3A.144   
+     &   , L_RESCALE                                                       SBKE3A.145   
+!             RESCALE OPTICAL PROPERTIES                                   SBKE3A.146   
+!                                                                          SBKE3A.147   
+!                       Treatment of Scattering                            SBKE3A.148   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.149   
+     &     I_SCATTER_METHOD_BAND                                           SBKE3A.150   
+!             METHOD OF TREATING SCATTERING                                SBKE3A.151   
+!                                                                          SBKE3A.152   
+!                       Options for Solver                                 SBKE3A.153   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.154   
+     &     I_SOLVER                                                        SBKE3A.155   
+!             SOLVER USED                                                  SBKE3A.156   
+     &   , N_AUGMENT                                                       SBKE3A.159   
+!             LENGTH OF LONG FLUX VECTOR                                   SBKE3A.160   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.161   
+     &     L_NET                                                           SBKE3A.162   
+!             CALCULATE NET FLUXES                                         SBKE3A.163   
+!                                                                          SBKE3A.164   
+!                       Gaseous Properties                                 SBKE3A.165   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.166   
+     &     I_BAND                                                          SBKE3A.167   
+!             BAND BEING CONSIDERED                                        SBKE3A.168   
+     &   , N_GAS                                                           SBKE3A.169   
+!             NUMBER OF GASES IN BAND                                      SBKE3A.170   
+     &   , INDEX_ABSORB(NPD_SPECIES, NPD_BAND)                             SBKE3A.171   
+!             LIST OF ABSORBERS IN BANDS                                   SBKE3A.172   
+     &   , I_BAND_ESFT(NPD_BAND, NPD_SPECIES)                              SBKE3A.173   
+!             NUMBER OF TERMS IN BAND                                      SBKE3A.174   
+     &   , I_SCALE_ESFT(NPD_BAND, NPD_SPECIES)                             SBKE3A.175   
+!             TYPE OF ESFT SCALING                                         SBKE3A.176   
+     &   , I_SCALE_FNC(NPD_BAND, NPD_SPECIES)                              SBKE3A.177   
+!             TYPE OF SCALING FUNCTION                                     SBKE3A.178   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.179   
+     &     L_DOPPLER(NPD_SPECIES)                                          SBKE3A.180   
+!             DOPPLER BROADENING INCLUDED                                  SBKE3A.181   
+      REAL  !, INTENT(IN)                                                  SBKE3A.182   
+     &     K_ESFT(NPD_ESFT_TERM, NPD_BAND, NPD_SPECIES)                    SBKE3A.183   
+!             EXPONENTIAL ESFT TERMS                                       SBKE3A.184   
+     &   , W_ESFT(NPD_ESFT_TERM, NPD_BAND, NPD_SPECIES)                    SBKE3A.185   
+!             WEIGHTS FOR ESFT                                             SBKE3A.186   
+     &   , SCALE_VECTOR(NPD_SCALE_VARIABLE, NPD_ESFT_TERM, NPD_BAND        SBKE3A.187   
+     &        , NPD_SPECIES)                                               SBKE3A.188   
+!             ABSORBER SCALING PARAMETERS                                  SBKE3A.189   
+     &   , P_REFERENCE(NPD_SPECIES, NPD_BAND)                              SBKE3A.190   
+!             REFERENCE SCALING PRESSURE                                   SBKE3A.191   
+     &   , T_REFERENCE(NPD_SPECIES, NPD_BAND)                              SBKE3A.192   
+!             REFERENCE SCALING TEMPERATURE                                SBKE3A.193   
+     &   , GAS_MIX_RATIO(NPD_PROFILE, 0: NPD_LAYER, NPD_SPECIES)           SBKE3A.194   
+!             GAS MASS MIXING RATIOS                                       SBKE3A.195   
+     &   , GAS_FRAC_RESCALED(NPD_PROFILE, 0: NPD_LAYER, NPD_SPECIES)       SBKE3A.196   
+!             RESCALED GAS MASS FRACTIONS                                  SBKE3A.197   
+     &   , DOPPLER_CORRECTION(NPD_SPECIES)                                 SBKE3A.198   
+!             DOPPLER BROADENING TERMS                                     SBKE3A.199   
+!                                                                          SBKE3A.200   
+!                       Spectral Region                                    SBKE3A.201   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.202   
+     &     ISOLIR                                                          SBKE3A.203   
+!             VISIBLE OR IR                                                SBKE3A.204   
+!                                                                          SBKE3A.205   
+!                       Solar Properties                                   SBKE3A.206   
+      REAL  !, INTENT(IN)                                                  SBKE3A.207   
+     &     SEC_0(NPD_PROFILE)                                              SBKE3A.208   
+!             SECANT OF SOLAR ZENITH ANGLE                                 SBKE3A.209   
+     &   , SOLAR_FLUX(NPD_PROFILE)                                         SBKE3A.210   
+!             INCIDENT SOLAR FLUX IN BAND                                  SBKE3A.211   
+!                                                                          SBKE3A.212   
+!                       Infra-red Properties                               SBKE3A.213   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.214   
+     &     L_IR_SOURCE_QUAD                                                SBKE3A.215   
+!             USE A QUADRATIC SOURCE FUNCTION                              SBKE3A.216   
+      REAL  !, INTENT(IN)                                                  SBKE3A.217   
+     &     PLANCK_SOURCE_BAND(NPD_PROFILE, 0: NPD_LAYER)                   SBKE3A.218   
+!             PLANCKIAN SOURCE IN BAND                                     SBKE3A.219   
+     &   , DIFF_PLANCK_BAND(NPD_PROFILE, NPD_LAYER)                        SBKE3A.220   
+!             THERMAL SOURCE FUNCTION                                      SBKE3A.221   
+     &   , DIFF_PLANCK_BAND_2(NPD_PROFILE, NPD_LAYER)                      SBKE3A.222   
+!             2x2ND DIFFERENCE OF PLANCKIAN IN BAND                        SBKE3A.223   
+!                                                                          SBKE3A.224   
+!                       Surface Properties                                 SBKE3A.225   
+      REAL  !, INTENT(IN)                                                  SBKE3A.226   
+     &     ALBEDO_SURFACE_DIFF(NPD_PROFILE)                                SBKE3A.227   
+!             DIFFUSE SURFACE ALBEDO                                       SBKE3A.228   
+     &   , ALBEDO_SURFACE_DIR(NPD_PROFILE)                                 SBKE3A.229   
+!             DIRECT SURFACE ALBEDO                                        SBKE3A.230   
+     &   , THERMAL_GROUND_BAND(NPD_PROFILE)                                SBKE3A.231   
+!             THERMAL SOURCE FUNCTION AT GROUND                            SBKE3A.232   
+!                                                                          SBKE3A.233   
+!                       Clear-sky Optical Properties                       SBKE3A.234   
+      REAL  !, INTENT(IN)                                                  SBKE3A.235   
+     &     K_GREY_TOT_FREE(NPD_PROFILE, NPD_LAYER)                         SBKE3A.236   
+!             FREE ABSORPTIVE EXTINCTION                                   SBKE3A.237   
+     &   , K_EXT_SCAT_FREE(NPD_PROFILE, NPD_LAYER)                         SBKE3A.238   
+!             FREE SCATTERING EXTINCTION                                   SBKE3A.239   
+     &   , ASYMMETRY_FREE(NPD_PROFILE, NPD_LAYER)                          SBKE3A.240   
+!             CLEAR-SKY ASYMMETRY                                          SBKE3A.241   
+     &   , FORWARD_SCATTER_FREE(NPD_PROFILE, NPD_LAYER)                    SBKE3A.242   
+!             FREE FORWARD SCATTERING                                      SBKE3A.243   
+!                                                                          SBKE3A.244   
+!                       Cloudy Properties                                  SBKE3A.245   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.246   
+     &     L_CLOUD                                                         SBKE3A.247   
+!             CLOUDS REQUIRED                                              SBKE3A.248   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.249   
+     &     I_CLOUD                                                         SBKE3A.250   
+!             CLOUD SCHEME USED                                            SBKE3A.251   
+!                                                                          SBKE3A.252   
+!                       Cloud Geometry                                     SBKE3A.253   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.254   
+     &     N_CLOUD_TOP                                                     SBKE3A.255   
+!             TOPMOST CLOUDY LAYER                                         SBKE3A.256   
+     &   , N_CLOUD_TYPE                                                    SBKE3A.257   
+!             NUMBER OF TYPES OF CLOUDS                                    SBKE3A.258   
+     &   , N_FREE_PROFILE(NPD_LAYER)                                       SBKE3A.259   
+!             NUMBER OF FREE PROFILES                                      SBKE3A.260   
+     &   , I_FREE_PROFILE(NPD_PROFILE, NPD_LAYER)                          SBKE3A.261   
+!             INDICES OF FREE PROFILES                                     SBKE3A.262   
+     &   , N_CLOUD_PROFILE(NPD_LAYER)                                      SBKE3A.263   
+!             NUMBER OF CLOUDY PROFILES                                    SBKE3A.264   
+     &   , I_CLOUD_PROFILE(NPD_PROFILE, NPD_LAYER)                         SBKE3A.265   
+!             INDICES OF CLOUDY PROFILES                                   SBKE3A.266   
+     &   , N_COLUMN(NPD_PROFILE)                                           SBKE3A.267   
+!             NUMBER OF COLUMNS REQUIRED                                   SBKE3A.268   
+     &   , I_REGION_CLOUD(NPD_CLOUD_TYPE)                                  ADB1F402.659   
+!             REGIONS IN WHICH TYPES OF CLOUDS FALL                        ADB1F402.660   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.269   
+     &     L_COLUMN(NPD_PROFILE, NPD_LAYER, NPD_COLUMN)                    SBKE3A.270   
+!             COLUMN FLAGS FOR COLUMNS                                     SBKE3A.271   
+      REAL  !, INTENT(IN)                                                  SBKE3A.272   
+     &     W_CLOUD(NPD_PROFILE, NPD_LAYER)                                 SBKE3A.273   
+!             CLOUDY FRACTION                                              SBKE3A.274   
+     &   , FRAC_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)              SBKE3A.275   
+!             FRACTIONS OF DIFFERENT TYPES OF CLOUD                        ADB1F401.859   
+     &   , W_FREE(NPD_PROFILE, NPD_LAYER)                                  SBKE3A.277   
+!             CLEAR-SKY FRACTION                                           SBKE3A.278   
+     &   , CLOUD_OVERLAP(NPD_PROFILE, 0: NPD_LAYER, NPD_OVERLAP_COEFF)     SBKE3A.279   
+!             COEFFICIENTS FOR TRANSFER FOR ENERGY AT INTERFACES           SBKE3A.280   
+     &   , AREA_COLUMN(NPD_PROFILE, NPD_COLUMN)                            SBKE3A.281   
+!             AREAS OF COLUMNS                                             SBKE3A.282   
+     &   , FRAC_REGION(NPD_PROFILE, NPD_LAYER, NPD_REGION)                 ADB1F402.661   
+!             FRACTIONS OF TOTAL CLOUD OCCUPIED BY EACH REGION             ADB1F402.662   
+!                                                                          SBKE3A.283   
+!                       Cloudy Optical Properties                          SBKE3A.284   
+      REAL  !, INTENT(IN)                                                  SBKE3A.285   
+     &     K_GREY_TOT_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)        SBKE3A.286   
+!             CLOUDY ABSORPTIVE EXTINCTION                                 SBKE3A.287   
+     &   , K_EXT_SCAT_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)        SBKE3A.288   
+!             CLOUDY SCATTERING EXTINCTION                                 SBKE3A.289   
+     &   , ASYMMETRY_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)         SBKE3A.290   
+!             CLOUDY ASYMMETRY                                             SBKE3A.291   
+     &   , FORWARD_SCATTER_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)   SBKE3A.292   
+!             CLOUDY FORWARD SCATTERING                                    SBKE3A.293   
+!                                                                          SBKE3A.294   
+!                       Fluxes Calculated                                  SBKE3A.295   
+      REAL  !, INTENT(OUT)                                                 SBKE3A.296   
+     &     FLUX_DIRECT_BAND(NPD_PROFILE, 0: NPD_LAYER)                     SBKE3A.297   
+!             DIRECT FLUX IN BAND                                          SBKE3A.298   
+     &   , FLUX_TOTAL_BAND(NPD_PROFILE, 2*NPD_LAYER+2)                     SBKE3A.299   
+!             TOTAL FLUX IN BAND                                           SBKE3A.300   
+!                                                                          SBKE3A.301   
+!                       Flags for Clear-sky Fluxes                         SBKE3A.302   
+      LOGICAL   !, INTENT(IN)                                              SBKE3A.303   
+     &     L_CLEAR                                                         SBKE3A.304   
+!             CALCULATE CLEAR-SKY PROPERTIES                               SBKE3A.305   
+      INTEGER   !, INTENT(IN)                                              SBKE3A.306   
+     &     I_SOLVER_CLEAR                                                  SBKE3A.307   
+!             CLEAR SOLVER USED                                            SBKE3A.308   
+!                                                                          SBKE3A.309   
+!                       Clear-sky Fluxes Calculated                        SBKE3A.310   
+      REAL  !, INTENT(OUT)                                                 SBKE3A.311   
+     &     FLUX_DIRECT_CLEAR_BAND(NPD_PROFILE, 0: NPD_LAYER)               SBKE3A.312   
+!             CLEAR-SKY DIRECT FLUX IN BAND                                SBKE3A.313   
+     &   , FLUX_TOTAL_CLEAR_BAND(NPD_PROFILE, 2*NPD_LAYER+2)               SBKE3A.314   
+!             CLEAR-SKY TOTAL FLUX IN BAND                                 SBKE3A.315   
+!                                                                          SBKE3A.316   
+!                                                                          SBKE3A.317   
+!                                                                          SBKE3A.318   
+!     LOCAL VARIABLES.                                                     SBKE3A.319   
+      INTEGER                                                              SBKE3A.320   
+     &     I                                                               SBKE3A.321   
+!             LOOP VARIABLE                                                SBKE3A.322   
+     &   , J                                                               SBKE3A.323   
+!             LOOP VARIABLE                                                SBKE3A.324   
+     &   , K                                                               SBKE3A.325   
+!             LOOP VARIABLE                                                SBKE3A.326   
+     &   , L                                                               SBKE3A.327   
+!             LOOP VARIABLE                                                SBKE3A.328   
+      INTEGER                                                              SBKE3A.329   
+     &     I_GAS                                                           SBKE3A.330   
+!             INDEX OF MAIN GAS                                            SBKE3A.331   
+     &   , I_GAS_BAND                                                      SBKE3A.332   
+!             INDEX OF ACTIVE GAS                                          SBKE3A.333   
+     &   , I_GAS_POINTER(NPD_SPECIES)                                      SBKE3A.334   
+!             POINTER ARRAY FOR MONOCHROMATIC ESFTs                        SBKE3A.335   
+     &   , IEX                                                             SBKE3A.336   
+!             INDEX OF ESFT TERM                                           SBKE3A.337   
+      REAL                                                                 SBKE3A.338   
+     &     SOURCE_GROUND(NPD_PROFILE)                                      SBKE3A.339   
+!             GROUND SOURCE FUNCTION                                       SBKE3A.340   
+     &   , FLUX_INC_DIRECT(NPD_PROFILE)                                    SBKE3A.341   
+!             INCIDENT DIRECT FLUX                                         SBKE3A.342   
+     &   , FLUX_INC_DOWN(NPD_PROFILE)                                      SBKE3A.343   
+!             INCIDENT DOWNWARD FLUX                                       SBKE3A.344   
+     &   , ESFT_WEIGHT                                                     SBKE3A.345   
+!             ESFT WEIGHT FOR CURRENT CALCULATION                          SBKE3A.346   
+     &   , ADJUST_SOLAR_KE(NPD_PROFILE, NPD_LAYER)                         SBKE3A.347   
+!             ADJUSTMENT OF SOLAR TRANSMISSION TO INCLUDE EFFECTS          SBKE3A.348   
+!             OF MINOR GASES AND TAKE OUT EQUIVALENT EXTINCTION            SBKE3A.349   
+     &   , K_EQV(NPD_PROFILE, NPD_LAYER)                                   SBKE3A.350   
+!             EQUIVALENT EXTINCTION                                        SBKE3A.351   
+     &   , TAU_GAS(NPD_PROFILE, NPD_LAYER)                                 SBKE3A.352   
+!             OPTICAL DEPTH OF GAS                                         SBKE3A.353   
+     &   , K_ESFT_MONO(NPD_SPECIES)                                        SBKE3A.354   
+!             MONOCHROMATIC EXPONENTS                                      SBKE3A.355   
+     &   , K_GAS_ABS(NPD_PROFILE, NPD_LAYER)                               SBKE3A.356   
+!             GASEOUS EXTINCTION                                           SBKE3A.357   
+      REAL                                                                 SBKE3A.358   
+     &     FLUX_DIRECT_PART(NPD_PROFILE, 0: NPD_LAYER)                     SBKE3A.359   
+!             PARTIAL DIRECT FLUX                                          SBKE3A.360   
+     &   , FLUX_TOTAL_PART(NPD_PROFILE, 2*NPD_LAYER+2)                     SBKE3A.361   
+!             PARTIAL TOTAL FLUX                                           SBKE3A.362   
+     &   , FLUX_DIRECT_CLEAR_PART(NPD_PROFILE, 0: NPD_LAYER)               SBKE3A.363   
+!             CLEAR PARTIAL DIRECT FLUX                                    SBKE3A.364   
+     &   , FLUX_TOTAL_CLEAR_PART(NPD_PROFILE, 2*NPD_LAYER+2)               SBKE3A.365   
+!             CLEAR PARTIAL TOTAL FLUX                                     SBKE3A.366   
+     &   , SUM_FLUX(NPD_PROFILE, 2*NPD_LAYER+2, NPD_SPECIES)               SBKE3A.367   
+!             SUM OF FLUXES FOR WEIGHTING                                  SBKE3A.368   
+     &   , SUM_K_FLUX(NPD_PROFILE, 2*NPD_LAYER+2, NPD_SPECIES)             SBKE3A.369   
+!             SUM OF K*FLUXES FOR WEIGHTING                                SBKE3A.370   
+     &   , FLUX_TERM(NPD_PROFILE, 0: NPD_LAYER)                            SBKE3A.371   
+!             FLUX WITH ONE TERM                                           SBKE3A.372   
+     &   , FLUX_GAS(NPD_PROFILE, 0: NPD_LAYER)                             SBKE3A.373   
+!             FLUX WITH ONE GAS                                            SBKE3A.374   
+      REAL                                                                 SBKE3A.375   
+     &     MEAN_NET_FLUX                                                   SBKE3A.376   
+!             MEAN NET FLUX                                                SBKE3A.377   
+     &   , MEAN_K_NET_FLUX                                                 SBKE3A.378   
+!             MEAN K-WEIGHTED NET FLUX                                     SBKE3A.379   
+     &   , K_WEAK                                                          SBKE3A.380   
+!             WEAK ABSORPTION FOR MINOR GAS                                SBKE3A.381   
+      REAL                                                                 SBKE3A.382   
+     &     KE_GREY_TOT_FREE(NPD_PROFILE, NPD_LAYER)                        SBKE3A.383   
+!             EQUIVALENT FREE ABSORPTIVE EXTINCTION                        ADB1F401.860   
+     &   , KE_GREY_TOT_CLOUD(NPD_PROFILE, NPD_LAYER, NPD_CLOUD_TYPE)       SBKE3A.385   
+!             EQUIVALENT FREE ABSORPTIVE EXTINCTION                        ADB1F401.861   
+!                                                                          SBKE3A.387   
+!     SUBROUTINES CALLED:                                                  SBKE3A.388   
+      EXTERNAL                                                             SBKE3A.389   
+     &     SCALE_ABSORB, GAS_OPTICAL_PROPERTIES                            SBKE3A.390   
+     &   , MONOCHROMATIC_GAS_FLUX, MONOCHROMATIC_FLUX                      SBKE3A.391   
+     &   , AUGMENT_FLUX                                                    SBKE3A.392   
+!                                                                          SBKE3A.393   
+!                                                                          SBKE3A.394   
+!                                                                          SBKE3A.395   
+      I_GAS=INDEX_ABSORB(1, I_BAND)                                        SBKE3A.396   
+!                                                                          SBKE3A.397   
+      IF (ISOLIR.EQ.IP_SOLAR) THEN                                         SBKE3A.398   
+!                                                                          SBKE3A.399   
+!        AN APPROPRIATE SCALING FACTOR IS CALCULATED FOR THE DIRECT        SBKE3A.400   
+!        BEAM, WHILST THE EQUIVALENT EXTINCTION FOR THE DIFFUSE BEAM       SBKE3A.401   
+!        IS WEIGHTED WITH THE SOLAR SCALING FACTOR AS EVALUATED            SBKE3A.402   
+!        AT THE SURFACE.                                                   SBKE3A.403   
+!                                                                          SBKE3A.404   
+!        INITIALIZE THE SCALING FACTORS:                                   SBKE3A.405   
+         DO I=1, N_LAYER                                                   SBKE3A.406   
+            DO L=1, N_PROFILE                                              SBKE3A.407   
+               ADJUST_SOLAR_KE(L, I)=1.0E+00                               SBKE3A.408   
+               K_EQV(L, I)=0.0E+00                                         SBKE3A.409   
+            ENDDO                                                          SBKE3A.410   
+         ENDDO                                                             SBKE3A.411   
+!                                                                          SBKE3A.412   
+         DO J=2, N_GAS                                                     SBKE3A.413   
+!                                                                          SBKE3A.414   
+!           INITIALIZE THE NORMALIZED FLUX FOR THE GAS.                    SBKE3A.415   
+            DO L=1, N_PROFILE                                              SBKE3A.416   
+               FLUX_GAS(L, 0)=1.0E+00                                      SBKE3A.417   
+            ENDDO                                                          SBKE3A.418   
+            DO I=1, N_LAYER                                                SBKE3A.419   
+               DO L=1, N_PROFILE                                           SBKE3A.420   
+                  FLUX_GAS(L, I)=0.0E+00                                   SBKE3A.421   
+                  SUM_K_FLUX(L, N_LAYER, J)=0.0E+00                        SBKE3A.422   
+                  SUM_FLUX(L, N_LAYER, J)=0.0E+00                          SBKE3A.423   
+               ENDDO                                                       SBKE3A.424   
+            ENDDO                                                          SBKE3A.425   
+!                                                                          SBKE3A.426   
+            I_GAS_BAND=INDEX_ABSORB(J, I_BAND)                             SBKE3A.427   
+            DO IEX=1, I_BAND_ESFT(I_BAND, I_GAS_BAND)                      SBKE3A.428   
+!                                                                          SBKE3A.429   
+!              STORE THE ESFT WEIGHT FOR FUTURE USE.                       SBKE3A.430   
+               ESFT_WEIGHT=W_ESFT(IEX, I_BAND,  I_GAS_BAND)                SBKE3A.431   
+!                                                                          SBKE3A.432   
+!              RESCALE THE AMOUNT OF GAS FOR THIS ABSORBER IF REQUIRED.    SBKE3A.433   
+               IF (I_SCALE_ESFT(I_BAND, I_GAS_BAND).EQ.IP_SCALE_TERM)      SBKE3A.434   
+     &            THEN                                                     SBKE3A.435   
+                  CALL SCALE_ABSORB(IERR, N_PROFILE, N_LAYER               SBKE3A.436   
+     &               , GAS_MIX_RATIO(1, 0, I_GAS_BAND), P, T               SBKE3A.437   
+     &               , L_LAYER, I_TOP                                      SBKE3A.438   
+     &               , GAS_FRAC_RESCALED(1, 0, I_GAS_BAND)                 SBKE3A.439   
+     &               , I_SCALE_FNC(I_BAND, I_GAS_BAND)                     SBKE3A.440   
+     &               , P_REFERENCE(I_GAS_BAND, I_BAND)                     SBKE3A.441   
+     &               , T_REFERENCE(I_GAS_BAND, I_BAND)                     SBKE3A.442   
+     &               , SCALE_VECTOR(1, IEX, I_BAND, I_GAS_BAND)            SBKE3A.443   
+     &               , L_DOPPLER(I_GAS_BAND)                               SBKE3A.444   
+     &               , DOPPLER_CORRECTION(I_GAS_BAND)                      SBKE3A.445   
+     &               , NPD_PROFILE, NPD_LAYER, NPD_SCALE_FNC               SBKE3A.446   
+     &               , NPD_SCALE_VARIABLE                                  SBKE3A.447   
+     &               )                                                     SBKE3A.448   
+                  IF (IERR.NE.I_NORMAL) RETURN                             SBKE3A.449   
+               ENDIF                                                       SBKE3A.450   
+!                                                                          SBKE3A.451   
+               DO L=1, N_PROFILE                                           SBKE3A.452   
+                  FLUX_TERM(L, 0)=ESFT_WEIGHT                              SBKE3A.453   
+               ENDDO                                                       SBKE3A.454   
+               DO I=1, N_LAYER                                             SBKE3A.455   
+                  DO L=1, N_PROFILE                                        SBKE3A.456   
+                     FLUX_TERM(L, I)=FLUX_TERM(L, I-1)                     SBKE3A.457   
+     &                  *EXP(-K_ESFT(IEX, I_BAND, I_GAS_BAND)              GSS3F402.328   
+     &                  *GAS_FRAC_RESCALED(L, I, I_GAS_BAND)               SBKE3A.459   
+     &                  *D_MASS(L, I)*SEC_0(L))                            SBKE3A.460   
+                     FLUX_GAS(L, I)=FLUX_GAS(L, I)+FLUX_TERM(L, I)         SBKE3A.461   
+                  ENDDO                                                    SBKE3A.462   
+               ENDDO                                                       SBKE3A.463   
+!                                                                          SBKE3A.464   
+!              CALCULATE THE INCREMENT IN THE ABSORPTIVE EXTINCTION        SBKE3A.465   
+               DO L=1, N_PROFILE                                           SBKE3A.466   
+                  SUM_K_FLUX(L, N_LAYER, J)                                SBKE3A.467   
+     &               =SUM_K_FLUX(L, N_LAYER, J)                            SBKE3A.468   
+     &               +K_ESFT(IEX, I_BAND, I_GAS_BAND)                      SBKE3A.469   
+     &               *FLUX_TERM(L, N_LAYER)                                SBKE3A.470   
+                  SUM_FLUX(L, N_LAYER, J)                                  SBKE3A.471   
+     &               =SUM_FLUX(L, N_LAYER, J)+FLUX_TERM(L, N_LAYER)        SBKE3A.472   
+               ENDDO                                                       SBKE3A.473   
+!                                                                          SBKE3A.474   
+            ENDDO                                                          SBKE3A.475   
+!                                                                          SBKE3A.476   
+!           SET THE EQUIVALENT EXTINCTION FOR THE DIFFUSE BEAM,            SBKE3A.477   
+!           WEIGHTING WITH THE DIRECT SURFACE FLUX.                        SBKE3A.478   
+            DO I=1, N_LAYER                                                SBKE3A.479   
+               DO L=1, N_PROFILE                                           SBKE3A.480   
+                  IF (SUM_FLUX(L, N_LAYER, J).GT.0.0E+00) THEN             ADB6F403.5     
+                     K_EQV(L, I)=K_EQV(L, I)                               ADB6F403.6     
+     &                  +GAS_FRAC_RESCALED(L, I, I_GAS_BAND)               ADB6F403.7     
+     &                  *SUM_K_FLUX(L, N_LAYER, J)                         ADB6F403.8     
+     &                  /SUM_FLUX(L, N_LAYER, J)                           ADB6F403.9     
+                  ELSE                                                     ADB6F403.10    
+!                    THIS CASE CAN ARISE ONLY WHEN THE SUN IS CLOSE        ADB6F403.11    
+!                    TO THE HORIZON WHEN THE EXPONENTIAL MAY UNDERFLOW     ADB6F403.12    
+!                    TO 0. WE USE THE WEAKEST ESFT-TERM.                   ADB6F403.13    
+                     K_EQV(L, I)=K_EQV(L, I)                               ADB6F403.14    
+     &                  *K_ESFT(1, I_BAND, I_GAS_BAND)                     ADB6F403.15    
+     &                  *GAS_FRAC_RESCALED(L, I, I_GAS_BAND)               ADB6F403.16    
+                  ENDIF                                                    ADB6F403.17    
+                  IF (FLUX_GAS(L, I-1).GT.0.0E+00) THEN                    ADB6F403.18    
+!                    IF THE FLUX HAS BEEN REDUCED TO 0 AT THE UPPER        ADB6F403.19    
+!                    LEVEL THE ADJUSTING FACTOR IS NOT OF IMPORTANCE       ADB6F403.20    
+!                    AND NEED NOT BE ADJUSTED. THIS WILL PREVENT           ADB6F403.21    
+!                    POSSIBLE FAILURES.                                    ADB6F403.22    
+                     ADJUST_SOLAR_KE(L, I)                                 ADB6F403.23    
+     &                  =ADJUST_SOLAR_KE(L, I)*FLUX_GAS(L, I)              ADB6F403.24    
+     &                  /FLUX_GAS(L, I-1)                                  ADB6F403.25    
+                  ENDIF                                                    ADB6F403.26    
+                                                                           ADB6F403.27    
+               ENDDO                                                       SBKE3A.488   
+            ENDDO                                                          SBKE3A.489   
+!                                                                          SBKE3A.490   
+         ENDDO                                                             SBKE3A.491   
+!                                                                          SBKE3A.492   
+!        SINCE THE GREY EXTINCTION WILL LATER BE MODIFIED WE MUST          SBKE3A.493   
+!        INCREASE THE TRANSMISSION OF THE SOLAR BEAM TO COMPENSATE.        SBKE3A.494   
+         DO I=1, N_LAYER                                                   SBKE3A.495   
+            DO L=1, N_PROFILE                                              SBKE3A.496   
+               ADJUST_SOLAR_KE(L, I)=ADJUST_SOLAR_KE(L, I)                 SBKE3A.497   
+     &            *EXP(K_EQV(L, I)*D_MASS(L, I)*SEC_0(L))                  GSS3F402.329   
+            ENDDO                                                          SBKE3A.499   
+         ENDDO                                                             SBKE3A.500   
+!                                                                          SBKE3A.501   
+      ELSE IF (ISOLIR.EQ.IP_INFRA_RED) THEN                                SBKE3A.502   
+!                                                                          SBKE3A.503   
+!        EQUIVALENT ABSORPTION IS USED FOR THE MINOR GASES.                SBKE3A.504   
+!                                                                          SBKE3A.505   
+         DO J=2, N_GAS                                                     SBKE3A.506   
+!                                                                          SBKE3A.507   
+!                                                                          SBKE3A.509   
+!           INITIALIZE THE SUMS TO FORM THE RATIO TO 0.                    SBKE3A.510   
+            DO I=1, 2*N_LAYER+2                                            SBKE3A.511   
+               DO L=1, N_PROFILE                                           SBKE3A.512   
+                  SUM_FLUX(L, I, J)=0.0E+00                                SBKE3A.513   
+                  SUM_K_FLUX(L, I, J)=0.0E+00                              SBKE3A.514   
+               ENDDO                                                       SBKE3A.515   
+            ENDDO                                                          SBKE3A.516   
+!                                                                          SBKE3A.517   
+            I_GAS_BAND=INDEX_ABSORB(J, I_BAND)                             SBKE3A.518   
+            DO IEX=1, I_BAND_ESFT(I_BAND, I_GAS_BAND)                      SBKE3A.519   
+!                                                                          SBKE3A.520   
+!              STORE THE ESFT WEIGHT FOR FUTURE USE.                       SBKE3A.521   
+               ESFT_WEIGHT=W_ESFT(IEX, I_BAND,  I_GAS_BAND)                SBKE3A.522   
+!                                                                          SBKE3A.523   
+!                                                                          SBKE3A.525   
+!              RESCALE THE AMOUNT OF GAS FOR THIS ABSORBER IF REQUIRED.    SBKE3A.526   
+               IF (I_SCALE_ESFT(I_BAND, I_GAS_BAND).EQ.IP_SCALE_TERM)      SBKE3A.527   
+     &            THEN                                                     SBKE3A.528   
+                  CALL SCALE_ABSORB(IERR, N_PROFILE, N_LAYER               SBKE3A.529   
+     &               , GAS_MIX_RATIO(1, 0, I_GAS_BAND), P, T               SBKE3A.530   
+     &               , L_LAYER, I_TOP                                      SBKE3A.531   
+     &               , GAS_FRAC_RESCALED(1, 0, I_GAS_BAND)                 SBKE3A.532   
+     &               , I_SCALE_FNC(I_BAND, I_GAS_BAND)                     SBKE3A.533   
+     &               , P_REFERENCE(I_GAS_BAND, I_BAND)                     SBKE3A.534   
+     &               , T_REFERENCE(I_GAS_BAND, I_BAND)                     SBKE3A.535   
+     &               , SCALE_VECTOR(1, IEX, I_BAND, I_GAS_BAND)            SBKE3A.536   
+     &               , L_DOPPLER(I_GAS_BAND)                               SBKE3A.537   
+     &               , DOPPLER_CORRECTION(I_GAS_BAND)                      SBKE3A.538   
+     &               , NPD_PROFILE, NPD_LAYER, NPD_SCALE_FNC               SBKE3A.539   
+     &               , NPD_SCALE_VARIABLE                                  SBKE3A.540   
+     &               )                                                     SBKE3A.541   
+                  IF (IERR.NE.I_NORMAL) RETURN                             SBKE3A.542   
+               ENDIF                                                       SBKE3A.543   
+!                                                                          SBKE3A.544   
+!              SET THE APPROPRIATE BOUNDARY TERMS FOR THE                  SBKE3A.545   
+!              TOTAL UPWARD AND DOWNWARD FLUXES AT THE BOUNDARIES.         SBKE3A.546   
+!                                                                          SBKE3A.547   
+               DO L=1, N_PROFILE                                           SBKE3A.548   
+                  FLUX_INC_DIRECT(L)=0.0E+00                               SBKE3A.549   
+                  FLUX_DIRECT_PART(L, N_LAYER)=0.0E+00                     ADB1F401.872   
+                  FLUX_INC_DOWN(L)=-PLANCK_SOURCE_BAND(L, 0)               SBKE3A.550   
+                  SOURCE_GROUND(L)=THERMAL_GROUND_BAND(L)                  SBKE3A.551   
+     &               -(1.0E+00-ALBEDO_SURFACE_DIFF(L))                     SBKE3A.552   
+     &               *PLANCK_SOURCE_BAND(L, N_LAYER)                       SBKE3A.553   
+               ENDDO                                                       SBKE3A.554   
+!                                                                          SBKE3A.555   
+!              SET THE OPTICAL DEPTHS OF EACH LAYER.                       SBKE3A.556   
+               DO I=1, N_LAYER                                             SBKE3A.557   
+                  DO L=1, N_PROFILE                                        SBKE3A.558   
+                     TAU_GAS(L, I)=K_ESFT(IEX, I_BAND, I_GAS_BAND)         SBKE3A.559   
+     &                  *GAS_FRAC_RESCALED(L, I, I_GAS_BAND)               SBKE3A.560   
+     &                  *D_MASS(L, I)                                      SBKE3A.561   
+                  ENDDO                                                    SBKE3A.562   
+               ENDDO                                                       SBKE3A.563   
+!                                                                          SBKE3A.564   
+!              CALCULATE THE FLUXES WITH JUST THIS GAS.                    SBKE3A.565   
+               CALL MONOCHROMATIC_GAS_FLUX(N_PROFILE, N_LAYER              SBKE3A.566   
+     &            , .FALSE.                                                SBKE3A.567   
+     &            , TAU_GAS                                                SBKE3A.568   
+     &            , ISOLIR, SEC_0, FLUX_INC_DIRECT, FLUX_INC_DOWN          SBKE3A.569   
+     &            , DIFF_PLANCK_BAND, SOURCE_GROUND                        SBKE3A.570   
+     &            , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR                SBKE3A.571   
+     &            , DIFFUSIVITY_FACTOR_MINOR                               SBKE3A.572   
+     &            , FLUX_DIRECT_PART, FLUX_TOTAL_PART                      SBKE3A.573   
+     &            , NPD_PROFILE, NPD_LAYER                                 SBKE3A.574   
+     &            )                                                        SBKE3A.575   
+!                                                                          SBKE3A.576   
+               DO I=1, 2*N_LAYER+2                                         SBKE3A.577   
+                  DO L=1, N_PROFILE                                        SBKE3A.578   
+                     SUM_K_FLUX(L, I, J)=SUM_K_FLUX(L, I, J)               SBKE3A.579   
+     &                  +K_ESFT(IEX, I_BAND, I_GAS_BAND)                   SBKE3A.580   
+     &                  *ESFT_WEIGHT*FLUX_TOTAL_PART(L, I)                 SBKE3A.581   
+                     SUM_FLUX(L, I, J)=SUM_FLUX(L, I, J)                   SBKE3A.582   
+     &                  +ESFT_WEIGHT*FLUX_TOTAL_PART(L, I)                 SBKE3A.583   
+                  ENDDO                                                    SBKE3A.584   
+               ENDDO                                                       SBKE3A.585   
+!                                                                          SBKE3A.586   
+            ENDDO                                                          SBKE3A.587   
+!                                                                          SBKE3A.588   
+         ENDDO                                                             SBKE3A.589   
+!                                                                          SBKE3A.590   
+!                                                                          ADB1F401.873   
+         DO I=1, N_LAYER                                                   ADB1F401.874   
+            DO L=1, N_PROFILE                                              ADB1F401.875   
+               K_EQV(L, I)=0.0E+00                                         ADB1F401.876   
+            ENDDO                                                          ADB1F401.877   
+         ENDDO                                                             ADB1F401.878   
+!                                                                          ADB1F401.879   
+         DO J=2, N_GAS                                                     ADB1F401.880   
+            DO I=1, N_LAYER                                                ADB1F401.881   
+               DO L=1, N_PROFILE                                           ADB1F401.882   
+                  MEAN_K_NET_FLUX=0.5E+00*(SUM_K_FLUX(L, 2*I, J)           ADB1F401.883   
+     &               +SUM_K_FLUX(L, 2*I+2, J)                              ADB1F401.884   
+     &               -SUM_K_FLUX(L, 2*I-1, J)                              ADB1F401.885   
+     &               -SUM_K_FLUX(L, 2*I+1, J))                             ADB1F401.886   
+                  MEAN_NET_FLUX=0.5E+00*(SUM_FLUX(L, 2*I, J)               ADB1F401.887   
+     &               +SUM_FLUX(L, 2*I+2, J)                                ADB1F401.888   
+     &               -SUM_FLUX(L, 2*I-1, J)                                ADB1F401.889   
+     &               -SUM_FLUX(L, 2*I+1, J))                               ADB1F401.890   
+!                 NEGATIVE EFFECTIVE EXTINCTIONS MUST BE REMOVED.          ADB1F401.891   
+                  K_WEAK=MAX(0.0E+00, MEAN_K_NET_FLUX/MEAN_NET_FLUX)       ADB1F401.892   
+                  K_EQV(L, I)=K_EQV(L, I)                                  ADB1F401.893   
+     &               +K_WEAK*GAS_FRAC_RESCALED(L, I                        ADB1F401.894   
+     &               , INDEX_ABSORB(J, I_BAND))                            ADB1F401.895   
+               ENDDO                                                       ADB1F401.896   
+            ENDDO                                                          ADB1F401.897   
+         ENDDO                                                             ADB1F401.898   
+                                                                           ADB1F401.899   
+      ENDIF                                                                SBKE3A.591   
+!                                                                          SBKE3A.592   
+!                                                                          SBKE3A.593   
+!     THE ESFT TERMS FOR THE MAJOR GAS IN THE BAND ARE USED WITH           SBKE3A.594   
+!     APPROPRIATE WEIGHTED TERMS FOR THE MINOR GASES.                      SBKE3A.595   
+      I_GAS_POINTER(1)=I_GAS                                               SBKE3A.596   
+      DO IEX=1, I_BAND_ESFT(I_BAND, I_GAS)                                 SBKE3A.597   
+!                                                                          SBKE3A.598   
+!        STORE THE ESFT WEIGHT FOR FUTURE USE.                             SBKE3A.599   
+         ESFT_WEIGHT=W_ESFT(IEX, I_BAND,  I_GAS)                           SBKE3A.600   
+!                                                                          SBKE3A.601   
+!        RESCALE FOR EACH ESFT TERM IF THAT IS REQUIRED.                   SBKE3A.602   
+         IF (I_SCALE_ESFT(I_BAND, I_GAS).EQ.IP_SCALE_TERM) THEN            SBKE3A.603   
+            CALL SCALE_ABSORB(IERR, N_PROFILE, N_LAYER                     SBKE3A.604   
+     &         , GAS_MIX_RATIO(1, 0, I_GAS), P, T                          SBKE3A.605   
+     &         , L_LAYER, I_TOP                                            SBKE3A.606   
+     &         , GAS_FRAC_RESCALED(1, 0, I_GAS)                            SBKE3A.607   
+     &         , I_SCALE_FNC(I_BAND, I_GAS)                                SBKE3A.608   
+     &         , P_REFERENCE(I_GAS, I_BAND)                                SBKE3A.609   
+     &         , T_REFERENCE(I_GAS, I_BAND)                                SBKE3A.610   
+     &         , SCALE_VECTOR(1, IEX, I_BAND, I_GAS)                       SBKE3A.611   
+     &         , L_DOPPLER(I_GAS), DOPPLER_CORRECTION(I_GAS)               SBKE3A.612   
+     &         , NPD_PROFILE, NPD_LAYER, NPD_SCALE_FNC                     SBKE3A.613   
+     &         , NPD_SCALE_VARIABLE                                        SBKE3A.614   
+     &         )                                                           SBKE3A.615   
+            IF (IERR.NE.I_NORMAL) RETURN                                   SBKE3A.616   
+         ENDIF                                                             SBKE3A.617   
+!                                                                          SBKE3A.618   
+!        SET THE APPROPRIATE BOUNDARY TERMS FOR THE TOTAL                  SBKE3A.619   
+!        UPWARD AND DOWNWARD FLUXES.                                       SBKE3A.620   
+!                                                                          SBKE3A.621   
+         IF (ISOLIR.EQ.IP_SOLAR) THEN                                      SBKE3A.622   
+!           VISIBLE REGION.                                                SBKE3A.623   
+            DO L=1, N_PROFILE                                              SBKE3A.624   
+               SOURCE_GROUND(L)=0.0E+00                                    SBKE3A.625   
+               FLUX_INC_DOWN(L)=SOLAR_FLUX(L)                              SBKE3A.626   
+               FLUX_INC_DIRECT(L)=SOLAR_FLUX(L)                            SBKE3A.627   
+            ENDDO                                                          SBKE3A.628   
+         ELSEIF (ISOLIR.EQ.IP_INFRA_RED) THEN                              SBKE3A.629   
+!           INFRA-RED REGION.                                              SBKE3A.630   
+            DO L=1, N_PROFILE                                              SBKE3A.631   
+               FLUX_INC_DIRECT(L)=0.0E+00                                  SBKE3A.632   
+               FLUX_DIRECT_PART(L, N_LAYER)=0.0E+00                        ADB1F401.900   
+               FLUX_INC_DOWN(L)=-PLANCK_SOURCE_BAND(L, 0)                  SBKE3A.633   
+               SOURCE_GROUND(L)=THERMAL_GROUND_BAND(L)                     SBKE3A.634   
+     &            -(1.0E+00-ALBEDO_SURFACE_DIFF(L))                        SBKE3A.635   
+     &            *PLANCK_SOURCE_BAND(L, N_LAYER)                          SBKE3A.636   
+            ENDDO                                                          SBKE3A.637   
+            IF (L_CLEAR) THEN                                              ADB1F401.901   
+               DO L=1, N_PROFILE                                           ADB1F401.902   
+                  FLUX_DIRECT_CLEAR_PART(L, N_LAYER)=0.0E+00               ADB1F401.903   
+               ENDDO                                                       ADB1F401.904   
+            ENDIF                                                          ADB1F401.905   
+         ENDIF                                                             SBKE3A.638   
+!                                                                          SBKE3A.639   
+!                                                                          SBKE3A.640   
+!        AUGMENT THE GREY EXTINCTION WITH AN EFFECTIVE VALUE               SBKE3A.641   
+!        FOR EACH GAS.                                                     SBKE3A.642   
+!                                                                          SBKE3A.643   
+         DO I=1, N_LAYER                                                   SBKE3A.644   
+            DO L=1, N_PROFILE                                              SBKE3A.645   
+               KE_GREY_TOT_FREE(L, I)=K_GREY_TOT_FREE(L, I)                SBKE3A.646   
+            ENDDO                                                          SBKE3A.647   
+         ENDDO                                                             SBKE3A.648   
+         IF (L_CLOUD) THEN                                                 SBKE3A.649   
+            DO K=1, N_CLOUD_TYPE                                           SBKE3A.650   
+               DO I=N_CLOUD_TOP, N_LAYER                                   SBKE3A.651   
+                  DO L=1, N_PROFILE                                        SBKE3A.652   
+                     KE_GREY_TOT_CLOUD(L, I, K)                            SBKE3A.653   
+     &                  =K_GREY_TOT_CLOUD(L, I, K)                         SBKE3A.654   
+                  ENDDO                                                    SBKE3A.655   
+               ENDDO                                                       SBKE3A.656   
+            ENDDO                                                          SBKE3A.657   
+         ENDIF                                                             SBKE3A.658   
+!                                                                          SBKE3A.659   
+!                                                                          SBKE3A.688   
+         DO I=1, N_LAYER                                                   SBKE3A.689   
+            DO L=1, N_PROFILE                                              SBKE3A.690   
+               KE_GREY_TOT_FREE(L, I)=KE_GREY_TOT_FREE(L, I)               SBKE3A.691   
+     &            +K_EQV(L, I)                                             SBKE3A.692   
+            ENDDO                                                          SBKE3A.693   
+         ENDDO                                                             SBKE3A.694   
+         IF (L_CLOUD) THEN                                                 SBKE3A.695   
+            DO K=1, N_CLOUD_TYPE                                           SBKE3A.696   
+               DO I=N_CLOUD_TOP, N_LAYER                                   SBKE3A.697   
+                  DO L=1, N_PROFILE                                        SBKE3A.698   
+                     KE_GREY_TOT_CLOUD(L, I, K)                            SBKE3A.699   
+     &                  =KE_GREY_TOT_CLOUD(L, I, K)+K_EQV(L, I)            SBKE3A.700   
+                  ENDDO                                                    SBKE3A.701   
+               ENDDO                                                       SBKE3A.702   
+            ENDDO                                                          SBKE3A.703   
+         ENDIF                                                             SBKE3A.704   
+!                                                                          SBKE3A.705   
+!        ASSIGN THE MONOCHROMATIC ABSORPTION COEFFICIENT.                  SBKE3A.706   
+         K_ESFT_MONO(I_GAS)=K_ESFT(IEX, I_BAND, I_GAS)                     SBKE3A.707   
+!                                                                          SBKE3A.708   
+         CALL GAS_OPTICAL_PROPERTIES(N_PROFILE, N_LAYER                    SBKE3A.709   
+     &      , 1, I_GAS_POINTER, K_ESFT_MONO                                SBKE3A.710   
+     &      , GAS_FRAC_RESCALED                                            SBKE3A.711   
+     &      , K_GAS_ABS                                                    SBKE3A.712   
+     &      , NPD_PROFILE, NPD_LAYER, NPD_SPECIES                          SBKE3A.713   
+     &      )                                                              SBKE3A.714   
+!                                                                          SBKE3A.715   
+!                                                                          SBKE3A.716   
+         CALL MONOCHROMATIC_FLUX(IERR                                      SBKE3A.717   
+!                       Atmospheric Properties                             SBKE3A.718   
+     &      , N_PROFILE, N_LAYER, D_MASS                                   SBKE3A.719   
+!                       Angular Integration                                SBKE3A.720   
+     &      , I_ANGULAR_INTEGRATION, I_2STREAM, L_2_STREAM_CORRECT         SBKE3A.721   
+     &      , L_RESCALE, N_ORDER_GAUSS                                     SBKE3A.722   
+!                       Treatment of Scattering                            SBKE3A.723   
+     &      , I_SCATTER_METHOD_BAND                                        SBKE3A.724   
+!                       Options for Solver                                 SBKE3A.725   
+     &      , I_SOLVER, L_NET, N_AUGMENT                                   ADB1F405.583   
+!                       Gaseous Propreties                                 SBKE3A.727   
+     &      , K_GAS_ABS                                                    SBKE3A.728   
+!                       Options for Equivalent Extinction                  SBKE3A.729   
+     &      , .TRUE., ADJUST_SOLAR_KE                                      SBKE3A.730   
+!                       Spectral Region                                    SBKE3A.731   
+     &      , ISOLIR                                                       SBKE3A.732   
+!                       Infra-red Properties                               SBKE3A.733   
+     &      , DIFF_PLANCK_BAND                                             SBKE3A.734   
+     &      , L_IR_SOURCE_QUAD, DIFF_PLANCK_BAND_2                         SBKE3A.735   
+!                       Conditions at TOA                                  SBKE3A.736   
+     &      , SEC_0, FLUX_INC_DIRECT, FLUX_INC_DOWN                        SBKE3A.737   
+!                       Surface Properties                                 SBKE3A.738   
+     &      , ALBEDO_SURFACE_DIFF, ALBEDO_SURFACE_DIR, SOURCE_GROUND       SBKE3A.739   
+     &      , THERMAL_GROUND_BAND                                          SBKE3A.740   
+!                       Clear-sky Optical Properties                       SBKE3A.741   
+     &      , KE_GREY_TOT_FREE, K_EXT_SCAT_FREE                            SBKE3A.742   
+     &      , ASYMMETRY_FREE, FORWARD_SCATTER_FREE                         SBKE3A.743   
+!                       Cloudy Properties                                  SBKE3A.744   
+     &      , L_CLOUD, I_CLOUD                                             SBKE3A.745   
+!                       Cloud Geometry                                     SBKE3A.746   
+     &      , N_CLOUD_TOP                                                  SBKE3A.747   
+     &      , N_CLOUD_TYPE, FRAC_CLOUD                                     SBKE3A.748   
+     &      , I_REGION_CLOUD, FRAC_REGION                                  ADB1F402.663   
+     &      , W_FREE, N_FREE_PROFILE, I_FREE_PROFILE                       SBKE3A.749   
+     &      , W_CLOUD, N_CLOUD_PROFILE, I_CLOUD_PROFILE                    SBKE3A.750   
+     &      , CLOUD_OVERLAP                                                SBKE3A.751   
+     &      , N_COLUMN, L_COLUMN, AREA_COLUMN                              SBKE3A.752   
+!                       Cloudy Optical Properties                          SBKE3A.753   
+     &      , KE_GREY_TOT_CLOUD, K_EXT_SCAT_CLOUD                          SBKE3A.754   
+     &      , ASYMMETRY_CLOUD, FORWARD_SCATTER_CLOUD                       SBKE3A.755   
+!                       Flxues Calculated                                  SBKE3A.756   
+     &      , FLUX_DIRECT_PART, FLUX_TOTAL_PART                            SBKE3A.757   
+!                       Flags for Clear-sky Calculations                   SBKE3A.758   
+     &      , L_CLEAR, I_SOLVER_CLEAR                                      SBKE3A.759   
+!                       Clear-sky Fluxes Calculated                        SBKE3A.760   
+     &      , FLUX_DIRECT_CLEAR_PART, FLUX_TOTAL_CLEAR_PART                SBKE3A.761   
+!                       Planckian Function                                 SBKE3A.762   
+     &      , PLANCK_SOURCE_BAND                                           SBKE3A.763   
+!                       Dimensions of Arrays                               SBKE3A.764   
+     &      , NPD_PROFILE, NPD_LAYER, NPD_COLUMN                           SBKE3A.765   
+     &      )                                                              SBKE3A.766   
+         IF (IERR.NE.I_NORMAL) RETURN                                      SBKE3A.767   
+!                                                                          SBKE3A.768   
+!        INCREMENT THE FLUXES WITHIN THE BAND.                             SBKE3A.769   
+         CALL AUGMENT_FLUX(N_PROFILE, N_LAYER, N_AUGMENT                   SBKE3A.770   
+     &      , ISOLIR, L_CLEAR                                              SBKE3A.771   
+     &      , ESFT_WEIGHT                                                  SBKE3A.772   
+     &      , FLUX_DIRECT_BAND, FLUX_TOTAL_BAND                            SBKE3A.773   
+     &      , FLUX_DIRECT_PART, FLUX_TOTAL_PART                            SBKE3A.774   
+     &      , FLUX_DIRECT_CLEAR_BAND, FLUX_TOTAL_CLEAR_BAND                SBKE3A.775   
+     &      , FLUX_DIRECT_CLEAR_PART, FLUX_TOTAL_CLEAR_PART                SBKE3A.776   
+     &      , NPD_PROFILE, NPD_LAYER                                       SBKE3A.777   
+     &      )                                                              SBKE3A.778   
+      ENDDO                                                                SBKE3A.779   
+!                                                                          SBKE3A.780   
+!                                                                          SBKE3A.781   
+      RETURN                                                               SBKE3A.782   
+      END                                                                  SBKE3A.783   
+*ENDIF DEF,A01_3A,OR,DEF,A02_3A                                            SBKE3A.784   
+*ENDIF DEF,A70_1A,OR,DEF,A70_1B                                            APB4F405.80    

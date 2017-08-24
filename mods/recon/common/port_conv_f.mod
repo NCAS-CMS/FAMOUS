@@ -1,0 +1,399 @@
+*ID PORTCONVF
+*/--------------------------------------------------------
+*/
+*/ Backport vn5.5 mod gqz3505 and vn6.0 mod gqz1600 to vn4.5
+*/ Original author frqz (Paul Dando)
+*/
+*/ Jeff Cole 14/11/03
+*/
+*/ Provides portable data conversion routines to replace
+*/ the Cray-specific routines on non-Cray platforms
+*/--------------------------------------------------------
+*/
+*/-----
+*DECLARE COEX1A
+*/-----
+*D UIE2F403.4
+*IF DEF,CRAY
+      INTEGER :: CRI2IBM
+      INTEGER :: IBM2CRI
+*ELSE
+      INTEGER :: IEEE2IBM
+      INTEGER :: IBM2IEEE
+*ENDIF
+*I UIE2F403.3
+!LL   5.5  28/02/03 Insert code for portable data conversion routines
+!LL                 to replace Cray-specific CRI2IBM etc.     P.Dando
+!     6.0  10/09/03 Conversion of portable data conversion routines
+!                   (IEEE2IBM etc) into functions with error return
+!                   codes matching those of CRAY routines.   P.Dando
+!LL
+*I COEX1A.67
+*IF DEF,CRAY
+*I UIE2F403.7
+*ELSE
+          IER=IEEE2IBM(2,1,ICOMP(1),32,ISC,1,64,32)
+          IER=IEEE2IBM(2,1,ICOMP(2),0,IX,1,64,16)
+          IER=IEEE2IBM(2,1,ICOMP(2),16,IY,1,64,16)
+*ENDIF
+*I COEX1A.100
+*IF DEF,CRAY
+*I UIE2F403.10
+*ELSE
+          IER=IBM2IEEE(2,1,ICOMP(1),32,ISC,1,64,32)
+          IER=IBM2IEEE(2,1,ICOMP(2),0,IX,1,64,16)
+          IER=IBM2IEEE(2,1,ICOMP(2),16,IY,1,64,16)
+*ENDIF
+*D UIE2F403.11
+*IF DEF,CRAY
+      INTEGER :: CRI2IBM
+      INTEGER :: IBM2CRI
+*ELSE
+      INTEGER :: IEEE2IBM
+      INTEGER :: IBM2IEEE
+*ENDIF
+*I COEX1A.199
+*IF DEF,CRAY
+*I UIE2F403.14
+*ELSE
+              IERR1(JJ)=IEEE2IBM(3,1, JCOMP(1,JJ),0, BASE(JJ),1,64,32)
+              IERR2(JJ)=IEEE2IBM(2,1,JCOMP(1,JJ),32,IBIT(JJ),1,64,16)
+              IERR3(JJ)=IEEE2IBM(2,1,JCOMP(1,JJ),48,NOP(JJ),1,64,16)
+*ENDIF
+*I COEX1A.246
+*IF DEF,CRAY
+*I COEX1A.247
+*ELSE
+              CALL MOVEBYTES(JCOMP(1,JJ),1,NOB,ICOMP(ICX),IST)
+*ENDIF
+*I COEX1A.252
+*IF DEF,CRAY
+*I UIE2F403.15
+*ELSE
+          IER2=IEEE2IBM(2,1,ICOMP(1),0,NUM,1,64,32)
+*ENDIF
+*I COEX1A.273
+*IF DEF,CRAY
+*I UIE2F403.18
+*ELSE
+                  IERR=IBM2IEEE(3,1,ICOMP(ICX),32,BASE(JJ),1,64,32)
+                  IERR=IBM2IEEE(2,1,ICOMP(ICX+1),0,IBIT(JJ),1,64,16)
+                  IERR=IBM2IEEE(2,1,ICOMP(ICX+1),16,NOP(JJ),1,64,16)
+*ENDIF
+*I COEX1A.280
+*IF DEF,CRAY
+*I UIE2F403.21
+*ELSE
+                  IERR=IBM2IEEE(3,1,ICOMP(ICX),0,BASE(JJ),1,64,32)
+                  IERR=IBM2IEEE(2,1,ICOMP(ICX),32,IBIT(JJ),1,64,16)
+                  IERR=IBM2IEEE(2,1,ICOMP(ICX),48,NOP(JJ),1,64,16)
+*ENDIF
+*I COEX1A.306
+*IF DEF,CRAY
+*I COEX1A.307
+*ELSE
+              CALL MOVEBYTES(ICOMP(ICX),IST,NOB,JCOMP(1,JJ),1)
+*ENDIF
+*I COEX1A.815
+*IF DEF,CRAY
+*I COEX1A.816
+*ELSE
+          CALL MOVEBITS(INUM,1,1,ICOMP(1),ISCOMP)
+*ENDIF
+*I COEX1A.824
+*IF DEF,CRAY
+*I COEX1A.825
+*ELSE
+      CALL MOVEBITS(INUM,ISNUM,NUM,ICOMP(1),ISCOMP)
+*ENDIF
+*I COEX1A.873
+*IF DEF,CRAY
+*I COEX1A.874
+*ELSE
+          CALL MOVEBITS(ICOMP,ISCOMP,NUM,INUM,ISNUM)
+*ENDIF
+*I COEX1A.880
+*IF DEF,CRAY
+*I COEX1A.881
+*ELSE
+          CALL MOVEBITS(ICOMP,ISCOMP,1,INUM,1)
+*ENDIF
+*I COEX1A.885
+*IF DEF,CRAY
+*I COEX1A.886
+*ELSE
+          CALL MOVEBITS(ICOMP,ISCOMP,NUM,INUM,ISNUM)
+*ENDIF
+*I COEX1A.901
+*IF DEF,CRAY
+*I COEX1A.902
+*ELSE
+          CALL MOVEBITS(ICOMP,ISCOMP,NUM,INUM,ISNUM)
+*ENDIF
+*I GBCQF405.111
+*IF DEF,CRAY
+*I GBCQF405.112
+*ELSE
+      INTEGER IEEE2IBM
+*ENDIF
+*I GBCQF405.123
+*IF DEF,CRAY
+*I GBCQF405.126
+*ELSE
+      IERR=IEEE2IBM(2,1,ICOMP(1,1),32,ISC,1,64,32)
+      IERR=IEEE2IBM(2,1,ICOMP(2,1),0,IX,1,64,16)
+      IERR=IEEE2IBM(2,1,ICOMP(2,1),16,IY,1,64,16)
+*ENDIF
+*I GBCQF405.281
+*IF DEF,CRAY
+*I GBCQF405.282
+*ELSE
+      INTEGER IEEE2IBM
+*ENDIF
+*I GBCQF405.362
+*IF DEF,CRAY
+*D GBCQF405.365
+            IERR=CRI2IBM(2,1,JCOMP_PROC(1,JJ),48,NOP_PROC(JJ),1,64,16)
+*ELSE
+            IERR=IEEE2IBM(3,1,JCOMP_PROC(1,JJ),0, BASE_PROC,1,64,32)
+            IERR=IEEE2IBM(2,1,JCOMP_PROC(1,JJ),32,IBIT_PROC,1,64,16)
+            IERR=IEEE2IBM(2,1,JCOMP_PROC(1,JJ),48,NOP_PROC(JJ),
+     &                       1,64,16)
+            IERR=0
+*ENDIF
+*I GBCQF405.437
+*IF DEF,CRAY
+*I GBCQF405.438
+*ELSE
+            CALL MOVEBYTES(JCOMP(1,JJ,K),1,NOB,ICOMP(ICX,K),IST)
+*ENDIF
+
+*I GBCQF405.444
+*IF DEF,CRAY
+*I GBCQF405.445
+*ELSE
+          IERR=IEEE2IBM(2,1,ICOMP(1,K),0,NUM,1,64,32)
+*ENDIF
+*/-----
+*DECLARE FIELDCOS
+*/-----
+*B FIELDCOS.21
+!LL  5.5  28/02/03  Insert code for portable data conversion routines
+!LL                 to replace Cray-specific CRI2IBM etc.     P.Dando
+!    6.0  10/09/03  Conversion of portable data conversion routines
+!                   (IEEE2IBM etc) into functions with error return
+!                   codes matching those of CRAY routines.    P.Dando
+*D UIE1F402.1,UIE1F402.2
+      EXTERNAL READFF,INT_FROM_REAL,TIME2SEC,SEC2TIME
+*IF DEF,CRAY
+      EXTERNAL CRI2IBM
+      INTEGER CRI2IBM
+*ELSE
+      INTEGER IEEE2IBM
+*ENDIF
+      INTEGER INT_FROM_REAL
+*I PS050793.211
+*IF DEF,CRAY
+*I UIE1F402.4
+*ELSE
+      IER = IEEE2IBM(2,LEN_ILABEL,IBM_LABEL(IBM_ADDR),BIT_OFF,
+     &               ILABEL,1,64,32)
+*ENDIF
+*I PS050793.216
+*IF DEF,CRAY
+*I UIE1F402.6
+*ELSE
+      IER = IEEE2IBM(3,LEN_RLABEL,IBM_LABEL(IBM_ADDR),BIT_OFF,
+     &               RLABEL,1,64,32)
+*ENDIF
+*I URR2F405.11
+*IF DEF,CRAY
+*I UIE1F402.10
+*ELSE
+            IER = IEEE2IBM(3,NUM_VALUES-IEXTRAW,IBM_FIELD,
+     &                  BIT_OFF,FIELD,1,64,32)
+*ENDIF
+*I PS050793.220
+*IF DEF,CRAY
+*I UIE1F402.12
+*ELSE
+          IER = IEEE2IBM(2,NUM_VALUES-IEXTRAW,IBM_FIELD,
+     &               BIT_OFF,FIELD,1,64,32)
+*ENDIF
+*I PS050793.221
+*IF DEF,CRAY
+*I UIE1F402.14
+*ELSE
+          IER = IEEE2IBM(5,NUM_VALUES-IEXTRAW,IBM_FIELD,
+     &               BIT_OFF,FIELD,1,64,32)
+*ENDIF
+*I FIELDCOS.560
+*IF DEF,CRAY
+*I UIE1F402.16
+*ELSE
+          IER=IEEE2IBM(2,1,IBM_FIELD(IBM_ADDR),BIT_OFF,
+     &             FIELD(ADDR),1,64,32)
+*ENDIF
+*I FIELDCOS.577
+*IF DEF,CRAY
+*I UIE1F402.18
+*ELSE
+          IER=IEEE2IBM(3,DATA_VALUES,IBM_FIELD(IBM_ADDR),
+     &      BIT_OFF,FIELD(ADDR),1,64,32)
+*ENDIF
+*I PS050793.229
+*IF DEF,CRAY
+*I UIE1F402.20
+*ELSE
+        IER = IEEE2IBM(2,LEN_ILABEL,IBM_LABEL(IBM_ADDR),
+     &               BIT_OFF,ILABEL,1,64,32)
+*ENDIF
+*I PS050793.239
+*IF DEF,CRAY
+*I UIE1F402.22
+*ELSE
+        IER = IEEE2IBM(3,LEN_RLABEL,IBM_LABEL(IBM_ADDR),
+     &               BIT_OFF,RLABEL,1,64,32)
+*ENDIF
+*D UIE1F402.39,UIE1F402.40
+      EXTERNAL READFF,INT_FROM_REAL,TIME2SEC,SEC2TIME
+*IF DEF,CRAY
+      EXTERNAL CRI2IEG
+      INTEGER CRI2IEG
+*ELSE
+      INTEGER IEEE2IEG
+*ENDIF
+      INTEGER INT_FROM_REAL
+*I PS050793.439
+*IF DEF,CRAY
+*I UIE1F402.42
+*ELSE
+      IER=IEEE2IEG(2,LEN_ILABEL,IEEE_LABEL(IEEE_ADDR),
+     &           BIT_OFF,ILABEL,1,64,32)
+*ENDIF
+*I PS050793.444
+*IF DEF,CRAY
+*I UIE1F402.44
+*ELSE
+      IER=IEEE2IEG(3,LEN_RLABEL,IEEE_LABEL(IEEE_ADDR),
+     &           BIT_OFF,RLABEL,1,64,32)
+*ENDIF
+*I GIE0F403.192
+*IF DEF,CRAY
+*I UIE1F402.46
+*ELSE
+          IER = IEEE2IEG(5,NUM_VALUES-IEXTRAW,IEEE_FIELD,
+     &             BIT_OFF,FIELD,1,64,32)
+*ENDIF
+*I APS2F304.33
+*IF DEF,CRAY
+*I UIE1F402.48
+*ELSE
+          IER = IEEE2IEG(3,NUM_VALUES-IEXTRAW,IEEE_FIELD
+     &             ,BIT_OFF,FIELD,1,64,32)
+*ENDIF
+*I FIELDCOS.1266
+*IF DEF,CRAY
+*I UIE1F402.50
+*ELSE
+          IER = IEEE2IEG(2,NUM_VALUES-IEXTRAW,IEEE_FIELD,
+     &             BIT_OFF,FIELD,1,64,32)
+*ENDIF
+*I FIELDCOS.1273
+*IF DEF,CRAY
+*I UIE1F402.52
+*ELSE
+          IER = IEEE2IEG(5,NUM_VALUES-IEXTRAW,IEEE_FIELD,
+     &             BIT_OFF,FIELD,1,64,32)
+*ENDIF
+*I FIELDCOS.1306
+*IF DEF,CRAY
+*I UIE1F402.54
+*ELSE
+          IER = IEEE2IEG(2,1,IEEE_FIELD(IEEE_ADDR),BIT_OFF,
+     &             FIELD(ADDR),1,64,32)
+*ENDIF
+*I FIELDCOS.1323
+*IF DEF,CRAY
+*I UIE1F402.56
+*ELSE
+          IER=IEEE2IEG(3,DATA_VALUES,IEEE_FIELD(IEEE_ADDR),
+     &     BIT_OFF,FIELD(ADDR),1,64,32)
+*ENDIF
+*I PS050793.454
+*IF DEF,CRAY
+*I UIE1F402.58
+*ELSE
+        IER=IEEE2IEG(2,LEN_ILABEL,IEEE_LABEL(IEEE_ADDR),
+     &           BIT_OFF,ILABEL,1,64,32)
+*ENDIF
+*I PS050793.462
+*IF DEF,CRAY
+*I UIE1F402.60
+*ELSE
+        IER=IEEE2IEG(3,LEN_RLABEL,IEEE_LABEL(IEEE_ADDR),
+     &           BIT_OFF,RLABEL,1,64,32)
+*ENDIF
+*/-----
+*DECLARE PPTOANC1
+*/-----
+*B PPTOANC1.143
+!   5.5   28/02/03 Insert code for portable data conversion routines
+!                  to replace Cray-specific CRI2IBM etc.     P.Dando
+!   6.0   10/09/03 Conversion of portable data conversion routines
+!                  (IEEE2IBM etc) into functions with error return
+!                  codes matching those of CRAY routines.    P.Dando
+*I PPTOANC1.2341
+*IF DEF,CRAY
+*I PPTOANC1.2343
+*ELSE
+      integer ibm2ieee
+*ENDIF
+*I PPTOANC1.2367
+*IF DEF,CRAY
+*I PPTOANC1.2368
+*ELSE
+        ierr=ibm2ieee(3,rows*columns,levels_in,0,levels_array,
+     &                   1,64,32)
+*ENDIF
+*I PPTOANC1.2606
+*IF DEF,CRAY
+*I PPTOANC1.2607
+*ELSE
+      integer ibm2ieee
+*ENDIF
+*I PPTOANC1.2644
+*IF DEF,CRAY
+*I PPTOANC1.2645
+*ELSE
+        ierr=ibm2ieee(3,rows*columns,levels_in,0,levels_array,
+     &                   1,64,32)
+*ENDIF
+*I PPTOANC1.2854
+*IF DEF,CRAY
+*I PPTOANC1.2855
+*ELSE
+      INTEGER IBM2IEEE
+*ENDIF
+*I PPTOANC1.2865
+*IF DEF,CRAY
+*I PPTOANC1.2866
+*ELSE
+        ierr=ibm2ieee(3,rows*columns,datain,0,data_field,1,64,32)
+*ENDIF
+*I PPTOANC1.3385
+*IF DEF,CRAY
+*I PPTOANC1.3386
+*ELSE
+      integer ibm2ieee
+*ENDIF
+*I PPTOANC1.3394
+*IF DEF,CRAY
+*I PPTOANC1.3399
+*ELSE
+C Convert Integer part of header (Words 1-45)
+        ier = ibm2ieee(2,45,pp_buffer,0,pp_int,1,64,32)
+
+C Convert Real part of header (Words 46-64)
+        ier = ibm2ieee(3,19,pp_buffer(23),32,pp_real,1,64,32)
+*ENDIF

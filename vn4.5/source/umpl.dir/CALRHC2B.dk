@@ -1,0 +1,469 @@
+*IF DEF,A09_2B                                                             CALRHC2B.2     
+C ******************************COPYRIGHT******************************    CALRHC2B.3     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    CALRHC2B.4     
+C                                                                          CALRHC2B.5     
+C Use, duplication or disclosure of this code is subject to the            CALRHC2B.6     
+C restrictions as set forth in the contract.                               CALRHC2B.7     
+C                                                                          CALRHC2B.8     
+C                Meteorological Office                                     CALRHC2B.9     
+C                London Road                                               CALRHC2B.10    
+C                BRACKNELL                                                 CALRHC2B.11    
+C                Berkshire UK                                              CALRHC2B.12    
+C                RG12 2SZ                                                  CALRHC2B.13    
+C                                                                          CALRHC2B.14    
+C If no contract has been raised with this copy of the code, the use,      CALRHC2B.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      CALRHC2B.16    
+C to do so must first be obtained in writing from the Head of Numerical    CALRHC2B.17    
+C Modelling at the above address.                                          CALRHC2B.18    
+C ******************************COPYRIGHT******************************    CALRHC2B.19    
+C                                                                          CALRHC2B.20    
+!                                                                          CALRHC2B.21    
+      SUBROUTINE RHCRIT_CALC(AK,BK,AKH,BKH,PSTAR,RHCPT,LEVELS,             CALRHC2B.22    
+     &      POINTS,PFIELD,T,Q,QCF,ROW_LENGTH,LAND,ICE_FRAC,BL_LEVELS)      CALRHC2B.23    
+!                                                                          CALRHC2B.24    
+      IMPLICIT NONE                                                        CALRHC2B.25    
+!                                                                          CALRHC2B.26    
+!                                                                          CALRHC2B.27    
+!     Purpose: To calculate the critical relative humidity in every        CALRHC2B.28    
+!              grid-box.                                                   CALRHC2B.29    
+!                                                                          CALRHC2B.30    
+!     Method : The critical relative humidity of a certain grid-box is     CALRHC2B.31    
+!            determined from the variance in a 3*3 set of boxes centred    CALRHC2B.32    
+!            on it. A fit, dependent on pressure, relates the variance     CALRHC2B.33    
+!            of the 3*3 region to the variance within the one grid-box.    CALRHC2B.34    
+!            This variance is converted to a critical relative humidity    CALRHC2B.35    
+!            in a straightforward fashion.                                 CALRHC2B.36    
+!            Some points in the 3*3 region may be excluded from the        CALRHC2B.37    
+!            variance calculation in the BL layers, if their               CALRHC2B.38    
+!            surfaces do not 'match'. The criterion for matching is that   CALRHC2B.39    
+!            land and sea-ice match, but that open ocean does not match    CALRHC2B.40    
+!            with either of these.                                         CALRHC2B.41    
+!            In all layers, points in the 3*3 region which lie outside 3   CALRHC2B.42    
+!            std devs of the mean are excluded in a second iteration of    CALRHC2B.43    
+!            the main calculation.                                         CALRHC2B.44    
+!            Notice that RHc is not the same at all points on the polar    CALRHC2B.45    
+!            row, which gives different values of T, q and qcl at the      CALRHC2B.46    
+!            polar row. However, these polar values are never used by      CALRHC2B.47    
+!            the physics, so this polar discrepancy does not affect        CALRHC2B.48    
+!            model evolution.                                              CALRHC2B.49    
+!                                                                          CALRHC2B.50    
+!     Compatible with version 2B of LS_CLD                                 CALRHC2B.51    
+!                                                                          CALRHC2B.52    
+!                                                                          CALRHC2B.53    
+! Current Owner of Code: S. Cusack                                         CALRHC2B.54    
+!                                                                          CALRHC2B.55    
+! History:                                                                 CALRHC2B.56    
+! Version   Date     Comment                                               CALRHC2B.57    
+!  4.5    15/09/98   Original Code     S. Cusack                           CALRHC2B.58    
+!                                                                          CALRHC2B.59    
+! Description of Code:                                                     CALRHC2B.60    
+!   FORTRAN 77  + common extensions also in Fortran90.                     CALRHC2B.61    
+!   This code is written to UMDP3 version 6 programming standards.         CALRHC2B.62    
+!                                                                          CALRHC2B.63    
+!   System component covered: P292                                         CALRHC2B.64    
+!                                                                          CALRHC2B.65    
+!   Documentation:                                                         CALRHC2B.66    
+!                                                                          CALRHC2B.67    
+!  Global Variables:----------------------------------------------------   CALRHC2B.68    
+!                                                                          CALRHC2B.69    
+*CALL C_R_CP                                                               CALRHC2B.70    
+*CALL C_EPSLON                                                             CALRHC2B.71    
+*CALL C_LHEAT                                                              CALRHC2B.72    
+*CALL C_0_DG_C                                                             CALRHC2B.73    
+!                                                                          CALRHC2B.74    
+!  Subroutine arguments                                                    CALRHC2B.75    
+!-----------------------------------------------------------------------   CALRHC2B.76    
+! IN variables                                                             CALRHC2B.77    
+!-----------------------------------------------------------------------   CALRHC2B.78    
+      INTEGER LEVELS           ! No. of levels being processed.            CALRHC2B.79    
+!                                                                          CALRHC2B.80    
+      INTEGER BL_LEVELS        ! No. of BL levels being processed.         CALRHC2B.81    
+!                                                                          CALRHC2B.82    
+      INTEGER POINTS           ! No. of gridpoints being processed.        CALRHC2B.83    
+!                                                                          CALRHC2B.84    
+      INTEGER PFIELD           ! No. of points in global field (at one     CALRHC2B.85    
+!                                vertical level).                          CALRHC2B.86    
+      INTEGER ROW_LENGTH                                                   CALRHC2B.87    
+!                                                                          CALRHC2B.88    
+      REAL PSTAR(PFIELD)       ! Surface pressure (Pa).                    CALRHC2B.89    
+      REAL ICE_FRAC(PFIELD)    ! Ice fraction.                             CALRHC2B.90    
+!                                                                          CALRHC2B.91    
+      REAL AK(LEVELS)          ! Hybrid "A" co-ordinate.                   CALRHC2B.92    
+      REAL BK(LEVELS)          ! Hybrid "B" co-ordinate.                   CALRHC2B.93    
+      REAL AKH(LEVELS+1)       ! Hybrid "A" co-ordinate.                   CALRHC2B.94    
+      REAL BKH(LEVELS+1)       ! Hybrid "B" co-ordinate.                   CALRHC2B.95    
+      REAL Q(PFIELD,LEVELS)    ! Total water content (Q+QCL,kg per kg)     CALRHC2B.96    
+      REAL QCF(PFIELD,LEVELS)  ! Ice water content (kg per kg air)         CALRHC2B.97    
+      REAL T(PFIELD,LEVELS)    ! Liquid/frozen water temperature (TL,K)    CALRHC2B.98    
+      LOGICAL LAND(PFIELD)     ! The model land mask                       CALRHC2B.99    
+!-----------------------------------------------------------------------   CALRHC2B.100   
+! OUT variables                                                            CALRHC2B.101   
+!-----------------------------------------------------------------------   CALRHC2B.102   
+      REAL RHCPT(PFIELD,LEVELS)  ! Critical relative humidity at every     CALRHC2B.103   
+!                                  grid cell.                              CALRHC2B.104   
+!                                                                          CALRHC2B.105   
+!  Local Parameters                                                        CALRHC2B.106   
+!                                                                          CALRHC2B.107   
+*CALL RHCCON2B                                                             CALRHC2B.108   
+!                                                                          CALRHC2B.109   
+      REAL INV9, LS, LSRCP, ERCPR                                          CALRHC2B.110   
+      PARAMETER ( INV9 = 1./9.                                             CALRHC2B.111   
+     &          , LS = LC+LF                                               CALRHC2B.112   
+     &          , LSRCP = (LC+LF)/CP                                       CALRHC2B.113   
+     &          , ERCPR = EPSILON/(CP*R))                                  CALRHC2B.114   
+!                                                                          CALRHC2B.115   
+!  Local Variables                                                         CALRHC2B.116   
+!                                                                          CALRHC2B.117   
+      REAL                                                                 CALRHC2B.118   
+     &    MEAN_SUPSAT       ! MEAN RH OF 3*3 REGION                        CALRHC2B.119   
+     &   ,P_LEV(POINTS,LEVELS)! Pressure at model levels                   CALRHC2B.120   
+     &   ,TL(POINTS,LEVELS) ! Conserved temperature (P292.1, UMDP29)       CALRHC2B.121   
+     &   ,QT(POINTS,LEVELS) ! Conserved WATER(P292.2, UMDP29)              CALRHC2B.122   
+     & ,  TOT_VAR           ! TOTAL VARIANCE OF 3*3 REGION                 CALRHC2B.123   
+     & ,  QST(POINTS)       ! SATURATION VAPOUR PRESSURE IN GRID-BOX       CALRHC2B.124   
+     & ,  SUPSAT(POINTS,LEVELS)! 'RELATIVE HUMIDITY' OF GRID-BOX           CALRHC2B.125   
+     & ,  SUPSAT_SD_1       ! STANDARD DEVIATION OF 'R.H.' IN GRID-BOX     CALRHC2B.126   
+     & ,  SUPSAT_SD_3       ! RESOLVED STD DEV OF 'R.H.' IN 3*3 REGION     CALRHC2B.127   
+     & ,  P_GRAD(POINTS,LEVELS)! CONSTANT WHICH RELATES RH_SD_3 TO         CALRHC2B.128   
+!                                 RH_SD_1                                  CALRHC2B.129   
+     & ,  ROOT_6            ! =sqrt(6.)                                    CALRHC2B.130   
+     & ,  LATHT             ! =Lc if T>Tm, ELSE = Lc+Lf                    CALRHC2B.131   
+     & ,  AL(POINTS)        ! Variable defined in P292.6 in UMDP 29        CALRHC2B.132   
+     & ,  SURF_MULT(POINTS,8)! A multiplier to take into account           CALRHC2B.133   
+!                              surface matching.                           CALRHC2B.134   
+     & ,  THREE_SIGMA       ! Three times sigma                            CALRHC2B.135   
+     & ,  SUPSAT1           ! Temporary variable                           CALRHC2B.136   
+     & ,  SUPSAT2           ! Temporary variable                           CALRHC2B.137   
+     & ,  SUPSAT3           ! Temporary variable                           CALRHC2B.138   
+     & ,  SUPSAT4           ! Temporary variable                           CALRHC2B.139   
+     & ,  SUPSAT5           ! Temporary variable                           CALRHC2B.140   
+     & ,  SUPSAT6           ! Temporary variable                           CALRHC2B.141   
+     & ,  SUPSAT7           ! Temporary variable                           CALRHC2B.142   
+     & ,  SUPSAT8           ! Temporary variable                           CALRHC2B.143   
+!                                                                          CALRHC2B.144   
+      INTEGER                                                              CALRHC2B.145   
+     &    I, K, J           ! Simple loop variables                        CALRHC2B.146   
+     & ,  ICOUNT(POINTS)    ! Counter of points                            CALRHC2B.147   
+     & ,  COUNT             ! Counter of points                            CALRHC2B.148   
+     & ,  RL, RLM1, RLP1    !                                              CALRHC2B.149   
+!                                                                          CALRHC2B.150   
+      LOGICAL                                                              CALRHC2B.151   
+     &    OCEAN(POINTS)     ! Those points which are not land, and have    CALRHC2B.152   
+!                             a sea-ice fraction less than 0.25.           CALRHC2B.153   
+!                                                                          CALRHC2B.154   
+!  External subroutine calls: ------------------------------------------   CALRHC2B.155   
+      EXTERNAL QSAT                                                        CALRHC2B.156   
+!- End of Header                                                           CALRHC2B.157   
+!                                                                          CALRHC2B.158   
+!                                                                          CALRHC2B.159   
+      ROOT_6=SQRT(6.)                                                      CALRHC2B.160   
+      RL=ROW_LENGTH                                                        CALRHC2B.161   
+      RLP1=ROW_LENGTH+1                                                    CALRHC2B.162   
+      RLM1=ROW_LENGTH-1                                                    CALRHC2B.163   
+!                                                                          CALRHC2B.164   
+      DO K=1,LEVELS                                                        CALRHC2B.165   
+        DO I=1,POINTS                                                      CALRHC2B.166   
+          P_LEV(I,K)=AK(K)+PSTAR(I)*BK(K)                                  CALRHC2B.167   
+          P_GRAD(I,K)=RHC_CON1+RHC_CON2*(P_LEV(I,K)-RHC_CON4)/             CALRHC2B.168   
+     &                             (RHC_CON3+ABS(P_LEV(I,K)-RHC_CON4))     CALRHC2B.169   
+! Calculate Tl and QT as in P292.1, P292.2 in UMDP 29.                     CALRHC2B.170   
+! (Assumes version 3A onwards of Section 4)                                CALRHC2B.171   
+          TL(I,K)=T(I,K)-LSRCP*QCF(I,K)                                    CALRHC2B.172   
+          QT(I,K)=Q(I,K)+QCF(I,K)                                          CALRHC2B.173   
+        ENDDO                                                              CALRHC2B.174   
+      ENDDO                                                                CALRHC2B.175   
+!                                                                          CALRHC2B.176   
+! Ocean points defined now as not land and where ice fraction LT 0.25      CALRHC2B.177   
+      DO I=1,POINTS                                                        CALRHC2B.178   
+        OCEAN(I)=(.NOT.LAND(I)).AND.(ICE_FRAC(I).LT.2.5E-1)                CALRHC2B.179   
+      ENDDO                                                                CALRHC2B.180   
+!                                                                          CALRHC2B.181   
+! A real no. is now assigned to every neighbouring point of every point    CALRHC2B.182   
+! on the grid, if their surfaces match it has the value one, else it is    CALRHC2B.183   
+! zero.                                                                    CALRHC2B.184   
+      DO J=1,8                                                             CALRHC2B.185   
+        DO I=(ROW_LENGTH+2),(POINTS-ROW_LENGTH)                            CALRHC2B.186   
+          SURF_MULT(I,J)=0.                                                CALRHC2B.187   
+        ENDDO                                                              CALRHC2B.188   
+      ENDDO                                                                CALRHC2B.189   
+      DO I=(ROW_LENGTH+2),(POINTS-ROW_LENGTH)                              CALRHC2B.190   
+        ICOUNT(I)=1                                                        CALRHC2B.191   
+        IF ((OCEAN(I).AND.OCEAN(I-RLP1)).OR.                               CALRHC2B.192   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I-RLP1))) THEN          CALRHC2B.193   
+          SURF_MULT(I,1)=1.                                                CALRHC2B.194   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.195   
+        ENDIF                                                              CALRHC2B.196   
+        IF ((OCEAN(I).AND.OCEAN(I-RL)).OR.                                 CALRHC2B.197   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I-RL))) THEN            CALRHC2B.198   
+          SURF_MULT(I,2)=1.                                                CALRHC2B.199   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.200   
+        ENDIF                                                              CALRHC2B.201   
+        IF ((OCEAN(I).AND.OCEAN(I-RLM1)).OR.                               CALRHC2B.202   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I-RLM1))) THEN          CALRHC2B.203   
+          SURF_MULT(I,3)=1.                                                CALRHC2B.204   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.205   
+        ENDIF                                                              CALRHC2B.206   
+        IF ((OCEAN(I).AND.OCEAN(I-1)).OR.                                  CALRHC2B.207   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I-1))) THEN             CALRHC2B.208   
+          SURF_MULT(I,4)=1.                                                CALRHC2B.209   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.210   
+        ENDIF                                                              CALRHC2B.211   
+        IF ((OCEAN(I).AND.OCEAN(I+1)).OR.                                  CALRHC2B.212   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I+1))) THEN             CALRHC2B.213   
+          SURF_MULT(I,5)=1.                                                CALRHC2B.214   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.215   
+        ENDIF                                                              CALRHC2B.216   
+        IF ((OCEAN(I).AND.OCEAN(I+RLM1)).OR.                               CALRHC2B.217   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I+RLM1))) THEN          CALRHC2B.218   
+          SURF_MULT(I,6)=1.                                                CALRHC2B.219   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.220   
+        ENDIF                                                              CALRHC2B.221   
+        IF ((OCEAN(I).AND.OCEAN(I+RL)).OR.                                 CALRHC2B.222   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I+RL))) THEN            CALRHC2B.223   
+          SURF_MULT(I,7)=1.                                                CALRHC2B.224   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.225   
+        ENDIF                                                              CALRHC2B.226   
+        IF ((OCEAN(I).AND.OCEAN(I+RLP1)).OR.                               CALRHC2B.227   
+     &               (.NOT.OCEAN(I).AND..NOT.OCEAN(I+RLP1))) THEN          CALRHC2B.228   
+          SURF_MULT(I,8)=1.                                                CALRHC2B.229   
+          ICOUNT(I)=ICOUNT(I)+1                                            CALRHC2B.230   
+        ENDIF                                                              CALRHC2B.231   
+      ENDDO                                                                CALRHC2B.232   
+!                                                                          CALRHC2B.233   
+! An initial sweep is done for all grid-cells, obtaining an initial        CALRHC2B.234   
+! estimate of the variance of the 3*3 grid.                                CALRHC2B.235   
+!                                                                          CALRHC2B.236   
+      DO K=1,BL_LEVELS                                                     CALRHC2B.237   
+        CALL QSAT(QST,TL(1,K),P_LEV(1,K),POINTS)                           CALRHC2B.238   
+        DO I=1,POINTS                                                      CALRHC2B.239   
+          IF (TL(I,K).GT.TM) THEN                                          CALRHC2B.240   
+            LATHT=LC/TL(I,K)                                               CALRHC2B.241   
+          ELSE                                                             CALRHC2B.242   
+            LATHT=LS/TL(I,K)                                               CALRHC2B.243   
+          ENDIF                                                            CALRHC2B.244   
+          AL(I)=1./(1.+LATHT*LATHT*ERCPR*QST(I))                           CALRHC2B.245   
+! SUPSAT given by P292.3 of UMDP 29.                                       CALRHC2B.246   
+          SUPSAT(I,K)=AL(I)*(QT(I,K)-QST(I))                               CALRHC2B.247   
+        ENDDO                                                              CALRHC2B.248   
+        DO I=(ROW_LENGTH+2),(POINTS-ROW_LENGTH-1)                          CALRHC2B.249   
+          SUPSAT1=SURF_MULT(I,1)*SUPSAT(I-RLP1,K)                          CALRHC2B.250   
+          SUPSAT2=SURF_MULT(I,2)*SUPSAT(I-RL,K)                            CALRHC2B.251   
+          SUPSAT3=SURF_MULT(I,3)*SUPSAT(I-RLM1,K)                          CALRHC2B.252   
+          SUPSAT4=SURF_MULT(I,4)*SUPSAT(I-1,K)                             CALRHC2B.253   
+          SUPSAT5=SURF_MULT(I,5)*SUPSAT(I+1,K)                             CALRHC2B.254   
+          SUPSAT6=SURF_MULT(I,6)*SUPSAT(I+RLM1,K)                          CALRHC2B.255   
+          SUPSAT7=SURF_MULT(I,7)*SUPSAT(I+RL,K)                            CALRHC2B.256   
+          SUPSAT8=SURF_MULT(I,8)*SUPSAT(I+RLP1,K)                          CALRHC2B.257   
+          MEAN_SUPSAT=(SUPSAT1 + SUPSAT2 + SUPSAT3 + SUPSAT4               CALRHC2B.258   
+     &               + SUPSAT5 + SUPSAT6 + SUPSAT7 + SUPSAT8               CALRHC2B.259   
+     &               + SUPSAT(I,K)) / ICOUNT(I)                            CALRHC2B.260   
+          TOT_VAR=SUPSAT1*SUPSAT1 + SUPSAT2*SUPSAT2                        CALRHC2B.261   
+     &          + SUPSAT3*SUPSAT3 + SUPSAT4*SUPSAT4                        CALRHC2B.262   
+     &          + SUPSAT5*SUPSAT5 + SUPSAT6*SUPSAT6                        CALRHC2B.263   
+     &          + SUPSAT7*SUPSAT7 + SUPSAT8*SUPSAT8                        CALRHC2B.264   
+     &          + SUPSAT(I,K)*SUPSAT(I,K)                                  CALRHC2B.265   
+     &          - ICOUNT(I)*MEAN_SUPSAT*MEAN_SUPSAT                        CALRHC2B.266   
+!                                                                          CALRHC2B.267   
+!  Now remove the statistical outliers from the 3*3 region, so that        CALRHC2B.268   
+!  sigma, and hence RHcrit, is not biased by extreme values.               CALRHC2B.269   
+!  Points outside 3*sigma of the mean are considered outliers and are      CALRHC2B.270   
+!  rejected.                                                               CALRHC2B.271   
+          IF (ICOUNT(I).GT.1) THEN                                         CALRHC2B.272   
+            THREE_SIGMA=3.*SQRT(TOT_VAR/ICOUNT(I))                         CALRHC2B.273   
+          ELSE                                                             CALRHC2B.274   
+            THREE_SIGMA=QST(I)*0.01                                        CALRHC2B.275   
+          ENDIF                                                            CALRHC2B.276   
+          COUNT=1                                                          CALRHC2B.277   
+          IF (ABS(SUPSAT(I-RLP1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN       CALRHC2B.278   
+            SUPSAT1=0.                                                     CALRHC2B.279   
+          ELSE IF (SURF_MULT(I,1).GT.0.5) THEN                             CALRHC2B.280   
+            COUNT=COUNT+1                                                  CALRHC2B.281   
+          ENDIF                                                            CALRHC2B.282   
+          IF (ABS(SUPSAT(I-RL,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN         CALRHC2B.283   
+            SUPSAT2=0.                                                     CALRHC2B.284   
+          ELSE IF (SURF_MULT(I,2).GT.0.5) THEN                             CALRHC2B.285   
+            COUNT=COUNT+1                                                  CALRHC2B.286   
+          ENDIF                                                            CALRHC2B.287   
+          IF (ABS(SUPSAT(I-RLM1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN       CALRHC2B.288   
+            SUPSAT3=0.                                                     CALRHC2B.289   
+          ELSE IF (SURF_MULT(I,3).GT.0.5) THEN                             CALRHC2B.290   
+            COUNT=COUNT+1                                                  CALRHC2B.291   
+          ENDIF                                                            CALRHC2B.292   
+          IF (ABS(SUPSAT(I-1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN          CALRHC2B.293   
+            SUPSAT4=0.                                                     CALRHC2B.294   
+          ELSE IF (SURF_MULT(I,4).GT.0.5) THEN                             CALRHC2B.295   
+            COUNT=COUNT+1                                                  CALRHC2B.296   
+          ENDIF                                                            CALRHC2B.297   
+          IF (ABS(SUPSAT(I+1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN          CALRHC2B.298   
+            SUPSAT5=0.                                                     CALRHC2B.299   
+          ELSE IF (SURF_MULT(I,5).GT.0.5) THEN                             CALRHC2B.300   
+            COUNT=COUNT+1                                                  CALRHC2B.301   
+          ENDIF                                                            CALRHC2B.302   
+          IF (ABS(SUPSAT(I+RLM1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN       CALRHC2B.303   
+            SUPSAT6=0.                                                     CALRHC2B.304   
+          ELSE IF (SURF_MULT(I,6).GT.0.5) THEN                             CALRHC2B.305   
+            COUNT=COUNT+1                                                  CALRHC2B.306   
+          ENDIF                                                            CALRHC2B.307   
+          IF (ABS(SUPSAT(I+RL,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN         CALRHC2B.308   
+            SUPSAT7=0.                                                     CALRHC2B.309   
+          ELSE IF (SURF_MULT(I,7).GT.0.5) THEN                             CALRHC2B.310   
+            COUNT=COUNT+1                                                  CALRHC2B.311   
+          ENDIF                                                            CALRHC2B.312   
+          IF (ABS(SUPSAT(I+RLP1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN       CALRHC2B.313   
+            SUPSAT8=0.                                                     CALRHC2B.314   
+          ELSE IF (SURF_MULT(I,8).GT.0.5) THEN                             CALRHC2B.315   
+            COUNT=COUNT+1                                                  CALRHC2B.316   
+          ENDIF                                                            CALRHC2B.317   
+          IF (COUNT.GT.1) THEN                                             CALRHC2B.318   
+            MEAN_SUPSAT=(SUPSAT1 + SUPSAT2 + SUPSAT3 + SUPSAT4             CALRHC2B.319   
+     &               + SUPSAT5 + SUPSAT6 + SUPSAT7 + SUPSAT8               CALRHC2B.320   
+     &               + SUPSAT(I,K)) / COUNT                                CALRHC2B.321   
+            TOT_VAR=SUPSAT1*SUPSAT1 + SUPSAT2*SUPSAT2                      CALRHC2B.322   
+     &          + SUPSAT3*SUPSAT3 + SUPSAT4*SUPSAT4                        CALRHC2B.323   
+     &          + SUPSAT5*SUPSAT5 + SUPSAT6*SUPSAT6                        CALRHC2B.324   
+     &          + SUPSAT7*SUPSAT7 + SUPSAT8*SUPSAT8                        CALRHC2B.325   
+     &          + SUPSAT(I,K)*SUPSAT(I,K)                                  CALRHC2B.326   
+     &          - COUNT*MEAN_SUPSAT*MEAN_SUPSAT                            CALRHC2B.327   
+            SUPSAT_SD_3=SQRT(TOT_VAR/COUNT)                                CALRHC2B.328   
+          ELSE                                                             CALRHC2B.329   
+            SUPSAT_SD_3=QST(I)*0.01                                        CALRHC2B.330   
+          ENDIF                                                            CALRHC2B.331   
+!                                                                          CALRHC2B.332   
+! P_GRAD determines the relation between 3*3 and sub-grid variance.        CALRHC2B.333   
+          SUPSAT_SD_1=P_GRAD(I,K)*SUPSAT_SD_3                              CALRHC2B.334   
+! RHCPT defined from P292.14 in UMDP 29                                    CALRHC2B.335   
+          RHCPT(I,K)=1.-ROOT_6*SUPSAT_SD_1/(AL(I)*QST(I))                  CALRHC2B.336   
+! RHcrit is now limited to lie between a range defined in RHCCON2B         CALRHC2B.337   
+          RHCPT(I,K)=MAX(RHCPT(I,K),RHC_MIN)                               CALRHC2B.338   
+          RHCPT(I,K)=MIN(RHCPT(I,K),RHC_MAX)                               CALRHC2B.339   
+        ENDDO                                                              CALRHC2B.340   
+! North and south haloes not determined above, now they are filled in.     CALRHC2B.341   
+! Call to SWAPBOUNDS after this subroutine fills the haloes in properly.   CALRHC2B.342   
+        RHCPT(ROW_LENGTH+1,K)=RHCPT(ROW_LENGTH+2,K)                        CALRHC2B.343   
+        DO I=1,ROW_LENGTH                                                  CALRHC2B.344   
+          RHCPT(I,K)=RHCPT(I+ROW_LENGTH,K)                                 CALRHC2B.345   
+        ENDDO                                                              CALRHC2B.346   
+        RHCPT(POINTS-ROW_LENGTH,K)=RHCPT(POINTS-ROW_LENGTH-1,K)            CALRHC2B.347   
+        DO I=(POINTS-ROW_LENGTH+1),POINTS                                  CALRHC2B.348   
+          RHCPT(I,K)=RHCPT(I-ROW_LENGTH,K)                                 CALRHC2B.349   
+        ENDDO                                                              CALRHC2B.350   
+      ENDDO                                                                CALRHC2B.351   
+!                                                                          CALRHC2B.352   
+! The same calculations as above are performed, but the 'surface match'    CALRHC2B.353   
+! criterion is now dropped (atmosphere less influenced by surface at       CALRHC2B.354   
+! greater heights).                                                        CALRHC2B.355   
+      IF (LEVELS.GT.BL_LEVELS) THEN                                        CALRHC2B.356   
+!                                                                          CALRHC2B.357   
+        DO K=(BL_LEVELS+1),LEVELS                                          CALRHC2B.358   
+          CALL QSAT(QST,TL(1,K),P_LEV(1,K),POINTS)                         CALRHC2B.359   
+          DO I=1,POINTS                                                    CALRHC2B.360   
+            IF (TL(I,K).GT.TM) THEN                                        CALRHC2B.361   
+              LATHT=LC/TL(I,K)                                             CALRHC2B.362   
+            ELSE                                                           CALRHC2B.363   
+              LATHT=LS/TL(I,K)                                             CALRHC2B.364   
+            ENDIF                                                          CALRHC2B.365   
+            AL(I)=1./(1.+LATHT*LATHT*ERCPR*QST(I))                         CALRHC2B.366   
+            SUPSAT(I,K)=AL(I)*(QT(I,K)-QST(I))                             CALRHC2B.367   
+          ENDDO                                                            CALRHC2B.368   
+          DO I=(ROW_LENGTH+2),(POINTS-ROW_LENGTH-1)                        CALRHC2B.369   
+            SUPSAT1=SUPSAT(I-RLP1,K)                                       CALRHC2B.370   
+            SUPSAT2=SUPSAT(I-RL,K)                                         CALRHC2B.371   
+            SUPSAT3=SUPSAT(I-RLM1,K)                                       CALRHC2B.372   
+            SUPSAT4=SUPSAT(I-1,K)                                          CALRHC2B.373   
+            SUPSAT5=SUPSAT(I+1,K)                                          CALRHC2B.374   
+            SUPSAT6=SUPSAT(I+RLM1,K)                                       CALRHC2B.375   
+            SUPSAT7=SUPSAT(I+RL,K)                                         CALRHC2B.376   
+            SUPSAT8=SUPSAT(I+RLP1,K)                                       CALRHC2B.377   
+            MEAN_SUPSAT=(SUPSAT1 + SUPSAT2 + SUPSAT3 + SUPSAT4             CALRHC2B.378   
+     &               + SUPSAT5 + SUPSAT6 + SUPSAT7 + SUPSAT8               CALRHC2B.379   
+     &               + SUPSAT(I,K)) * INV9                                 CALRHC2B.380   
+            TOT_VAR=SUPSAT1*SUPSAT1 + SUPSAT2*SUPSAT2                      CALRHC2B.381   
+     &          + SUPSAT3*SUPSAT3 + SUPSAT4*SUPSAT4                        CALRHC2B.382   
+     &          + SUPSAT5*SUPSAT5 + SUPSAT6*SUPSAT6                        CALRHC2B.383   
+     &          + SUPSAT7*SUPSAT7 + SUPSAT8*SUPSAT8                        CALRHC2B.384   
+     &          + SUPSAT(I,K)*SUPSAT(I,K)                                  CALRHC2B.385   
+     &          - 9. * MEAN_SUPSAT*MEAN_SUPSAT                             CALRHC2B.386   
+!                                                                          CALRHC2B.387   
+!  Now remove the statistical outliers from the 3*3 region, so that        CALRHC2B.388   
+!  sigma, and hence RHcrit, is not biased by extreme values.               CALRHC2B.389   
+!  Points outside 3*sigma of the mean are considered outliers and are      CALRHC2B.390   
+!  rejected.                                                               CALRHC2B.391   
+            THREE_SIGMA=3.*SQRT(TOT_VAR*INV9)                              CALRHC2B.392   
+            COUNT=1                                                        CALRHC2B.393   
+            IF (ABS(SUPSAT(I-RLP1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN     CALRHC2B.394   
+              SUPSAT1=0.                                                   CALRHC2B.395   
+            ELSE                                                           CALRHC2B.396   
+              COUNT=COUNT+1                                                CALRHC2B.397   
+            ENDIF                                                          CALRHC2B.398   
+            IF (ABS(SUPSAT(I-RL,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN       CALRHC2B.399   
+              SUPSAT2=0.                                                   CALRHC2B.400   
+            ELSE                                                           CALRHC2B.401   
+              COUNT=COUNT+1                                                CALRHC2B.402   
+            ENDIF                                                          CALRHC2B.403   
+            IF (ABS(SUPSAT(I-RLM1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN     CALRHC2B.404   
+              SUPSAT3=0.                                                   CALRHC2B.405   
+            ELSE                                                           CALRHC2B.406   
+              COUNT=COUNT+1                                                CALRHC2B.407   
+            ENDIF                                                          CALRHC2B.408   
+            IF (ABS(SUPSAT(I-1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN        CALRHC2B.409   
+              SUPSAT4=0.                                                   CALRHC2B.410   
+            ELSE                                                           CALRHC2B.411   
+              COUNT=COUNT+1                                                CALRHC2B.412   
+            ENDIF                                                          CALRHC2B.413   
+            IF (ABS(SUPSAT(I+1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN        CALRHC2B.414   
+              SUPSAT5=0.                                                   CALRHC2B.415   
+            ELSE                                                           CALRHC2B.416   
+              COUNT=COUNT+1                                                CALRHC2B.417   
+            ENDIF                                                          CALRHC2B.418   
+            IF (ABS(SUPSAT(I+RLM1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN     CALRHC2B.419   
+              SUPSAT6=0.                                                   CALRHC2B.420   
+            ELSE                                                           CALRHC2B.421   
+              COUNT=COUNT+1                                                CALRHC2B.422   
+            ENDIF                                                          CALRHC2B.423   
+            IF (ABS(SUPSAT(I+RL,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN       CALRHC2B.424   
+              SUPSAT7=0.                                                   CALRHC2B.425   
+            ELSE                                                           CALRHC2B.426   
+              COUNT=COUNT+1                                                CALRHC2B.427   
+            ENDIF                                                          CALRHC2B.428   
+            IF (ABS(SUPSAT(I+RLP1,K)-MEAN_SUPSAT).GT.THREE_SIGMA) THEN     CALRHC2B.429   
+              SUPSAT8=0.                                                   CALRHC2B.430   
+            ELSE                                                           CALRHC2B.431   
+              COUNT=COUNT+1                                                CALRHC2B.432   
+            ENDIF                                                          CALRHC2B.433   
+            IF (COUNT.GT.1) THEN                                           CALRHC2B.434   
+              MEAN_SUPSAT=(SUPSAT1 + SUPSAT2 + SUPSAT3 + SUPSAT4           CALRHC2B.435   
+     &               + SUPSAT5 + SUPSAT6 + SUPSAT7 + SUPSAT8               CALRHC2B.436   
+     &               + SUPSAT(I,K)) / COUNT                                CALRHC2B.437   
+              TOT_VAR=SUPSAT1*SUPSAT1 + SUPSAT2*SUPSAT2                    CALRHC2B.438   
+     &          + SUPSAT3*SUPSAT3 + SUPSAT4*SUPSAT4                        CALRHC2B.439   
+     &          + SUPSAT5*SUPSAT5 + SUPSAT6*SUPSAT6                        CALRHC2B.440   
+     &          + SUPSAT7*SUPSAT7 + SUPSAT8*SUPSAT8                        CALRHC2B.441   
+     &          + SUPSAT(I,K)*SUPSAT(I,K)                                  CALRHC2B.442   
+     &          - COUNT*MEAN_SUPSAT*MEAN_SUPSAT                            CALRHC2B.443   
+              SUPSAT_SD_3=SQRT(TOT_VAR/COUNT)                              CALRHC2B.444   
+            ELSE                                                           CALRHC2B.445   
+              SUPSAT_SD_3=QST(I)*0.01                                      CALRHC2B.446   
+            ENDIF                                                          CALRHC2B.447   
+!                                                                          CALRHC2B.448   
+            SUPSAT_SD_1=P_GRAD(I,K)*SUPSAT_SD_3                            CALRHC2B.449   
+            RHCPT(I,K)=1.-ROOT_6*SUPSAT_SD_1/(AL(I)*QST(I))                CALRHC2B.450   
+! RHcrit is now limited to lie between a range defined in RHCCON2B         CALRHC2B.451   
+            RHCPT(I,K)=MAX(RHCPT(I,K),RHC_MIN)                             CALRHC2B.452   
+            RHCPT(I,K)=MIN(RHCPT(I,K),RHC_MAX)                             CALRHC2B.453   
+          ENDDO                                                            CALRHC2B.454   
+! North and south haloes not determined above, now they are filled in.     CALRHC2B.455   
+! Call to SWAPBOUNDS after this subroutine fills the haloes in properly.   CALRHC2B.456   
+          RHCPT(ROW_LENGTH+1,K)=RHCPT(ROW_LENGTH+2,K)                      CALRHC2B.457   
+          DO I=1,ROW_LENGTH                                                CALRHC2B.458   
+            RHCPT(I,K)=RHCPT(I+ROW_LENGTH,K)                               CALRHC2B.459   
+          ENDDO                                                            CALRHC2B.460   
+          RHCPT(POINTS-ROW_LENGTH,K)=RHCPT(POINTS-ROW_LENGTH-1,K)          CALRHC2B.461   
+          DO I=(POINTS-ROW_LENGTH+1),POINTS                                CALRHC2B.462   
+            RHCPT(I,K)=RHCPT(I-ROW_LENGTH,K)                               CALRHC2B.463   
+          ENDDO                                                            CALRHC2B.464   
+        ENDDO                                                              CALRHC2B.465   
+      ENDIF  !  LEVELS GT BL_LEVELS                                        CALRHC2B.466   
+!                                                                          CALRHC2B.467   
+      RETURN                                                               CALRHC2B.468   
+      END                                                                  CALRHC2B.469   
+*ENDIF                                                                     CALRHC2B.470   

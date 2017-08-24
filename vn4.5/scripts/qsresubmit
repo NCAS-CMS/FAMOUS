@@ -1,0 +1,183 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+########################################################################
+#LL Unified Model Resubmit Script
+#LL  Author: T.C.Johns
+#LL  Date: 21 May 1990
+#LL  Purpose: Resubmits jobscript with specified time/memory details
+#LL Arguments: $1 - jobscript pathname
+#LL            $2 - temporary file containing resubmit details
+#LL Called by: UM final script
+#LL Calls    : None
+#LL
+#LL Modification history:
+#LL --------------------
+#LL 9/09/91 : Altered qsub line removing PRTY and testing to see if
+#LL           TIME set before trying to use it. (R A Stratton)
+#LL 30/04/92 : Altered to stop resubmission if present run is a new run
+#LL  7/05/92 : Add Job name and destination to resubmit request.
+#LL 20/07/92 : Altered so that jobscript pathname is a cray file.
+#LL 03/08/92 : Altered so that fails with 0 exit code if NRUN.
+#LL 09/08/92 : Try out alteration to TEXT to get rid of output problem.
+#LL 14/06/94 Vn3.4 Added lrecl=255 to @print command.  K Rogers
+#LL 11/08/94 Vn3.4 Write resubmit command to a file to submit later.
+#LL                \ changed to \\\ when setting up text for return of
+#LL                job output file because it gets echo -eed to file now.
+#LL                (Otherwise shell interprets it.) KMR
+#LL 27/01/95 vn4.0 Remove pipe to obsolete usage of tail and replace
+#LL                with sed (Tracey Smith)
+#LL 03/10/95 4.0  Removed unnecessary options from qsub lines.
+#LL               Added additions to SCRIPT from umui. K Rogers.
+#LL 30/11/95 4.0   Changed submission to match UMUI
+#LL  4.3  25/04/97  Converted to use new submit script. S Mullerworth
+#LL  4.4  09/12/97  Set OPRESTART variable before resubmitting.K Rogers
+########################################################################
+#L  Imports  :
+#L
+#L  AUTOMATIC_PP : true if post processing
+#L  ERRFLAG      : location of error flag file for server
+#L  TYPE         : run type new or continuation
+#L  CCMAIN       : return code from qsmain
+#L  RESUBMIT_SYSOUT : sysout for resubmitted job
+#L  RUNID        :  job 5-character expt+runid
+#L  RESUB_FILE   :  name of file holding resubmit command
+#L
+#L  local variables
+#L  CC           :  return code from command
+#L
+########################################################################
+# Step 0 - Set up environment variables
+#
+set -$SETOPT
+########################################################################
+# Step 1 - Extract resubmit details from file
+#
+if test -f $2
+then
+  mv $2 $2.tmp
+  $UM_SED 's/ *= */=/' $2.tmp > $2
+  chmod 755 $2
+  . $2               # Execute to set environment variables
+  if test $FLAG != 'Y'
+  then
+    echo -e "$0: No resubmit requested"
+    exit 0
+  fi
+
+
+  if $AUTOMATIC_PP
+  then      # check server return code before resubmission
+    RCSERVER=`cat $ERRFLAG|cut -c 1`
+    if test $RCSERVER = "T"
+    then
+     echo -e "$0: Error job not resubmitted because of server failure"
+     exit 135
+    fi
+  fi
+else
+  echo -e "$0: Error: no resubmit details found"
+  exit 135                                   # Abort
+fi
+#
+#
+if test $CCMAIN -ne 0
+then
+   echo -e "$0: Error job not resubmitted because of error in qsmain"
+   exit 135
+fi
+#
+if test $TYPE = 'NRUN'
+then
+   echo -e "$0: Error job not resubmitted because job script is for a new \
+   run"
+   exit
+fi
+#
+########################################################################
+# Step 2 - Resubmit jobscript if step 1 OK and resubmit requested
+#
+SCRIPT=$1
+
+# set up job destination  - default output is fiche
+YEAR_DAY=`date +%y%j`
+TIME=`date +%H%M%S`
+OUTPUT_SUBID=d$YEAR_DAY.t$TIME
+#OUTPUT_SUBID=`date +%j%H%M%S`  #calculate output submit id
+OUTFILE=$MY_OUTPUT/$JOBNAME.$RUNID.$OUTPUT_SUBID.$OUT_CLASSR
+TITLE=$DATAW/TITLE
+cat > $TITLE <<EOF
+ &TITLF TITLE1="$JOBNAME" &END
+EOF
+
+
+# Write resubmit command to a separate file to be submitted later
+# after job output has been returned to front-end to prevent output
+# from first job getting mixed up with output from second job if job
+# gets resubmitted immediately.
+
+if test -z "$RESUB_FILE"
+then
+   RESUB_FILE=$TEMP/$RUNID.resub
+fi
+rm $RESUB_FILE
+
+# create complete script to submit
+
+SUBMITID=$SUBMITID
+export SUBMITID                  # just in case someone uses it
+JOBDIR=$HOME/umui_runs/$RUNID-$SUBMITID
+export JOBDIR
+export OPRESTART=3  # indicates run has been automatically resubmitted
+cp $JOBDIR/qsubmit.`hostname` /tmp/umuisubmit.$$
+
+REDIRECTS="> $OUTFILE 2>&1"
+
+
+export CLUSTER_OPTIONS
+if [ -n "$CLUSTER_OPTIONS" ]
+then
+cat > $RESUB_FILE <<eof
+ eval $CLUSTER_OPTIONS $TMPDIR/umuisubmit.$$
+eof
+else
+
+cat > $RESUB_FILE << eof
+  at now <<EOF
+  # run profiles to get things like UMDIR
+  # hopefully, they will not be interactive.
+  . /etc/profile $REDIRECTS
+  . $HOME/setvars $REDIRECTS
+  # set JOBDIR variable
+  JOBDIR=$HOME/umui_runs/$RUNID-$SUBMITID
+  export JOBDIR SUBMITID
+  # run a shell under nice with the toplevel script as input
+  nice -19 /bin/ksh< /tmp/umuisubmit.$$ $REDIRECTS
+  rm /tmp/umuisubmit.$$
+EOF
+  CC=\$?
+
+  if test \$CC -eq 0
+  then
+    echo -e "qsresubmit: submitted job successfully"
+  elif test \$CC -eq 1
+  then
+    echo -e "qsresubmit: job not resubmitted due to user error:"
+  elif test \$CC -eq 2
+  then
+    echo -e "qsresubmit: job not resubmitted due to NQS error"
+  fi
+eof
+
+fi
+
+chmod 755 $RESUB_FILE
+
+########################################################################

@@ -1,0 +1,335 @@
+*IF DEF,A05_3C                                                             AJX1F405.182   
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.14810 
+C                                                                          GTS2F400.14811 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.14812 
+C restrictions as set forth in the contract.                               GTS2F400.14813 
+C                                                                          GTS2F400.14814 
+C                Meteorological Office                                     GTS2F400.14815 
+C                London Road                                               GTS2F400.14816 
+C                BRACKNELL                                                 GTS2F400.14817 
+C                Berkshire UK                                              GTS2F400.14818 
+C                RG12 2SZ                                                  GTS2F400.14819 
+C                                                                          GTS2F400.14820 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.14821 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.14822 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.14823 
+C Modelling at the above address.                                          GTS2F400.14824 
+C ******************************COPYRIGHT******************************    GTS2F400.14825 
+C                                                                          GTS2F400.14826 
+!   Subroutine GLUE_CONV--------------------------------------             GCONV_3A.3     
+!                                                                          GCONV_3A.4     
+!   Level 3 control routine                                                GCONV_3A.5     
+!                                                                          GCONV_3A.6     
+!   Purpose: Calls CONVECT to calculate and add convection increments.     GCONV_3A.7     
+!            It is an extra level of Control routine to avoid the          GCONV_3A.8     
+!            use of *IF DEF around calls to different CONVECT routines     GCONV_3A.9     
+!            as per proposal of S. Foreman 22/8/94 for plug compatible     GCONV_3A.10    
+!            routines.                                                     GCONV_3A.11    
+!       Test version with tracers, momentum transports, CAPE closure.      GCONV_3A.12    
+!                                                                          GCONV_3A.13    
+!   Code Description:                                                      GCONV_3A.14    
+!    Language FORTRAN 77 + extensions.                                     GCONV_3A.15    
+!    This code is written to UMDP3 v6 programming standards.               GCONV_3A.16    
+!                                                                          GCONV_3A.17    
+!         Author: P.Inness        Reviewer: C. Wilson                      GCONV_3A.18    
+!                                                                          GCONV_3A.19    
+!   Modification History from U.M. version 4.0:                            GCONV_3A.20    
+!                                                                          GCONV_3A.21    
+!   Version      Date                                                      GCONV_3A.22    
+!                                                                          GCONV_3A.23    
+!     4.1        10/6/96  : Changed dimensions of momentum arrays          API4F401.48    
+!                           to allow convection to be split into           API4F401.49    
+!                           segments when momentum transports are          API4F401.50    
+!                           used.                                          API4F401.51    
+!     4.3        03/02/97   Pass logical switches L_SDXS and L_XSCOMP      ARN2F403.79    
+!                           down to CONVECT.                               ARN2F403.80    
+!     4.4        26/09/97   Provision for 3D conv cloud amount and rain    AJX0F404.169   
+!                           out before calculation of water path. J.M.G    AJX0F404.170   
+!LL  4.4  Oct 97    Add halo mask to stop redundant calculations           AAD2F404.121   
+!LL                                               Alan Dickinson           AAD2F404.122   
+!                                                                          API4F401.52    
+!   System components covered : P27                                        GCONV_3A.24    
+!                                                                          GCONV_3A.25    
+!   System task : P0                                                       GCONV_3A.26    
+!                                                                          GCONV_3A.27    
+!   Documentation:                                                         GCONV_3A.28    
+!                                                                          GCONV_3A.29    
+!  END -----------------------------------------------------------------   GCONV_3A.30    
+                                                                           GCONV_3A.31    
+      SUBROUTINE GLUE_CONV(                                                GCONV_3A.32    
+     &     NP_FIELD,NPNTS,NLEV,NBL,                                        GCONV_3A.33    
+     &     TH,Q,PSTAR,BLAND,U,V,TRACER,                                    GCONV_3A.34    
+     &     DTHBYDT,DQBYDT,DUBYDT,DVBYDT,                                   GCONV_3A.35    
+     &     RAIN,SNOW,                                                      GCONV_3A.36    
+     &     CCA,ICCB,ICCT,CCLWP,CCW,                                        GCONV_3A.37    
+     &     ICCBPxCCA,ICCTPxCCA,GBMCCWP,GBMCCW,                             AJX1F402.78    
+     &     LCBASE,LCTOP,LCCA,LCCLWP,                                       GCONV_3A.38    
+     &     CAPE,                                                           GCONV_3A.39    
+     &     EXNER,AK,BK,AKM12,BKM12,DELAK,DELBK,                            GCONV_3A.40    
+     &     TIMESTEP,                                                       GCONV_3A.41    
+     &     T1_SD,Q1_SD,                                                    GCONV_3A.42    
+     &     L_MOM,L_TRACER,L_CAPE,NTRA,TRLEV,L_XSCOMP,                      ARN2F403.81    
+     &     L_SDXS                                                          ARN2F403.82    
+*IF DEF,SCMA                                                               AJC0F405.128   
+C       For Observational forcing                                          AJC0F405.129   
+     &    ,DTHUD,DTHDD,DQUD,DQDD                                           AJC0F405.130   
+*ENDIF                                                                     AJC0F405.131   
+*IF DEF,MPP                                                                AAD2F404.123   
+     &     ,l_halo                                                         AAD2F404.124   
+*ENDIF                                                                     AAD2F404.125   
+     &     ,N_CCA_LEV, L_3D_CCA, L_CCW, MPARWTR                            AJX0F404.171   
+     &     , ANVIL_FACTOR, TOWER_FACTOR, UD_FACTOR, L_CLOUD_DEEP           AJX3F405.93    
+     &     , L_PHASE_LIM, UP_FLUX,FLG_UP_FLX,DWN_FLUX,FLG_DWN_FLX          AJX3F405.94    
+     &     , ENTRAIN_UP, FLG_ENTR_UP,DETRAIN_UP,FLG_DETR_UP                AJX3F405.95    
+     &     , ENTRAIN_DWN, FLG_ENTR_DWN,DETRAIN_DWN,FLG_DETR_DWN            AJX3F405.96    
+     & )                                                                   GCONV_3A.45    
+      IMPLICIT NONE                                                        GCONV_3A.46    
+                                                                           GCONV_3A.47    
+!----------------------------------------------------------------------    GCONV_3A.48    
+!Some of the following variables are 'dummy' as they are used in other     GCONV_3A.49    
+! CONVECT versions                                                         GCONV_3A.50    
+!-----------------------------------------------------------------------   GCONV_3A.51    
+!----------------------------------------------------------------------    GCONV_3A.52    
+! IN variables                                                             GCONV_3A.53    
+!---------------------------------------------------------------------     GCONV_3A.54    
+      INTEGER NP_FIELD            ! LENGTH OF DATA (ALSO USED TO           GCONV_3A.55    
+                                  ! SPECIFY STARTING POINT OF              GCONV_3A.56    
+                                  ! DATA PASSED IN)                        GCONV_3A.57    
+C                                                                          GCONV_3A.58    
+      INTEGER NPNTS               ! IN FULL VECTOR LENGTH                  GCONV_3A.59    
+C                                                                          GCONV_3A.60    
+      INTEGER NLEV                ! IN NUMBER OF MODEL LAYERS              GCONV_3A.61    
+C                                                                          GCONV_3A.62    
+      INTEGER NBL                 ! IN NUMBER OF BOUNDARY LAYER LEVELS     GCONV_3A.63    
+C                                                                          GCONV_3A.64    
+      INTEGER NTRA                ! NUMBER OF TRACER FIELDS                GCONV_3A.65    
+C                                                                          GCONV_3A.66    
+      INTEGER TRLEV               ! NUMBER OF MODEL LEVELS ON WHICH        GCONV_3A.67    
+                                  ! TRACERS ARE INCLUDED                   GCONV_3A.68    
+      INTEGER N_CCA_LEV           ! IN Number of convective cloud levels   AJX0F404.173   
+C                                                                          GCONV_3A.69    
+      LOGICAL BLAND(NP_FIELD)     ! IN LAND/SEA MASK                       GCONV_3A.70    
+C                                                                          GCONV_3A.71    
+      LOGICAL L_TRACER            ! IN SWITCH FOR INCLUSION OF TRACERS     GCONV_3A.72    
+C                                                                          GCONV_3A.73    
+      LOGICAL L_MOM               ! IN SWITCH FOR INCLUSION OF             GCONV_3A.74    
+                                  !    MOMENTUM TRANSPORTS                 GCONV_3A.75    
+C                                                                          GCONV_3A.76    
+      LOGICAL L_XSCOMP            ! IN SWITCH FOR ALLOWING COMPENSATING    ARN2F403.83    
+                                  !    COOLING AND DRYING OF THE           ARN2F403.84    
+                                  !    ENVIRONMENT IN INITIATING LAYER     ARN2F403.85    
+C                                                                          ARN2F403.86    
+      LOGICAL L_SDXS              ! IN SWITCH FOR ALLOWING PARCEL EXCESS   ARN2F403.87    
+                                  !    TO BE SET TO S.D. OF TURBULENT      ARN2F403.88    
+                                  !    FLUCTUATIONS IN LOWEST MODEL        ARN2F403.89    
+                                  !    LAYER                               ARN2F403.90    
+      LOGICAL L_CAPE              ! IN SWITCH FOR USE OF CAPE CLOSURE      GCONV_3A.77    
+C                                                                          GCONV_3A.78    
+      LOGICAL L_3D_CCA            ! IN SWITCH FOR USE OF 3D CLOUD AMOUNT   AJX0F404.174   
+C                                                                          AJX0F404.175   
+      LOGICAL L_CCW               ! IN IF .TRUE. THEN PRECIP NOT INC. IN   AJX0F404.176   
+!                                 !    CONV. CLOUD WATER PATH.             AJX0F404.177   
+!                                                                          AJX3F405.97    
+      LOGICAL L_CLOUD_DEEP        ! IN IF TRUE LIMITS PHASE CHANGE OF      AJX3F405.98    
+!                                 !    PRECIP IF LH WILL TAKE TEMP TO      AJX3F405.99    
+!                                 !    OTHER SIDE OF TM.                   AJX3F405.100   
+!                                                                          AJX3F405.101   
+      LOGICAL L_PHASE_LIM         ! IN SWITCH TO DETERMINE IF PHASE        AJX3F405.102   
+!                                 !    CHANGE OF PRECIP IS LIMITED TO      AJX3F405.103   
+!                                 !    ENSURE LH DOES NOT TAKE TEMP        AJX3F405.104   
+!                                 !    TO OTHER SIDE OF TM                 AJX3F405.105   
+!                                                                          AJX3F405.106   
+C                                                                          AJX0F404.178   
+      REAL PSTAR(NP_FIELD)        ! IN SURFACE PRESSURE (PA)               GCONV_3A.79    
+C                                                                          GCONV_3A.80    
+      REAL EXNER(NP_FIELD,NLEV+1) ! IN EXNER RATIO                         GCONV_3A.81    
+C                                                                          GCONV_3A.82    
+      REAL AK(NLEV),              ! IN HYBRID CO-ORDINATE COEFFICIENTS     GCONV_3A.83    
+     *     BK(NLEV)               !    DEFINE PRESSURE AT MID-POINT        GCONV_3A.84    
+                                  !    OF LAYER K                          GCONV_3A.85    
+C                                                                          GCONV_3A.86    
+      REAL AKM12(NLEV+1),         ! IN HYBRID CO-ORDINATE COEFFICIENTS     GCONV_3A.87    
+     *     BKM12(NLEV+1)          !    TO DEFINE PRESSURE AT               GCONV_3A.88    
+                                  !    LEVEL K-1/2                         GCONV_3A.89    
+C                                                                          GCONV_3A.90    
+      REAL DELAK(NLEV),           ! IN DIFFERENCE IN HYBRID CO-ORDINATE    GCONV_3A.91    
+     *     DELBK(NLEV)            !    COEFFICIENTS ACROSS LAYER K         GCONV_3A.92    
+C                                                                          GCONV_3A.93    
+      REAL TIMESTEP               ! IN MODEL TIMESTEP (SECS)               GCONV_3A.94    
+C                                                                          GCONV_3A.95    
+      REAL U(NP_FIELD,NLEV)       ! IN MODEL U FIELD (M/S)                 API4F401.53    
+C                                                                          GCONV_3A.97    
+      REAL V(NP_FIELD,NLEV)       ! IN MODEL V FIELD (M/S)                 API4F401.54    
+C                                                                          GCONV_3A.99    
+      REAL T1_SD(NP_FIELD)        ! IN Standard deviation of turbulent     GCONV_3A.100   
+C                                 !    fluctuations of layer 1             GCONV_3A.101   
+C                                 !    temperature (K).                    GCONV_3A.102   
+      REAL Q1_SD(NP_FIELD)        ! IN Standard deviation of turbulent     GCONV_3A.103   
+C                                 !    fluctuations of layer 1             GCONV_3A.104   
+C                                 !    humidity (kg/kg).                   GCONV_3A.105   
+      LOGICAL FLG_UP_FLX          ! STASH FLAG FOR UPDRAUGHT MASS FLUX     API2F405.128   
+!                                                                          API2F405.129   
+      LOGICAL FLG_DWN_FLX         ! STASH FLAG FOR DOWNDRAGHT MASS FLUX    API2F405.130   
+!                                                                          API2F405.131   
+      LOGICAL FLG_ENTR_UP         ! STASH FLAG FOR UPDRAUGHT ENTRAINMENT   API2F405.132   
+!                                                                          API2F405.133   
+      LOGICAL FLG_ENTR_DWN        ! STASH FLAG FOR DOWNDRAUGHT ENTRAINMN   API2F405.134   
+!                                                                          API2F405.135   
+      LOGICAL FLG_DETR_UP         ! STASH FLAG FOR UPDRAUGHT DETRAINMENT   API2F405.136   
+!                                                                          API2F405.137   
+      LOGICAL FLG_DETR_DWN        ! STASH FLAG FOR DOWNDRAUGHT DETRAINMN   API2F405.138   
+!                                                                          API2F405.139   
+      REAL MPARWTR              ! IN Reservoir of convective cloud water   AJX0F404.179   
+!                               !    left in a layer after conv. precip.   AJX0F404.180   
+      REAL ANVIL_FACTOR         ! IN used in calculation of cloud amount   AJX0F404.181   
+     &    ,TOWER_FACTOR         !    on model levels if L_3D_CCA = .T.     AJX0F404.182   
+!                                                                          AJX3F405.107   
+      REAL UD_FACTOR            ! IN FACTOR USED IN CALCULATION OF CCWP    AJX3F405.108   
+!                               !    FOR RADIATION IF L_CCW IS TRUE.       AJX3F405.109   
+!                                                                          AJX3F405.110   
+*IF DEF,MPP                                                                AAD2F404.126   
+      LOGICAL l_halo(NP_FIELD)    ! IN Mask for halos                      AAD2F404.127   
+*ENDIF                                                                     AAD2F404.128   
+C                                                                          GCONV_3A.106   
+!----------------------------------------------------------------------    GCONV_3A.107   
+! INOUT variables                                                          GCONV_3A.108   
+!----------------------------------------------------------------------    GCONV_3A.109   
+      REAL TH(NP_FIELD,NLEV)      ! INOUT                                  GCONV_3A.110   
+                                  ! IN MODEL POTENTIAL TEMPERATURE (K)     GCONV_3A.111   
+                                  ! OUT MODEL POTENTIAL TEMPERATURE        GCONV_3A.112   
+                                  !     AFTER CONVECTION (K)               GCONV_3A.113   
+C                                                                          GCONV_3A.114   
+      REAL Q(NP_FIELD,NLEV)       ! INOUT                                  GCONV_3A.115   
+                                  ! IN MODEL MIXING RATIO (KG/KG)          GCONV_3A.116   
+                                  ! OUT MODEL MIXING RATIO AFTER           GCONV_3A.117   
+                                  !     AFTER CONVECTION (KG/KG)           GCONV_3A.118   
+C                                                                          GCONV_3A.119   
+      REAL TRACER(NP_FIELD,TRLEV,NTRA)! INOUT                              GCONV_3A.120   
+                                      ! IN  MODEL TRACER FIELDS (KG/KG)    GCONV_3A.121   
+                                      ! OUT MODEL TRACER FIELDS AFTER      GCONV_3A.122   
+                                      !     CONVECTION (KG/KG)             GCONV_3A.123   
+C                                                                          GCONV_3A.124   
+                                                                           GCONV_3A.125   
+!----------------------------------------------------------------------    GCONV_3A.126   
+! OUT variables                                                            GCONV_3A.127   
+!----------------------------------------------------------------------    GCONV_3A.128   
+      REAL DTHBYDT(NP_FIELD,NLEV) ! OUT INCREMENTS TO POTENTIAL            GCONV_3A.129   
+                                  !     TEMPERATURE DUE TO CONVECTION      GCONV_3A.130   
+                                  !     (K/S)                              GCONV_3A.131   
+C                                                                          GCONV_3A.132   
+      REAL DQBYDT(NP_FIELD,NLEV)  ! OUT INCREMENTS TO MIXING RATIO         GCONV_3A.133   
+                                  !     DUE TO CONVECTION (KG/KG/S)        GCONV_3A.134   
+C                                                                          GCONV_3A.135   
+      REAL DUBYDT(NP_FIELD,NLEV)  ! OUT INCREMENTS TO U DUE TO             API4F401.55    
+                                  !     CONVECTIVE MOMENTUM TRANSPORT      GCONV_3A.137   
+                                  !     (M/S**2)                           GCONV_3A.138   
+C                                                                          GCONV_3A.139   
+      REAL DVBYDT(NP_FIELD,NLEV)  ! OUT INCREMENTS TO V DUE TO             API4F401.56    
+                                  !     CONVECTIVE MOMENTUM TRANSPORT      GCONV_3A.141   
+                                  !     (M/S**2)                           GCONV_3A.142   
+*IF DEF,SCMA                                                               AJC0F405.132   
+      Real DTHUD(NP_FIELD,NLEV)                                            AJC0F405.133   
+      Real DTHDD(NP_FIELD,NLEV)                                            AJC0F405.134   
+      Real DQUD(NP_FIELD,NLEV)                                             AJC0F405.135   
+      Real DQDD(NP_FIELD,NLEV)                                             AJC0F405.136   
+*ENDIF                                                                     AJC0F405.137   
+C                                                                          GCONV_3A.143   
+      REAL RAIN(NP_FIELD)         ! OUT SURFACE CONVECTIVE RAINFALL        GCONV_3A.144   
+                                  !     (KG/M**2/S)                        GCONV_3A.145   
+C                                                                          GCONV_3A.146   
+      REAL SNOW(NP_FIELD)         ! OUT SURFACE CONVECTIVE SNOWFALL        GCONV_3A.147   
+                                  !     (KG/M**2/S)                        GCONV_3A.148   
+C                                                                          GCONV_3A.149   
+      REAL CCA(NP_FIELD,N_CCA_LEV) ! OUT CONVECTIVE CLOUD AMOUNT (%)       AJX0F404.183   
+!                                  !     2D or 3D depending on L_3D_CCA    AJX0F404.184   
+C                                                                          AJX0F404.185   
+C                                                                          GCONV_3A.151   
+      INTEGER ICCB(NP_FIELD)      ! OUT CONVECTIVE CLOUD BASE LEVEL        GCONV_3A.152   
+C                                                                          GCONV_3A.153   
+      INTEGER ICCT(NP_FIELD)      ! OUT CONVECTIVE CLOUD TOP LEVEL         GCONV_3A.154   
+C                                                                          GCONV_3A.155   
+      REAL CCLWP(NP_FIELD)        ! OUT CONDENSED WATER PATH (KG/M**2)     GCONV_3A.156   
+C                                                                          GCONV_3A.157   
+      REAL CCW(NP_FIELD,NLEV)     ! OUT CONVECTIVE CLOUD LIQUID WATER      GCONV_3A.158   
+                                  ! (G/KG) ON MODEL LEVELS                 GCONV_3A.159   
+C                                                                          GCONV_3A.160   
+      REAL ICCBPxCCA(NP_FIELD)    ! OUT CONV. CLD BASE PRESSURE x CCA      AJX1F402.79    
+C                                                                          AJX1F402.80    
+      REAL ICCTPxCCA(NP_FIELD)    ! OUT CONV. CLD TOP PRESSURE x CCA       AJX1F402.81    
+C                                                                          AJX1F402.82    
+      REAL GBMCCWP(NP_FIELD)      ! OUT GRIDBOX MEAN CCWP                  AJX1F402.83    
+C                                                                          AJX1F402.84    
+      REAL GBMCCW(NP_FIELD,NLEV)  ! OUT GRIDBOX MEAN CCW                   AJX1F402.85    
+C                                                                          AJX1F402.86    
+      REAL LCCA(NP_FIELD)         ! OUT LOWEST CONV.CLOUD AMOUNT (%)       GCONV_3A.161   
+C                                                                          GCONV_3A.162   
+      INTEGER LCBASE(NP_FIELD)    ! OUT LOWEST CONV.CLOUD BASE LEVEL       GCONV_3A.163   
+C                                                                          GCONV_3A.164   
+      INTEGER LCTOP(NP_FIELD)     ! OUT LOWEST CONV.CLOUD TOP LEVEL        GCONV_3A.165   
+C                                                                          GCONV_3A.166   
+      REAL LCCLWP(NP_FIELD)       ! OUT CONDENSED WATER PATH (KG/M**2)     GCONV_3A.167   
+                                  !     FOR LOWEST CONV.CLOUD              GCONV_3A.168   
+C                                                                          GCONV_3A.169   
+      REAL CAPE(NPNTS)            ! OUT MODEL VALUES OF CONVECTIVE         GCONV_3A.170   
+                                  !     AVAILABLE POTENTIAL ENERGY         GCONV_3A.171   
+                                  !     FOR DIAGNOSTIC OUTPUT              GCONV_3A.172   
+                                                                           GCONV_3A.173   
+!                                                                          API2F405.140   
+      REAL UP_FLUX(NP_FIELD,NLEV)     ! OUT UPDRAUGHT MASS FLUX            API2F405.141   
+!                                                                          API2F405.142   
+      REAL DWN_FLUX(NP_FIELD,NLEV)    ! OUT DOWNDRAUGHT MASS FLUX          API2F405.143   
+!                                                                          API2F405.144   
+      REAL ENTRAIN_UP(NP_FIELD,NLEV)  ! OUT FRACTIOAL ENTRAINMENT RATE F   API2F405.145   
+                                      !     UPDRAUGHTS                     API2F405.146   
+!                                                                          API2F405.147   
+      REAL DETRAIN_UP(NP_FIELD,NLEV)   ! OUT FRACTIONAL DETRAINMEN RATE    API2F405.148   
+                                       ! UPDRAUGHTS                        API2F405.149   
+!                                                                          API2F405.150   
+      REAL ENTRAIN_DWN(NP_FIELD,NLEV)  ! OUT FRACTIONAL DETRAINMENT RATE   API2F405.151   
+                                       !     DOWNDRAUGHTS                  API2F405.152   
+!                                                                          API2F405.153   
+      REAL DETRAIN_DWN(NP_FIELD,NLEV)  ! OUT FRACTIONAL DETRAINMENT RATE   API2F405.154   
+                                                                           API2F405.155   
+! External subroutines called                                              GCONV_3A.174   
+                                                                           GCONV_3A.175   
+      EXTERNAL                                                             GCONV_3A.176   
+     &      CONVECT                                                        GCONV_3A.177   
+                                                                           GCONV_3A.178   
+! Local variables                                                          GCONV_3A.179   
+                                                                           GCONV_3A.180   
+                                                                           GCONV_3A.181   
+!--------------- SECTION 5 CONVECTION ------------------------             GCONV_3A.182   
+                                                                           GCONV_3A.183   
+!  5.2 Call CONVECT to calculate and add convection increments             GCONV_3A.184   
+                                                                           GCONV_3A.185   
+      CALL CONVECT(                                                        GCONV_3A.186   
+     &     NP_FIELD,NPNTS,NLEV,NBL,                                        GCONV_3A.187   
+     &     TH,Q,PSTAR,BLAND,U,V,TRACER,                                    GCONV_3A.188   
+     &     DTHBYDT,DQBYDT,DUBYDT,DVBYDT,                                   GCONV_3A.189   
+     &     RAIN,SNOW,                                                      GCONV_3A.190   
+     &     CCA,ICCB,ICCT,CCLWP,CCW,                                        GCONV_3A.191   
+     &     ICCBPxCCA,ICCTPxCCA,GBMCCWP,GBMCCW,                             AJX1F402.87    
+     &     LCBASE,LCTOP,LCCA,LCCLWP,                                       GCONV_3A.192   
+     &     CAPE,                                                           GCONV_3A.193   
+     &     EXNER,AK,BK,AKM12,BKM12,DELAK,DELBK,                            GCONV_3A.194   
+     &     TIMESTEP,                                                       GCONV_3A.195   
+     &     T1_SD,Q1_SD,                                                    GCONV_3A.196   
+     &     L_MOM,L_TRACER,L_CAPE,NTRA,TRLEV,L_XSCOMP,                      ARN2F403.91    
+     &     L_SDXS                                                          ARN2F403.92    
+     &    ,N_CCA_LEV, L_3D_CCA, L_CCW, MPARWTR                             AJX0F404.186   
+     &    ,ANVIL_FACTOR ,TOWER_FACTOR                                      AJX0F404.187   
+*IF DEF,SCMA                                                               AJC0F405.138   
+     &    ,DTHUD,DTHDD,DQUD,DQDD                                           AJC0F405.139   
+*ENDIF                                                                     AJC0F405.140   
+*IF DEF,MPP                                                                AAD2F404.129   
+     &     ,l_halo                                                         AAD2F404.130   
+*ENDIF                                                                     AAD2F404.131   
+     &     ,UD_FACTOR, L_CLOUD_DEEP, L_PHASE_LIM                           AJX3F405.111   
+     &     ,UP_FLUX,FLG_UP_FLX,DWN_FLUX,FLG_DWN_FLX,ENTRAIN_UP             AJX3F405.112   
+     &     ,FLG_ENTR_UP,DETRAIN_UP,FLG_DETR_UP,ENTRAIN_DWN                 AJX3F405.113   
+     &     ,FLG_ENTR_DWN,DETRAIN_DWN,FLG_DETR_DWN                          AJX3F405.114   
+     & )                                                                   GCONV_3A.199   
+                                                                           GCONV_3A.200   
+      RETURN                                                               GCONV_3A.201   
+      END                                                                  GCONV_3A.202   
+*ENDIF                                                                     GCONV_3A.203   

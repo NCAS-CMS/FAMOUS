@@ -1,0 +1,216 @@
+*IF DEF,C84_1A                                                             STCOLM1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.9541  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9542  
+C                                                                          GTS2F400.9543  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9544  
+C restrictions as set forth in the contract.                               GTS2F400.9545  
+C                                                                          GTS2F400.9546  
+C                Meteorological Office                                     GTS2F400.9547  
+C                London Road                                               GTS2F400.9548  
+C                BRACKNELL                                                 GTS2F400.9549  
+C                Berkshire UK                                              GTS2F400.9550  
+C                RG12 2SZ                                                  GTS2F400.9551  
+C                                                                          GTS2F400.9552  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9553  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9554  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9555  
+C Modelling at the above address.                                          GTS2F400.9556  
+C ******************************COPYRIGHT******************************    GTS2F400.9557  
+C                                                                          GTS2F400.9558  
+CLL  Routine: STCOLM ---------------------------------------------------   STCOLM1A.3     
+CLL                                                                        STCOLM1A.4     
+CLL  Purpose: Calculate weighted column mean within a region specified     STCOLM1A.5     
+CLL           by a lower left hand and upper right hand corner.            STCOLM1A.6     
+CLL           (STASH service routine).                                     STCOLM1A.7     
+CLL                                                                        STCOLM1A.8     
+CLL  Author:   T.Johns/S.Tett                                              STCOLM1A.9     
+CLL                                                                        STCOLM1A.10    
+CLL  Tested under compiler:   cft77                                        STCOLM1A.11    
+CLL  Tested under OS version: UNICOS 5.1                                   STCOLM1A.12    
+CLL                                                                        STCOLM1A.13    
+CLL  Model            Modification history from model version 3.0:         STCOLM1A.14    
+CLL version  Date                                                          STCOLM1A.15    
+CLL   3.3  16/09/93  Allow mass-weighting only if level type has a well-   TJ170993.87    
+CLL                  defined mass-weight (ie. model levels/half-levels).   TJ170993.88    
+!LL   4.3  06/01/97  Moved calculation of  weighting and masking arrays    GPB0F403.91    
+!LL                   up to SPATIAL.                          P.Burton     GPB0F403.92    
+CLL                                                                        STCOLM1A.16    
+CLL  Programming standard: UM Doc Paper 3, version 2 (7/9/90)              STCOLM1A.17    
+CLL                                                                        STCOLM1A.18    
+CLL  Logical components covered: D712                                      STCOLM1A.19    
+CLL                                                                        STCOLM1A.20    
+CLL  Project task: D7                                                      STCOLM1A.21    
+CLL                                                                        STCOLM1A.22    
+CLL  External documentation:                                               STCOLM1A.23    
+CLL    Unified Model Doc Paper C4 - Storage handling and diagnostic        STCOLM1A.24    
+CLL                                 system (STASH)                         STCOLM1A.25    
+CLLEND ---------------------------------------------------------------     STCOLM1A.26    
+C                                                                          STCOLM1A.27    
+C*L  Interface and arguments: ------------------------------------------   STCOLM1A.28    
+C                                                                          STCOLM1A.29    
+      SUBROUTINE STCOLM(fieldin,vx,vy,vz,st_grid,lwrap,lmasswt,            TJ170993.89    
+     &                  xstart,ystart,xend,yend,                           STCOLM1A.31    
+     &                  fieldout,index_lev,level_list,zsize,               STCOLM1A.32    
+     &                  pstar_weight,delta_ak,delta_bk,                    GPB0F403.93    
+     &                  area_weight,mask,                                  GPB0F403.94    
+     &                  row_length,p_rows,                                 GPB0F403.95    
+     &                  level_code,mask_code,weight_code,rmdi,             STCOLM1A.36    
+     &                  icode,cmessage)                                    STCOLM1A.37    
+C                                                                          STCOLM1A.38    
+      IMPLICIT NONE                                                        STCOLM1A.39    
+C                                                                          STCOLM1A.40    
+      INTEGER                                                              STCOLM1A.41    
+     &    vx,vy,vz,                             ! IN  input field size     STCOLM1A.42    
+     &    st_grid,                              ! IN  STASH grdtype code   STCOLM1A.43    
+     &    xstart,ystart,                        ! IN  lower LH corner      STCOLM1A.44    
+     &    xend,yend,                            ! IN  upper RH corner      STCOLM1A.45    
+     &    zsize,                      ! IN no of horiz levels to process   STCOLM1A.46    
+     &    index_lev(zsize),           ! IN offset for each horiz level     STCOLM1A.47    
+     &    level_list(zsize),          ! IN model level at each horiz lev   STCOLM1A.48    
+     &    row_length,p_rows,                    ! IN  primary dimensions   GPB0F403.96    
+     &    level_code,                           ! IN  input level code     STCOLM1A.50    
+     &    mask_code,                            ! IN  masking code         STCOLM1A.51    
+     &    weight_code,                          ! IN  weighting code       STCOLM1A.52    
+     &    icode                                 ! OUT error return code    STCOLM1A.53    
+      CHARACTER*(*)                                                        STCOLM1A.54    
+     &    cmessage                              ! OUT error return msg     STCOLM1A.55    
+      LOGICAL                                                              STCOLM1A.56    
+     &    lwrap,                                ! IN  TRUE if wraparound   STCOLM1A.57    
+     &    lmasswt,                              ! IN  TRUE if masswts OK   TJ170993.90    
+     &    mask(row_length,p_rows)               ! IN  mask array           GPB0F403.97    
+      REAL                                                                 STCOLM1A.59    
+     &    fieldin(vx,vy,vz),                    ! IN  input field          STCOLM1A.60    
+     &    fieldout(xstart:xend,ystart:yend),    ! OUT output field         STCOLM1A.61    
+     &    pstar_weight(row_length,p_rows),      ! IN  mass weight factor   GPB0F403.98    
+     &    delta_ak(*),                          ! IN  hybrid coordinates   STCOLM1A.64    
+     &    delta_bk(*),                          ! IN  hybrid coordinates   STCOLM1A.65    
+     &    area_weight(row_length,p_rows),       ! IN  area weight factor   GPB0F403.99    
+     &    rmdi                                  ! IN  missing data indic   STCOLM1A.68    
+C*----------------------------------------------------------------------   STCOLM1A.69    
+C                                                                          STCOLM1A.70    
+C External subroutines called                                              STCOLM1A.71    
+C                                                                          STCOLM1A.72    
+C                                                                          STCOLM1A.74    
+*CALL STPARAM                                                              STCOLM1A.75    
+*CALL STERR                                                                STCOLM1A.76    
+*IF DEF,MPP                                                                GPB0F403.100   
+*CALL PARVARS                                                              GPB0F403.101   
+*ENDIF                                                                     GPB0F403.102   
+C                                                                          STCOLM1A.77    
+C Local variables                                                          STCOLM1A.78    
+C                                                                          STCOLM1A.79    
+        INTEGER i,j,k,ii,kk,level ! ARRAY INDICES FOR VARIABLE             STCOLM1A.80    
+                                                                           STCOLM1A.81    
+        REAL SUMCTOP(xstart:xend,ystart:yend)                              STCOLM1A.83    
+        REAL SUMCBOT(xstart:xend,ystart:yend)                              STCOLM1A.84    
+                                                                           STCOLM1A.85    
+CL----------------------------------------------------------------------   STCOLM1A.86    
+CL 0. Initialise sums                                                      STCOLM1A.87    
+CL                                                                         STCOLM1A.88    
+      DO 1 i=xstart,xend                                                   STCOLM1A.89    
+      DO j=ystart,yend                                                     STCOLM1A.90    
+        SUMCTOP(i,j)=0.0                                                   STCOLM1A.91    
+        SUMCBOT(i,j)=0.0                                                   STCOLM1A.92    
+      ENDDO                                                                STCOLM1A.93    
+ 1    CONTINUE                                                             STCOLM1A.94    
+CL----------------------------------------------------------------------   STCOLM1A.95    
+CL 1. Form column sums                                                     STCOLM1A.96    
+CL                                                                         STCOLM1A.97    
+CL 1.1 NULL weighting or area weighting                                    STCOLM1A.98    
+CL                                                                         STCOLM1A.99    
+      IF (weight_code.eq.stash_weight_null_code.or.                        STCOLM1A.100   
+     &    weight_code.eq.stash_weight_area_code) THEN                      STCOLM1A.101   
+        DO 11 kk=1,zsize                                                   STCOLM1A.102   
+          k=index_lev(kk)                                                  STCOLM1A.103   
+          DO i=xstart,xend                                                 STCOLM1A.104   
+*IF -DEF,MPP                                                               GPB0F403.103   
+            IF (lwrap) THEN                                                STCOLM1A.105   
+              ii=1+mod(i-1,vx)                                             STCOLM1A.106   
+            ELSE                                                           STCOLM1A.107   
+              ii=i                                                         STCOLM1A.108   
+            ENDIF                                                          STCOLM1A.109   
+*ELSE                                                                      GPB0F403.104   
+            IF ( lwrap .AND. (i .GT. (lasize(1)-Offx))) THEN               GPB0F403.105   
+              ii=i-lasize(1)+2*Offx ! miss halos on wrap around            GPB0F403.106   
+            ELSE                                                           GPB0F403.107   
+              ii=i                                                         GPB0F403.108   
+            ENDIF                                                          GPB0F403.109   
+*ENDIF                                                                     GPB0F403.110   
+            DO j=ystart,yend                                               STCOLM1A.110   
+              SUMCBOT(i,j)=SUMCBOT(i,j)+1.0                                STCOLM1A.111   
+              SUMCTOP(i,j)=SUMCTOP(i,j)+fieldin(ii,j,k)                    STCOLM1A.112   
+            ENDDO                                                          STCOLM1A.113   
+          ENDDO                                                            STCOLM1A.114   
+ 11     CONTINUE                                                           STCOLM1A.115   
+CL                                                                         STCOLM1A.116   
+CL 1.2 mass weighting                                                      STCOLM1A.117   
+CL                                                                         STCOLM1A.118   
+      ELSEIF (weight_code.eq.stash_weight_mass_code) THEN                  STCOLM1A.119   
+        IF (.NOT.lmasswt) THEN                                             TJ170993.91    
+C Mass-weighting on level types with no mass-weight defined is not         TJ170993.92    
+C supported - should be prevented by UI                                    TJ170993.93    
+          cmessage='STCOLM  : mass-weights not defined for this diag'      TJ170993.94    
+          icode=st_illegal_weight                                          TJ170993.95    
+          goto 999                                                         TJ170993.96    
+        ELSE                                                               GPB0F403.111   
+          DO 121 kk=1,zsize                                                TJ170993.98    
+            k=index_lev(kk)                                                TJ170993.99    
+            level=level_list(kk)                                           TJ170993.100   
+            DO i=xstart,xend                                               TJ170993.101   
+*IF -DEF,MPP                                                               GPB0F403.112   
+              IF (lwrap) THEN                                              TJ170993.102   
+                ii=1+mod(i-1,vx)                                           TJ170993.103   
+              ELSE                                                         TJ170993.104   
+                ii=i                                                       TJ170993.105   
+              ENDIF                                                        TJ170993.106   
+*ELSE                                                                      GPB0F403.113   
+              IF ( lwrap .AND. (i .GT. (lasize(1)-Offx))) THEN             GPB0F403.114   
+                ii=i-lasize(1)+2*Offx ! miss halos on wrap around          GPB0F403.115   
+              ELSE                                                         GPB0F403.116   
+                ii=i                                                       GPB0F403.117   
+              ENDIF                                                        GPB0F403.118   
+*ENDIF                                                                     GPB0F403.119   
+              DO j=ystart,yend                                             TJ170993.107   
+                SUMCBOT(i,j)=SUMCBOT(i,j)-                                 TJ170993.108   
+     &            (delta_ak(level)+delta_bk(level)*pstar_weight(ii,j))     GPB0F403.120   
+                SUMCTOP(i,j)=SUMCTOP(i,j)-fieldin(ii,j,k)*                 TJ170993.110   
+     &            (delta_ak(level)+delta_bk(level)*pstar_weight(ii,j))     GPB0F403.121   
+              ENDDO                                                        STCOLM1A.135   
+            ENDDO                                                          TJ170993.112   
+ 121      CONTINUE                                                         TJ170993.113   
+        ENDIF                                                              GPB0F403.122   
+      ELSE                                                                 STCOLM1A.258   
+        cmessage='STCOLM  : Invalid weighting code detected'               TJ170993.150   
+        icode=unknown_weight                                               STCOLM1A.260   
+        goto 999                                                           STCOLM1A.261   
+      ENDIF                                                                STCOLM1A.262   
+CL----------------------------------------------------------------------   STCOLM1A.263   
+CL 2. Perform masking (set missing data at masked points) - compute mean   STCOLM1A.264   
+CL                                                                         STCOLM1A.265   
+      DO i=xstart,xend                                                     GPB0F403.123   
+*IF -DEF,MPP                                                               GPB0F403.124   
+        IF (lwrap) THEN                                                    GPB0F403.125   
+          ii=1+MOD(i-1,vx)                                                 GPB0F403.126   
+        ELSE                                                               GPB0F403.127   
+          ii=i                                                             GPB0F403.128   
+        ENDIF                                                              GPB0F403.129   
+*ELSE                                                                      GPB0F403.130   
+        IF ( lwrap .AND. (i .GT. (lasize(1)-Offx))) THEN                   GPB0F403.131   
+          ii=i-lasize(1)+2*Offx ! miss halos on wrap around                GPB0F403.132   
+        ELSE                                                               GPB0F403.133   
+          ii=i                                                             GPB0F403.134   
+        ENDIF                                                              GPB0F403.135   
+*ENDIF                                                                     GPB0F403.136   
+        DO j=ystart,yend                                                   GPB0F403.137   
+          IF (mask(ii,j)) THEN                                             GPB0F403.138   
+            fieldout(i,j)=SUMCTOP(i,j)/SUMCBOT(i,j)                        GPB0F403.139   
+          ELSE                                                             STCOLM1A.272   
+            fieldout(i,j)=rmdi                                             GPB0F403.140   
+          ENDIF                                                            STCOLM1A.274   
+        ENDDO                                                              GPB0F403.141   
+      ENDDO                                                                GPB0F403.142   
+CL                                                                         STCOLM1A.323   
+  999 CONTINUE                                                             STCOLM1A.324   
+      RETURN                                                               STCOLM1A.325   
+      END                                                                  STCOLM1A.326   
+*ENDIF                                                                     STCOLM1A.327   

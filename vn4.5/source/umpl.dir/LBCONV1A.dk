@@ -1,0 +1,940 @@
+*IF DEF,A05_2A,OR,DEF,A05_2C,OR,DEF,A05_3B,OR,DEF,A05_3C                   LBCONV1A.2     
+*IF DEF,MPP,AND,DEF,T3E                                                    LBCONV1A.3     
+C ******************************COPYRIGHT******************************    LBCONV1A.4     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    LBCONV1A.5     
+C                                                                          LBCONV1A.6     
+C Use, duplication or disclosure of this code is subject to the            LBCONV1A.7     
+C restrictions as set forth in the contract.                               LBCONV1A.8     
+C                                                                          LBCONV1A.9     
+C                Meteorological Office                                     LBCONV1A.10    
+C                London Road                                               LBCONV1A.11    
+C                BRACKNELL                                                 LBCONV1A.12    
+C                Berkshire UK                                              LBCONV1A.13    
+C                RG12 2SZ                                                  LBCONV1A.14    
+C                                                                          LBCONV1A.15    
+C If no contract has been raised with this copy of the code, the use,      LBCONV1A.16    
+C duplication or disclosure of it is strictly prohibited.  Permission      LBCONV1A.17    
+C to do so must first be obtained in writing from the Head of Numerical    LBCONV1A.18    
+C Modelling at the above address.                                          LBCONV1A.19    
+C ******************************COPYRIGHT******************************    LBCONV1A.20    
+!                                                                          LBCONV1A.21    
+! + Redistributes data allowing load balancing for convection (T3E only)   LBCONV1A.22    
+!                                                                          LBCONV1A.23    
+! Subroutine interface:                                                    LBCONV1A.24    
+                                                                           LBCONV1A.25    
+      SUBROUTINE T3E_LOAD_BAL_CONV(                                        LBCONV1A.26    
+     &  N_SEGS,MAX_SEG,MAX_P_FIELD,SEG_START,SEG_LEN,                      LBCONV1A.27    
+     &  P_FIELD,Q_LEVELS,BL_LEVELS,                                        LBCONV1A.28    
+     &  THETA,Q,PSTAR,BLAND,                                               LBCONV1A.29    
+     &  U,V,TRACER,                                                        LBCONV1A.30    
+     &  DTHBYDT,DQBYDT,                                                    LBCONV1A.31    
+     &  DUBYDT,DVBYDT,RAIN,SNOW,                                           LBCONV1A.32    
+     &  CCA,ICCB,ICCT,CCLWP,                                               LBCONV1A.33    
+     &  CCW,ICCBPxCCA,ICCTPxCCA,GBMCCWP,GBMCCW,                            LBCONV1A.34    
+     &  LCBASE,LCTOP,LCCA,LCCLWP,CAPE,                                     LBCONV1A.35    
+     &  EXNER,AK,BK,AKM12,BKM12,                                           LBCONV1A.36    
+     &  DELAK,DELBK,                                                       LBCONV1A.37    
+     &  TIMESTEP,                                                          LBCONV1A.38    
+     &  T1_SD,Q1_SD,                                                       LBCONV1A.39    
+     &  L_MOM,L_TRACER,L_CAPE,NTRA,TRLEV,L_XSCOMP,L_SDXS,                  LBCONV1A.40    
+     &  L_HALO,                                                            LBCONV1A.41    
+     &  N_CCA_LEV,L_3D_CCA,L_CCW,MPARWTR,ANVIL_FACTOR,TOWER_FACTOR,        LBCONV1A.42    
+     &  UD_FACTOR,                                                         LBCONV1A.43    
+     &  L_CLOUD_DEEP, L_PHASE_LIM,                                         LBCONV1A.44    
+     &  UP_FLUX,FLG_UP_FLUX,                                               LBCONV1A.45    
+     &  DWN_FLUX,FLG_DWN_FLUX,                                             LBCONV1A.46    
+     &  ENTRAIN_UP, FLG_ENTR_UP,                                           LBCONV1A.47    
+     &  DETRAIN_UP,FLG_DETR_UP,                                            LBCONV1A.48    
+     &  ENTRAIN_DWN, FLG_ENTR_DWN,                                         LBCONV1A.49    
+     &  DETRAIN_DWN,FLG_DETR_DWN                                           LBCONV1A.50    
+     &  )                                                                  LBCONV1A.51    
+                                                                           LBCONV1A.52    
+      IMPLICIT NONE                                                        LBCONV1A.53    
+                                                                           LBCONV1A.54    
+! Description:                                                             LBCONV1A.55    
+! Load balances the convection.                                            LBCONV1A.56    
+!                                                                          LBCONV1A.57    
+! Method:                                                                  LBCONV1A.58    
+! The data on each processor is split into "N_SEGS" segments.              LBCONV1A.59    
+! Each processor keeps a counter "remote_next_seg_to_do" which is          LBCONV1A.60    
+! the next segment on that processor which needs to be passed              LBCONV1A.61    
+! to the convection code.                                                  LBCONV1A.62    
+! Each processor performs a loop, over all processors, starting with       LBCONV1A.63    
+! itself, and looks at the value of "remote_next_seg_to_do" on each        LBCONV1A.64    
+! processor. When it finds a processor in which "remote_next_seg_to_do"    LBCONV1A.65    
+! is less than or equal ot "N_SEGS" (ie. there is still at least one       LBCONV1A.66    
+! segment to do on that processor), the loop is stopped, and one of        LBCONV1A.67    
+! two possible courses of action is taken                                  LBCONV1A.68    
+! If this is the local processor, then the data is simply passed           LBCONV1A.69    
+! to the convection routines. If it is a remote processor, the data        LBCONV1A.70    
+! is shmem_getted from the remote processor into temporary arrays on       LBCONV1A.71    
+! the local processor, processed, and then shmem_putted back to the        LBCONV1A.72    
+! remote processor.                                                        LBCONV1A.73    
+! The routine is exited, via a call to barrier (to ensure everyone         LBCONV1A.74    
+! has completed) when the above loop completes without any processor       LBCONV1A.75    
+! having any segments left to compute.                                     LBCONV1A.76    
+!                                                                          LBCONV1A.77    
+! Note on adding new arguments to the convection routines:                 LBCONV1A.78    
+! Any new arguments should be added in a similar fashion to the            LBCONV1A.79    
+! existing arguments. For examples:                                        LBCONV1A.80    
+! Single dimensional input argument: PSTAR                                 LBCONV1A.81    
+! Multi dimensional input argument: DTHBYDT                                LBCONV1A.82    
+! Multi dimensional input/output argument: THETA                           LBCONV1A.83    
+! Note, for every new argument added, you will need to increase            LBCONV1A.84    
+! the parameter "number_of_vars" by one, and include a new                 LBCONV1A.85    
+! var_"variable_name" parameter which has a specific id for the            LBCONV1A.86    
+! new variable.                                                            LBCONV1A.87    
+!                                                                          LBCONV1A.88    
+! Current code owner: P.Burton                                             LBCONV1A.89    
+!                                                                          LBCONV1A.90    
+! History                                                                  LBCONV1A.91    
+! Model    Date      Modification history from model version 4.5           LBCONV1A.92    
+! version                                                                  LBCONV1A.93    
+! 4.5      30/01/98  New DECK created for MPP code.         P.Burton       LBCONV1A.94    
+!                                                                          LBCONV1A.95    
+                                                                           LBCONV1A.96    
+                                                                           LBCONV1A.97    
+! Subroutine arguments:                                                    LBCONV1A.98    
+                                                                           LBCONV1A.99    
+      INTEGER                                                              LBCONV1A.100   
+     &  N_SEGS                     ! IN: number of segments                LBCONV1A.101   
+     &, MAX_SEG                    ! IN: maximum segment size              LBCONV1A.102   
+     &, MAX_P_FIELD                ! IN: maximum value of P_FIELD          LBCONV1A.103   
+     &, SEG_START(N_SEGS)          ! IN: first element of segment          LBCONV1A.104   
+     &, SEG_LEN(N_SEGS)            ! IN: segment size                      LBCONV1A.105   
+     &, P_FIELD                    ! IN: horizontal field size             LBCONV1A.106   
+     &, Q_LEVELS                   ! IN: number of moist levels            LBCONV1A.107   
+     &, BL_LEVELS                  ! IN: number of b.l. levels             LBCONV1A.108   
+     &, NTRA                       ! IN: number of tracer fields           LBCONV1A.109   
+     &, TRLEV                      ! IN: number of tracer levels           LBCONV1A.110   
+     &, N_CCA_LEV                  ! IN: number of convective layers       LBCONV1A.111   
+                                                                           LBCONV1A.112   
+      REAL                                                                 LBCONV1A.113   
+     &  THETA(P_FIELD,Q_LEVELS)    ! INOUT: potential temperature          LBCONV1A.114   
+     &, Q(P_FIELD,Q_LEVELS)        ! INOUT: mixing ratio                   LBCONV1A.115   
+     &, PSTAR(P_FIELD)             ! IN: surface pressure                  LBCONV1A.116   
+     &, U(P_FIELD,Q_LEVELS)        ! IN: U field (on P grid)               LBCONV1A.117   
+     &, V(P_FIELD,Q_LEVELS)        ! IN: V field (on P grid)               LBCONV1A.118   
+     &, TRACER(P_FIELD,TRLEV,NTRA) ! INOUT: tracer fields                  LBCONV1A.119   
+     &, DTHBYDT(P_FIELD,Q_LEVELS)  ! OUT: increment to pot. temp.          LBCONV1A.120   
+     &, DQBYDT(P_FIELD,Q_LEVELS)   ! OUT: increment to mix. ratio          LBCONV1A.121   
+     &, DUBYDT(P_FIELD,Q_LEVELS)   ! OUT: increments to U field            LBCONV1A.122   
+     &, DVBYDT(P_FIELD,Q_LEVELS)   ! OUT: increments to V field            LBCONV1A.123   
+     &, RAIN(P_FIELD)              ! OUT: surface convective rain          LBCONV1A.124   
+     &, SNOW(P_FIELD)              ! OUT: surface convective snow          LBCONV1A.125   
+     &, CCA(P_FIELD,N_CCA_LEV)     ! OUT: convective cloud amount          LBCONV1A.126   
+     &, CCLWP(P_FIELD)             ! OUT: condensed water path             LBCONV1A.127   
+     &, CCW(P_FIELD,Q_LEVELS)      ! OUT: liquid water amount              LBCONV1A.128   
+     &, ICCBPxCCA(P_FIELD)         ! OUT: cld base pressure x CCA          LBCONV1A.129   
+     &, ICCTPxCCA(P_FIELD)         ! OUT: cld top pressure x CCA           LBCONV1A.130   
+     &, GBMCCWP(P_FIELD)           ! OUT: gridbox mean CCWP                LBCONV1A.131   
+     &, GBMCCW(P_FIELD,Q_LEVELS)   ! OUT: gridbox mean CCW                 LBCONV1A.132   
+     &, LCCA(P_FIELD)              ! OUT: lowest conv. cloud amnt          LBCONV1A.133   
+     &, LCCLWP(P_FIELD)            ! OUT: condensed water path             LBCONV1A.134   
+     &, CAPE(P_FIELD)              ! OUT: conv. avail. pot. energy         LBCONV1A.135   
+     &, EXNER(P_FIELD,Q_LEVELS+1)  ! IN: exner ratio                       LBCONV1A.136   
+     &, AK(Q_LEVELS)               ! IN: hybrid vertical co-ord.           LBCONV1A.137   
+     &, BK(Q_LEVELS)               ! IN: hybrid vertical co-ord.           LBCONV1A.138   
+     &, AKM12(Q_LEVELS+1)          ! IN: hybrid vertical co-ord.           LBCONV1A.139   
+     &, BKM12(Q_LEVELS+1)          ! IN: hybrid vertical co-ord.           LBCONV1A.140   
+     &, DELAK(Q_LEVELS)            ! IN: diff. of AK over layer            LBCONV1A.141   
+     &, DELBK(Q_LEVELS)            ! IN: diff. of BK over layer            LBCONV1A.142   
+     &, TIMESTEP                   ! IN: model timestep                    LBCONV1A.143   
+     &, T1_SD(P_FIELD)             ! IN: s.d. of temp. at layer1           LBCONV1A.144   
+     &, Q1_SD(P_FIELD)             ! IN: s.d. of humid. at layer1          LBCONV1A.145   
+     &, MPARWTR                    ! IN: res. of ccw left after conv.      LBCONV1A.146   
+     &, ANVIL_FACTOR               ! IN: used in calc. of cld. amt.        LBCONV1A.147   
+     &, TOWER_FACTOR               ! IN: used in calc. of cld. amt.        LBCONV1A.148   
+     &, UD_FACTOR                  ! IN: updraught factor                  LBCONV1A.149   
+     &, UP_FLUX(P_FIELD,Q_LEVELS)     ! OUT: upward flux diagnostic        LBCONV1A.150   
+     &, DWN_FLUX(P_FIELD,Q_LEVELS)    ! OUT: downward flux diagnostic      LBCONV1A.151   
+     &, ENTRAIN_UP(P_FIELD,Q_LEVELS)  ! OUT: upward entrainment diag.      LBCONV1A.152   
+     &, DETRAIN_UP(P_FIELD,Q_LEVELS)  ! OUT: upward detrainment diag.      LBCONV1A.153   
+     &, ENTRAIN_DWN(P_FIELD,Q_LEVELS) ! OUT: downward entrainment diag.    LBCONV1A.154   
+     &, DETRAIN_DWN(P_FIELD,Q_LEVELS) ! OUT: downward detrainment diag.    LBCONV1A.155   
+                                                                           LBCONV1A.156   
+      INTEGER                                                              LBCONV1A.157   
+     &  ICCB(P_FIELD)              ! OUT: convective cloud base lev.       LBCONV1A.158   
+     &, ICCT(P_FIELD)              ! OUT: convective clout top lev.        LBCONV1A.159   
+     &, LCBASE(P_FIELD)            ! OUT: lowest conv. cloud base          LBCONV1A.160   
+     &, LCTOP(P_FIELD)             ! OUT: lowest conv. cloud top           LBCONV1A.161   
+                                                                           LBCONV1A.162   
+                                                                           LBCONV1A.163   
+      LOGICAL                                                              LBCONV1A.164   
+     &  BLAND(P_FIELD)             ! IN: land/sea mask                     LBCONV1A.165   
+     &, L_HALO(P_FIELD)            ! IN: halo mask                         LBCONV1A.166   
+     &, L_MOM                      ! IN: momentum transport switch         LBCONV1A.167   
+     &, L_TRACER                   ! IN: tracer inclusion switch           LBCONV1A.168   
+     &, L_CAPE                     ! IN: CAPE closure switch               LBCONV1A.169   
+     &, L_XSCOMP                   ! IN: compensation switch               LBCONV1A.170   
+     &, L_SDXS                     ! IN: parcel excess switch              LBCONV1A.171   
+     &, L_3D_CCA                   ! IN: use 3D or 2D cld amt              LBCONV1A.172   
+     &, L_CCW                      ! IN: precip. not inc. in ccw path      LBCONV1A.173   
+     &, L_CLOUD_DEEP               ! IN: depth criterion for anvils        LBCONV1A.174   
+     &, L_PHASE_LIM                ! IN: phase change limiter              LBCONV1A.175   
+     &, FLG_UP_FLUX                ! IN: output upward flux diag.          LBCONV1A.176   
+     &, FLG_DWN_FLUX               ! IN: output downward flux diag.        LBCONV1A.177   
+     &, FLG_ENTR_UP                ! IN: output upward entr. diag.         LBCONV1A.178   
+     &, FLG_DETR_UP                ! IN: output upward detr. diag.         LBCONV1A.179   
+     &, FLG_ENTR_DWN               ! IN: output downward entr. diag.       LBCONV1A.180   
+     &, FLG_DETR_DWN               ! IN: output downward entr. diag.       LBCONV1A.181   
+                                                                           LBCONV1A.182   
+! Comdecks                                                                 LBCONV1A.183   
+*CALL PARVARS                                                              LBCONV1A.184   
+                                                                           LBCONV1A.185   
+! Local variables                                                          LBCONV1A.186   
+                                                                           LBCONV1A.187   
+! Copies of segments of arrays on other PEs:                               LBCONV1A.188   
+      REAL                                                                 LBCONV1A.189   
+     &  local_THETA(MAX_SEG,Q_LEVELS)                                      LBCONV1A.190   
+     &, local_Q(MAX_SEG,Q_LEVELS)                                          LBCONV1A.191   
+     &, local_PSTAR(MAX_SEG)                                               LBCONV1A.192   
+     &, local_U(MAX_SEG,Q_LEVELS)                                          LBCONV1A.193   
+     &, local_V(MAX_SEG,Q_LEVELS)                                          LBCONV1A.194   
+     &, local_TRACER(MAX_SEG,TRLEV,NTRA)                                   LBCONV1A.195   
+     &, local_DTHBYDT(MAX_SEG,Q_LEVELS)                                    LBCONV1A.196   
+     &, local_DQBYDT(MAX_SEG,Q_LEVELS)                                     LBCONV1A.197   
+     &, local_DUBYDT(MAX_SEG,Q_LEVELS)                                     LBCONV1A.198   
+     &, local_DVBYDT(MAX_SEG,Q_LEVELS)                                     LBCONV1A.199   
+     &, local_RAIN(MAX_SEG)                                                LBCONV1A.200   
+     &, local_SNOW(MAX_SEG)                                                LBCONV1A.201   
+     &, local_CCA(MAX_SEG,N_CCA_LEV)                                       LBCONV1A.202   
+     &, local_CCLWP(MAX_SEG)                                               LBCONV1A.203   
+     &, local_CCW(MAX_SEG,Q_LEVELS)                                        LBCONV1A.204   
+     &, local_ICCBPxCCA(MAX_SEG)                                           LBCONV1A.205   
+     &, local_ICCTPxCCA(MAX_SEG)                                           LBCONV1A.206   
+     &, local_GBMCCWP(MAX_SEG)                                             LBCONV1A.207   
+     &, local_GBMCCW(MAX_SEG,Q_LEVELS)                                     LBCONV1A.208   
+     &, local_LCCA(MAX_SEG)                                                LBCONV1A.209   
+     &, local_LCCLWP(MAX_SEG)                                              LBCONV1A.210   
+     &, local_CAPE(MAX_SEG)                                                LBCONV1A.211   
+     &, local_EXNER(MAX_SEG,Q_LEVELS+1)                                    LBCONV1A.212   
+     &, local_T1_SD(MAX_SEG)                                               LBCONV1A.213   
+     &, local_Q1_SD(MAX_SEG)                                               LBCONV1A.214   
+     &, local_UP_FLUX(MAX_SEG,Q_LEVELS)                                    LBCONV1A.215   
+     &, local_DWN_FLUX(MAX_SEG,Q_LEVELS)                                   LBCONV1A.216   
+     &, local_ENTRAIN_UP(MAX_SEG,Q_LEVELS)                                 LBCONV1A.217   
+     &, local_DETRAIN_UP(MAX_SEG,Q_LEVELS)                                 LBCONV1A.218   
+     &, local_ENTRAIN_DWN(MAX_SEG,Q_LEVELS)                                LBCONV1A.219   
+     &, local_DETRAIN_DWN(MAX_SEG,Q_LEVELS)                                LBCONV1A.220   
+                                                                           LBCONV1A.221   
+      INTEGER                                                              LBCONV1A.222   
+     &  local_ICCB(MAX_SEG)                                                LBCONV1A.223   
+     &, local_ICCT(MAX_SEG)                                                LBCONV1A.224   
+     &, local_LCBASE(MAX_SEG)                                              LBCONV1A.225   
+     &, local_LCTOP(MAX_SEG)                                               LBCONV1A.226   
+                                                                           LBCONV1A.227   
+      LOGICAL                                                              LBCONV1A.228   
+     &  local_BLAND(MAX_SEG)                                               LBCONV1A.229   
+     &, local_L_HALO(MAX_SEG)                                              LBCONV1A.230   
+                                                                           LBCONV1A.231   
+      INTEGER                                                              LBCONV1A.232   
+     &  copy_remote_P_FIELD   ! value of P_FIELD on remote PE              LBCONV1A.233   
+     &, copy_remote_SEG_START ! segment start on remote PE                 LBCONV1A.234   
+     &, copy_remote_SEG_LEN   ! segment length on remote PE                LBCONV1A.235   
+                                                                           LBCONV1A.236   
+! Dummy versions of arrays used for generating addresses required          LBCONV1A.237   
+! by the SHMEM calls                                                       LBCONV1A.238   
+      REAL                                                                 LBCONV1A.239   
+     &  remote_THETA(MAX_P_FIELD*Q_LEVELS)                                 LBCONV1A.240   
+     &, remote_Q(MAX_P_FIELD*Q_LEVELS)                                     LBCONV1A.241   
+     &, remote_PSTAR(MAX_P_FIELD)                                          LBCONV1A.242   
+     &, remote_U(MAX_P_FIELD*Q_LEVELS)                                     LBCONV1A.243   
+     &, remote_V(MAX_P_FIELD*Q_LEVELS)                                     LBCONV1A.244   
+     &, remote_TRACER(MAX_P_FIELD*TRLEV*NTRA)                              LBCONV1A.245   
+     &, remote_DTHBYDT(MAX_P_FIELD*Q_LEVELS)                               LBCONV1A.246   
+     &, remote_DQBYDT(MAX_P_FIELD*Q_LEVELS)                                LBCONV1A.247   
+     &, remote_DUBYDT(MAX_P_FIELD*Q_LEVELS)                                LBCONV1A.248   
+     &, remote_DVBYDT(MAX_P_FIELD*Q_LEVELS)                                LBCONV1A.249   
+     &, remote_RAIN(MAX_P_FIELD)                                           LBCONV1A.250   
+     &, remote_SNOW(MAX_P_FIELD)                                           LBCONV1A.251   
+     &, remote_CCA(MAX_P_FIELD*N_CCA_LEV)                                  LBCONV1A.252   
+     &, remote_CCLWP(MAX_P_FIELD)                                          LBCONV1A.253   
+     &, remote_CCW(MAX_P_FIELD*Q_LEVELS)                                   LBCONV1A.254   
+     &, remote_ICCBPxCCA(MAX_P_FIELD)                                      LBCONV1A.255   
+     &, remote_ICCTPxCCA(MAX_P_FIELD)                                      LBCONV1A.256   
+     &, remote_GBMCCWP(MAX_P_FIELD)                                        LBCONV1A.257   
+     &, remote_GBMCCW(MAX_P_FIELD*Q_LEVELS)                                LBCONV1A.258   
+     &, remote_LCCA(MAX_P_FIELD)                                           LBCONV1A.259   
+     &, remote_LCCLWP(MAX_P_FIELD)                                         LBCONV1A.260   
+     &, remote_CAPE(MAX_P_FIELD)                                           LBCONV1A.261   
+     &, remote_EXNER(MAX_P_FIELD*(Q_LEVELS+1))                             LBCONV1A.262   
+     &, remote_T1_SD(MAX_P_FIELD)                                          LBCONV1A.263   
+     &, remote_Q1_SD(MAX_P_FIELD)                                          LBCONV1A.264   
+     &, remote_UP_FLUX(MAX_P_FIELD*Q_LEVELS)                               LBCONV1A.265   
+     &, remote_DWN_FLUX(MAX_P_FIELD*Q_LEVELS)                              LBCONV1A.266   
+     &, remote_ENTRAIN_UP(MAX_P_FIELD*Q_LEVELS)                            LBCONV1A.267   
+     &, remote_DETRAIN_UP(MAX_P_FIELD*Q_LEVELS)                            LBCONV1A.268   
+     &, remote_ENTRAIN_DWN(MAX_P_FIELD*Q_LEVELS)                           LBCONV1A.269   
+     &, remote_DETRAIN_DWN(MAX_P_FIELD*Q_LEVELS)                           LBCONV1A.270   
+                                                                           LBCONV1A.271   
+      INTEGER                                                              LBCONV1A.272   
+     &  remote_ICCB(MAX_P_FIELD)                                           LBCONV1A.273   
+     &, remote_ICCT(MAX_P_FIELD)                                           LBCONV1A.274   
+     &, remote_LCBASE(MAX_P_FIELD)                                         LBCONV1A.275   
+     &, remote_LCTOP(MAX_P_FIELD)                                          LBCONV1A.276   
+                                                                           LBCONV1A.277   
+      LOGICAL                                                              LBCONV1A.278   
+     &  remote_BLAND(MAX_P_FIELD)                                          LBCONV1A.279   
+     &, remote_L_HALO(MAX_P_FIELD)                                         LBCONV1A.280   
+                                                                           LBCONV1A.281   
+      INTEGER                                                              LBCONV1A.282   
+     &  remote_P_FIELD                                                     LBCONV1A.283   
+     &, remote_SEG_START(N_SEGS)                                           LBCONV1A.284   
+     &, remote_SEG_LEN(N_SEGS)                                             LBCONV1A.285   
+                                                                           LBCONV1A.286   
+! Pointers pointing to the remote addresses of the arrays                  LBCONV1A.287   
+                                                                           LBCONV1A.288   
+      POINTER                                                              LBCONV1A.289   
+     &  (ptr_THETA,remote_THETA)                                           LBCONV1A.290   
+     &, (ptr_Q,remote_Q)                                                   LBCONV1A.291   
+     &, (ptr_PSTAR,remote_PSTAR)                                           LBCONV1A.292   
+     &, (ptr_U,remote_U)                                                   LBCONV1A.293   
+     &, (ptr_V,remote_V)                                                   LBCONV1A.294   
+     &, (ptr_TRACER,remote_TRACER)                                         LBCONV1A.295   
+     &, (ptr_DTHBYDT,remote_DTHBYDT)                                       LBCONV1A.296   
+     &, (ptr_DQBYDT,remote_DQBYDT)                                         LBCONV1A.297   
+     &, (ptr_DUBYDT,remote_DUBYDT)                                         LBCONV1A.298   
+     &, (ptr_DVBYDT,remote_DVBYDT)                                         LBCONV1A.299   
+     &, (ptr_RAIN,remote_RAIN)                                             LBCONV1A.300   
+     &, (ptr_SNOW,remote_SNOW)                                             LBCONV1A.301   
+     &, (ptr_CCA,remote_CCA)                                               LBCONV1A.302   
+     &, (ptr_CCLWP,remote_CCLWP)                                           LBCONV1A.303   
+     &, (ptr_CCW,remote_CCW)                                               LBCONV1A.304   
+     &, (ptr_ICCBPxCCA,remote_ICCBPxCCA)                                   LBCONV1A.305   
+     &, (ptr_ICCTPxCCA,remote_ICCTPxCCA)                                   LBCONV1A.306   
+     &, (ptr_GBMCCWP,remote_GBMCCWP)                                       LBCONV1A.307   
+     &, (ptr_GBMCCW,remote_GBMCCW)                                         LBCONV1A.308   
+     &, (ptr_LCCA,remote_LCCA)                                             LBCONV1A.309   
+     &, (ptr_LCCLWP,remote_LCCLWP)                                         LBCONV1A.310   
+     &, (ptr_CAPE,remote_CAPE)                                             LBCONV1A.311   
+     &, (ptr_EXNER,remote_EXNER)                                           LBCONV1A.312   
+     &, (ptr_T1_SD,remote_T1_SD)                                           LBCONV1A.313   
+     &, (ptr_Q1_SD,remote_Q1_SD)                                           LBCONV1A.314   
+     &, (ptr_ICCB,remote_ICCB)                                             LBCONV1A.315   
+     &, (ptr_ICCT,remote_ICCT)                                             LBCONV1A.316   
+     &, (ptr_LCBASE,remote_LCBASE)                                         LBCONV1A.317   
+     &, (ptr_LCTOP,remote_LCTOP)                                           LBCONV1A.318   
+     &, (ptr_BLAND,remote_BLAND)                                           LBCONV1A.319   
+     &, (ptr_L_HALO,remote_L_HALO)                                         LBCONV1A.320   
+     &, (ptr_P_FIELD,remote_P_FIELD)                                       LBCONV1A.321   
+     &, (ptr_SEG_START,remote_SEG_START)                                   LBCONV1A.322   
+     &, (ptr_SEG_LEN,remote_SEG_LEN)                                       LBCONV1A.323   
+     &, (ptr_UP_FLUX,remote_UP_FLUX)                                       LBCONV1A.324   
+     &, (ptr_DWN_FLUX,remote_DWN_FLUX)                                     LBCONV1A.325   
+     &, (ptr_ENTRAIN_UP,remote_ENTRAIN_UP)                                 LBCONV1A.326   
+     &, (ptr_DETRAIN_UP,remote_DETRAIN_UP)                                 LBCONV1A.327   
+     &, (ptr_ENTRAIN_DWN,remote_ENTRAIN_DWN)                               LBCONV1A.328   
+     &, (ptr_DETRAIN_DWN,remote_DETRAIN_DWN)                               LBCONV1A.329   
+                                                                           LBCONV1A.330   
+                                                                           LBCONV1A.331   
+! Array containg start address of each variable                            LBCONV1A.332   
+      INTEGER                                                              LBCONV1A.333   
+     &  number_of_vars                                                     LBCONV1A.334   
+      PARAMETER                                                            LBCONV1A.335   
+     &  (number_of_vars=40)                                                LBCONV1A.336   
+                                                                           LBCONV1A.337   
+      INTEGER                                                              LBCONV1A.338   
+     &  address(number_of_vars)                                            LBCONV1A.339   
+     &, remote_address(number_of_vars) ! copy of address on remote pe      LBCONV1A.340   
+                                                                           LBCONV1A.341   
+     &, status  ! indicates if this processor is ready for comms.          LBCONV1A.342   
+     &, next_seg_to_do ! next segment to calculate on this PE              LBCONV1A.343   
+                                                                           LBCONV1A.344   
+                                                                           LBCONV1A.345   
+      COMMON /shmem_LBCONV_align/  ! make sure arrays are aligned on       LBCONV1A.346   
+     & address,status,next_seg_to_do     ! each PE                         LBCONV1A.347   
+                                                                           LBCONV1A.348   
+! And magic numbers for each variables location in address array           LBCONV1A.349   
+                                                                           LBCONV1A.350   
+      INTEGER                                                              LBCONV1A.351   
+     &  var_THETA,var_Q,var_PSTAR,var_U,var_V,var_TRACER,                  LBCONV1A.352   
+     &  var_DTHBYDT,var_DQBYDT,var_DUBYDT,var_DVBYDT,var_RAIN,             LBCONV1A.353   
+     &  var_SNOW,var_CCA,var_CCLWP,var_CCW,var_ICCBPxCCA,                  LBCONV1A.354   
+     &  var_ICCTPxCCA,var_GBMCCWP,var_GBMCCW,var_LCCA,var_LCCLWP,          LBCONV1A.355   
+     &  var_CAPE,var_EXNER,var_T1_SD,var_Q1_SD,var_ICCB,var_ICCT,          LBCONV1A.356   
+     &  var_LCBASE,var_LCTOP,var_BLAND,var_L_HALO,                         LBCONV1A.357   
+     &  var_P_FIELD,var_SEG_START,var_SEG_LEN,                             LBCONV1A.358   
+     &  var_UP_FLUX,var_DWN_FLUX,                                          LBCONV1A.359   
+     &  var_ENTRAIN_UP,var_DETRAIN_UP,                                     LBCONV1A.360   
+     &  var_ENTRAIN_DWN,var_DETRAIN_DWN                                    LBCONV1A.361   
+                                                                           LBCONV1A.362   
+      PARAMETER(                                                           LBCONV1A.363   
+     &  var_THETA=1                                                        LBCONV1A.364   
+     &, var_Q=2                                                            LBCONV1A.365   
+     &, var_PSTAR=3                                                        LBCONV1A.366   
+     &, var_U=4                                                            LBCONV1A.367   
+     &, var_V=5                                                            LBCONV1A.368   
+     &, var_TRACER=6                                                       LBCONV1A.369   
+     &, var_DTHBYDT=7                                                      LBCONV1A.370   
+     &, var_DQBYDT=8                                                       LBCONV1A.371   
+     &, var_DUBYDT=9                                                       LBCONV1A.372   
+     &, var_DVBYDT=10                                                      LBCONV1A.373   
+     &, var_RAIN=11                                                        LBCONV1A.374   
+     &, var_SNOW=12                                                        LBCONV1A.375   
+     &, var_CCA=13                                                         LBCONV1A.376   
+     &, var_CCLWP=14                                                       LBCONV1A.377   
+     &, var_CCW=15                                                         LBCONV1A.378   
+     &, var_ICCBPxCCA=16                                                   LBCONV1A.379   
+     &, var_ICCTPxCCA=17                                                   LBCONV1A.380   
+     &, var_GBMCCWP=18                                                     LBCONV1A.381   
+     &, var_GBMCCW=19                                                      LBCONV1A.382   
+     &, var_LCCA=20                                                        LBCONV1A.383   
+     &, var_LCCLWP=21                                                      LBCONV1A.384   
+     &, var_CAPE=22                                                        LBCONV1A.385   
+     &, var_EXNER=23                                                       LBCONV1A.386   
+     &, var_T1_SD=24                                                       LBCONV1A.387   
+     &, var_Q1_SD=25                                                       LBCONV1A.388   
+     &, var_ICCB=26                                                        LBCONV1A.389   
+     &, var_ICCT=27                                                        LBCONV1A.390   
+     &, var_LCBASE=28                                                      LBCONV1A.391   
+     &, var_LCTOP=29                                                       LBCONV1A.392   
+     &, var_BLAND=30                                                       LBCONV1A.393   
+     &, var_L_HALO=31                                                      LBCONV1A.394   
+     &, var_P_FIELD=32                                                     LBCONV1A.395   
+     &, var_SEG_START=33                                                   LBCONV1A.396   
+     &, var_SEG_LEN=34                                                     LBCONV1A.397   
+     &, var_UP_FLUX=35                                                     LBCONV1A.398   
+     &, var_DWN_FLUX=36                                                    LBCONV1A.399   
+     &, var_ENTRAIN_UP=37                                                  LBCONV1A.400   
+     &, var_DETRAIN_UP=38                                                  LBCONV1A.401   
+     &, var_ENTRAIN_DWN=39                                                 LBCONV1A.402   
+     &, var_DETRAIN_DWN=40                                                 LBCONV1A.403   
+     & )                                                                   LBCONV1A.404   
+                                                                           LBCONV1A.405   
+! Parameters                                                               LBCONV1A.406   
+      INTEGER                                                              LBCONV1A.407   
+     &  locked                                                             LBCONV1A.408   
+      PARAMETER (locked=-1)                                                LBCONV1A.409   
+                                                                           LBCONV1A.410   
+! Other variables                                                          LBCONV1A.411   
+                                                                           LBCONV1A.412   
+      INTEGER                                                              LBCONV1A.413   
+     &  iproc ! loop counter over virtual PEs                              LBCONV1A.414   
+     &, remote_pe ! processor I'm communicating with                       LBCONV1A.415   
+     &, i ! loop counter over horizontal field                             LBCONV1A.416   
+     &, k ! loop counter for loop over levels                              LBCONV1A.417   
+     &, fp ! first point in remote var. to start copying from              LBCONV1A.418   
+     &, len ! number of points to copy from remote variable                LBCONV1A.419   
+     &, fld ! loop counter for loop over tracer fields                     LBCONV1A.420   
+     &, remote_status ! value of status on remote pe                       LBCONV1A.421   
+     &, iseg ! segment of data to process                                  LBCONV1A.422   
+     &, remote_next_seg_to_do ! value on remote pe                         LBCONV1A.423   
+                                                                           LBCONV1A.424   
+      LOGICAL                                                              LBCONV1A.425   
+     & found_work  ! if any work could be found to do                      LBCONV1A.426   
+                                                                           LBCONV1A.427   
+! Functions                                                                LBCONV1A.428   
+      INTEGER                                                              LBCONV1A.429   
+     & shmem_swap                                                          LBCONV1A.430   
+                                                                           LBCONV1A.431   
+!-----------------------------------------------------------------         LBCONV1A.432   
+! 1.0 Set up the address array with the start address of all the           LBCONV1A.433   
+!     variables that will require transfer between processors.             LBCONV1A.434   
+                                                                           LBCONV1A.435   
+      address(var_THETA)=LOC(THETA)                                        LBCONV1A.436   
+      address(var_Q)=LOC(Q)                                                LBCONV1A.437   
+      address(var_PSTAR)=LOC(PSTAR)                                        LBCONV1A.438   
+      address(var_U)=LOC(U)                                                LBCONV1A.439   
+      address(var_V)=LOC(V)                                                LBCONV1A.440   
+      address(var_TRACER)=LOC(TRACER)                                      LBCONV1A.441   
+      address(var_DTHBYDT)=LOC(DTHBYDT)                                    LBCONV1A.442   
+      address(var_DQBYDT)=LOC(DQBYDT)                                      LBCONV1A.443   
+      address(var_DUBYDT)=LOC(DUBYDT)                                      LBCONV1A.444   
+      address(var_DVBYDT)=LOC(DVBYDT)                                      LBCONV1A.445   
+      address(var_RAIN)=LOC(RAIN)                                          LBCONV1A.446   
+      address(var_SNOW)=LOC(SNOW)                                          LBCONV1A.447   
+      address(var_CCA)=LOC(CCA)                                            LBCONV1A.448   
+      address(var_CCLWP)=LOC(CCLWP)                                        LBCONV1A.449   
+      address(var_CCW)=LOC(CCW)                                            LBCONV1A.450   
+      address(var_ICCBPxCCA)=LOC(ICCBPxCCA)                                LBCONV1A.451   
+      address(var_ICCTPxCCA)=LOC(ICCTPxCCA)                                LBCONV1A.452   
+      address(var_GBMCCWP)=LOC(GBMCCWP)                                    LBCONV1A.453   
+      address(var_GBMCCW)=LOC(GBMCCW)                                      LBCONV1A.454   
+      address(var_LCCA)=LOC(LCCA)                                          LBCONV1A.455   
+      address(var_LCCLWP)=LOC(LCCLWP)                                      LBCONV1A.456   
+      address(var_CAPE)=LOC(CAPE)                                          LBCONV1A.457   
+      address(var_EXNER)=LOC(EXNER)                                        LBCONV1A.458   
+      address(var_T1_SD)=LOC(T1_SD)                                        LBCONV1A.459   
+      address(var_Q1_SD)=LOC(Q1_SD)                                        LBCONV1A.460   
+      address(var_ICCB)=LOC(ICCB)                                          LBCONV1A.461   
+      address(var_ICCT)=LOC(ICCT)                                          LBCONV1A.462   
+      address(var_LCBASE)=LOC(LCBASE)                                      LBCONV1A.463   
+      address(var_LCTOP)=LOC(LCTOP)                                        LBCONV1A.464   
+      address(var_BLAND)=LOC(BLAND)                                        LBCONV1A.465   
+      address(var_L_HALO)=LOC(L_HALO)                                      LBCONV1A.466   
+      address(var_P_FIELD)=LOC(P_FIELD)                                    LBCONV1A.467   
+      address(var_SEG_START)=LOC(SEG_START)                                LBCONV1A.468   
+      address(var_SEG_LEN)=LOC(SEG_LEN)                                    LBCONV1A.469   
+      address(var_UP_FLUX)=LOC(UP_FLUX)                                    LBCONV1A.470   
+      address(var_DWN_FLUX)=LOC(DWN_FLUX)                                  LBCONV1A.471   
+      address(var_ENTRAIN_UP)=LOC(ENTRAIN_UP)                              LBCONV1A.472   
+      address(var_DETRAIN_UP)=LOC(DETRAIN_UP)                              LBCONV1A.473   
+      address(var_ENTRAIN_DWN)=LOC(ENTRAIN_DWN)                            LBCONV1A.474   
+      address(var_DETRAIN_DWN)=LOC(DETRAIN_DWN)                            LBCONV1A.475   
+                                                                           LBCONV1A.476   
+! Set up variables required for the snooping algorithm                     LBCONV1A.477   
+                                                                           LBCONV1A.478   
+      found_work=.TRUE.                                                    LBCONV1A.479   
+      next_seg_to_do=0                                                     LBCONV1A.480   
+                                                                           LBCONV1A.481   
+! Synchronize to ensure everyone has a value address array...              LBCONV1A.482   
+                                                                           LBCONV1A.483   
+      CALL barrier()                                                       LBCONV1A.484   
+                                                                           LBCONV1A.485   
+!-----------------------------------------------------------------         LBCONV1A.486   
+                                                                           LBCONV1A.487   
+! Loop until there is no work left to do                                   LBCONV1A.488   
+        DO WHILE (found_work)                                              LBCONV1A.489   
+                                                                           LBCONV1A.490   
+          found_work=.FALSE.  ! default - set to TRUE when some            LBCONV1A.491   
+                              ! work has been found                        LBCONV1A.492   
+          iproc=mype                                                       LBCONV1A.493   
+                                                                           LBCONV1A.494   
+! Loop over processors looking for work to be done                         LBCONV1A.495   
+          DO WHILE (.NOT.((iproc .GT. (mype + nproc-1)) .OR.               LBCONV1A.496   
+     &                    (found_work)))                                   LBCONV1A.497   
+                                                                           LBCONV1A.498   
+            remote_pe=MOD(iproc,nproc)                                     LBCONV1A.499   
+            iproc=iproc+1                                                  LBCONV1A.500   
+                                                                           LBCONV1A.501   
+! Set lock on remote_pe, and find value of next_seg_to_do on that PE       LBCONV1A.502   
+            remote_next_seg_to_do=locked                                   LBCONV1A.503   
+            DO WHILE (remote_next_seg_to_do .EQ. locked)                   LBCONV1A.504   
+              remote_next_seg_to_do=                                       LBCONV1A.505   
+     &          shmem_swap(next_seg_to_do,locked,remote_pe)                LBCONV1A.506   
+            ENDDO                                                          LBCONV1A.507   
+                                                                           LBCONV1A.508   
+! Increment counter for next segment to do on remote_pe                    LBCONV1A.509   
+            remote_next_seg_to_do=remote_next_seg_to_do+1                  LBCONV1A.510   
+                                                                           LBCONV1A.511   
+! Write the incremented counter back to remote_pe, and remove              LBCONV1A.512   
+! the lock                                                                 LBCONV1A.513   
+            status=shmem_swap(next_seg_to_do,                              LBCONV1A.514   
+     &                        remote_next_seg_to_do,remote_pe)             LBCONV1A.515   
+                                                                           LBCONV1A.516   
+            IF (status .NE. locked) THEN                                   LBCONV1A.517   
+              WRITE(6,*) 'Error unlocking PE ',remote_pe                   LBCONV1A.518   
+            ENDIF                                                          LBCONV1A.519   
+                                                                           LBCONV1A.520   
+! If there is some work to do on remote_pe:                                LBCONV1A.521   
+            IF (remote_next_seg_to_do .LE. N_SEGS) THEN                    LBCONV1A.522   
+               found_work=.TRUE.                                           LBCONV1A.523   
+               iseg=remote_next_seg_to_do                                  LBCONV1A.524   
+            ENDIF                                                          LBCONV1A.525   
+                                                                           LBCONV1A.526   
+! If the data is local, we can just call the convection routines           LBCONV1A.527   
+! without copying any data                                                 LBCONV1A.528   
+                                                                           LBCONV1A.529   
+            IF (found_work) THEN                                           LBCONV1A.530   
+              IF (remote_pe .EQ. mype) THEN                                LBCONV1A.531   
+                                                                           LBCONV1A.532   
+                fp=SEG_START(iseg)                                         LBCONV1A.533   
+                                                                           LBCONV1A.534   
+                CALL GLUE_CONV(                                            LBCONV1A.535   
+     &               P_FIELD,SEG_LEN(iseg),Q_LEVELS,BL_LEVELS,             LBCONV1A.536   
+     &               THETA(fp,1),Q(fp,1),                                  LBCONV1A.537   
+     &               PSTAR(fp),BLAND(fp),                                  LBCONV1A.538   
+     &               U(fp,1),V(fp,1),                                      LBCONV1A.539   
+     &               TRACER(fp,1,1),                                       LBCONV1A.540   
+     &               DTHBYDT(fp,1),                                        LBCONV1A.541   
+     &               DQBYDT(fp,1),                                         LBCONV1A.542   
+     &               DUBYDT(fp,1),DVBYDT(fp,1),                            LBCONV1A.543   
+     &               RAIN(fp),SNOW(fp),                                    LBCONV1A.544   
+     &               CCA(fp,1),ICCB(fp),ICCT(fp),CCLWP(fp),                LBCONV1A.545   
+     &               CCW(fp,1),ICCBPxCCA(fp),ICCTPxCCA(fp),                LBCONV1A.546   
+     &               GBMCCWP(fp),GBMCCW(fp,1),                             LBCONV1A.547   
+     &               LCBASE(fp),LCTOP(fp),LCCA(fp),                        LBCONV1A.548   
+     &               LCCLWP(fp),CAPE(fp),                                  LBCONV1A.549   
+     &               EXNER(fp,1),                                          LBCONV1A.550   
+     &               AK,BK,AKM12,BKM12,                                    LBCONV1A.551   
+     &               DELAK,DELBK,                                          LBCONV1A.552   
+     &               TIMESTEP,                                             LBCONV1A.553   
+     &               T1_SD(fp),Q1_SD(fp),                                  LBCONV1A.554   
+     &               L_MOM,L_TRACER,L_CAPE,NTRA,TRLEV,L_XSCOMP,L_SDXS,     LBCONV1A.555   
+     &               L_HALO(fp),                                           LBCONV1A.556   
+     &               N_CCA_LEV,L_3D_CCA,L_CCW,MPARWTR,                     LBCONV1A.557   
+     &               ANVIL_FACTOR,TOWER_FACTOR,                            LBCONV1A.558   
+     &               UD_FACTOR,                                            LBCONV1A.559   
+     &               L_CLOUD_DEEP,L_PHASE_LIM,                             LBCONV1A.560   
+     &               UP_FLUX(fp,1),FLG_UP_FLUX,                            LBCONV1A.561   
+     &               DWN_FLUX(fp,1),FLG_DWN_FLUX,                          LBCONV1A.562   
+     &               ENTRAIN_UP(fp,1),FLG_ENTR_UP,                         LBCONV1A.563   
+     &               DETRAIN_UP(fp,1),FLG_DETR_UP,                         LBCONV1A.564   
+     &               ENTRAIN_DWN(fp,1),FLG_DETR_DWN,                       LBCONV1A.565   
+     &               DETRAIN_DWN(fp,1),FLG_DETR_DWN                        LBCONV1A.566   
+     &               )                                                     LBCONV1A.567   
+                                                                           LBCONV1A.568   
+! If the data is remote, then we need to get the data into                 LBCONV1A.569   
+! temporary arrays, process it, and put it back                            LBCONV1A.570   
+              ELSE                                                         LBCONV1A.571   
+                                                                           LBCONV1A.572   
+! Get the address array from remote_pe. remote_address will contain        LBCONV1A.573   
+! the start address of each array on the remote processor.                 LBCONV1A.574   
+                                                                           LBCONV1A.575   
+                CALL shmem_get(remote_address,address,                     LBCONV1A.576   
+     &                         number_of_vars,remote_pe)                   LBCONV1A.577   
+                                                                           LBCONV1A.578   
+! Find out the remote P_FIELD, the size of the segment, and its            LBCONV1A.579   
+! start location                                                           LBCONV1A.580   
+                                                                           LBCONV1A.581   
+                ptr_P_FIELD=remote_address(var_P_FIELD)                    LBCONV1A.582   
+                ptr_SEG_START=remote_address(var_SEG_START)                LBCONV1A.583   
+                ptr_SEG_LEN=remote_address(var_SEG_LEN)                    LBCONV1A.584   
+                                                                           LBCONV1A.585   
+                CALL shmem_get(copy_remote_P_FIELD,remote_P_FIELD,         LBCONV1A.586   
+     &                         1,remote_pe)                                LBCONV1A.587   
+                CALL shmem_get(copy_remote_SEG_START,                      LBCONV1A.588   
+     &                         remote_SEG_START(iseg),1,remote_pe)         LBCONV1A.589   
+                CALL shmem_get(copy_remote_SEG_LEN,                        LBCONV1A.590   
+     &                         remote_SEG_LEN(iseg),1,remote_pe)           LBCONV1A.591   
+                                                                           LBCONV1A.592   
+! Set up all the pointers, so that the remote_??? variables can            LBCONV1A.593   
+! be used to generate valid addresses on remote_pe                         LBCONV1A.594   
+                                                                           LBCONV1A.595   
+                ptr_THETA=remote_address(var_THETA)                        LBCONV1A.596   
+                ptr_Q=remote_address(var_Q)                                LBCONV1A.597   
+                ptr_PSTAR=remote_address(var_PSTAR)                        LBCONV1A.598   
+                ptr_U=remote_address(var_U)                                LBCONV1A.599   
+                ptr_V=remote_address(var_V)                                LBCONV1A.600   
+                ptr_TRACER=remote_address(var_TRACER)                      LBCONV1A.601   
+                ptr_DTHBYDT=remote_address(var_DTHBYDT)                    LBCONV1A.602   
+                ptr_DQBYDT=remote_address(var_DQBYDT)                      LBCONV1A.603   
+                ptr_DUBYDT=remote_address(var_DUBYDT)                      LBCONV1A.604   
+                ptr_DVBYDT=remote_address(var_DVBYDT)                      LBCONV1A.605   
+                ptr_RAIN=remote_address(var_RAIN)                          LBCONV1A.606   
+                ptr_SNOW=remote_address(var_SNOW)                          LBCONV1A.607   
+                ptr_CCA=remote_address(var_CCA)                            LBCONV1A.608   
+                ptr_CCLWP=remote_address(var_CCLWP)                        LBCONV1A.609   
+                ptr_CCW=remote_address(var_CCW)                            LBCONV1A.610   
+                ptr_ICCBPxCCA=remote_address(var_ICCBPxCCA)                LBCONV1A.611   
+                ptr_ICCTPxCCA=remote_address(var_ICCTPxCCA)                LBCONV1A.612   
+                ptr_GBMCCWP=remote_address(var_GBMCCWP)                    LBCONV1A.613   
+                ptr_GBMCCW=remote_address(var_GBMCCW)                      LBCONV1A.614   
+                ptr_LCCA=remote_address(var_LCCA)                          LBCONV1A.615   
+                ptr_LCCLWP=remote_address(var_LCCLWP)                      LBCONV1A.616   
+                ptr_CAPE=remote_address(var_CAPE)                          LBCONV1A.617   
+                ptr_EXNER=remote_address(var_EXNER)                        LBCONV1A.618   
+                ptr_T1_SD=remote_address(var_T1_SD)                        LBCONV1A.619   
+                ptr_Q1_SD=remote_address(var_Q1_SD)                        LBCONV1A.620   
+                ptr_ICCB=remote_address(var_ICCB)                          LBCONV1A.621   
+                ptr_ICCT=remote_address(var_ICCT)                          LBCONV1A.622   
+                ptr_LCBASE=remote_address(var_LCBASE)                      LBCONV1A.623   
+                ptr_LCTOP=remote_address(var_LCTOP)                        LBCONV1A.624   
+                ptr_BLAND=remote_address(var_BLAND)                        LBCONV1A.625   
+                ptr_L_HALO=remote_address(var_L_HALO)                      LBCONV1A.626   
+                ptr_UP_FLUX=remote_address(var_UP_FLUX)                    LBCONV1A.627   
+                ptr_DWN_FLUX=remote_address(var_DWN_FLUX)                  LBCONV1A.628   
+                ptr_ENTRAIN_UP=remote_address(var_ENTRAIN_UP)              LBCONV1A.629   
+                ptr_DETRAIN_UP=remote_address(var_DETRAIN_UP)              LBCONV1A.630   
+                ptr_ENTRAIN_DWN=remote_address(var_ENTRAIN_DWN)            LBCONV1A.631   
+                ptr_DETRAIN_DWN=remote_address(var_DETRAIN_DWN)            LBCONV1A.632   
+                                                                           LBCONV1A.633   
+! Now get all the data required for the call to convection                 LBCONV1A.634   
+                                                                           LBCONV1A.635   
+                len=copy_remote_seg_len                                    LBCONV1A.636   
+                                                                           LBCONV1A.637   
+! Single level fields                                                      LBCONV1A.638   
+                                                                           LBCONV1A.639   
+                fp=copy_remote_seg_start                                   LBCONV1A.640   
+                                                                           LBCONV1A.641   
+                CALL shmem_get(local_PSTAR,remote_PSTAR(fp),               LBCONV1A.642   
+     &                         len,remote_pe)                              LBCONV1A.643   
+                CALL shmem_get(local_T1_SD,remote_T1_SD(fp),               LBCONV1A.644   
+     &                         len,remote_pe)                              LBCONV1A.645   
+                CALL shmem_get(local_Q1_SD,remote_Q1_SD(fp),               LBCONV1A.646   
+     &                         len,remote_pe)                              LBCONV1A.647   
+                CALL shmem_get(local_BLAND,remote_BLAND(fp),               LBCONV1A.648   
+     &                         len,remote_pe)                              LBCONV1A.649   
+                CALL shmem_get(local_L_HALO,remote_L_HALO(fp),             LBCONV1A.650   
+     &                         len,remote_pe)                              LBCONV1A.651   
+                CALL shmem_get(local_LCCLWP,remote_LCCLWP(fp),             LBCONV1A.652   
+     &                         len,remote_pe)                              LBCONV1A.653   
+                                                                           LBCONV1A.654   
+! A few fields require initialisation to zeros (the source fields have     LBCONV1A.655   
+! been initialised in conv_ctl). Convection routine only sets              LBCONV1A.656   
+! convecting points, so we need to ensure other points have valid          LBCONV1A.657   
+! values.                                                                  LBCONV1A.658   
+                                                                           LBCONV1A.659   
+                DO i=1,len                                                 LBCONV1A.660   
+                  local_LCCA(i)=0.0                                        LBCONV1A.661   
+                  local_LCBASE(i)=0                                        LBCONV1A.662   
+                  local_LCTOP(i)=0                                         LBCONV1A.663   
+                ENDDO                                                      LBCONV1A.664   
+                                                                           LBCONV1A.665   
+! Multi level fields                                                       LBCONV1A.666   
+                                                                           LBCONV1A.667   
+! Normal multi-level fields: THETA,Q                                       LBCONV1A.668   
+                                                                           LBCONV1A.669   
+                DO k=1,Q_LEVELS                                            LBCONV1A.670   
+                                                                           LBCONV1A.671   
+                  fp=copy_remote_seg_start+                                LBCONV1A.672   
+     &                 copy_remote_P_FIELD*(k-1)                           LBCONV1A.673   
+                                                                           LBCONV1A.674   
+                  CALL shmem_get(local_THETA(1,k),remote_THETA(fp),        LBCONV1A.675   
+     &                           len,remote_pe)                            LBCONV1A.676   
+                  CALL shmem_get(local_Q(1,k),remote_Q(fp),                LBCONV1A.677   
+     &                           len,remote_pe)                            LBCONV1A.678   
+                                                                           LBCONV1A.679   
+                ENDDO                                                      LBCONV1A.680   
+                                                                           LBCONV1A.681   
+! EXNER which has an extra level                                           LBCONV1A.682   
+                                                                           LBCONV1A.683   
+                DO k=1,Q_LEVELS+1                                          LBCONV1A.684   
+                                                                           LBCONV1A.685   
+                  fp=copy_remote_seg_start+                                LBCONV1A.686   
+     &                 copy_remote_P_FIELD*(k-1)                           LBCONV1A.687   
+                                                                           LBCONV1A.688   
+                  CALL shmem_get(local_EXNER(1,k),remote_EXNER(fp),        LBCONV1A.689   
+     &                           len,remote_pe)                            LBCONV1A.690   
+                                                                           LBCONV1A.691   
+                ENDDO                                                      LBCONV1A.692   
+                                                                           LBCONV1A.693   
+! Optional fields                                                          LBCONV1A.694   
+                                                                           LBCONV1A.695   
+! Tracers                                                                  LBCONV1A.696   
+                                                                           LBCONV1A.697   
+                IF (L_TRACER) THEN                                         LBCONV1A.698   
+                                                                           LBCONV1A.699   
+                  DO fld=1,NTRA                                            LBCONV1A.700   
+                                                                           LBCONV1A.701   
+                    DO k=1,TRLEV                                           LBCONV1A.702   
+                                                                           LBCONV1A.703   
+                      fp=copy_remote_seg_start+                            LBCONV1A.704   
+     &                     (copy_remote_P_FIELD*(k-1))+                    LBCONV1A.705   
+     &                     (copy_remote_P_FIELD*TRLEV*(fld-1))             LBCONV1A.706   
+                                                                           LBCONV1A.707   
+                      CALL shmem_get(local_TRACER(1,k,fld),                LBCONV1A.708   
+     &                               remote_TRACER(fp),                    LBCONV1A.709   
+     &                               len,remote_pe)                        LBCONV1A.710   
+                                                                           LBCONV1A.711   
+                    ENDDO                                                  LBCONV1A.712   
+                  ENDDO                                                    LBCONV1A.713   
+                ENDIF                                                      LBCONV1A.714   
+                                                                           LBCONV1A.715   
+! Convective momentum transfer fields                                      LBCONV1A.716   
+                                                                           LBCONV1A.717   
+                IF (L_MOM) THEN                                            LBCONV1A.718   
+                                                                           LBCONV1A.719   
+                  DO k=1,Q_LEVELS                                          LBCONV1A.720   
+                                                                           LBCONV1A.721   
+                    fp=copy_remote_seg_start+                              LBCONV1A.722   
+     &                   copy_remote_P_FIELD*(k-1)                         LBCONV1A.723   
+                                                                           LBCONV1A.724   
+                    CALL shmem_get(local_U(1,k),remote_U(fp),              LBCONV1A.725   
+     &                             len,remote_pe)                          LBCONV1A.726   
+                    CALL shmem_get(local_V(1,k),remote_V(fp),              LBCONV1A.727   
+     &                             len,remote_pe)                          LBCONV1A.728   
+                                                                           LBCONV1A.729   
+                  ENDDO                                                    LBCONV1A.730   
+                ENDIF                                                      LBCONV1A.731   
+                                                                           LBCONV1A.732   
+! Now call convection routine with the copies of the remote                LBCONV1A.733   
+! variables (local_???).                                                   LBCONV1A.734   
+                                                                           LBCONV1A.735   
+                CALL GLUE_CONV(                                            LBCONV1A.736   
+     &               MAX_SEG,len,Q_LEVELS,BL_LEVELS,                       LBCONV1A.737   
+     &               local_THETA,local_Q,                                  LBCONV1A.738   
+     &               local_PSTAR,local_BLAND,                              LBCONV1A.739   
+     &               local_U,local_V,                                      LBCONV1A.740   
+     &               local_TRACER,                                         LBCONV1A.741   
+     &               local_DTHBYDT,                                        LBCONV1A.742   
+     &               local_DQBYDT,                                         LBCONV1A.743   
+     &               local_DUBYDT,local_DVBYDT,                            LBCONV1A.744   
+     &               local_RAIN,local_SNOW,                                LBCONV1A.745   
+     &               local_CCA,local_ICCB,local_ICCT,local_CCLWP,          LBCONV1A.746   
+     &               local_CCW,local_ICCBPxCCA,local_ICCTPxCCA,            LBCONV1A.747   
+     &               local_GBMCCWP,local_GBMCCW,                           LBCONV1A.748   
+     &               local_LCBASE,local_LCTOP,local_LCCA,                  LBCONV1A.749   
+     &               local_LCCLWP,local_CAPE,                              LBCONV1A.750   
+     &               local_EXNER,                                          LBCONV1A.751   
+     &               AK,BK,AKM12,BKM12,                                    LBCONV1A.752   
+     &               DELAK,DELBK,                                          LBCONV1A.753   
+     &               TIMESTEP,                                             LBCONV1A.754   
+     &               local_T1_SD,local_Q1_SD,                              LBCONV1A.755   
+     &               L_MOM,L_TRACER,L_CAPE,NTRA,TRLEV,L_XSCOMP,L_SDXS,     LBCONV1A.756   
+     &               local_L_HALO,                                         LBCONV1A.757   
+     &               N_CCA_LEV,L_3D_CCA,L_CCW,MPARWTR,                     LBCONV1A.758   
+     &               ANVIL_FACTOR,TOWER_FACTOR,                            LBCONV1A.759   
+     &               UD_FACTOR,                                            LBCONV1A.760   
+     &               L_CLOUD_DEEP,L_PHASE_LIM,                             LBCONV1A.761   
+     &               local_UP_FLUX,FLG_UP_FLUX,                            LBCONV1A.762   
+     &               local_DWN_FLUX,FLG_DWN_FLUX,                          LBCONV1A.763   
+     &               local_ENTRAIN_UP,FLG_ENTR_UP,                         LBCONV1A.764   
+     &               local_DETRAIN_UP,FLG_DETR_UP,                         LBCONV1A.765   
+     &               local_ENTRAIN_DWN,FLG_DETR_DWN,                       LBCONV1A.766   
+     &               local_DETRAIN_DWN,FLG_DETR_DWN                        LBCONV1A.767   
+     &               )                                                     LBCONV1A.768   
+                                                                           LBCONV1A.769   
+! And now put all the relevant data from the local_??? arrays              LBCONV1A.770   
+! to the remote_??? arrays on remote_pe                                    LBCONV1A.771   
+                                                                           LBCONV1A.772   
+! Single level fields                                                      LBCONV1A.773   
+                                                                           LBCONV1A.774   
+                fp=copy_remote_seg_start                                   LBCONV1A.775   
+                                                                           LBCONV1A.776   
+                CALL shmem_put(remote_T1_SD(fp),local_T1_SD,               LBCONV1A.777   
+     &                         len,remote_pe)                              LBCONV1A.778   
+                CALL shmem_put(remote_T1_SD(fp),local_Q1_SD,               LBCONV1A.779   
+     &                         len,remote_pe)                              LBCONV1A.780   
+                CALL shmem_put(remote_RAIN(fp),local_RAIN,                 LBCONV1A.781   
+     &                         len,remote_pe)                              LBCONV1A.782   
+                CALL shmem_put(remote_SNOW(fp),local_SNOW,                 LBCONV1A.783   
+     &                         len,remote_pe)                              LBCONV1A.784   
+                CALL shmem_put(remote_CCLWP(fp),local_CCLWP,               LBCONV1A.785   
+     &                         len,remote_pe)                              LBCONV1A.786   
+                CALL shmem_put(remote_ICCBPxCCA(fp),local_ICCBPxCCA,       LBCONV1A.787   
+     &                         len,remote_pe)                              LBCONV1A.788   
+                CALL shmem_put(remote_ICCTPxCCA(fp),local_ICCTPxCCA,       LBCONV1A.789   
+     &                         len,remote_pe)                              LBCONV1A.790   
+                CALL shmem_put(remote_GBMCCWP(fp),local_GBMCCWP,           LBCONV1A.791   
+     &                         len,remote_pe)                              LBCONV1A.792   
+                CALL shmem_put(remote_LCCA(fp),local_LCCA,                 LBCONV1A.793   
+     &                         len,remote_pe)                              LBCONV1A.794   
+                CALL shmem_put(remote_LCCLWP(fp),local_LCCLWP,             LBCONV1A.795   
+     &                         len,remote_pe)                              LBCONV1A.796   
+                CALL shmem_put(remote_CAPE(fp),local_CAPE,                 LBCONV1A.797   
+     &                         len,remote_pe)                              LBCONV1A.798   
+                CALL shmem_put(remote_ICCB(fp),local_ICCB,                 LBCONV1A.799   
+     &                         len,remote_pe)                              LBCONV1A.800   
+                CALL shmem_put(remote_ICCT(fp),local_ICCT,                 LBCONV1A.801   
+     &                         len,remote_pe)                              LBCONV1A.802   
+                CALL shmem_put(remote_LCBASE(fp),local_LCBASE,             LBCONV1A.803   
+     &                         len,remote_pe)                              LBCONV1A.804   
+                CALL shmem_put(remote_LCTOP(fp),local_LCTOP,               LBCONV1A.805   
+     &                         len,remote_pe)                              LBCONV1A.806   
+                                                                           LBCONV1A.807   
+! Multi level fields                                                       LBCONV1A.808   
+                                                                           LBCONV1A.809   
+                DO k=1,N_CCA_LEV                                           LBCONV1A.810   
+                                                                           LBCONV1A.811   
+                  fp=copy_remote_seg_start+                                LBCONV1A.812   
+     &               copy_remote_P_FIELD*(k-1)                             LBCONV1A.813   
+                                                                           LBCONV1A.814   
+                  CALL shmem_put(remote_CCA(fp),local_CCA(1,k),            LBCONV1A.815   
+     &                           len,remote_pe)                            LBCONV1A.816   
+                                                                           LBCONV1A.817   
+                ENDDO                                                      LBCONV1A.818   
+                                                                           LBCONV1A.819   
+                DO k=1,Q_LEVELS                                            LBCONV1A.820   
+                                                                           LBCONV1A.821   
+                  fp=copy_remote_seg_start+                                LBCONV1A.822   
+     &               copy_remote_P_FIELD*(k-1)                             LBCONV1A.823   
+                                                                           LBCONV1A.824   
+                  CALL shmem_put(remote_THETA(fp),local_THETA(1,k),        LBCONV1A.825   
+     &                           len,remote_pe)                            LBCONV1A.826   
+                  CALL shmem_put(remote_Q(fp),local_Q(1,k),                LBCONV1A.827   
+     &                           len,remote_pe)                            LBCONV1A.828   
+                  CALL shmem_put(remote_DTHBYDT(fp),local_DTHBYDT(1,k),    LBCONV1A.829   
+     &                           len,remote_pe)                            LBCONV1A.830   
+                  CALL shmem_put(remote_DQBYDT(fp),local_DQBYDT(1,k),      LBCONV1A.831   
+     &                           len,remote_pe)                            LBCONV1A.832   
+                  CALL shmem_put(remote_CCW(fp),local_CCW(1,k),            LBCONV1A.833   
+     &                           len,remote_pe)                            LBCONV1A.834   
+                  CALL shmem_put(remote_GBMCCW(fp),local_GBMCCW(1,k),      LBCONV1A.835   
+     &                           len,remote_pe)                            LBCONV1A.836   
+          ENDDO                                                            LBCONV1A.837   
+                                                                           LBCONV1A.838   
+! Optional fields                                                          LBCONV1A.839   
+                                                                           LBCONV1A.840   
+! Tracers                                                                  LBCONV1A.841   
+                                                                           LBCONV1A.842   
+                IF (L_TRACER) THEN                                         LBCONV1A.843   
+                                                                           LBCONV1A.844   
+                  DO fld=1,NTRA                                            LBCONV1A.845   
+                                                                           LBCONV1A.846   
+                    DO k=1,TRLEV                                           LBCONV1A.847   
+                                                                           LBCONV1A.848   
+                      fp=copy_remote_seg_start+                            LBCONV1A.849   
+     &                   (copy_remote_P_FIELD*(k-1))+                      LBCONV1A.850   
+     &                   (copy_remote_P_FIELD*TRLEV*(fld-1))               LBCONV1A.851   
+                                                                           LBCONV1A.852   
+                      CALL shmem_put(remote_TRACER(fp),                    LBCONV1A.853   
+     &                               local_TRACER(1,k,fld),                LBCONV1A.854   
+     &                               len,remote_pe)                        LBCONV1A.855   
+                                                                           LBCONV1A.856   
+                    ENDDO                                                  LBCONV1A.857   
+                  ENDDO                                                    LBCONV1A.858   
+                ENDIF                                                      LBCONV1A.859   
+                                                                           LBCONV1A.860   
+! Convective momentum transfer fields                                      LBCONV1A.861   
+                                                                           LBCONV1A.862   
+                IF (L_MOM) THEN                                            LBCONV1A.863   
+                                                                           LBCONV1A.864   
+                  DO k=1,Q_LEVELS                                          LBCONV1A.865   
+                                                                           LBCONV1A.866   
+                    fp=copy_remote_seg_start+                              LBCONV1A.867   
+     &                   copy_remote_P_FIELD*(k-1)                         LBCONV1A.868   
+                                                                           LBCONV1A.869   
+                    CALL shmem_put(remote_DUBYDT(fp),local_DUBYDT(1,k),    LBCONV1A.870   
+     &                             len,remote_pe)                          LBCONV1A.871   
+                    CALL shmem_put(remote_DVBYDT(fp),local_DVBYDT(1,k),    LBCONV1A.872   
+     &                             len,remote_pe)                          LBCONV1A.873   
+                                                                           LBCONV1A.874   
+                  ENDDO                                                    LBCONV1A.875   
+                ENDIF                                                      LBCONV1A.876   
+                                                                           LBCONV1A.877   
+! Diagnostic output                                                        LBCONV1A.878   
+                                                                           LBCONV1A.879   
+                DO k=1,Q_LEVELS                                            LBCONV1A.880   
+                                                                           LBCONV1A.881   
+                  fp=copy_remote_seg_start+                                LBCONV1A.882   
+     &                     copy_remote_P_FIELD*(k-1)                       LBCONV1A.883   
+                                                                           LBCONV1A.884   
+                  IF (FLG_UP_FLUX) THEN                                    LBCONV1A.885   
+                    CALL shmem_put(remote_UP_FLUX(fp),                     LBCONV1A.886   
+     &                             local_UP_FLUX(1,k),                     LBCONV1A.887   
+     &                             len,remote_pe)                          LBCONV1A.888   
+                  ENDIF                                                    LBCONV1A.889   
+                                                                           LBCONV1A.890   
+                  IF (FLG_DWN_FLUX) THEN                                   LBCONV1A.891   
+                    CALL shmem_put(remote_DWN_FLUX(fp),                    LBCONV1A.892   
+     &                             local_DWN_FLUX(1,k),                    LBCONV1A.893   
+     &                             len,remote_pe)                          LBCONV1A.894   
+                  ENDIF                                                    LBCONV1A.895   
+                                                                           LBCONV1A.896   
+                  IF (FLG_ENTR_UP) THEN                                    LBCONV1A.897   
+                    CALL shmem_put(remote_ENTRAIN_UP(fp),                  LBCONV1A.898   
+     &                             local_ENTRAIN_UP(1,k),                  LBCONV1A.899   
+     &                             len,remote_pe)                          LBCONV1A.900   
+                  ENDIF                                                    LBCONV1A.901   
+                                                                           LBCONV1A.902   
+                  IF (FLG_DETR_UP) THEN                                    LBCONV1A.903   
+                    CALL shmem_put(remote_DETRAIN_UP(fp),                  LBCONV1A.904   
+     &                             local_DETRAIN_UP(1,k),                  LBCONV1A.905   
+     &                             len,remote_pe)                          LBCONV1A.906   
+                  ENDIF                                                    LBCONV1A.907   
+                                                                           LBCONV1A.908   
+                  IF (FLG_ENTR_DWN) THEN                                   LBCONV1A.909   
+                    CALL shmem_put(remote_ENTRAIN_DWN(fp),                 LBCONV1A.910   
+     &                             local_ENTRAIN_DWN(1,k),                 LBCONV1A.911   
+     &                             len,remote_pe)                          LBCONV1A.912   
+                  ENDIF                                                    LBCONV1A.913   
+                                                                           LBCONV1A.914   
+                  IF (FLG_DETR_DWN) THEN                                   LBCONV1A.915   
+                    CALL shmem_put(remote_DETRAIN_DWN(fp),                 LBCONV1A.916   
+     &                             local_DETRAIN_DWN(1,k),                 LBCONV1A.917   
+     &                             len,remote_pe)                          LBCONV1A.918   
+                  ENDIF                                                    LBCONV1A.919   
+                                                                           LBCONV1A.920   
+                ENDDO                                                      LBCONV1A.921   
+                                                                           LBCONV1A.922   
+                                                                           LBCONV1A.923   
+              ENDIF ! If this segment is on another PE                     LBCONV1A.924   
+                                                                           LBCONV1A.925   
+            ENDIF ! If there is some work to be done on this processor     LBCONV1A.926   
+                                                                           LBCONV1A.927   
+          ENDDO ! loop over processors looking for work                    LBCONV1A.928   
+                                                                           LBCONV1A.929   
+        ENDDO ! loop looking for work                                      LBCONV1A.930   
+                                                                           LBCONV1A.931   
+! Wait for everyone to finish, so that I am sure all my segments have      LBCONV1A.932   
+! been updated.                                                            LBCONV1A.933   
+                                                                           LBCONV1A.934   
+      CALL barrier()                                                       LBCONV1A.935   
+                                                                           LBCONV1A.936   
+      RETURN                                                               LBCONV1A.937   
+                                                                           LBCONV1A.938   
+      END                                                                  LBCONV1A.939   
+*ENDIF                                                                     LBCONV1A.940   
+*ENDIF                                                                     LBCONV1A.941   

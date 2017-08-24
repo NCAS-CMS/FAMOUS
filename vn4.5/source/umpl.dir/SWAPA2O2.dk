@@ -1,0 +1,727 @@
+*IF DEF,CONTROL,AND,DEF,ATMOS,AND,DEF,OCEAN,AND,DEF,MPP                    SWAPA2O2.2     
+C ******************************COPYRIGHT******************************    SWAPA2O2.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    SWAPA2O2.4     
+C                                                                          SWAPA2O2.5     
+C Use, duplication or disclosure of this code is subject to the            SWAPA2O2.6     
+C restrictions as set forth in the contract.                               SWAPA2O2.7     
+C                                                                          SWAPA2O2.8     
+C                Meteorological Office                                     SWAPA2O2.9     
+C                London Road                                               SWAPA2O2.10    
+C                BRACKNELL                                                 SWAPA2O2.11    
+C                Berkshire UK                                              SWAPA2O2.12    
+C                RG12 2SZ                                                  SWAPA2O2.13    
+C                                                                          SWAPA2O2.14    
+C If no contract has been raised with this copy of the code, the use,      SWAPA2O2.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      SWAPA2O2.16    
+C to do so must first be obtained in writing from the Head of Numerical    SWAPA2O2.17    
+C Modelling at the above address.                                          SWAPA2O2.18    
+C ******************************COPYRIGHT******************************    SWAPA2O2.19    
+!+ Replace atmos model data with ocean model data in coupled model.        SWAPA2O2.20    
+!                                                                          SWAPA2O2.21    
+! Subroutine Interface:                                                    SWAPA2O2.22    
+      SUBROUTINE SWAP_A2O (G_P_FIELD,G_IMTJMT,CO2_DIMA,CO2_DIMO,           CCN1F405.125   
+*CALL ARGSIZE                                                              SWAPA2O2.24    
+*CALL ARGD1                                                                SWAPA2O2.25    
+*CALL ARGDUMO                                                              SWAPA2O2.26    
+*CALL ARGPTRA                                                              SWAPA2O2.27    
+*CALL ARGPTRO                                                              SWAPA2O2.28    
+*CALL ARGCONA                                                              SWAPA2O2.29    
+*CALL ARGCONO                                                              SWAPA2O2.30    
+*CALL ARGAOCPL                                                             SWAPA2O2.31    
+     &    ICODE,CMESSAGE)                                                  SWAPA2O2.32    
+                                                                           SWAPA2O2.33    
+      IMPLICIT NONE                                                        SWAPA2O2.34    
+!                                                                          SWAPA2O2.35    
+! Description:                                                             SWAPA2O2.36    
+! Control the interchange of data when swapping from atmosphere to ocean   SWAPA2O2.37    
+! in a coupled model.  Fields required from the completed atmosphere       SWAPA2O2.38    
+! group of timesteps replace corresponding fields in the ocean model       SWAPA2O2.39    
+! with interpolation onto a different grid if required.                    SWAPA2O2.40    
+!                                                                          SWAPA2O2.41    
+! Method:                                                                  SWAPA2O2.42    
+! 1. Gather coupling fields from distributed processors onto a single      SWAPA2O2.43    
+!    processor for input to interpolation routines.                        SWAPA2O2.44    
+! 2. Convert sublimation and runoff fields from totals to rates.           SWAPA2O2.45    
+! 3. Perform IO (or memory transfer) to swap data in D1 from               SWAPA2O2.46    
+!    atmosphere to ocean and then transform to the corresponding           SWAPA2O2.47    
+!    MPP data decomposition.                                               SWAPA2O2.48    
+! 4. Gather ocean field from O_SPCON array not required: already global.   GRR0F403.163   
+! 5. Perform the coupling calculations on a single PE. Transform           SWAPA2O2.52    
+!    coupling fields onto the new (ocean) grid, including interpolation    SWAPA2O2.53    
+!    if required.                                                          SWAPA2O2.54    
+!    Arrays are on the full horizontal domain.                             GRR0F403.164   
+! 6. Scatter coupling fields received from atmos model, now residing       SWAPA2O2.56    
+!    on a single PE, over all processors according to the ocean MPP        SWAPA2O2.57    
+!    data decomposition.                                                   SWAPA2O2.58    
+! 7. Error trap.                                                           SWAPA2O2.59    
+!                                                                          SWAPA2O2.60    
+!    'Global' refers here to the full horizontal domain over all           SWAPA2O2.61    
+!    processing elements (PE)s.                                            SWAPA2O2.62    
+!                                                                          SWAPA2O2.63    
+!  External documentation:                                                 SWAPA2O2.64    
+!    Unified Model Doc Paper C2 - Atmosphere-Ocean coupling: overview      CCN1F405.126   
+!                                                                          SWAPA2O2.66    
+! Current Code Owner: Rick Rawlins                                         SWAPA2O2.67    
+!                                                                          SWAPA2O2.68    
+! History:                                                                 SWAPA2O2.69    
+! Version   Date     Comment                                               SWAPA2O2.70    
+! -------   ----     -------                                               SWAPA2O2.71    
+!  4.2  04/11/96 : New deck based on SWAPA2O1 deck, with changes for       SWAPA2O2.72    
+!                  MPP. R.Rawlins                                          SWAPA2O2.73    
+!  4.3  30/01/97 : Remove redundant CHANGE_DECOMPOSITION call and get      GRR0F403.165   
+!                  'global' sizes from database. Add SWAPBOUNDS calls      GRR0F403.166   
+!                  after SCATTER_FIELD to populate halos.                  GRR0F403.167   
+!                  Remove gather of fkmq, which is a globally defined      GRR0F403.168   
+!                  array. Runoff outflow points converted from local       GRR0F403.169   
+!                  compression on land points to global compression on     GRR0F403.170   
+!                  land points.                                            GRR0F403.171   
+!                  Initialise IN/OUT fields into TRANSA2O as RMDI.         GRR0F403.172   
+!                  R.Rawlins                                               GRR0F403.173   
+!  4.5  13/01/98 : Replace IOVARS with ATM_LSM comdeck   P.Burton          GPB2F405.309   
+!  4.5   1/07/98   Include code to pass atmospheric surface CO2            CCN1F405.127   
+!                                                    C.D.Jones             CCN1F405.128   
+!                                                                          SWAPA2O2.74    
+! Code Description:                                                        SWAPA2O2.75    
+!   Language: FORTRAN 77 + common extensions.                              SWAPA2O2.76    
+!   This code is written to UMDP3 v6 programming standards.                SWAPA2O2.77    
+!                                                                          SWAPA2O2.78    
+! System component covered:                                                SWAPA2O2.79    
+! System Task:                                                             SWAPA2O2.80    
+!                                                                          SWAPA2O2.81    
+! Declarations:                                                            SWAPA2O2.82    
+!                                                                          SWAPA2O2.83    
+! Global variables (*CALLed COMDECKs etc...):                              SWAPA2O2.84    
+*CALL PARVARS                                                              SWAPA2O2.86    
+*CALL DECOMPTP                                                             GRR0F403.174   
+*CALL DECOMPDB                                                             GRR0F403.175   
+*CALL AMAXSIZE                                                             SWAPA2O2.87    
+*CALL ATM_LSM                                                              GPB2F405.310   
+                                                                           SWAPA2O2.89    
+*CALL CMAXSIZE                                                             SWAPA2O2.90    
+*CALL TYPSIZE                                                              SWAPA2O2.91    
+*CALL TYPD1                                                                SWAPA2O2.92    
+*CALL TYPDUMO                                                              SWAPA2O2.93    
+*CALL TYPPTRA                                                              SWAPA2O2.94    
+*CALL TYPPTRO                                                              SWAPA2O2.95    
+*CALL TYPCONA                                                              SWAPA2O2.96    
+*CALL TYPCONO                                                              SWAPA2O2.97    
+*CALL TYPAOCPL                                                             SWAPA2O2.98    
+                                                                           SWAPA2O2.99    
+*CALL CAOPTR                                                               SWAPA2O2.100   
+*CALL C_LHEAT                                                              SWAPA2O2.101   
+*CALL C_0_DG_C                                                             SWAPA2O2.102   
+*CALL C_MDI                                                                SWAPA2O2.103   
+*CALL CHSUNITS                                                             SWAPA2O2.104   
+*CALL CNTLALL                                                              SWAPA2O2.105   
+*CALL TYPOCDPT                                                             SWAPA2O2.106   
+*CALL CSUBMODL                                                             SWAPA2O2.107   
+*CALL CNTLATM                                                              CCN1F405.129   
+                                                                           SWAPA2O2.108   
+! Subroutine arguments                                                     SWAPA2O2.109   
+!   Scalar arguments with intent(in):                                      SWAPA2O2.110   
+      INTEGER                                                              SWAPA2O2.111   
+     &  G_P_FIELD             ! IN : global horiz domain for atmos         SWAPA2O2.112   
+     & ,G_IMTJMT              ! IN : global horiz domain for ocean         SWAPA2O2.113   
+     & ,CO2_DIMA              ! IN : dimension of atmos CO2 array          CCN1F405.130   
+     & ,CO2_DIMO              ! IN : dimension of ocean CO2 array          CCN1F405.131   
+     & ,CO2_ICOLS,CO2_JROWS   ! OUT: CO2 array dimensions                  CCN1F405.132   
+     & ,CO2_IMT,  CO2_JMT                                                  CCN1F405.133   
+                                                                           SWAPA2O2.114   
+!   ErrorStatus                                                            SWAPA2O2.115   
+      INTEGER                                                              SWAPA2O2.116   
+     &       ICODE            ! OUT - Error return code (=0 is OK)         SWAPA2O2.117   
+      CHARACTER*80 CMESSAGE   ! OUT - Error return message                 SWAPA2O2.118   
+                                                                           SWAPA2O2.119   
+! Local parameters:                                                        SWAPA2O2.120   
+      INTEGER                                                              GRR0F403.176   
+     &       swap_levels                 ! no. levels for SWAPBOUNDS       GRR0F403.177   
+      PARAMETER(                                                           GRR0F403.178   
+     &       swap_levels=1)              ! by definition for AO coupling   GRR0F403.179   
+                                                                           SWAPA2O2.121   
+! Local scalars:                                                           SWAPA2O2.122   
+      INTEGER                                                              SWAPA2O2.123   
+     &       NFTASWAP,NFTOSWAP           ! FT units for swap files         SWAPA2O2.124   
+     &      ,I                           ! Loop index                      SWAPA2O2.125   
+     &      ,info                        ! Return code from MPP            SWAPA2O2.126   
+     &      ,gather_pe                   ! Processor for gathering         SWAPA2O2.127   
+     &      ,G_ROW_LENGTH                ! Global (atmos) row length       SWAPA2O2.128   
+     &      ,G_P_ROWS                    ! Global (atmos) p  rows          SWAPA2O2.129   
+     &      ,G_U_ROWS                    ! Global (atmos) uv rows          SWAPA2O2.130   
+     &      ,G_IMT                       ! Global (ocean) row length       SWAPA2O2.131   
+     &      ,G_JMT                       ! Global (ocean) p  rows          SWAPA2O2.132   
+     &      ,G_JMTM1                     ! Global (ocean) uv rows          SWAPA2O2.133   
+     &      ,number_of_landpts_out       ! Returned landpts (not used)     GRR0F403.180   
+                                                                           SWAPA2O2.134   
+! Local dynamic arrays:                                                    SWAPA2O2.135   
+! Coupling fields on atmosphere grid being sent into ocean model           SWAPA2O2.136   
+      REAL                                                                 SWAPA2O2.137   
+     &  TAUX(G_P_FIELD)                  ! Surface u windstress            SWAPA2O2.138   
+     & ,TAUY(G_P_FIELD)                  ! Surface v windstress            SWAPA2O2.139   
+     & ,WINDMIX(G_P_FIELD)               ! Windmixing power                SWAPA2O2.140   
+     & ,SOLAR(G_P_FIELD)                 ! Surface net solar               SWAPA2O2.141   
+     & ,BLUE(G_P_FIELD)                  ! Surface net blueband solar      SWAPA2O2.142   
+     & ,EVAP(G_P_FIELD)                  ! Evaporation over sea            SWAPA2O2.143   
+     & ,LONGWAVE(G_P_FIELD)              ! Net downward longwave           SWAPA2O2.144   
+     & ,SENSIBLE(G_P_FIELD)              ! Sensible heat flux              SWAPA2O2.145   
+     & ,LSSNOW(G_P_FIELD)                ! LS precip snowfall rate         SWAPA2O2.146   
+     & ,CVSNOW(G_P_FIELD)                ! Convective snowfall rate        SWAPA2O2.147   
+     & ,LSRAIN(G_P_FIELD)                ! LS  precip rainfall rate        SWAPA2O2.148   
+     & ,CVRAIN(G_P_FIELD)                ! Convective rainfall rate        SWAPA2O2.149   
+*IF DEF,SEAICE                                                             SWAPA2O2.150   
+     & ,AICE(G_P_FIELD)                  ! Seaice fraction                 SWAPA2O2.151   
+     & ,SUBLIM(G_P_FIELD)                ! Sublimation                     SWAPA2O2.152   
+     & ,BOTMELT(G_P_FIELD)               ! Bottom melting heat flux        SWAPA2O2.153   
+     & ,TOPMELT(G_P_FIELD)               ! Top melting heat flux           SWAPA2O2.154   
+*ENDIF                                                                     SWAPA2O2.155   
+*IF DEF,RIVERS                                                             SWAPA2O2.156   
+      INTEGER                                                              SWAPA2O2.157   
+     &  OCENTPTS(G_P_FIELD)              ! Ocean entry points index        SWAPA2O2.158   
+! Intermediate field for work space                                        GRR0F403.181   
+     & ,OCENTPTS_local(P_FIELD)          ! local land-compressed           GRR0F403.182   
+     & ,OCENTPTS_global(G_P_FIELD)       !                                 GRR0F403.183   
+      REAL                                                                 SWAPA2O2.159   
+     &  RUNOFFIN(G_P_FIELD)              ! Total runoff from land          SWAPA2O2.160   
+! Intermediate fields for coupling:                                        SWAPA2O2.161   
+     & ,SLOWRUNOFF(G_P_FIELD)            ! Slow part of runoff             SWAPA2O2.162   
+     & ,FASTRUNOFF(G_P_FIELD)            ! Fast part of runoff             SWAPA2O2.163   
+! Intermediate pre-calculated trig field for coupling:                     SWAPA2O2.164   
+     & ,A_COS_P_LATITUDE(G_P_FIELD)      ! Cos(lat) on atmos p grid        SWAPA2O2.165   
+*ENDIF                                                                     SWAPA2O2.166   
+     &,     ATMCO2(CO2_DIMA)           ! atmospheric surface CO2           CCN1F405.134   
+! Coupling fields on ocean grid being received from atmosphere model       SWAPA2O2.167   
+      REAL                                                                 SWAPA2O2.168   
+     &  O_TAUX(G_IMTJMT)                 ! Surface u windstress            SWAPA2O2.169   
+     & ,O_TAUY(G_IMTJMT)                 ! Surface v windstress            SWAPA2O2.170   
+     & ,O_WINDMIX(G_IMTJMT)              ! Windmixing power                SWAPA2O2.171   
+     & ,O_BLUE(G_IMTJMT)                 ! Penetrative solar heat          SWAPA2O2.172   
+     & ,O_HEATFLUX(G_IMTJMT)             ! Non-penetrative heat flux       SWAPA2O2.173   
+     & ,O_PMINUSE(G_IMTJMT)              ! Precipitation - evaporation     SWAPA2O2.174   
+*IF DEF,SEAICE                                                             SWAPA2O2.175   
+     & ,O_SNOWFALL(G_IMTJMT)             ! Total snowfall                  SWAPA2O2.176   
+     & ,O_SUBLIM(G_IMTJMT)               ! Sublimation                     SWAPA2O2.177   
+     & ,O_BOTMELT(G_IMTJMT)              ! Bottom melting heat flux        SWAPA2O2.178   
+     & ,O_TOPMELT(G_IMTJMT)              ! Top melting heat flux           SWAPA2O2.179   
+*ENDIF                                                                     SWAPA2O2.180   
+*IF DEF,RIVERS                                                             SWAPA2O2.181   
+     & ,O_RIVEROUT(G_IMTJMT)             ! River outflow at coastal pts    SWAPA2O2.182   
+*ENDIF                                                                     SWAPA2O2.183   
+     &,     O_ATMCO2(CO2_DIMO)          ! atmospheric surface CO2          CCN1F405.135   
+! Function & Subroutine calls:                                             SWAPA2O2.186   
+      External TRANSOUT,TRANSIN,TRANSA2O                                   SWAPA2O2.187   
+      External GATHER_FIELD,SCATTER_FIELD,SWAPBOUNDS                       GRR0F403.184   
+     &        ,FROM_LAND_POINTS,TO_LAND_POINTS                             GRR0F403.185   
+                                                                           SWAPA2O2.189   
+!- End of header                                                           SWAPA2O2.190   
+!----------------------------------------------------------------------    SWAPA2O2.191   
+!                                                                          SWAPA2O2.192   
+! 1. Gather coupling fields from distributed processors onto a single      SWAPA2O2.193   
+!    processor for input to interpolation routines.                        SWAPA2O2.194   
+                                                                           SWAPA2O2.195   
+      gather_pe=0          ! Processor for gathering fields                SWAPA2O2.196   
+                                                                           SWAPA2O2.197   
+      CALL GATHER_FIELD(D1(JA_TAUX),TAUX,   ! NB: TAUX over dimensioned    SWAPA2O2.198   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.199   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.200   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.201   
+         CMESSAGE='SWAPA2O : ERROR in gather of TAUX'                      SWAPA2O2.202   
+         ICODE=1                                                           SWAPA2O2.203   
+         GO TO 999                                                         SWAPA2O2.204   
+      ENDIF                                                                SWAPA2O2.205   
+                                                                           SWAPA2O2.206   
+      CALL GATHER_FIELD(D1(JA_TAUY),TAUY,   ! NB: TAUY over dimensioned    SWAPA2O2.207   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.208   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.209   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.210   
+         CMESSAGE='SWAPA2O : ERROR in gather of TAUY'                      SWAPA2O2.211   
+         ICODE=2                                                           SWAPA2O2.212   
+         GO TO 999                                                         SWAPA2O2.213   
+      ENDIF                                                                SWAPA2O2.214   
+                                                                           SWAPA2O2.215   
+      CALL GATHER_FIELD(D1(JA_WINDMIX),WINDMIX,                            SWAPA2O2.216   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.217   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.218   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.219   
+         CMESSAGE='SWAPA2O : ERROR in gather of WINDMIX'                   SWAPA2O2.220   
+         ICODE=3                                                           SWAPA2O2.221   
+         GO TO 999                                                         SWAPA2O2.222   
+      ENDIF                                                                SWAPA2O2.223   
+                                                                           SWAPA2O2.224   
+      CALL GATHER_FIELD(D1(JA_SOLAR),SOLAR,                                SWAPA2O2.225   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.226   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.227   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.228   
+         CMESSAGE='SWAPA2O : ERROR in gather of SOLAR'                     SWAPA2O2.229   
+         ICODE=4                                                           SWAPA2O2.230   
+         GO TO 999                                                         SWAPA2O2.231   
+      ENDIF                                                                SWAPA2O2.232   
+                                                                           SWAPA2O2.233   
+      CALL GATHER_FIELD(D1(JA_BLUE),BLUE,                                  SWAPA2O2.234   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.235   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.236   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.237   
+         CMESSAGE='SWAPA2O : ERROR in gather of BLUE'                      SWAPA2O2.238   
+         ICODE=5                                                           SWAPA2O2.239   
+         GO TO 999                                                         SWAPA2O2.240   
+      ENDIF                                                                SWAPA2O2.241   
+                                                                           SWAPA2O2.242   
+      CALL GATHER_FIELD(D1(JA_EVAP),EVAP,                                  SWAPA2O2.243   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.244   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.245   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.246   
+         CMESSAGE='SWAPA2O : ERROR in gather of EVAP'                      SWAPA2O2.247   
+         ICODE=6                                                           SWAPA2O2.248   
+         GO TO 999                                                         SWAPA2O2.249   
+      ENDIF                                                                SWAPA2O2.250   
+                                                                           SWAPA2O2.251   
+      CALL GATHER_FIELD(D1(JA_LONGWAVE),LONGWAVE,                          SWAPA2O2.252   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.253   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.254   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.255   
+         CMESSAGE='SWAPA2O : ERROR in gather of LONGWAVE'                  SWAPA2O2.256   
+         ICODE=7                                                           SWAPA2O2.257   
+         GO TO 999                                                         SWAPA2O2.258   
+      ENDIF                                                                SWAPA2O2.259   
+                                                                           SWAPA2O2.260   
+      CALL GATHER_FIELD(D1(JA_SENSIBLE),SENSIBLE,                          SWAPA2O2.261   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.262   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.263   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.264   
+         CMESSAGE='SWAPA2O : ERROR in gather of SENSIBLE'                  SWAPA2O2.265   
+         ICODE=8                                                           SWAPA2O2.266   
+         GO TO 999                                                         SWAPA2O2.267   
+      ENDIF                                                                SWAPA2O2.268   
+                                                                           SWAPA2O2.269   
+      CALL GATHER_FIELD(D1(JA_LSSNOW),LSSNOW,                              SWAPA2O2.270   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.271   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.272   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.273   
+         CMESSAGE='SWAPA2O : ERROR in gather of LSSNOW'                    SWAPA2O2.274   
+         ICODE=9                                                           SWAPA2O2.275   
+         GO TO 999                                                         SWAPA2O2.276   
+      ENDIF                                                                SWAPA2O2.277   
+                                                                           SWAPA2O2.278   
+      CALL GATHER_FIELD(D1(JA_CVSNOW),CVSNOW,                              SWAPA2O2.279   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.280   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.281   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.282   
+         CMESSAGE='SWAPA2O : ERROR in gather of CVSNOW'                    SWAPA2O2.283   
+         ICODE=10                                                          SWAPA2O2.284   
+         GO TO 999                                                         SWAPA2O2.285   
+      ENDIF                                                                SWAPA2O2.286   
+                                                                           SWAPA2O2.287   
+      CALL GATHER_FIELD(D1(JA_LSRAIN),LSRAIN,                              SWAPA2O2.288   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.289   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.290   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.291   
+         CMESSAGE='SWAPA2O : ERROR in gather of LSRAIN'                    SWAPA2O2.292   
+         ICODE=11                                                          SWAPA2O2.293   
+         GO TO 999                                                         SWAPA2O2.294   
+      ENDIF                                                                SWAPA2O2.295   
+                                                                           SWAPA2O2.296   
+      CALL GATHER_FIELD(D1(JA_CVRAIN),CVRAIN,                              SWAPA2O2.297   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.298   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.299   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.300   
+         CMESSAGE='SWAPA2O : ERROR in gather of CVRAIN'                    SWAPA2O2.301   
+         ICODE=12                                                          SWAPA2O2.302   
+         GO TO 999                                                         SWAPA2O2.303   
+      ENDIF                                                                SWAPA2O2.304   
+                                                                           SWAPA2O2.305   
+*IF DEF,SEAICE                                                             SWAPA2O2.306   
+                                                                           SWAPA2O2.307   
+      CALL GATHER_FIELD(D1(JA_AICE),AICE,                                  SWAPA2O2.308   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.309   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.310   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.311   
+         CMESSAGE='SWAPA2O : ERROR in gather of AICE'                      SWAPA2O2.312   
+         ICODE=13                                                          SWAPA2O2.313   
+         GO TO 999                                                         SWAPA2O2.314   
+      ENDIF                                                                SWAPA2O2.315   
+                                                                           SWAPA2O2.316   
+      CALL GATHER_FIELD(D1(JA_SUBLIM),SUBLIM,                              SWAPA2O2.317   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.318   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.319   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.320   
+         CMESSAGE='SWAPA2O : ERROR in gather of SUBLIM'                    SWAPA2O2.321   
+         ICODE=14                                                          SWAPA2O2.322   
+         GO TO 999                                                         SWAPA2O2.323   
+      ENDIF                                                                SWAPA2O2.324   
+                                                                           SWAPA2O2.325   
+      CALL GATHER_FIELD(D1(JA_BOTMELT),BOTMELT,                            SWAPA2O2.326   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.327   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.328   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.329   
+         CMESSAGE='SWAPA2O : ERROR in gather of BOTMELT'                   SWAPA2O2.330   
+         ICODE=15                                                          SWAPA2O2.331   
+         GO TO 999                                                         SWAPA2O2.332   
+      ENDIF                                                                SWAPA2O2.333   
+                                                                           SWAPA2O2.334   
+      CALL GATHER_FIELD(D1(JA_TOPMELT),TOPMELT,                            SWAPA2O2.335   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.336   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.337   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.338   
+         CMESSAGE='SWAPA2O : ERROR in gather of TOPMELT'                   SWAPA2O2.339   
+         ICODE=16                                                          SWAPA2O2.340   
+         GO TO 999                                                         SWAPA2O2.341   
+      ENDIF                                                                SWAPA2O2.342   
+                                                                           SWAPA2O2.343   
+*ENDIF                                                                     SWAPA2O2.344   
+                                                                           SWAPA2O2.345   
+*IF DEF,RIVERS                                                             SWAPA2O2.346   
+                                                                           SWAPA2O2.347   
+      CALL GATHER_FIELD(D1(JA_SLOWRUNOFF),SLOWRUNOFF,                      SWAPA2O2.348   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.349   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.350   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.351   
+         CMESSAGE='SWAPA2O : ERROR in gather of SLOWRUNOFF'                SWAPA2O2.352   
+         ICODE=18                                                          SWAPA2O2.353   
+         GO TO 999                                                         SWAPA2O2.354   
+      ENDIF                                                                SWAPA2O2.355   
+                                                                           SWAPA2O2.356   
+      CALL GATHER_FIELD(D1(JA_FASTRUNOFF),FASTRUNOFF,                      SWAPA2O2.357   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.358   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.359   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.360   
+         CMESSAGE='SWAPA2O : ERROR in gather of FASTRUNOFF'                SWAPA2O2.361   
+         ICODE=19                                                          SWAPA2O2.362   
+         GO TO 999                                                         SWAPA2O2.363   
+      ENDIF                                                                SWAPA2O2.364   
+                                                                           GRR0F403.186   
+! Expand river index compressed on land points for each PE domain          GRR0F403.187   
+      CALL FROM_LAND_POINTS(OCENTPTS_local,ID1(JA_OCENTPTS),               GRR0F403.188   
+     &  atmos_landmask_local,lasize(1)*lasize(2),                          GRR0F403.189   
+     &  number_of_landpts_out)                                             GRR0F403.190   
+                                                                           SWAPA2O2.365   
+      CALL GATHER_FIELD(OCENTPTS_local,OCENTPTS_global,                    GRR0F403.191   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.367   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.368   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.369   
+         CMESSAGE='SWAPA2O : ERROR in gather of OCENTPTS'                  SWAPA2O2.370   
+         ICODE=20                                                          SWAPA2O2.371   
+         GO TO 999                                                         SWAPA2O2.372   
+      ENDIF                                                                SWAPA2O2.373   
+                                                                           SWAPA2O2.374   
+!        Pre-calculated trig field cos(lat) on atmos p grid                SWAPA2O2.375   
+      CALL GATHER_FIELD(COS_P_LATITUDE,A_COS_P_LATITUDE,                   SWAPA2O2.376   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.377   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.378   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.379   
+         CMESSAGE='SWAPA2O : ERROR in gather of A_COS_P_LATITUDE'          SWAPA2O2.380   
+         ICODE=21                                                          SWAPA2O2.381   
+         GO TO 999                                                         SWAPA2O2.382   
+      ENDIF                                                                SWAPA2O2.383   
+                                                                           SWAPA2O2.384   
+*ENDIF                                                                     SWAPA2O2.385   
+      IF (L_CO2_INTERACTIVE) THEN                                          CCN1F405.136   
+                                                                           CCN1F405.137   
+        CALL GATHER_FIELD(D1(JA_co2),ATMCO2,                               CCN1F405.138   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           CCN1F405.139   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  CCN1F405.140   
+        IF(info.NE.0) THEN      ! Check return code                        CCN1F405.141   
+           CMESSAGE='SWAPA2O : ERROR in gather of ATMCO2'                  CCN1F405.142   
+           ICODE=22                                                        CCN1F405.143   
+           GO TO 999                                                       CCN1F405.144   
+        ENDIF                                                              CCN1F405.145   
+      ENDIF                                                                CCN1F405.146   
+!                                                                          SWAPA2O2.386   
+!      End of gathering distributed fields onto arrays on a single PE      SWAPA2O2.387   
+!----------------------------------------------------------------------    SWAPA2O2.388   
+!                                                                          SWAPA2O2.389   
+! 2. Convert sublimation and runoff fields                                 SWAPA2O2.390   
+!    from totals to rates.                                                 SWAPA2O2.391   
+!                                                                          SWAPA2O2.392   
+                                                                           SWAPA2O2.393   
+*IF DEF,SEAICE                                                             SWAPA2O2.394   
+      IF(mype.EQ.gather_pe) THEN    ! Global data on single PE only        SWAPA2O2.395   
+         DO I=1,G_P_FIELD                                                  SWAPA2O2.396   
+          SUBLIM(I)= SUBLIM(I)/REAL(MODEL_HRS_PER_GROUP*3600)              SWAPA2O2.397   
+         ENDDO  ! I                                                        SWAPA2O2.398   
+      ENDIF                         ! Single processor                     SWAPA2O2.399   
+*ENDIF                                                                     SWAPA2O2.400   
+                                                                           SWAPA2O2.401   
+*IF DEF,RIVERS                                                             SWAPA2O2.402   
+      IF(mype.EQ.gather_pe) THEN    ! Global data on single PE only        SWAPA2O2.403   
+! Compress river index on global domain onto land points                   GRR0F403.192   
+         CALL TO_LAND_POINTS(OCENTPTS_global,OCENTPTS,                     GRR0F403.193   
+     &      atmos_landmask,glsize(1)*glsize(2),                            GRR0F403.194   
+     &      number_of_landpts_out)                                         GRR0F403.195   
+                                                                           GRR0F403.196   
+         DO I=1,G_P_FIELD                                                  SWAPA2O2.404   
+          RUNOFFIN(I)= (SLOWRUNOFF(I)+FASTRUNOFF(I))/                      SWAPA2O2.405   
+     &                   REAL(MODEL_HRS_PER_GROUP*3600)                    SWAPA2O2.406   
+         ENDDO  ! I                                                        SWAPA2O2.407   
+      ENDIF                         ! Single processor                     SWAPA2O2.408   
+*ENDIF                                                                     SWAPA2O2.409   
+                                                                           SWAPA2O2.410   
+!                                                                          SWAPA2O2.411   
+!----------------------------------------------------------------------    SWAPA2O2.412   
+!                                                                          SWAPA2O2.413   
+! 3. Perform IO (or memory transfer) to swap data in D1 from               SWAPA2O2.414   
+!    atmosphere to ocean and then transform to the corresponding           SWAPA2O2.415   
+!    MPP data decomposition.                                               SWAPA2O2.416   
+!                                                                          SWAPA2O2.417   
+                                                                           SWAPA2O2.418   
+      NFTASWAP=18                                                          SWAPA2O2.419   
+      NFTOSWAP=19                                                          SWAPA2O2.420   
+                                                                           SWAPA2O2.421   
+      CALL TRANSOUT(                                                       SWAPA2O2.422   
+*CALL ARGD1                                                                SWAPA2O2.423   
+     &              A_LEN_DATA+(P_LEVELS+1+2*Q_LEVELS)*P_FIELD,            SWAPA2O2.424   
+     &              NFTASWAP,atmos_sm,ICODE,CMESSAGE)                      SWAPA2O2.425   
+      IF (ICODE.GT.0) GOTO 999                                             SWAPA2O2.426   
+                                                                           SWAPA2O2.427   
+! Get 'global' atmos and ocean horizontal domain sizes from database       GRR0F403.197   
+! in DECOMPDB to set dynamic allocation in TRANSA2O                        GRR0F403.198   
+                                                                           GRR0F403.199   
+      G_ROW_LENGTH = decomp_db_glsize(1,decomp_standard_atmos)             GRR0F403.200   
+      G_P_ROWS     = decomp_db_glsize(2,decomp_standard_atmos)             GRR0F403.201   
+      G_U_ROWS     = G_P_ROWS - 1                                          GRR0F403.202   
+                                                                           GRR0F403.203   
+      G_IMT        = decomp_db_glsize(1,decomp_standard_ocean)             GRR0F403.204   
+      G_JMT        = decomp_db_glsize(2,decomp_standard_ocean)             GRR0F403.205   
+      G_JMTM1      = G_JMT - 1                                             GRR0F403.206   
+                                                                           SWAPA2O2.440   
+      IF (L_CO2_INTERACTIVE) THEN                                          CCN1F405.147   
+        CO2_ICOLS = G_ROW_LENGTH                                           CCN1F405.148   
+        CO2_JROWS = G_P_ROWS                                               CCN1F405.149   
+        CO2_IMT   = G_IMT                                                  CCN1F405.150   
+        CO2_JMT   = G_JMT                                                  CCN1F405.151   
+      ELSE                                                                 CCN1F405.152   
+        ATMCO2(1) = 0.0                                                    CCN1F405.153   
+        CO2_ICOLS = 1                                                      CCN1F405.154   
+        CO2_JROWS = 1                                                      CCN1F405.155   
+        CO2_IMT   = 1                                                      CCN1F405.156   
+        CO2_JMT   = 1                                                      CCN1F405.157   
+      ENDIF                                                                CCN1F405.158   
+                                                                           CCN1F405.159   
+      CALL TRANSIN (                                                       SWAPA2O2.441   
+*CALL ARGD1                                                                SWAPA2O2.442   
+     &              O_LEN_DATA+O_LEN_DUALDATA,                             SWAPA2O2.443   
+     &              NFTOSWAP,ocean_sm,ICODE,CMESSAGE)                      SWAPA2O2.444   
+      IF (ICODE.GT.0) GOTO 999                                             SWAPA2O2.445   
+!----------------------------------------------------------------------    SWAPA2O2.446   
+!                                                                          SWAPA2O2.447   
+! 4. Gather ocean field from O_SPCON array no longer required: already     GRR0F403.207   
+!    a global domain.                                                      GRR0F403.208   
+!                                                                          GRR0F403.209   
+!----------------------------------------------------------------------    SWAPA2O2.460   
+!                                                                          SWAPA2O2.461   
+! 5. Perform the coupling calculations on a single PE. Transform           SWAPA2O2.462   
+!    coupling fields onto the new (ocean) grid, including interpolation    SWAPA2O2.463   
+!    if required.                                                          SWAPA2O2.464   
+!                                                                          SWAPA2O2.465   
+      IF(mype.EQ.gather_pe) THEN    ! Global data on single PE only        SWAPA2O2.466   
+                                                                           GRR0F403.210   
+! Initialise output fields to missing data indicators (strictly, these     GRR0F403.211   
+! are IN/OUT fields).                                                      GRR0F403.212   
+      DO I=1,G_IMTJMT                                                      GRR0F403.213   
+      O_TAUX(I)    = RMDI                                                  GJC0F405.55    
+      O_TAUY(I)    = RMDI                                                  GJC0F405.56    
+      O_WINDMIX(I) = RMDI                                                  GJC0F405.57    
+      O_BLUE(I)    = RMDI                                                  GJC0F405.58    
+      O_HEATFLUX(I)= RMDI                                                  GJC0F405.59    
+      O_PMINUSE(I) = RMDI                                                  GJC0F405.60    
+      O_ATMCO2(I) = RMDI                                                   CCN1F405.160   
+                                                                           CCN1F405.161   
+*IF DEF,SEAICE                                                             GRR0F403.220   
+      O_SNOWFALL(I)= RMDI                                                  GJC0F405.61    
+      O_SUBLIM(I)  = RMDI                                                  GJC0F405.62    
+      O_BOTMELT(I) = RMDI                                                  GJC0F405.63    
+      O_TOPMELT(I) = RMDI                                                  GJC0F405.64    
+*ENDIF                                                                     GRR0F403.225   
+*IF DEF,RIVERS                                                             GRR0F403.226   
+        O_RIVEROUT(I)= RMDI                                                GRR0F403.227   
+*ENDIF                                                                     GRR0F403.228   
+      ENDDO ! I                                                            GRR0F403.229   
+                                                                           GRR0F403.230   
+                                                                           SWAPA2O2.467   
+      CALL TRANSA2O (                                                      SWAPA2O2.468   
+     & TAUX,O_TAUX,TAUY,O_TAUY,WINDMIX,O_WINDMIX,                          SWAPA2O2.469   
+     & SOLAR,BLUE,O_BLUE,EVAP,LONGWAVE,SENSIBLE,O_HEATFLUX,                SWAPA2O2.470   
+     & LSSNOW,CVSNOW,LSRAIN,CVRAIN,O_PMINUSE,                              SWAPA2O2.471   
+     & RMDI,LC,                                                            SWAPA2O2.472   
+*IF DEF,SEAICE                                                             SWAPA2O2.473   
+     & AICE,SUBLIM,BOTMELT,TOPMELT,                                        SWAPA2O2.474   
+     & O_SNOWFALL,O_SUBLIM,O_BOTMELT,O_TOPMELT,                            SWAPA2O2.475   
+*ENDIF                                                                     SWAPA2O2.476   
+*IF DEF,TRANGRID                                                           SWAPA2O2.477   
+     & XUO,XTO,YUO,YTO,XTA,XUA,YTA,YUA,                                    SWAPA2O2.478   
+*ENDIF                                                                     SWAPA2O2.479   
+*IF DEF,TRANGRID,OR,DEF,RIVERS                                             SWAPA2O2.480   
+     & atmos_landmask,                                                     SWAPA2O2.481   
+*ENDIF                                                                     SWAPA2O2.482   
+*IF DEF,RIVERS                                                             SWAPA2O2.483   
+     & RUNOFFIN,OCENTPTS,O_RIVEROUT,atmos_number_of_landpts,               SWAPA2O2.484   
+     & A_COS_P_LATITUDE,                                                   SWAPA2O2.485   
+*ENDIF                                                                     SWAPA2O2.486   
+     & ATMCO2, O_ATMCO2, CO2_ICOLS, CO2_JROWS, CO2_IMT, CO2_JMT,           CCN1F405.162   
+     & G_IMT,G_JMT,G_JMTM1,G_ROW_LENGTH,G_P_ROWS,G_U_ROWS,                 SWAPA2O2.487   
+     & (G_IMT+G_ROW_LENGTH)*(G_JMT+G_P_ROWS),                              SWAPA2O2.488   
+     & O_FLDDEPC,O_SPCON(jocp_fkmq_global),                                GRR0F403.231   
+     & INVERT_OCEAN,CYCLIC_OCEAN,GLOBAL_OCEAN,                             SWAPA2O2.490   
+     & icode,cmessage)                                                     SWAPA2O2.491   
+                                                                           SWAPA2O2.492   
+      ENDIF                         ! Single processor                     SWAPA2O2.493   
+                                                                           SWAPA2O2.494   
+!----------------------------------------------------------------------    SWAPA2O2.495   
+!                                                                          SWAPA2O2.496   
+! 6. Scatter coupling fields received from atmos model, now residing       SWAPA2O2.497   
+!    on a single PE, over all processors according to the ocean MPP        SWAPA2O2.498   
+!    data decomposition. Make SWAPBOUNDS calls after each scatter          GRR0F403.232   
+!    to populate halos.                                                    GRR0F403.233   
+                                                                           SWAPA2O2.500   
+      CALL SCATTER_FIELD(D1(JO_TAUX),O_TAUX,! NB: TAUX over dimensioned    SWAPA2O2.501   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.502   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.503   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.504   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_TAUX'                   SWAPA2O2.505   
+         ICODE=101                                                         SWAPA2O2.506   
+         GO TO 999                                                         SWAPA2O2.507   
+      ENDIF                                                                SWAPA2O2.508   
+      CALL SWAPBOUNDS(D1(JO_TAUX),lasize(1),lasize(2),offx,offy,           GRR0F403.234   
+     &                   swap_levels)                                      GRR0F403.235   
+                                                                           SWAPA2O2.509   
+      CALL SCATTER_FIELD(D1(JO_TAUY),O_TAUY,! NB: TAUY over dimensioned    SWAPA2O2.510   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.511   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.512   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.513   
+         CMESSAGE='SWAPA2O : ERROR in scather of O_TAUY'                   SWAPA2O2.514   
+         ICODE=102                                                         SWAPA2O2.515   
+         GO TO 999                                                         SWAPA2O2.516   
+      ENDIF                                                                SWAPA2O2.517   
+      CALL SWAPBOUNDS(D1(JO_TAUY),lasize(1),lasize(2),offx,offy,           GRR0F403.236   
+     &                   swap_levels)                                      GRR0F403.237   
+                                                                           SWAPA2O2.518   
+      CALL SCATTER_FIELD(D1(JO_WINDMIX),O_WINDMIX,                         SWAPA2O2.519   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.520   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.521   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.522   
+         CMESSAGE='SWAPA2O : ERROR in scather of O_WINDMIX'                SWAPA2O2.523   
+         ICODE=103                                                         SWAPA2O2.524   
+         GO TO 999                                                         SWAPA2O2.525   
+      ENDIF                                                                SWAPA2O2.526   
+      CALL SWAPBOUNDS(D1(JO_WINDMIX),lasize(1),lasize(2),offx,offy,        GRR0F403.238   
+     &                   swap_levels)                                      GRR0F403.239   
+                                                                           SWAPA2O2.527   
+      CALL SCATTER_FIELD(D1(JO_BLUE),O_BLUE,                               SWAPA2O2.528   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.529   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.530   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.531   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_BLUE'                   SWAPA2O2.532   
+         ICODE=105                                                         SWAPA2O2.533   
+         GO TO 999                                                         SWAPA2O2.534   
+      ENDIF                                                                SWAPA2O2.535   
+      CALL SWAPBOUNDS(D1(JO_BLUE),lasize(1),lasize(2),offx,offy,           GRR0F403.240   
+     &                   swap_levels)                                      GRR0F403.241   
+                                                                           SWAPA2O2.536   
+      CALL SCATTER_FIELD(D1(JO_HEATFLUX),O_HEATFLUX,                       SWAPA2O2.537   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.538   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.539   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.540   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_HEATFLUX'               SWAPA2O2.541   
+         ICODE=106                                                         SWAPA2O2.542   
+         GO TO 999                                                         SWAPA2O2.543   
+      ENDIF                                                                SWAPA2O2.544   
+      CALL SWAPBOUNDS(D1(JO_HEATFLUX),lasize(1),lasize(2),offx,offy,       GRR0F403.242   
+     &                   swap_levels)                                      GRR0F403.243   
+                                                                           SWAPA2O2.545   
+      CALL SCATTER_FIELD(D1(JO_PMINUSE),O_PMINUSE,                         SWAPA2O2.546   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.547   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.548   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.549   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_PMINUSE'                SWAPA2O2.550   
+         ICODE=107                                                         SWAPA2O2.551   
+         GO TO 999                                                         SWAPA2O2.552   
+      ENDIF                                                                SWAPA2O2.553   
+      CALL SWAPBOUNDS(D1(JO_PMINUSE),lasize(1),lasize(2),offx,offy,        GRR0F403.244   
+     &                   swap_levels)                                      GRR0F403.245   
+                                                                           SWAPA2O2.554   
+      IF (L_CO2_INTERACTIVE) THEN                                          CCN1F405.163   
+                                                                           CCN1F405.164   
+        CALL SCATTER_FIELD(D1(JO_co2),O_ATMCO2,                            CCN1F405.165   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           CCN1F405.166   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  CCN1F405.167   
+        IF(info.NE.0) THEN      ! Check return code                        CCN1F405.168   
+           CMESSAGE='SWAPA2O : ERROR in scatter of O_ATMCO2'               CCN1F405.169   
+           ICODE=122                                                       CCN1F405.170   
+           GO TO 999                                                       CCN1F405.171   
+        ENDIF                                                              CCN1F405.172   
+        CALL SWAPBOUNDS(D1(JO_co2),lasize(1),lasize(2),offx,offy,          CCN1F405.173   
+     &                   swap_levels)                                      CCN1F405.174   
+                                                                           CCN1F405.175   
+      ENDIF                                                                CCN1F405.176   
+*IF DEF,SEAICE                                                             SWAPA2O2.555   
+                                                                           SWAPA2O2.556   
+      CALL SCATTER_FIELD(D1(JO_SNOWFALL),O_SNOWFALL,                       SWAPA2O2.557   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.558   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.559   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.560   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_SNOWFALL'               SWAPA2O2.561   
+         ICODE=113                                                         SWAPA2O2.562   
+         GO TO 999                                                         SWAPA2O2.563   
+      ENDIF                                                                SWAPA2O2.564   
+      CALL SWAPBOUNDS(D1(JO_SNOWFALL),lasize(1),lasize(2),offx,offy,       GRR0F403.246   
+     &                   swap_levels)                                      GRR0F403.247   
+                                                                           SWAPA2O2.565   
+      CALL SCATTER_FIELD(D1(JO_SUBLIM),O_SUBLIM,                           SWAPA2O2.566   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.567   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.568   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.569   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_SUBLIM'                 SWAPA2O2.570   
+         ICODE=114                                                         SWAPA2O2.571   
+         GO TO 999                                                         SWAPA2O2.572   
+      ENDIF                                                                SWAPA2O2.573   
+      CALL SWAPBOUNDS(D1(JO_SUBLIM),lasize(1),lasize(2),offx,offy,         GRR0F403.248   
+     &                   swap_levels)                                      GRR0F403.249   
+                                                                           SWAPA2O2.574   
+      CALL SCATTER_FIELD(D1(JO_BOTMELT),O_BOTMELT,                         SWAPA2O2.575   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.576   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.577   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.578   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_BOTMELT'                SWAPA2O2.579   
+         ICODE=115                                                         SWAPA2O2.580   
+         GO TO 999                                                         SWAPA2O2.581   
+      ENDIF                                                                SWAPA2O2.582   
+      CALL SWAPBOUNDS(D1(JO_BOTMELT),lasize(1),lasize(2),offx,offy,        GRR0F403.250   
+     &                   swap_levels)                                      GRR0F403.251   
+                                                                           SWAPA2O2.583   
+      CALL SCATTER_FIELD(D1(JO_TOPMELT),O_TOPMELT,                         SWAPA2O2.584   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.585   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.586   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.587   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_TOPMELT'                SWAPA2O2.588   
+         ICODE=116                                                         SWAPA2O2.589   
+         GO TO 999                                                         SWAPA2O2.590   
+      ENDIF                                                                SWAPA2O2.591   
+      CALL SWAPBOUNDS(D1(JO_TOPMELT),lasize(1),lasize(2),offx,offy,        GRR0F403.252   
+     &                   swap_levels)                                      GRR0F403.253   
+                                                                           SWAPA2O2.592   
+*ENDIF                                                                     SWAPA2O2.593   
+                                                                           SWAPA2O2.594   
+*IF DEF,RIVERS                                                             SWAPA2O2.595   
+                                                                           SWAPA2O2.596   
+      CALL SCATTER_FIELD(D1(JO_RIVEROUT),O_RIVEROUT,                       SWAPA2O2.597   
+     &  lasize(1),lasize(2),glsize(1),glsize(2),                           SWAPA2O2.598   
+     &  gather_pe,GC_ALL_PROC_GROUP,info)                                  SWAPA2O2.599   
+      IF(info.NE.0) THEN      ! Check return code                          SWAPA2O2.600   
+         CMESSAGE='SWAPA2O : ERROR in scatter of O_RIVEROUT'               SWAPA2O2.601   
+         ICODE=118                                                         SWAPA2O2.602   
+         GO TO 999                                                         SWAPA2O2.603   
+      ENDIF                                                                SWAPA2O2.604   
+      CALL SWAPBOUNDS(D1(JO_RIVEROUT),lasize(1),lasize(2),offx,offy,       GRR0F403.254   
+     &                   swap_levels)                                      GRR0F403.255   
+                                                                           SWAPA2O2.605   
+*ENDIF                                                                     SWAPA2O2.606   
+                                                                           SWAPA2O2.607   
+!---------------------------------------------------------------------     SWAPA2O2.608   
+!                                                                          SWAPA2O2.609   
+! 7. Error trap.                                                           SWAPA2O2.610   
+                                                                           SWAPA2O2.611   
+ 999  CONTINUE                                                             SWAPA2O2.612   
+      IF(ICODE.NE.0) THEN                                                  SWAPA2O2.613   
+         write(6,*) CMESSAGE,ICODE                                         SWAPA2O2.614   
+      ENDIF                                                                SWAPA2O2.615   
+                                                                           SWAPA2O2.616   
+      RETURN                                                               SWAPA2O2.617   
+      END                                                                  SWAPA2O2.618   
+*ENDIF                                                                     SWAPA2O2.619   

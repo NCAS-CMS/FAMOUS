@@ -1,0 +1,548 @@
+*IF DEF,A09_1A,OR,DEF,RECON                                                UIE3F404.34    
+C ******************************COPYRIGHT******************************    GTS2F400.5329  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.5330  
+C                                                                          GTS2F400.5331  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.5332  
+C restrictions as set forth in the contract.                               GTS2F400.5333  
+C                                                                          GTS2F400.5334  
+C                Meteorological Office                                     GTS2F400.5335  
+C                London Road                                               GTS2F400.5336  
+C                BRACKNELL                                                 GTS2F400.5337  
+C                Berkshire UK                                              GTS2F400.5338  
+C                RG12 2SZ                                                  GTS2F400.5339  
+C                                                                          GTS2F400.5340  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.5341  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.5342  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.5343  
+C Modelling at the above address.                                          GTS2F400.5344  
+C ******************************COPYRIGHT******************************    GTS2F400.5345  
+C                                                                          GTS2F400.5346  
+C*LL  SUBROUTINE LS_CLD and other---------------------------------------   LSCLD1A.3     
+CLL                                                                        LSCLD1A.4     
+CLL  Purpose: Calculates cloud amount, cloud water amounts (ice and        LSCLD1A.5     
+CLL           liquid), and temperature and specific humidity increments    LSCLD1A.6     
+CLL           due to cloud formation, from cloud-conserved and other       LSCLD1A.7     
+CLL           model variables.  This is done for levels 1 to LEVELS        LSCLD1A.8     
+CLL           (specified in the argument list).                            LSCLD1A.9     
+CLL  NB: Throughout, levels are counted from the bottom up, i.e. the       LSCLD1A.10    
+CLL      lowest level under consideration is level 1, the next lowest      LSCLD1A.11    
+CLL      level 2, and so on.                                               LSCLD1A.12    
+CLL                                                                        LSCLD1A.13    
+CLL  Suitable for single-column use.                                       LSCLD1A.14    
+CLL                                                                        LSCLD1A.15    
+CLL C.Wilson    <- programmer of some or all of previous code or changes   LSCLD1A.16    
+CLL                                                                        LSCLD1A.17    
+CLL  Model            Modification history from model version 3.0:         LSCLD1A.18    
+CLL version  Date                                                          LSCLD1A.19    
+CLL   3.4   5/08/94 Remove calls to TIMER (under *DEF TIMER). R.Rawlins    ARR1F304.1     
+CLL                                                                        LSCLD1A.20    
+!LL   4.0   9/05/95 Changed argument list to export mean cloud water       AYY2F400.115   
+!LL                 content, QC, and bs for precipitation. A.C.Bushell     AYY2F400.116   
+!LL                                                                        AYY2F400.117   
+!LL   4.1   9/02/96 Set default QC and bs to RMDI in LS_CLD and removed    AYY1F401.1     
+!LL                 zero cloud initialization in LS_CLD_C. A.C.Bushell     AYY1F401.2     
+!LL   4.2    Oct. 96  T3E migration: *DEF CRAY removed; was used to        GSS1F402.109   
+!LL                   switch on dynamic allocation & WHENIMD.              GSS1F402.110   
+!LL                                    S.J.Swarbrick                       GSS1F402.111   
+!LL                                                                        AYY1F401.3     
+!LL   4.4   13/8/97 Several gathers and scatters removed from LSCLD_C      AAD2F404.207   
+!LL                 in order to reduce run time.                           AAD2F404.208   
+!LL                 D. Salmond                                             AAD2F404.209   
+!LL  4.5  27/04/98  Add Fujitsu vectorization directives - needed          GRB0F405.124   
+!LL                 because of vn4.4 optimization. RBarnes@ecmwf.int       GRB0F405.125   
+!LL                                                                        AAD2F404.210   
+CLL  Programming standard: Unified Model Documentation Paper No 4,         LSCLD1A.21    
+CLL                        Version 2, dated 18/1/90.                       LSCLD1A.22    
+CLL                                                                        LSCLD1A.23    
+CLL  System component covered: P292                                        LSCLD1A.24    
+CLL                                                                        LSCLD1A.25    
+CLL  Documentation: UMDP No.29                                             LSCLD1A.26    
+CLL                                                                        LSCLD1A.27    
+C*L  Arguments:---------------------------------------------------------   LSCLD1A.28    
+      SUBROUTINE LS_CLD(                                                   LSCLD1A.29    
+     + AK,BK,PSTAR,RHCRIT,LEVELS,POINTS,PFIELD,                            LSCLD1A.30    
+     & T,CF,Q,QCF,QCL,                                                     AYY2F400.118   
+     & GRID_QC,BS,ERROR                                                    AYY2F400.119   
+     +)                                                                    LSCLD1A.32    
+      IMPLICIT NONE                                                        LSCLD1A.33    
+      INTEGER                                                              LSCLD1A.34    
+     + LEVELS              ! IN No. of levels being processed.             LSCLD1A.35    
+     +,POINTS              ! IN No. of gridpoints being processed.         LSCLD1A.36    
+     +,PFIELD              ! IN No. of points in global field (at one      LSCLD1A.37    
+C                          !    vertical level).                           LSCLD1A.38    
+      REAL                                                                 LSCLD1A.39    
+     + PSTAR(PFIELD)       ! IN Surface pressure (Pa).                     LSCLD1A.40    
+     +,RHCRIT(LEVELS)      ! IN Critical relative humidity.  See the       LSCLD1A.41    
+C                          !    the paragraph incorporating eqs P292.11    LSCLD1A.42    
+C                          !    to P292.14; the values need to be tuned    LSCLD1A.43    
+C                          !    for the given set of levels.               LSCLD1A.44    
+     +,AK(LEVELS)          ! IN Hybrid "A" co-ordinate.                    LSCLD1A.45    
+     +,BK(LEVELS)          ! IN Hybrid "B" co-ordinate.                    LSCLD1A.46    
+      REAL                                                                 LSCLD1A.47    
+     + Q(PFIELD,LEVELS)    ! INOUT On input: Total water content (QW)      LSCLD1A.48    
+C                          !       (kg per kg air).                        LSCLD1A.49    
+C                          !       On output: Specific humidity at         LSCLD1A.50    
+C                          !       processed levels (kg water per kg       LSCLD1A.51    
+C                          !       air).                                   LSCLD1A.52    
+     +,T(PFIELD,LEVELS)    ! INOUT On input: Liquid/frozen water           LSCLD1A.53    
+C                          !       temperature (TL) (K).                   LSCLD1A.54    
+C                          !       On output: Temperature at processed     LSCLD1A.55    
+C                          !       levels (K).                             LSCLD1A.56    
+      REAL                                                                 LSCLD1A.57    
+     + CF(PFIELD,LEVELS)   ! OUT Cloud fraction at processed levels        LSCLD1A.58    
+C                          !     (decimal fraction).                       LSCLD1A.59    
+     +,QCF(PFIELD,LEVELS)  ! OUT Cloud ice content at processed levels     LSCLD1A.60    
+C                          !     (kg per kg air).                          LSCLD1A.61    
+     +,QCL(PFIELD,LEVELS)  ! OUT Cloud liquid water content at             LSCLD1A.62    
+C                          !     processed levels (kg per kg air).         LSCLD1A.63    
+     &,GRID_QC(PFIELD,LEVELS)  ! OUT Gridbox mean cloud condensate at      AYY2F400.120   
+!                                    processed levels (kg per kg air).     AYY2F400.121   
+!                                    Set to RMDI when cloud is absent.     AYY1F401.4     
+     &,BS(PFIELD,LEVELS)   ! OUT Maximum moisture fluctuation /6*sigma     AYY2F400.122   
+!                                at processed levels (kg per kg air).      AYY2F400.123   
+!                                Set to RMDI when cloud is absent.         AYY1F401.5     
+      INTEGER ERROR        ! OUT 0 if OK; 1 if bad arguments.              LSCLD1A.64    
+C                                                                          LSCLD1A.65    
+C*L  Workspace usage----------------------------------------------------   LSCLD1A.66    
+C    5 blocks of real workspace are required.                              LSCLD1A.67    
+      REAL                 ! "Automatic" arrays on Cray.                   LSCLD1A.69    
+     & P(POINTS)           ! WORK Pressure at successive levels (Pa).      LSCLD1A.70    
+     &,QSL(POINTS)         ! WORK Saturated spec humidity for temp TL.     LSCLD1A.71    
+     &,QN(POINTS)          ! WORK Cloud water normalised with BS.          LSCLD1A.72    
+      LOGICAL                                                              LSCLD1A.73    
+     & LQC(POINTS)         ! WORK True for points with non-zero cloud      LSCLD1A.74    
+      INTEGER                                                              LSCLD1A.75    
+     & INDEX(POINTS)       ! WORK Index for points with non-zero cloud     LSCLD1A.76    
+C*  Local and other physical constants----------------------------------   AYY1F401.6     
+*CALL C_MDI                                                                AYY1F401.7     
+C*L  External subroutine called ----------------------------------------   LSCLD1A.89    
+      EXTERNAL QSAT,LS_CLD_C                                               LSCLD1A.90    
+C* Local, including SAVE'd, storage------------------------------------    LSCLD1A.97    
+C                                                                          LSCLD1A.98    
+C  (a) Scalars effectively expanded to workspace by the Cray (using        LSCLD1A.99    
+C      vector registers).                                                  LSCLD1A.100   
+C     REAL - None                                                          LSCLD1A.101   
+C                                                                          LSCLD1A.102   
+C  (b) Others.                                                             LSCLD1A.103   
+      INTEGER K,I       ! Loop counters: K - vertical level index.         LSCLD1A.104   
+C                       !                I - horizontal field index.       LSCLD1A.105   
+      INTEGER QC_POINTS ! No. points with non-zero cloud                   LSCLD1A.106   
+                                                                           LSCLD1A.107   
+C-----------------------------------------------------------------------   LSCLD1A.111   
+C  Check input arguments for potential over-writing problems.              LSCLD1A.112   
+C-----------------------------------------------------------------------   LSCLD1A.113   
+      ERROR=0                                                              LSCLD1A.114   
+      IF(POINTS.GT.PFIELD)THEN                                             LSCLD1A.115   
+        ERROR=1                                                            LSCLD1A.116   
+        GOTO1000                                                           LSCLD1A.117   
+      ENDIF                                                                LSCLD1A.118   
+C                                                                          LSCLD1A.119   
+C-----------------------------------------------------------------------   LSCLD1A.120   
+CL Subroutine structure :                                                  LSCLD1A.121   
+CL Loop round levels to be processed.                                      LSCLD1A.122   
+C-----------------------------------------------------------------------   LSCLD1A.123   
+C                                                                          LSCLD1A.124   
+      DO K=1,LEVELS                                                        LSCLD1A.125   
+C                                                                          LSCLD1A.126   
+C-----------------------------------------------------------------------   LSCLD1A.127   
+CL 1. Calculate QSAT at liquid/ice water temperature, TL,                  LSCLD1A.128   
+CL    and initialise cloud ice, water and fraction arrays.                 LSCLD1A.129   
+C     This requires a preliminary calculation of the pressure.             LSCLD1A.130   
+C     NB: On entry to the subroutine 'T' is TL and 'Q' is QW.              LSCLD1A.131   
+C-----------------------------------------------------------------------   LSCLD1A.132   
+C                                                                          LSCLD1A.133   
+        DO I=1,POINTS                                                      LSCLD1A.134   
+          P(I)=AK(K)+PSTAR(I)*BK(K)                                        LSCLD1A.135   
+          QCF(I,K)=0.0                                                     LSCLD1A.136   
+          QCL(I,K)=0.0                                                     LSCLD1A.137   
+          CF(I,K) =0.0                                                     LSCLD1A.138   
+          GRID_QC(I,K) = RMDI                                              AYY1F401.8     
+          BS(I,K) =RMDI                                                    AYY1F401.9     
+        ENDDO ! Loop over points                                           LSCLD1A.139   
+C                                                                          LSCLD1A.140   
+        CALL QSAT(QSL,T(1,K),P,POINTS)                                     LSCLD1A.141   
+C                                                                          LSCLD1A.142   
+        DO I=1,POINTS                                                      LSCLD1A.143   
+          IF (RHCRIT(K) .LT. 1.) THEN                                      LSCLD1A.144   
+C                                                                          LSCLD1A.145   
+C-----------------------------------------------------------------------   LSCLD1A.146   
+CL 2. Calculate the quantity QN = QC/BS = (QW/QSL-1)/(1-RHcrit)            LSCLD1A.147   
+CL    if RHcrit is less than 1                                             LSCLD1A.148   
+C-----------------------------------------------------------------------   LSCLD1A.149   
+C                                                                          LSCLD1A.150   
+            QN(I) = (Q(I,K)/QSL(I)-1.)/(1.-RHCRIT(K))                      LSCLD1A.151   
+C                                                                          LSCLD1A.152   
+C-----------------------------------------------------------------------   LSCLD1A.153   
+CL 3. Set logical variable for cloud, LQC, for the case RHcrit < 1;        LSCLD1A.154   
+C     where QN > -1, i.e. qW/qSAT(TL,P) > RHcrit, there is cloud           LSCLD1A.155   
+C-----------------------------------------------------------------------   LSCLD1A.156   
+C                                                                          LSCLD1A.157   
+            LQC(I) = (QN(I) .GT. -1.)                                      LSCLD1A.158   
+          ELSE                                                             LSCLD1A.159   
+C                                                                          LSCLD1A.160   
+C-----------------------------------------------------------------------   LSCLD1A.161   
+CL 2.a Calculate QN = QW - QSL if RHcrit equals 1                          LSCLD1A.162   
+C-----------------------------------------------------------------------   LSCLD1A.163   
+C                                                                          LSCLD1A.164   
+            QN(I) = Q(I,K) - QSL(I)                                        LSCLD1A.165   
+C                                                                          LSCLD1A.166   
+C-----------------------------------------------------------------------   LSCLD1A.167   
+CL 3.a Set logical variable for cloud, LQC, for the case RHcrit = 1;       LSCLD1A.168   
+CL     where QN > 0, i.e. qW > qSAT(TL,P), there is cloud                  LSCLD1A.169   
+C-----------------------------------------------------------------------   LSCLD1A.170   
+C                                                                          LSCLD1A.171   
+            LQC(I) = (QN(I) .GT. 0.)                                       LSCLD1A.172   
+          ENDIF ! Test on RHCRIT                                           LSCLD1A.173   
+        ENDDO ! Loop over points                                           LSCLD1A.174   
+C                                                                          LSCLD1A.175   
+C-----------------------------------------------------------------------   LSCLD1A.176   
+CL 4. Form index of points where non-zero cloud fraction                   LSCLD1A.177   
+C-----------------------------------------------------------------------   LSCLD1A.178   
+C                                                                          LSCLD1A.179   
+        QC_POINTS=0                                                        LSCLD1A.183   
+        DO I=1,POINTS                                                      LSCLD1A.184   
+          IF(LQC(I)) THEN                                                  LSCLD1A.185   
+            QC_POINTS=QC_POINTS+1                                          LSCLD1A.186   
+            INDEX(QC_POINTS)=I                                             LSCLD1A.187   
+          ENDIF                                                            LSCLD1A.188   
+        ENDDO ! Loop over points                                           LSCLD1A.189   
+C                                                                          LSCLD1A.191   
+C-----------------------------------------------------------------------   LSCLD1A.192   
+CL 5. Call LS_CLD_C to calculate cloud ice and water contents, cloud       LSCLD1A.193   
+CL                  fractions, spec. humidity and determine temperature    LSCLD1A.194   
+C-----------------------------------------------------------------------   LSCLD1A.195   
+C                                                                          LSCLD1A.196   
+        IF(QC_POINTS.GT.0) THEN                                            AYY2F400.124   
+          CALL LS_CLD_C(P,RHCRIT(K),QSL,QN,Q(1,K),T(1,K),QCF(1,K),         AYY2F400.125   
+     &                  QCL(1,K),CF(1,K),GRID_QC(1,K),BS(1,K),             AYY2F400.126   
+     &                  INDEX,QC_POINTS,POINTS)                            AYY2F400.127   
+        ENDIF ! qc_points > 0                                              AYY2F400.128   
+C                                                                          LSCLD1A.201   
+      ENDDO ! Loop over levels                                             LSCLD1A.202   
+C                                                                          LSCLD1A.203   
+ 1000 CONTINUE ! Error exit                                                LSCLD1A.204   
+      RETURN                                                               LSCLD1A.208   
+      END                                                                  LSCLD1A.209   
+                                                                           LSCLD1A.210   
+C*LL  SUBROUTINE LS_CLD_C-----------------------------------------------   LSCLD1A.211   
+CLL                                                                        LSCLD1A.212   
+CLL  Language: FORTRAN 77;  runs under at least IBM and Cray compilers,    LSCLD1A.213   
+CLL            after going through a Cray update-like preprocessor.        LSCLD1A.214   
+CLL                                                                        LSCLD1A.215   
+CLL  Suitable for single-column use.                                       LSCLD1A.216   
+CLL                                                                        LSCLD1A.217   
+CLL  Model            Modification history from model version 3.0:         LSCLD1A.218   
+CLL version  Date                                                          LSCLD1A.219   
+CLL                                                                        LSCLD1A.220   
+CLL  Programming standard: Unified Model Documentation Paper No 4,         LSCLD1A.221   
+CLL                        Version 1, dated 07/2/91.                       LSCLD1A.222   
+CLL                                                                        LSCLD1A.223   
+CLL  System component covered: P292                                        LSCLD1A.224   
+CLL                                                                        LSCLD1A.225   
+CLL  Purpose: Calculates cloud water amounts (ice and liquid), cloud       LSCLD1A.226   
+CLL           amounts and temperature and specific humidity                LSCLD1A.227   
+CLL           from cloud-conserved and other model variables.              LSCLD1A.228   
+CLL           This is done for one level.                                  LSCLD1A.229   
+CLL           Iteration is used to improve the determination of            LSCLD1A.230   
+CLL           ALPHAL, hence AL and so QCF, QCL, Q and T.                   LSCLD1A.231   
+CLL                                                                        LSCLD1A.232   
+CLL  Documentation: UMDP No.29                                             LSCLD1A.233   
+CLL                                                                        LSCLD1A.234   
+CLL                                                                        LSCLD1A.235   
+C*L  Arguments:---------------------------------------------------------   LSCLD1A.236   
+      SUBROUTINE LS_CLD_C(                                                 LSCLD1A.237   
+     & P_F,RHCRIT,QSL_F,QN_F,Q_F,T_F                                       AYY2F400.129   
+     &,QCF_F,QCL_F,CF_F,GRID_QC_F,BS_F                                     AYY2F400.130   
+     &,INDEX,POINTS,POINTS_F)                                              AYY2F400.131   
+      IMPLICIT NONE                                                        LSCLD1A.240   
+      INTEGER                                                              LSCLD1A.241   
+     + POINTS_F            ! IN No. of gridpoints being processed.         LSCLD1A.242   
+     +,POINTS              ! IN No. of gridpoints with non-zero cloud      LSCLD1A.243   
+     +,INDEX(POINTS)       ! IN INDEX for  points with non-zero cloud      LSCLD1A.244   
+C                          !    from lowest model level.                   LSCLD1A.245   
+      REAL                                                                 LSCLD1A.246   
+     + P_F(POINTS_F)       ! IN pressure (Pa).                             LSCLD1A.247   
+     +,QSL_F(POINTS_F)     ! IN saturated humidity at temperature TL,      LSCLD1A.248   
+C                          !    and pressure P_F                           LSCLD1A.249   
+     +,QN_F(POINTS_F)      ! IN Normalised super/subsaturation (=QC/BS).   LSCLD1A.250   
+     +,RHCRIT              ! IN Critical relative humidity.  See the       LSCLD1A.251   
+C                          !    the paragraph incorporating eqs P292.11    LSCLD1A.252   
+C                          !    to P292.14;                                LSCLD1A.253   
+      REAL                                                                 LSCLD1A.254   
+     + Q_F(POINTS_F)       ! INOUT On input: Total water content (QW)      LSCLD1A.255   
+C                          !       (kg per kg air).                        LSCLD1A.256   
+C                          !       On output: Specific humidity at         LSCLD1A.257   
+C                          !       processed levels (kg water per kg       LSCLD1A.258   
+C                          !       air).                                   LSCLD1A.259   
+     +,T_F(POINTS_F)       ! INOUT On input: Liquid/frozen water           LSCLD1A.260   
+C                          !       temperature (TL) (K).                   LSCLD1A.261   
+C                          !       On output: Temperature at processed     LSCLD1A.262   
+C                          !       levels (K).                             LSCLD1A.263   
+      REAL                                                                 LSCLD1A.264   
+     + QCF_F(POINTS_F)     ! OUT Cloud ice content at processed levels     LSCLD1A.265   
+C                          !     (kg per kg air).                          LSCLD1A.266   
+     +,QCL_F(POINTS_F)     ! OUT Cloud liquid water content at             LSCLD1A.267   
+C                          !     processed levels (kg per kg air).         LSCLD1A.268   
+     +,CF_F(POINTS_F)      ! OUT Cloud fraction at processed levels.       LSCLD1A.269   
+C                                                                          LSCLD1A.270   
+     &,GRID_QC_F(POINTS_F) ! OUT Super/subsaturation on processed levels   AYY2F400.132   
+!                                Input initialized to RMDI.                AYY1F401.10    
+     &,BS_F(POINTS_F)      ! OUT Value of bs at processed levels.          AYY2F400.134   
+!                                Input initialized to RMDI.                AYY1F401.11    
+C*L  Workspace usage----------------------------------------------------   LSCLD1A.271   
+!    14 blocks of real workspace are required.                             AYY2F400.136   
+      REAL                 ! "Automatic" arrays on Cray.                   LSCLD1A.274   
+     & P(POINTS)           ! WORK Pressure  (Pa).                          LSCLD1A.275   
+     &,QS(POINTS)          ! WORK Saturated spec humidity for temp T.      LSCLD1A.279   
+     &,QCN(POINTS)         ! WORK Cloud water normalised with BS.          LSCLD1A.280   
+     &,T(POINTS)           ! WORK temperature.                             LSCLD1A.281   
+     &,Q(POINTS)           ! WORK specific humidity.                       LSCLD1A.282   
+     &,BS(POINTS)          ! WORK Sigmas*sqrt(6): sigmas the parametric    AYY2F400.137   
+!                                 standard deviation of local cloud        AYY2F400.138   
+!                                 water content fluctuations.              AYY2F400.139   
+     &,ALPHAL_NM1(POINTS)  ! WORK ALPHAL at previous iteration.            LSCLD1A.286   
+C*  Local and other physical constants----------------------------------   LSCLD1A.304   
+*CALL C_R_CP                                                               LSCLD1A.305   
+*CALL C_EPSLON                                                             LSCLD1A.306   
+*CALL C_LHEAT                                                              LSCLD1A.307   
+*CALL C_0_DG_C                                                             LSCLD1A.308   
+      REAL ALPHF,ALPHL,LSRCP,LCRCP      ! Derived parameters.              LSCLD1A.309   
+     +,LFRCP,CPRLF                      !                                  LSCLD1A.310   
+      PARAMETER (                                                          LSCLD1A.311   
+     + ALPHF=EPSILON*(LF+LC)/R          ! For frozen AlphaL calculation.   LSCLD1A.312   
+     +,ALPHL=EPSILON*LC/R               ! For liquid AlphaL calculation.   LSCLD1A.313   
+     +,LSRCP=(LF+LC)/CP                 ! Lat ht of sublimation/Cp.        LSCLD1A.314   
+     +,LCRCP=LC/CP                      ! Lat ht of condensation/Cp.       LSCLD1A.315   
+     +,LFRCP=LF/CP                      ! Lat ht of fusion/Cp.             LSCLD1A.316   
+     +,CPRLF=CP/LF                      ! Cp/lat ht of fusion.             LSCLD1A.317   
+     +)                                                                    LSCLD1A.318   
+      REAL WTN                                                             LSCLD1A.319   
+      INTEGER                                                              LSCLD1A.320   
+     & ITS                              ! Total number of iterations       LSCLD1A.321   
+     &,N                                ! Iteration counter                LSCLD1A.322   
+      PARAMETER (ITS=5,WTN=0.75)                                           LSCLD1A.323   
+C*L  External subroutine called ----------------------------------------   LSCLD1A.324   
+      EXTERNAL QSAT                                                        LSCLD1A.325   
+C* Local, including SAVE'd, storage------------------------------------    LSCLD1A.326   
+C                                                                          LSCLD1A.327   
+C  (a) Scalars effectively expanded to workspace by the Cray (using        LSCLD1A.328   
+C      vector registers).                                                  LSCLD1A.329   
+      REAL                                                                 LSCLD1A.330   
+     + AL                  ! LOCAL AL (see equation P292.6).               LSCLD1A.331   
+     +,ALPHAL              ! LOCAL ALPHAL (see equation P292.5).           LSCLD1A.332   
+     +,TESTT               ! LOCAL temporary temperature for partition     LSCLD1A.337   
+C                          !       of cloud water into ice and liquid      LSCLD1A.338   
+     +,FRACF               ! Fraction of cloud water which is frozen.      LSCLD1A.339   
+C                                                                          LSCLD1A.340   
+C  (b) Others.                                                             LSCLD1A.341   
+      INTEGER   I       ! Loop counters: I - horizontal field index.       LSCLD1A.342   
+      INTEGER II                                                           AAD2F404.211   
+!                                                                          AYY2F400.166   
+!-----------------------------------------------------------------------   AYY2F400.167   
+!L Gather points with non-zero cloud fraction.                             AYY1F401.12    
+C-----------------------------------------------------------------------   LSCLD1A.346   
+C                                                                          LSCLD1A.347   
+        DO I=1,POINTS                                                      LSCLD1A.348   
+          P(I)=P_F(INDEX(I))                                               LSCLD1A.349   
+          QCN(I)=QN_F(INDEX(I))                                            LSCLD1A.353   
+        END DO ! Loop over points                                          AYY2F400.171   
+C                                                                          LSCLD1A.355   
+C-----------------------------------------------------------------------   LSCLD1A.356   
+CL Loop over points with cloud.                                            LSCLD1A.357   
+C-----------------------------------------------------------------------   LSCLD1A.358   
+!                                                                          AYY1F401.13    
+! Fujitsu vectorization directive                                          GRB0F405.126   
+! Needed because of indirect addressing introduced at vn4.4                GRB0F405.127   
+!OCL NOVREC                                                                GRB0F405.128   
+        DO I=1,POINTS                                                      LSCLD1A.360   
+        II=INDEX(I)                                                        AAD2F404.212   
+!-----------------------------------------------------------------------   AYY1F401.14    
+!L 1. Calculate ALPHAL (eq P292.5) and AL (P292.6).                        AYY1F401.15    
+!-----------------------------------------------------------------------   AYY1F401.16    
+!                                                                          AYY1F401.17    
+          IF (T_F(II) .GT. TM) THEN                                        AAD2F404.213   
+            ALPHAL = ALPHL * QSL_F(II) / (T_F(II) * T_F(II))   ! P292.5    AAD2F404.214   
+            AL = 1.0 / (1.0 + (LCRCP * ALPHAL))         ! P292.6           AYY1F401.20    
+          ELSE                                                             AYY1F401.21    
+            ALPHAL = ALPHF * QSL_F(II) / (T_F(II) * T_F(II))   ! P292.5    AAD2F404.215   
+            AL = 1.0 / (1.0 + (LSRCP * ALPHAL))         ! P292.6           AYY1F401.23    
+          ENDIF                                                            AYY1F401.24    
+          ALPHAL_NM1(I) = ALPHAL                                           AYY1F401.25    
+!                                                                          AYY1F401.26    
+          IF (RHCRIT .LT. 1.) THEN                                         LSCLD1A.361   
+!-----------------------------------------------------------------------   AYY1F401.27    
+!L 2. Calculate cloud fraction C, BS (ie. sigma*sqrt(6), where sigma is    AYY1F401.28    
+!L    as in P292.14) and normalised cloud water QCN=qc/BS, using eqs       AYY1F401.29    
+!L    P292.15 & 16 if RHcrit < 1.                                          AYY1F401.30    
+!  N.B. QN (input) is initially in QCN                                     AYY1F401.31    
+!  N.B. QN does not depend on AL and so CF and QCN can be calculated       AYY1F401.32    
+!       outside the iteration (which is performed in LS_CLD_C).            AYY1F401.33    
+!       QN is > -1 for all points processed so CF > 0.                     AYY1F401.34    
+!-----------------------------------------------------------------------   AYY1F401.35    
+!                                                                          AYY1F401.36    
+            BS(I) = (1.0 - RHCRIT) * AL * QSL_F(II)    ! P292.14           AAD2F404.216   
+            IF (QCN(I) .LE. 0.) THEN                                       LSCLD1A.370   
+              CF_F(II)=0.5*(1.+QCN(I))*(1.+QCN(I))                         AAD2F404.217   
+              QCN(I)=(1.+QCN(I))*(1.+QCN(I))*(1.+QCN(I))/6.                LSCLD1A.372   
+            ELSEIF (QCN(I) .LT. 1.) THEN                                   LSCLD1A.373   
+              CF_F(II)=1.-0.5*(1.-QCN(I))*(1.-QCN(I))                      AAD2F404.218   
+              QCN(I)=QCN(I) + (1.-QCN(I))*(1.-QCN(I))*(1.-QCN(I))/6.       LSCLD1A.375   
+            ELSE ! QN .GE. 1                                               LSCLD1A.376   
+              CF_F(II)=1.                                                  AAD2F404.219   
+            ENDIF ! Tests on QN                                            LSCLD1A.378   
+          ELSE ! i.e. if RHcrit =1                                         LSCLD1A.379   
+C-----------------------------------------------------------------------   LSCLD1A.380   
+!L 3.a Set the cloud fraction to 1 if RHcrit = 1.                          AYY2F400.172   
+C      For the case RHcrit =1, QN is > 0 for all points processed          LSCLD1A.382   
+C      so CF =1.                                                           LSCLD1A.383   
+C-----------------------------------------------------------------------   LSCLD1A.384   
+            BS(I) = AL                                                     AYY1F401.38    
+            CF_F(II) = 1.                                                  AAD2F404.220   
+          ENDIF ! Test on RHCRIT                                           LSCLD1A.386   
+C                                                                          LSCLD1A.387   
+C-----------------------------------------------------------------------   LSCLD1A.388   
+CL 3.1 Calculate 1st approx. to qc (store in QCL)                          LSCLD1A.408   
+C-----------------------------------------------------------------------   LSCLD1A.409   
+C                                                                          LSCLD1A.410   
+          QCL_F(II)=QCN(I)*BS(I)                                           AAD2F404.221   
+C                                                                          LSCLD1A.412   
+C-----------------------------------------------------------------------   LSCLD1A.413   
+CL 3.2 Calculate 1st approx. specific humidity (total minus cloud water)   LSCLD1A.414   
+C-----------------------------------------------------------------------   LSCLD1A.415   
+C                                                                          LSCLD1A.416   
+          Q(I)=Q_F(II)-QCL_F(II)                                           AAD2F404.222   
+C                                                                          LSCLD1A.418   
+C-----------------------------------------------------------------------   LSCLD1A.419   
+CL 3.3 Perform  partition of cloud water into liquid and ice               LSCLD1A.420   
+CL     components, and calculate 1st approx. to temperature,               LSCLD1A.421   
+CL     accounting for latent heating.                                      LSCLD1A.422   
+CL     First assume cloud water is all liquid.                             LSCLD1A.423   
+C-----------------------------------------------------------------------   LSCLD1A.424   
+C                                                                          LSCLD1A.425   
+          T(I)=T_F(II)+LCRCP*QCL_F(II)                                     AAD2F404.223   
+          IF(T(I) .GT. TM) THEN          ! Liquid case                     LSCLD1A.427   
+            QCF_F(II)=0.0                                                  AAD2F404.224   
+          ELSE                           ! Frozen or mixed phase           LSCLD1A.429   
+C                                                                          LSCLD1A.430   
+C-----------------------------------------------------------------------   LSCLD1A.431   
+CL 3.4 Cloud ice present; either all cloud water is cloud ice and T<TM     LSCLD1A.432   
+CL     or a mixture of ice and liquid and T=TM                             LSCLD1A.433   
+C                                                                          LSCLD1A.434   
+C      Form test temperature assuming all ice                              LSCLD1A.435   
+C      N.B. total cloud water stored in QCL at this stage                  LSCLD1A.436   
+C-----------------------------------------------------------------------   LSCLD1A.437   
+C                                                                          LSCLD1A.438   
+            TESTT =T(I)+LFRCP*QCL_F(II)                                    AAD2F404.225   
+            IF(TESTT .LT. TM) THEN       ! Frozen case                     LSCLD1A.440   
+              QCF_F(II)=QCL_F(II)                                          AAD2F404.226   
+              T(I)=TESTT                                                   LSCLD1A.442   
+            ELSE                         ! Mixed phase case                LSCLD1A.443   
+              QCF_F(II)= CPRLF*(TM-T(I))                                   AAD2F404.227   
+              T(I)=TM                                                      LSCLD1A.445   
+            ENDIF                        ! End frozen                      LSCLD1A.446   
+          ENDIF                          ! End liquid                      LSCLD1A.447   
+C                                                                          LSCLD1A.448   
+C-----------------------------------------------------------------------   LSCLD1A.449   
+CL 3.5 Calculate 1st approx. to cloud liquid water content.                LSCLD1A.450   
+C-----------------------------------------------------------------------   LSCLD1A.451   
+C                                                                          LSCLD1A.452   
+          QCL_F(II) = QCL_F(II) - QCF_F(II)                                AAD2F404.228   
+        ENDDO ! Loop over points                                           LSCLD1A.454   
+C                                                                          LSCLD1A.455   
+C-----------------------------------------------------------------------   LSCLD1A.456   
+CL 4. Iteration to find better cloud water values.                         LSCLD1A.457   
+C-----------------------------------------------------------------------   LSCLD1A.458   
+C                                                                          LSCLD1A.459   
+        IF(ITS.GE.2) THEN                                                  LSCLD1A.460   
+         DO N=2,ITS                                                        LSCLD1A.461   
+C                                                                          LSCLD1A.462   
+          CALL QSAT(QS,T,P,POINTS)                                         LSCLD1A.463   
+C                                                                          LSCLD1A.464   
+! Fujitsu vectorization directive                                          GRB0F405.129   
+! Needed because of indirect addressing introduced at vn4.4                GRB0F405.130   
+!OCL NOVREC                                                                GRB0F405.131   
+          DO I=1,POINTS                                                    LSCLD1A.465   
+           II=INDEX(I)                                                     AAD2F404.229   
+           IF(T(I).GT.T_F(II)) THEN                                        AAD2F404.230   
+C           ! N.B. Cloud water > 0 implies T > TL and so the               LSCLD1A.467   
+C           !        denominator in the following statement is non-zero.   LSCLD1A.468   
+            ALPHAL=(QS(I)-QSL_F(II))/(T(I)-T_F(II))                        AAD2F404.231   
+            ALPHAL=WTN*ALPHAL+(1.0-WTN)*ALPHAL_NM1(I)                      LSCLD1A.470   
+            ALPHAL_NM1(I)=ALPHAL                                           LSCLD1A.471   
+            FRACF=QCF_F(II)/(QCL_F(II)+QCF_F(II))                          AAD2F404.232   
+            AL=1.0/(1.0 + (LCRCP+FRACF*LFRCP)*ALPHAL)                      LSCLD1A.473   
+            IF (RHCRIT .LT. 1.) THEN                                       LSCLD1A.474   
+              BS(I) = (1.0 - RHCRIT) * AL * QSL_F(II)         ! P292.14    AAD2F404.233   
+            ELSE                                                           LSCLD1A.476   
+              BS(I) = AL                                                   AYY1F401.40    
+            ENDIF                                                          LSCLD1A.478   
+C                                                                          LSCLD1A.479   
+C-----------------------------------------------------------------------   LSCLD1A.480   
+CL 4.1 Calculate Nth approx. to qc (store in QCL).                         LSCLD1A.481   
+C-----------------------------------------------------------------------   LSCLD1A.482   
+C                                                                          LSCLD1A.483   
+            QCL_F(II)=QCN(I)*BS(I)                                         AAD2F404.234   
+C                                                                          LSCLD1A.485   
+C-----------------------------------------------------------------------   LSCLD1A.486   
+CL 4.2 Calculate Nth approx. spec. humidity (total minus cloud water).     LSCLD1A.487   
+C-----------------------------------------------------------------------   LSCLD1A.488   
+C                                                                          LSCLD1A.489   
+            Q(I)=Q_F(II)-QCL_F(II)                                         AAD2F404.235   
+C                                                                          LSCLD1A.491   
+C-----------------------------------------------------------------------   LSCLD1A.492   
+CL 4.3 Perform  partition of cloud water into liquid and ice               LSCLD1A.493   
+CL     components, and calculate Nth approx. to temperature,               LSCLD1A.494   
+CL     accounting for latent heating.                                      LSCLD1A.495   
+CL     First assume cloud water is all liquid.                             LSCLD1A.496   
+C-----------------------------------------------------------------------   LSCLD1A.497   
+C                                                                          LSCLD1A.498   
+            T(I)=T_F(II)+LCRCP*QCL_F(II)                                   AAD2F404.236   
+            IF(T(I) .GT. TM) THEN        ! Liquid case                     LSCLD1A.500   
+              QCF_F(II)=0.0                                                AAD2F404.237   
+            ELSE                         ! Frozen or mixed phase           LSCLD1A.502   
+C                                                                          LSCLD1A.503   
+C-----------------------------------------------------------------------   LSCLD1A.504   
+CL 4.4 Cloud ice present; either all cloud water is cloud ice and T<TM     LSCLD1A.505   
+CL     or a mixture of ice and liquid and T=TM                             LSCLD1A.506   
+C                                                                          LSCLD1A.507   
+C      Form test temperature assuming all ice                              LSCLD1A.508   
+C      N.B. total cloud water stored in QCL at this stage                  LSCLD1A.509   
+C-----------------------------------------------------------------------   LSCLD1A.510   
+C                                                                          LSCLD1A.511   
+              TESTT =T(I)+LFRCP*QCL_F(II)                                  AAD2F404.238   
+              IF(TESTT .LT. TM) THEN     ! Frozen case                     LSCLD1A.513   
+                QCF_F(II)=QCL_F(II)                                        AAD2F404.239   
+                T(I)=TESTT                                                 LSCLD1A.515   
+              ELSE                       ! Mixed phase case                LSCLD1A.516   
+                QCF_F(II)= CPRLF*(TM-T(I))                                 AAD2F404.240   
+                T(I)=TM                                                    LSCLD1A.518   
+              ENDIF                      ! End frozen                      LSCLD1A.519   
+            ENDIF                        ! End liquid                      LSCLD1A.520   
+C                                                                          LSCLD1A.521   
+C-----------------------------------------------------------------------   LSCLD1A.522   
+CL 4.5 Calculate Nth approx. to cloud liquid water content.                LSCLD1A.523   
+C-----------------------------------------------------------------------   LSCLD1A.524   
+C                                                                          LSCLD1A.525   
+            QCL_F(II) = QCL_F(II) - QCF_F(II)                              AAD2F404.241   
+           ENDIF ! T > TL                                                  LSCLD1A.527   
+          ENDDO ! Loop over points                                         LSCLD1A.528   
+         ENDDO ! Loop over iterations                                      LSCLD1A.529   
+        ENDIF ! ITS ge 2                                                   LSCLD1A.530   
+C                                                                          LSCLD1A.531   
+C-----------------------------------------------------------------------   LSCLD1A.532   
+CL 5. Finally scatter back results                                         LSCLD1A.533   
+C-----------------------------------------------------------------------   LSCLD1A.534   
+C                                                                          LSCLD1A.535   
+CDIR$ IVDEP                                                                LSCLD1A.536   
+! Fujitsu vectorization directive                                          GRB0F405.132   
+!OCL NOVREC                                                                GRB0F405.133   
+      DO I=1,POINTS                                                        LSCLD1A.537   
+        Q_F(INDEX(I)) = Q(I)                                               LSCLD1A.538   
+        T_F(INDEX(I)) = T(I)                                               LSCLD1A.539   
+        GRID_QC_F(INDEX(I)) = BS(I) * QN_F(INDEX(I))                       AYY2F400.177   
+        BS_F(INDEX(I)) = BS(I)                                             AYY2F400.178   
+      END DO ! Loop over points                                            AYY2F400.179   
+C                                                                          LSCLD1A.544   
+      RETURN                                                               LSCLD1A.545   
+      END                                                                  LSCLD1A.546   
+*ENDIF                                                                     LSCLD1A.547   

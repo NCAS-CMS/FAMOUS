@@ -1,0 +1,889 @@
+*IF DEF,MAKEBC                                                             MAKEBC1.2     
+C ******************************COPYRIGHT******************************    MAKEBC1.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    MAKEBC1.4     
+C                                                                          MAKEBC1.5     
+C Use, duplication or disclosure of this code is subject to the            MAKEBC1.6     
+C restrictions as set forth in the contract.                               MAKEBC1.7     
+C                                                                          MAKEBC1.8     
+C                Meteorological Office                                     MAKEBC1.9     
+C                London Road                                               MAKEBC1.10    
+C                BRACKNELL                                                 MAKEBC1.11    
+C                Berkshire UK                                              MAKEBC1.12    
+C                RG12 2SZ                                                  MAKEBC1.13    
+C                                                                          MAKEBC1.14    
+C If no contract has been raised with this copy of the code, the use,      MAKEBC1.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      MAKEBC1.16    
+C to do so must first be obtained in writing from the Head of Numerical    MAKEBC1.17    
+C Modelling at the above address.                                          MAKEBC1.18    
+C                                                                          MAKEBC1.19    
+C *********************************************************************    MAKEBC1.20    
+!+ Program MAKEBC : Top-level program to create boundary dataset           MAKEBC1.21    
+!                   from model analyses/dumps.                             MAKEBC1.22    
+!                                                                          MAKEBC1.23    
+      Program MAIN_MAKEBC                                                  MAKEBC1.24    
+                                                                           MAKEBC1.25    
+      IMPLICIT NONE                                                        MAKEBC1.26    
+!                                                                          MAKEBC1.27    
+! Description : Create a boundary dataset from UM model analyses           MAKEBC1.28    
+!               or dumps.                                                  MAKEBC1.29    
+!                                                                          MAKEBC1.30    
+! Method : For each dump, boundary conditions are generated through        MAKEBC1.31    
+!          GEN_INTF for the area specified in the INFTCNST namelist.       MAKEBC1.32    
+!          This routine initialises various variables in TYPSIZE           MAKEBC1.33    
+!          before it can be used in the lower routines.                    MAKEBC1.34    
+!                                                                          MAKEBC1.35    
+! Current Code Owner : Dave Robinson, NWP                                  MAKEBC1.36    
+!                                                                          MAKEBC1.37    
+! History :                                                                MAKEBC1.38    
+! Version    Date    Comment                                               MAKEBC1.39    
+! -------    ----    -------                                               MAKEBC1.40    
+!   4.4    10/10/97  Original Code                                         MAKEBC1.41    
+!   4.5    07/08/98  Call new subroutine LOOP_OVER_DUMPS from MAKEBC.      UDR3F405.19    
+!                    Adapt to new 4.5 changes. Use new unit number 140.    UDR3F405.20    
+!                    Call new routine DERV_INTF_A. Rename CINTF to         UDR3F405.21    
+!                    CINTFA. Read in env var UM_SECTOR_SIZE.               UDR3F405.22    
+!                    D. Robinson.                                          UDR3F405.23    
+!                                                                          MAKEBC1.42    
+! Code Description :                                                       MAKEBC1.43    
+! Language : FORTRAN 77 + common extensions                                MAKEBC1.44    
+! This code is written to UMDP3 v6 programming standards.                  MAKEBC1.45    
+!                                                                          MAKEBC1.46    
+! Declarations :                                                           MAKEBC1.47    
+!                                                                          MAKEBC1.48    
+      Integer internal_model   !  Internal Model Identifier                MAKEBC1.49    
+      Integer ppxRecs          !  No of stashmaster records                MAKEBC1.50    
+      Integer icode            !  Error code                               MAKEBC1.51    
+                                                                           MAKEBC1.52    
+      Character*80 cmessage    !  Error Message                            MAKEBC1.53    
+      Character*8  c_um_sector_size  ! Char variable to read env var       UDR3F405.24    
+                                                                           MAKEBC1.54    
+*CALL TYPSIZE                                                              MAKEBC1.55    
+*CALL CSUBMODL                                                             MAKEBC1.56    
+*CALL CNTL_IO                                                              UDR3F405.25    
+                                                                           MAKEBC1.57    
+!   Function & Subroutine calls                                            MAKEBC1.58    
+                                                                           MAKEBC1.59    
+      EXTERNAL HDPPXRF,MAKEBC                                              MAKEBC1.60    
+                                                                           MAKEBC1.61    
+!-  End of header                                                          MAKEBC1.62    
+                                                                           MAKEBC1.63    
+      write (6,*) ' ##########################################'            MAKEBC1.64    
+      write (6,*) ' Running MAKEBC Utility to create a'                    MAKEBC1.65    
+      write (6,*) ' Boundary Dataset from Model Analyses/Dumps'            MAKEBC1.66    
+      write (6,*) ' ##########################################'            MAKEBC1.67    
+      write (6,*) ' '                                                      MAKEBC1.68    
+                                                                           MAKEBC1.69    
+      icode = 0                                                            MAKEBC1.70    
+                                                                           MAKEBC1.71    
+!     Only Atmosphere Model catered for                                    MAKEBC1.72    
+      n_internal_model = 1                                                 MAKEBC1.73    
+      internal_model = 1                                                   MAKEBC1.74    
+      internal_model_index(internal_model) = 1                             MAKEBC1.75    
+                                                                           MAKEBC1.76    
+!     Determine no of Atmos records in STASHmaster file                    MAKEBC1.77    
+      ppxRecs=1                                                            MAKEBC1.78    
+      call hdppxrf(22,'STASHmaster_A',ppxRecs,icode,cmessage)              MAKEBC1.79    
+      if (icode.gt.0) then                                                 MAKEBC1.80    
+        write (6,*) 'Error in HDPPXRF for STASHmaster_A.'                  MAKEBC1.81    
+        go to 9999                                                         MAKEBC1.82    
+      endif                                                                MAKEBC1.83    
+                                                                           MAKEBC1.84    
+!     Get the current sector size for disk I/O                             UDR3F405.26    
+      CALL FORT_GET_ENV('UM_SECTOR_SIZE',14,c_um_sector_size,8,icode)      UDR3F405.27    
+      IF (icode .NE. 0) THEN                                               UDR3F405.28    
+        WRITE(6,*) ' Warning : Environment variable UM_SECTOR_SIZE',       UDR3F405.29    
+     &             ' has not been set.'                                    UDR3F405.30    
+        WRITE(6,*) ' Setting UM_SECTOR_SIZE to 2048'                       UDR3F405.31    
+        um_sector_size=2048                                                UDR3F405.32    
+      ELSE                                                                 UDR3F405.33    
+        READ(c_um_sector_size,'(I4)') um_sector_size                       UDR3F405.34    
+        write (6,*) ' '                                                    UDR3F405.35    
+        write (6,*) ' UM_SECTOR_SIZE is set to ',um_sector_size            UDR3F405.36    
+      ENDIF                                                                UDR3F405.37    
+                                                                           UDR3F405.38    
+!     Initialise variables in TYPSIZE                                      MAKEBC1.85    
+      nsects = 20                                                          MAKEBC1.86    
+      nitems = 20                                                          MAKEBC1.87    
+      n_req_items = 20                                                     MAKEBC1.88    
+      n_ppxrecs = 20                                                       MAKEBC1.89    
+      totitems = 20                                                        MAKEBC1.90    
+      nsttims = 20                                                         MAKEBC1.91    
+      nsttabl = 20                                                         MAKEBC1.92    
+      num_stash_pseudo = 1                                                 MAKEBC1.93    
+      num_pseudo_lists = 1                                                 MAKEBC1.94    
+      nstash_series_records = 1                                            MAKEBC1.95    
+      nstash_series_block = 1                                              MAKEBC1.96    
+      mos_mask_len = 1                                                     MAKEBC1.97    
+                                                                           MAKEBC1.98    
+!     Dimensions of Headers in Boundary dataset                            MAKEBC1.99    
+!     Integer/Real Constants                                               MAKEBC1.100   
+      pp_len_inthd = 15                                                    MAKEBC1.101   
+      pp_len_realhd = 6                                                    MAKEBC1.102   
+!     Level Dependent Constants array (Second dimension)                   MAKEBC1.103   
+      intf_len2_levdepc = 4                                                MAKEBC1.104   
+                                                                           MAKEBC1.111   
+!     No of areas requiring boundary conditions.                           UDR3F405.39    
+!     More than one area not tested yet.                                   UDR3F405.40    
+      n_intf_a = 1                                                         UDR3F405.41    
+                                                                           UDR3F405.42    
+!     Derive data lengths.                                                 UDR3F405.43    
+!     U_FIELD is not known yet : Set to 1 for DERV_INTF_A                  UDR3F405.44    
+      U_FIELD = 1                                                          UDR3F405.45    
+                                                                           UDR3F405.46    
+      CALL DERV_INTF_A (TOT_LEN_INTFA_P,TOT_LEN_INTFA_U,                   UDR3F405.47    
+     &     MAX_INTF_P_LEVELS,N_INTF_A,U_FIELD,U_FIELD_INTFA)               UDR3F405.48    
+                                                                           UDR3F405.49    
+!     Length of super arrays.                                              MAKEBC1.112   
+      len_a_spsts =1                                                       MAKEBC1.113   
+      len_a_ixsts =1                                                       MAKEBC1.114   
+                                                                           MAKEBC1.115   
+      call makebc(ppxRecs,icode,cmessage)                                  MAKEBC1.116   
+                                                                           MAKEBC1.117   
+ 9999 continue                                                             MAKEBC1.118   
+                                                                           MAKEBC1.119   
+      if (icode.gt.0) then                                                 MAKEBC1.120   
+        write (6,*) ' '                                                    MAKEBC1.121   
+        write (6,*) ' ##################################'                  MAKEBC1.122   
+        write (6,*) ' Error in MAKEBC Program.'                            MAKEBC1.123   
+        write (6,*) ' ICODE = ',ICODE                                      MAKEBC1.124   
+        write (6,*) ' CMESSAGE = ',CMESSAGE                                MAKEBC1.125   
+        write (6,*) ' ##################################'                  MAKEBC1.126   
+        call abort                                                         MAKEBC1.127   
+      endif                                                                MAKEBC1.128   
+                                                                           MAKEBC1.129   
+      write (6,*) ' '                                                      MAKEBC1.130   
+      write (6,*) ' ##################################'                    MAKEBC1.131   
+      write (6,*) ' MAKEBC program completed normally.'                    MAKEBC1.132   
+      write (6,*) ' ##################################'                    MAKEBC1.133   
+                                                                           MAKEBC1.134   
+      stop                                                                 MAKEBC1.135   
+      end                                                                  MAKEBC1.136   
+                                                                           MAKEBC1.137   
+                                                                           MAKEBC1.138   
+!+ Subroutine MAKEBC : Creates a boundary dataset from model dumps         MAKEBC1.139   
+!                                                                          MAKEBC1.140   
+! Subroutine Interface :                                                   MAKEBC1.141   
+      subroutine makebc(ppxRecs,icode,cmessage)                            MAKEBC1.142   
+                                                                           MAKEBC1.143   
+      IMPLICIT NONE                                                        MAKEBC1.144   
+!                                                                          MAKEBC1.145   
+! Description : Control routine for MAKEBC utility.                        MAKEBC1.146   
+!                                                                          MAKEBC1.147   
+! Method : Read in DUMP2BOUND namelist. Call INTF_CTL which reads          MAKEBC1.148   
+!          in INTFCNST namelist. Loop over dumps to generate               MAKEBC1.149   
+!          boundary conditions.                                            MAKEBC1.150   
+!                                                                          MAKEBC1.151   
+! Current Code Owner : Dave Robinson, NWP                                  MAKEBC1.152   
+!                                                                          MAKEBC1.153   
+! History :                                                                MAKEBC1.154   
+! Version    Date    Comment                                               MAKEBC1.155   
+! -------    ----    -------                                               MAKEBC1.156   
+!   4.4    10/10/97  Original Code                                         MAKEBC1.157   
+!                                                                          MAKEBC1.158   
+! Code Description :                                                       MAKEBC1.159   
+! Language : FORTRAN 77 + common extensions                                MAKEBC1.160   
+! This code is written to UMDP3 v6 programming standards.                  MAKEBC1.161   
+!                                                                          MAKEBC1.162   
+! Declarations :                                                           MAKEBC1.163   
+!                                                                          MAKEBC1.164   
+! Global Variables :                                                       MAKEBC1.165   
+!                                                                          MAKEBC1.166   
+*CALL TYPSIZE                                                              MAKEBC1.167   
+*CALL CSUBMODL                                                             MAKEBC1.168   
+*CALL CMAXSIZE                                                             MAKEBC1.169   
+*CALL CHSUNITS                                                             MAKEBC1.170   
+*CALL CHISTORY                                                             MAKEBC1.171   
+*CALL CTIME                                                                MAKEBC1.172   
+*CALL CLOOKADD                                                             MAKEBC1.173   
+*CALL C_MDI                                                                MAKEBC1.174   
+*CALL CCONTROL                                                             MAKEBC1.175   
+*CALL CINTFA                                                               UDR3F405.50    
+*CALL TYPINFA                                                              UDR3F405.51    
+*CALL CPPXREF                                                              MAKEBC1.177   
+*CALL PPXLOOK                                                              MAKEBC1.178   
+                                                                           MAKEBC1.179   
+! Subroutine arguments                                                     MAKEBC1.180   
+!   Scalar arguments with intent(in) :                                     MAKEBC1.181   
+                                                                           MAKEBC1.182   
+!   Array arguments with intent(in) :                                      MAKEBC1.183   
+                                                                           MAKEBC1.184   
+!   Scalar arguments with intent(inout) :                                  MAKEBC1.185   
+                                                                           MAKEBC1.186   
+!   Array arguments with intent(inout) :                                   MAKEBC1.187   
+                                                                           MAKEBC1.188   
+!   Scalar arguments with intent(out) :                                    MAKEBC1.189   
+                                                                           MAKEBC1.190   
+      Integer icode            !  Error code                               MAKEBC1.191   
+      Character*80 cmessage    !  Error Message                            MAKEBC1.192   
+                                                                           MAKEBC1.193   
+!   Array arguments with intent(out) :                                     MAKEBC1.194   
+                                                                           MAKEBC1.195   
+!   Local parameters :                                                     MAKEBC1.196   
+                                                                           MAKEBC1.197   
+!   Local scalars :                                                        MAKEBC1.198   
+                                                                           MAKEBC1.199   
+      Integer j,jintf          !  Loop indices                             UDR3F405.52    
+      Integer irow_number      !  Row number, required for GETPPX          MAKEBC1.204   
+      Integer internal_model   !  Internal Model Identifier                MAKEBC1.205   
+                                                                           MAKEBC1.208   
+!     Required for I/O                                                     MAKEBC1.209   
+      Integer unit_no_bc  !  Unit No for boundary dataset                  MAKEBC1.211   
+                                                                           MAKEBC1.220   
+!   Local dynamic arrays :                                                 MAKEBC1.221   
+                                                                           MAKEBC1.222   
+!   Namelists :                                                            MAKEBC1.226   
+                                                                           MAKEBC1.227   
+!     DUMP2BOUND namelist for MAKEBC Program                               MAKEBC1.228   
+      Integer  n_dumps      !  No of model dumps                           MAKEBC1.229   
+      Integer  nhours       !  No of hours between dumps                   MAKEBC1.230   
+      Integer  um_versn     !  UM Version Boundary Dataset for             MAKEBC1.231   
+                                                                           MAKEBC1.232   
+!     lcal360/l_lspice  defined in CNTLALL/CNTLATM                         MAKEBC1.233   
+                                                                           MAKEBC1.234   
+      NAMELIST /DUMP2BOUND/ n_dumps,nhours,um_versn,lcal360,l_lspice       MAKEBC1.235   
+                                                                           MAKEBC1.236   
+!   Function & Subroutine calls                                            MAKEBC1.237   
+                                                                           MAKEBC1.238   
+      EXTERNAL getppx,intf_ctl,loop_over_dumps                             PXMAKEBC.1     
+                                                                           MAKEBC1.241   
+!-  End of Header                                                          MAKEBC1.242   
+                                                                           MAKEBC1.243   
+!     Defaults for DUMP2BOUND namelist                                     MAKEBC1.244   
+      n_dumps  = 0                                                         MAKEBC1.245   
+      nhours   = 0                                                         MAKEBC1.246   
+      um_versn = 403                                                       MAKEBC1.247   
+      lcal360  = .false.                                                   MAKEBC1.248   
+      l_lspice = .false.                                                   MAKEBC1.249   
+                                                                           MAKEBC1.250   
+!     Read in namelist and print                                           MAKEBC1.251   
+      rewind 5                                                             MAKEBC1.252   
+      read  (5,DUMP2BOUND)                                                 MAKEBC1.253   
+      write (6,*) ' '                                                      MAKEBC1.254   
+      write (6,*) 'Namelist DUMPBOUND read in '                            MAKEBC1.255   
+      write (6,DUMP2BOUND)                                                 MAKEBC1.256   
+                                                                           MAKEBC1.257   
+!     Check namelist                                                       MAKEBC1.258   
+      if (n_dumps.eq.0 .or. nhours.eq.0) then                              MAKEBC1.259   
+        write (6,*) ' Error in setting DUMP2BOUND namelist'                MAKEBC1.260   
+        write (6,*) ' Both N_DUMPS and NHOURS must be set'                 MAKEBC1.261   
+        write (6,*) ' N_DUMPS ',N_DUMPS,' NHOURS ',NHOURS                  MAKEBC1.262   
+        go to 9999  !  Return                                              MAKEBC1.263   
+      endif                                                                MAKEBC1.264   
+                                                                           MAKEBC1.265   
+      internal_model = 1                                                   MAKEBC1.266   
+                                                                           MAKEBC1.271   
+!     Initialise LLBOUTim in CNTLGEN                                       MAKEBC1.272   
+      LLBOUTim(internal_model)=.true.                                      MAKEBC1.273   
+                                                                           MAKEBC1.274   
+!     Initialise variables to nullify A_STEPS_PER_HR in INTF_CTL           MAKEBC1.275   
+      STEPS_PER_PERIODim(internal_model) = 1                               MAKEBC1.276   
+      SECS_PER_PERIODim(internal_model)  = 3600                            MAKEBC1.277   
+                                                                           MAKEBC1.278   
+!     Initialise STEPIM to correspond to first dump                        MAKEBC1.279   
+      STEPim(internal_model)=0                                             MAKEBC1.280   
+                                                                           MAKEBC1.281   
+!     Use UM Unit No 140-147 for Atmos Boundary Datasets 1-8               UDR3F405.54    
+      unit_no_bc = 140                                                     UDR3F405.55    
+                                                                           MAKEBC1.285   
+!     Initialise variables in CNTLALL for this unit no.                    MAKEBC1.286   
+!     Reinitialising of boundary dataset not supported yet.                MAKEBC1.287   
+      TYPE_LETTER_1(unit_no_bc) = 'b'                                      UDR3F405.56    
+      FT_STEPS(unit_no_bc)      = 0                                        MAKEBC1.290   
+      FT_FIRSTSTEP(unit_no_bc)  = 0                                        MAKEBC1.291   
+      DO J =140,147                                                        UDR3F405.57    
+      FT_OUTPUT = 'N'                                                      UDR3F405.58    
+      ENDDO                                                                UDR3F405.59    
+                                                                           MAKEBC1.292   
+      write (6,*) ' '                                                      MAKEBC1.293   
+      write (6,*) ' Calling INTF_CTL to read in INTFCNSTA namelist.'       UDR3F405.60    
+                                                                           MAKEBC1.295   
+!     Get model grid for which boundary conditions are required            MAKEBC1.296   
+      call intf_ctl (                                                      MAKEBC1.297   
+*CALL ARGSIZE                                                              MAKEBC1.298   
+*CALL ARGINFA                                                              UDR3F405.61    
+     +               icode,cmessage)                                       MAKEBC1.299   
+                                                                           MAKEBC1.300   
+!     Print out INTFCNTL namelist variables (Read in intf_ctl)             MAKEBC1.301   
+      write (6,*) ' '                                                      MAKEBC1.302   
+      write (6,*) ' Namelist INTFCNSTA read in'                            UDR3F405.62    
+      do jintf=1,n_intf_a                                                  MAKEBC1.304   
+      write (6,*) ' For area ',jintf                                       MAKEBC1.305   
+      write (6,*) ' a_intf_start_hr  ',A_INTF_START_HR(JINTF)              MAKEBC1.306   
+      write (6,*) ' a_intf_freq_hr   ',A_INTF_FREQ_HR(JINTF)               MAKEBC1.307   
+      write (6,*) ' a_intf_end_hr    ',A_INTF_END_HR(JINTF)                MAKEBC1.308   
+      write (6,*) ' intf_p_rows      ',INTF_P_ROWS(JINTF)                  MAKEBC1.309   
+      write (6,*) ' intf_row_length  ',INTF_ROW_LENGTH(JINTF)              MAKEBC1.310   
+      write (6,*) ' intf_p_levels    ',INTF_P_LEVELS(JINTF)                MAKEBC1.311   
+      write (6,*) ' intf_q_levels    ',INTF_Q_LEVELS(JINTF)                MAKEBC1.312   
+      write (6,*) ' intf_tr_levels   ',INTF_TR_LEVELS(JINTF)               MAKEBC1.313   
+      write (6,*) ' intf_firstlat    ',INTF_FIRSTLAT(JINTF)                MAKEBC1.314   
+      write (6,*) ' intf_firstlong   ',INTF_FIRSTLONG(JINTF)               MAKEBC1.315   
+      write (6,*) ' intf_nsspace     ',INTF_NSSPACE(JINTF)                 MAKEBC1.316   
+      write (6,*) ' intf_ewspace     ',INTF_EWSPACE(JINTF)                 MAKEBC1.317   
+      write (6,*) ' intf_polelat     ',INTF_POLELAT(JINTF)                 MAKEBC1.318   
+      write (6,*) ' intf_polelong    ',INTF_POLELONG(JINTF)                MAKEBC1.319   
+      write (6,*) ' intf_pack        ',INTF_PACK(JINTF)                    MAKEBC1.320   
+      write (6,*) ' intfwidtha       ',INTFWIDTHA(JINTF)                   MAKEBC1.321   
+      write (6,*) ' intf_vert_interp ',INTF_VERT_INTERP(JINTF)             MAKEBC1.322   
+      enddo                                                                MAKEBC1.323   
+                                                                           MAKEBC1.324   
+                                                                           MAKEBC1.341   
+!     No of data types for which boundary conditions required.             MAKEBC1.342   
+!     Assume no tracer variables.                                          MAKEBC1.343   
+      tr_vars  = 0                                                         MAKEBC1.344   
+      if (l_lspice) then                                                   MAKEBC1.345   
+        intf_lookupsa = 6+tr_vars                                          MAKEBC1.346   
+      else                                                                 MAKEBC1.347   
+        intf_lookupsa = 5+tr_vars                                          MAKEBC1.348   
+      endif                                                                MAKEBC1.349   
+                                                                           MAKEBC1.350   
+!     No timer info required                                               MAKEBC1.351   
+      ltimer = .false.                                                     MAKEBC1.352   
+                                                                           MAKEBC1.353   
+!     Read StashMaster file                                                MAKEBC1.354   
+      irow_number=0                                                        MAKEBC1.355   
+      call getppx (22,2,'STASHmaster_A',irow_number,                       MAKEBC1.356   
+*CALL ARGPPX                                                               MAKEBC1.357   
+     &  icode,cmessage)                                                    MAKEBC1.358   
+                                                                           MAKEBC1.359   
+      if (icode.gt.0) then                                                 MAKEBC1.360   
+        write (6,*) 'Error in GETPPX.'                                     MAKEBC1.361   
+        go to 9999  !  Return                                              MAKEBC1.362   
+      endif                                                                MAKEBC1.363   
+                                                                           MAKEBC1.364   
+       call loop_over_dumps (n_dumps,nhours,unit_no_bc,um_versn,           UDR3F405.63    
+     &      intf_akh,intf_bkh,intf_ak,intf_bk,                             UDR3F405.64    
+*CALL ARGSIZE                                                              UDR3F405.65    
+*CALL ARGPPX                                                               UDR3F405.66    
+     &      icode,cmessage)                                                UDR3F405.67    
+       if (icode.gt.0) then                                                UDR3F405.68    
+         write (6,*) ' Error in LOOP_OVER_DUMPS '                          UDR3F405.69    
+         go to 9999   ! Return                                             UDR3F405.70    
+       endif                                                               UDR3F405.71    
+                                                                           UDR3F405.72    
+ 9999  continue                                                            UDR3F405.73    
+                                                                           UDR3F405.74    
+       return                                                              UDR3F405.75    
+       end                                                                 UDR3F405.76    
+                                                                           UDR3F405.77    
+!+ Subroutine LOOP_OVER_DUMPS : Loop over dumps to get boundary data       UDR3F405.78    
+!                                                                          UDR3F405.79    
+! Subroutine Interface :                                                   UDR3F405.80    
+       subroutine loop_over_dumps (n_dumps,nhours,unit_no_bc,um_versn,     UDR3F405.81    
+     &            intf_akh,intf_bkh,intf_ak,intf_bk,                       UDR3F405.82    
+*CALL ARGSIZE                                                              UDR3F405.83    
+*CALL ARGPPX                                                               UDR3F405.84    
+     &            icode,cmessage)                                          UDR3F405.85    
+                                                                           UDR3F405.86    
+      IMPLICIT NONE                                                        UDR3F405.87    
+!                                                                          UDR3F405.88    
+! Description : Loop over the dumps and get the boundary conditions        UDR3F405.89    
+!                                                                          UDR3F405.90    
+! Method : For each dump, GET_BC is called to read in the data from        UDR3F405.91    
+!          the dump and generate the boundary conditions.                  UDR3F405.92    
+!                                                                          UDR3F405.93    
+! Current Code Owner : Dave Robinson, NWP                                  UDR3F405.94    
+!                                                                          UDR3F405.95    
+! History :                                                                UDR3F405.96    
+! Version    Date    Comment                                               UDR3F405.97    
+! -------    ----    -------                                               UDR3F405.98    
+!   4.5    18/02/98  Subroutine MAKEBC in 4.4 split into MAKEBC and        UDR3F405.99    
+!                    LOOP_OVER_DUMPS. D. Robinson.                         UDR3F405.100   
+!                                                                          UDR3F405.101   
+! Code Description :                                                       UDR3F405.102   
+! Language : FORTRAN 77 + common extensions                                UDR3F405.103   
+! This code is written to UMDP3 v6 programming standards.                  UDR3F405.104   
+!                                                                          UDR3F405.105   
+! Declarations :                                                           UDR3F405.106   
+!                                                                          UDR3F405.107   
+! Global Variables :                                                       UDR3F405.108   
+!                                                                          UDR3F405.109   
+*CALL CMAXSIZE                                                             UDR3F405.110   
+*CALL TYPSIZE                                                              UDR3F405.111   
+*CALL CHSUNITS                                                             UDR3F405.112   
+*CALL CSUBMODL                                                             UDR3F405.113   
+*CALL CPPXREF                                                              UDR3F405.114   
+*CALL PPXLOOK                                                              UDR3F405.115   
+*CALL CTIME                                                                UDR3F405.116   
+*CALL CNTLALL                                                              UDR3F405.117   
+                                                                           UDR3F405.118   
+! Subroutine arguments                                                     UDR3F405.119   
+!   Scalar arguments with intent(in) :                                     UDR3F405.120   
+                                                                           UDR3F405.121   
+      Integer n_dumps     ! No of model dumps                              UDR3F405.122   
+      Integer nhours      ! No of hours between dumps                      UDR3F405.123   
+      Integer unit_no_bc  ! Unit No for Boundary dataset                   UDR3F405.124   
+      Integer um_versn    ! UM Version Boundary dataset for                UDR3F405.125   
+                                                                           UDR3F405.126   
+!   Array arguments with intent(in) :                                      UDR3F405.127   
+                                                                           UDR3F405.128   
+      Real Intf_akh (max_intf_p_levels+1,n_intf_a)                         UDR3F405.129   
+      Real Intf_bkh (max_intf_p_levels+1,n_intf_a)                         UDR3F405.130   
+      Real Intf_ak  (max_intf_p_levels  ,n_intf_a)                         UDR3F405.131   
+      Real Intf_bk  (max_intf_p_levels  ,n_intf_a)                         UDR3F405.132   
+                                                                           UDR3F405.133   
+!   Scalar arguments with intent(inout) :                                  UDR3F405.134   
+                                                                           UDR3F405.135   
+!   Array arguments with intent(inout) :                                   UDR3F405.136   
+                                                                           UDR3F405.137   
+!   Scalar arguments with intent(out) :                                    UDR3F405.138   
+                                                                           UDR3F405.139   
+!   Array arguments with intent(out) :                                     UDR3F405.140   
+                                                                           UDR3F405.141   
+      Integer icode          ! Error code                                  UDR3F405.142   
+      Character*80 cmessage  ! Error Message                               UDR3F405.143   
+                                                                           UDR3F405.144   
+!   Local parameters                                                       UDR3F405.145   
+                                                                           UDR3F405.146   
+!   Local scalars                                                          UDR3F405.147   
+                                                                           UDR3F405.148   
+      Integer unit_no        !  Unit no for input dump                     UDR3F405.149   
+      Integer len_env        !  Length of env. variable                    UDR3F405.150   
+      Integer env_var        !  Indicator that filename is in env var      UDR3F405.151   
+      Integer read_only      !  Input dumps - read only                    UDR3F405.152   
+      Integer read_write     !  Output Boundary File - read & write        UDR3F405.153   
+      Character*6 env        !  Env Variable for input dump filename       UDR3F405.154   
+                                                                           UDR3F405.155   
+      data read_only/0/, read_write/1/, len_env/6/, env_var/0/             UDR3F405.156   
+                                                                           UDR3F405.157   
+      Integer j,jdump        !  Loop indices                               UDR3F405.158   
+      Integer inthd(15)      !  Integer Constants array                    UDR3F405.159   
+      Integer yy,mm,dd,hr,mn,ss,day_no  !  Time/date for first dump        UDR3F405.160   
+      Integer elapsed_days   !  No of days elapsed                         UDR3F405.161   
+      Integer elapsed_secs   !  No of secs elapsed                         UDR3F405.162   
+      Integer len_actual     !  Length of data read in BUFFIN              UDR3F405.163   
+      Real a                 !  Return code from BUFFIN                    UDR3F405.164   
+                                                                           UDR3F405.165   
+!   Local dynamic arrays                                                   UDR3F405.166   
+                                                                           UDR3F405.167   
+      Integer fixhd(len_fixhd)  !  Fixed header from dump                  UDR3F405.168   
+      Integer Fixhd_intfa(len_fixhd,n_intf_a)                              UDR3F405.169   
+                                !  Fixed headers for boundary files        UDR3F405.170   
+      Integer Inthd_intfa(pp_len_inthd,n_intf_a)                           UDR3F405.171   
+                                !  Integer headers for boundary files      UDR3F405.172   
+      Integer Lookup_intfa(len1_lookup,intf_lookupsa,n_intf_a)             UDR3F405.173   
+                                !  Lookup Tables for boundary files        UDR3F405.174   
+      Real Realhd_intfa(pp_len_realhd,n_intf_a)                            UDR3F405.175   
+                                !  Real headers for boundary files         UDR3F405.176   
+      Real Levdepc_intfa(max_intf_p_levels,intf_len2_levdepc,n_intf_a)     UDR3F405.177   
+                                !  Level Dep Const for boundary files      UDR3F405.178   
+                                                                           UDR3F405.179   
+!   Function & Subroutine calls                                            UDR3F405.180   
+                                                                           UDR3F405.181   
+      EXTERNAL buffin,file_open,get_bc,read_flh,                           UDR3F405.182   
+     &         sec2time,setpos,time2sec                                    UDR3F405.183   
+                                                                           UDR3F405.184   
+!-  End of Header                                                          UDR3F405.185   
+                                                                           UDR3F405.186   
+!     Open Boundary Dataset                                                MAKEBC1.365   
+      write (6,*) ' '                                                      MAKEBC1.366   
+      call file_open                                                       MAKEBC1.367   
+     &   (unit_no_bc,'BCFILE',len_env,read_write,env_var,icode)            MAKEBC1.368   
+      if (icode.ne.0) then                                                 MAKEBC1.369   
+        write (6,*) 'Error in opening Boundary Dataset on unit no ',       MAKEBC1.370   
+     &  unit_no_bc                                                         MAKEBC1.371   
+        go to 9999  !  Return                                              MAKEBC1.372   
+      endif                                                                MAKEBC1.373   
+                                                                           MAKEBC1.374   
+!     Loop over model dumps                                                MAKEBC1.375   
+      do jdump=1,n_dumps                                                   MAKEBC1.376   
+      write (6,*) ' '                                                      MAKEBC1.377   
+      write (6,*) ' Processing dump no ',jdump                             MAKEBC1.378   
+                                                                           MAKEBC1.379   
+!     Unit number for this dump                                            MAKEBC1.380   
+      unit_no = jdump+30                                                   MAKEBC1.381   
+                                                                           MAKEBC1.382   
+!     Open the dump                                                        MAKEBC1.383   
+      env = 'FILE  '                                                       MAKEBC1.384   
+      write (env(5:6),'(I2)') unit_no                                      MAKEBC1.385   
+      write (6,*) ' '                                                      MAKEBC1.386   
+      call file_open (unit_no,env,len_env,read_only,env_var,icode)         MAKEBC1.387   
+      if (icode.ne.0) then                                                 MAKEBC1.388   
+        write (6,*) 'Error in opening dump on unit no ',unit_no            MAKEBC1.389   
+        go to 9999  !  Return                                              MAKEBC1.390   
+      endif                                                                MAKEBC1.391   
+                                                                           MAKEBC1.392   
+!     Set STEPim(1) for this dump (controlled by nhours)                   MAKEBC1.393   
+      STEPim(1) = INTERFACE_FSTEPim(1,1) + (jdump-1)*nhours                MAKEBC1.394   
+                                                                           MAKEBC1.395   
+!     Read in fixed header from this dump                                  MAKEBC1.396   
+      call setpos (unit_no,0,icode)                                        MAKEBC1.397   
+      if (icode.gt.0) then                                                 MAKEBC1.398   
+        write (6,*) 'Error in SETPOS for Fixed Header.'                    MAKEBC1.399   
+        go to 9999  !  Return                                              MAKEBC1.400   
+      endif                                                                MAKEBC1.401   
+                                                                           MAKEBC1.402   
+      call read_flh (unit_no,fixhd,len_fixhd,icode,cmessage)               MAKEBC1.403   
+      if (icode.gt.0) then                                                 MAKEBC1.404   
+        write (6,*) 'Error in READ_FLH for dump ',jdump                    MAKEBC1.405   
+        go to 9999  !  Return                                              MAKEBC1.406   
+      endif                                                                MAKEBC1.407   
+                                                                           MAKEBC1.408   
+!     For first dump only                                                  MAKEBC1.409   
+!     Set model basis time to be date/time in first dump and use           MAKEBC1.410   
+!     to initialise variables required for time processing                 MAKEBC1.411   
+      if (jdump.eq.1) then                                                 MAKEBC1.412   
+                                                                           MAKEBC1.413   
+        model_basis_time(1)=fixhd(21)                                      MAKEBC1.414   
+        model_basis_time(2)=fixhd(22)                                      MAKEBC1.415   
+        model_basis_time(3)=fixhd(23)                                      MAKEBC1.416   
+        model_basis_time(4)=fixhd(24)                                      MAKEBC1.417   
+        model_basis_time(5)=0                                              MAKEBC1.418   
+        model_basis_time(6)=0                                              MAKEBC1.419   
+                                                                           MAKEBC1.420   
+        i_year   = model_basis_time(1)                                     MAKEBC1.421   
+        i_month  = model_basis_time(2)                                     MAKEBC1.422   
+        i_day    = model_basis_time(3)                                     MAKEBC1.423   
+        i_hour   = model_basis_time(4)                                     MAKEBC1.424   
+        i_minute = model_basis_time(5)                                     MAKEBC1.425   
+        i_second = model_basis_time(6)                                     MAKEBC1.426   
+                                                                           MAKEBC1.427   
+        basis_time_days = 0                                                MAKEBC1.428   
+        basis_time_secs = 0                                                MAKEBC1.429   
+        call time2sec(i_year,i_month,i_day,i_hour,i_minute,i_second,       MAKEBC1.430   
+     +     basis_time_days,basis_time_secs,elapsed_days,elapsed_secs,      MAKEBC1.431   
+     +     lcal360)                                                        MAKEBC1.432   
+                                                                           MAKEBC1.433   
+        basis_time_days = elapsed_days                                     MAKEBC1.436   
+        basis_time_secs = elapsed_secs                                     MAKEBC1.437   
+        elapsed_days = 0                                                   MAKEBC1.438   
+        elapsed_secs = 0                                                   MAKEBC1.439   
+        call sec2time(elapsed_days,elapsed_secs,                           MAKEBC1.440   
+     +                basis_time_days,basis_time_secs,                     MAKEBC1.441   
+     +                yy,mm,dd,hr,mn,ss,day_no,lcal360)                    MAKEBC1.442   
+                                                                           MAKEBC1.443   
+      endif                                                                MAKEBC1.444   
+                                                                           MAKEBC1.445   
+!     Remove negative dimensions, if any.                                  MAKEBC1.446   
+      do j=100,256                                                         MAKEBC1.447   
+      if (fixhd(j).lt.0) fixhd(j)=0                                        MAKEBC1.448   
+      enddo                                                                MAKEBC1.449   
+                                                                           MAKEBC1.450   
+!     Get header dimensions from Fixed Header                              MAKEBC1.451   
+      a_len_inthd    = fixhd(101)                                          MAKEBC1.452   
+      a_len_realhd   = fixhd(106)                                          MAKEBC1.453   
+      a_len1_levdepc = fixhd(111)                                          MAKEBC1.454   
+      a_len2_levdepc = fixhd(112)                                          MAKEBC1.455   
+      a_len1_rowdepc = fixhd(116)                                          MAKEBC1.456   
+      a_len2_rowdepc = fixhd(117)                                          MAKEBC1.457   
+      a_len1_coldepc = fixhd(121)                                          MAKEBC1.458   
+      a_len2_coldepc = fixhd(122)                                          MAKEBC1.459   
+      a_len1_flddepc = fixhd(126)                                          MAKEBC1.460   
+      a_len2_flddepc = fixhd(127)                                          MAKEBC1.461   
+      a_len_extcnst  = fixhd(131)                                          MAKEBC1.462   
+      a_len_cfi1     = fixhd(141)                                          MAKEBC1.463   
+      a_len_cfi2     = fixhd(143)                                          MAKEBC1.464   
+      a_len_cfi3     = fixhd(145)                                          MAKEBC1.465   
+      a_len2_lookup  = fixhd(152)                                          MAKEBC1.466   
+      a_len_data     = fixhd(161)                                          MAKEBC1.467   
+                                                                           MAKEBC1.468   
+!     Get length of data in this dump                                      MAKEBC1.469   
+      len_tot  = a_len_data                                                MAKEBC1.470   
+                                                                           MAKEBC1.471   
+!     Read in Integer Constants for this dump                              MAKEBC1.472   
+      call setpos(unit_no,fixhd(100)-1,icode)                              MAKEBC1.473   
+      if (icode.gt.0) then                                                 MAKEBC1.474   
+        write (6,*) 'Error in SETPOS for Integer Constants array.'         MAKEBC1.475   
+        go to 9999  !  Return                                              MAKEBC1.476   
+      endif                                                                MAKEBC1.477   
+                                                                           MAKEBC1.478   
+      call buffin (unit_no,inthd(1),15,len_actual,a)                       MAKEBC1.479   
+      if (a.ne.-1.0) then                                                  MAKEBC1.480   
+        write (6,*) 'Problem with reading Integer Constants array.'        MAKEBC1.481   
+        write (6,*) 'Return code from buffin = ',a                         MAKEBC1.482   
+        write (6,*) 'Length of data read by buffin = ',len_actual          MAKEBC1.483   
+        go to 9999  !  Return                                              MAKEBC1.484   
+      endif                                                                MAKEBC1.485   
+                                                                           MAKEBC1.486   
+!     Get model grid for this dump                                         MAKEBC1.487   
+      row_length = inthd(6)                                                MAKEBC1.488   
+      p_rows     = inthd(7)                                                MAKEBC1.489   
+      u_rows     = p_rows-1                                                MAKEBC1.490   
+      p_field    = row_length * p_rows                                     MAKEBC1.491   
+      u_field    = row_length * u_rows                                     MAKEBC1.492   
+      u_field_intfa = u_field                                              UDR3F405.187   
+      write (6,*) ' u_field_intfa set to ',u_field_intfa                   UDR3F405.188   
+                                                                           MAKEBC1.493   
+!     Get model levels for this dump                                       MAKEBC1.494   
+      p_levels   = inthd(8)                                                MAKEBC1.495   
+      q_levels   = inthd(9)                                                MAKEBC1.496   
+      tr_levels  = inthd(12)                                               MAKEBC1.497   
+                                                                           MAKEBC1.498   
+      write (6,*) ' '                                                      MAKEBC1.499   
+      write (6,*) ' Model Grid/Levels in this dump. '                      MAKEBC1.500   
+      write (6,*) ' row_length = ',row_length                              MAKEBC1.501   
+      write (6,*) ' p_rows     = ',p_rows                                  MAKEBC1.502   
+      write (6,*) ' u_rows     = ',u_rows                                  MAKEBC1.503   
+      write (6,*) ' p_levels   = ',p_levels                                MAKEBC1.504   
+      write (6,*) ' q_levels   = ',q_levels                                MAKEBC1.505   
+      write (6,*) ' tr_levels  = ',tr_levels                               MAKEBC1.506   
+      write (6,*) ' p_field    = ',p_field                                 MAKEBC1.507   
+      write (6,*) ' u_field    = ',u_field                                 MAKEBC1.508   
+                                                                           MAKEBC1.509   
+!     Ensure TR_LEVELS > 0 to prevent zero dynamic allocation.             MAKEBC1.510   
+      if (tr_levels.le.0) then                                             MAKEBC1.511   
+        tr_levels = 1                                                      MAKEBC1.512   
+      endif                                                                MAKEBC1.513   
+                                                                           MAKEBC1.514   
+!     Proceed to read model data from dump and get boundary conditions     MAKEBC1.515   
+      call get_bc (jdump,unit_no,unit_no_bc,um_versn,                      MAKEBC1.516   
+     &  Fixhd_intfa,Inthd_intfa,Lookup_intfa,                              UDR3F405.189   
+     &  Realhd_intfa,Levdepc_intfa,                                        UDR3F405.190   
+     &  Intf_akh,Intf_bkh,Intf_ak,Intf_bk,                                 UDR3F405.191   
+*CALL ARGSIZE                                                              MAKEBC1.517   
+*CALL ARGPPX                                                               MAKEBC1.518   
+     +          icode,cmessage)                                            MAKEBC1.519   
+                                                                           MAKEBC1.520   
+      if (icode.gt.0) then                                                 MAKEBC1.521   
+        write (6,*) ' Error in subroutine GET_BC'                          UDR3F405.192   
+        write (6,*) ' icode = ',icode                                      MAKEBC1.523   
+        go to 9999  !  Return                                              MAKEBC1.524   
+      endif                                                                MAKEBC1.525   
+                                                                           MAKEBC1.526   
+!     Close the dump                                                       MAKEBC1.527   
+      call file_close (unit_no,env,len_env,env_var,0,icode)                MAKEBC1.528   
+      if (icode.ne.0) then                                                 MAKEBC1.529   
+        write (6,*) 'Error in closing dump on unit no ',unit_no            MAKEBC1.530   
+        go to 9999  !  Return                                              MAKEBC1.531   
+      endif                                                                MAKEBC1.532   
+                                                                           MAKEBC1.533   
+      enddo   !    End of loop over dumps                                  MAKEBC1.534   
+                                                                           MAKEBC1.535   
+!     Close Boundary Dataset                                               MAKEBC1.536   
+      call file_close (unit_no_bc,'BCFILE',len_env,env_var,0,icode)        MAKEBC1.537   
+      if (icode.ne.0) then                                                 MAKEBC1.538   
+        write (6,*) 'Error in closing Boundary Dataset on unit no ',       MAKEBC1.539   
+     &  unit_no_bc                                                         MAKEBC1.540   
+        go to 9999  !  Return                                              MAKEBC1.541   
+      endif                                                                MAKEBC1.542   
+                                                                           MAKEBC1.543   
+ 9999 continue                                                             MAKEBC1.544   
+                                                                           MAKEBC1.545   
+      return                                                               MAKEBC1.546   
+      end                                                                  MAKEBC1.547   
+                                                                           MAKEBC1.548   
+!+ Subroutine GET_BC : Get boundary conditions from model dump             MAKEBC1.549   
+!                                                                          MAKEBC1.550   
+! Subroutine Interface :                                                   MAKEBC1.551   
+      subroutine get_bc (jdump,unit_no,unit_no_bc,um_versn,                MAKEBC1.552   
+     &  Fixhd_intfa,Inthd_intfa,Lookup_intfa,                              UDR3F405.193   
+     &  Realhd_intfa,Levdepc_intfa,                                        UDR3F405.194   
+     &  Intf_akh,Intf_bkh,Intf_ak,Intf_bk,                                 UDR3F405.195   
+*CALL ARGSIZE                                                              MAKEBC1.553   
+*CALL ARGPPX                                                               MAKEBC1.554   
+     +                icode,cmessage)                                      MAKEBC1.555   
+                                                                           MAKEBC1.556   
+      IMPLICIT NONE                                                        MAKEBC1.557   
+!                                                                          MAKEBC1.558   
+! Description : Get boundary conditions from model dump                    MAKEBC1.559   
+!                                                                          MAKEBC1.560   
+! Method : For each dump, read in data through UM_READDUMP and             MAKEBC1.561   
+!          generate boundary conditions through GEN_INTF. Also             MAKEBC1.562   
+!          calls IN_INTF to initialise boundary dataset.                   MAKEBC1.563   
+!                                                                          MAKEBC1.564   
+! Current Code Owner : Dave Robinson, NWP                                  MAKEBC1.565   
+!                                                                          MAKEBC1.566   
+! History :                                                                MAKEBC1.567   
+! Version    Date    Comment                                               MAKEBC1.568   
+! -------    ----    -------                                               MAKEBC1.569   
+!   4.4    10/10/97  Original Code                                         MAKEBC1.570   
+!                                                                          MAKEBC1.571   
+! Code Description :                                                       MAKEBC1.572   
+! Language : FORTRAN 77 + common extensions                                MAKEBC1.573   
+! This code is written to UMDP3 v6 programming standards.                  MAKEBC1.574   
+!                                                                          MAKEBC1.575   
+! Declarations :                                                           MAKEBC1.576   
+!                                                                          MAKEBC1.577   
+! Global Variables :                                                       MAKEBC1.578   
+!                                                                          MAKEBC1.579   
+*CALL CSUBMODL                                                             MAKEBC1.580   
+*CALL CMAXSIZE                                                             MAKEBC1.581   
+*CALL CINTFA                                                               UDR3F405.196   
+*CALL TYPSIZE                                                              MAKEBC1.582   
+*CALL TYPD1                                                                MAKEBC1.583   
+*CALL TYPDUMA                                                              MAKEBC1.584   
+*CALL TYPINFA                                                              MAKEBC1.585   
+*CALL TYPSTS                                                               MAKEBC1.586   
+*CALL TYPPTRA                                                              MAKEBC1.587   
+*CALL TYPCONA                                                              MAKEBC1.588   
+*CALL CHSUNITS                                                             MAKEBC1.589   
+*CALL CCONTROL                                                             MAKEBC1.590   
+*CALL PPXLOOK                                                              MAKEBC1.591   
+                                                                           MAKEBC1.592   
+! Subroutine arguments                                                     MAKEBC1.593   
+!   Scalar arguments with intent(in) :                                     MAKEBC1.594   
+                                                                           MAKEBC1.595   
+      Integer jdump            !  No of dump being processed.              MAKEBC1.596   
+      Integer unit_no          !  Unit No for input dump                   MAKEBC1.597   
+      Integer unit_no_bc       !  Unit No for boundary dataset             MAKEBC1.598   
+      Integer um_versn         !  UM Version Boundary Dataset for          MAKEBC1.599   
+                                                                           MAKEBC1.600   
+!   Array arguments with intent(in) :                                      MAKEBC1.601   
+                                                                           MAKEBC1.602   
+!   Scalar arguments with intent(inout) :                                  MAKEBC1.603   
+                                                                           MAKEBC1.604   
+!   Array arguments with intent(inout) :                                   MAKEBC1.605   
+                                                                           MAKEBC1.606   
+!   Scalar arguments with intent(out) :                                    MAKEBC1.607   
+                                                                           MAKEBC1.608   
+      Integer icode            !  Error code                               MAKEBC1.609   
+      Character*80 cmessage    !  Error Message                            MAKEBC1.610   
+                                                                           MAKEBC1.611   
+!   Array arguments with intent(out) :                                     MAKEBC1.612   
+                                                                           MAKEBC1.613   
+!   Local parameters :                                                     MAKEBC1.614   
+                                                                           MAKEBC1.615   
+!   Local scalars :                                                        MAKEBC1.616   
+                                                                           MAKEBC1.617   
+      Integer submodel_id      !  Sub model identifier                     MAKEBC1.618   
+      Integer internal_model   !  Internal model identifier                MAKEBC1.619   
+                                                                           MAKEBC1.620   
+      Logical readhdr          !  T : Read headers from dump               MAKEBC1.621   
+                                                                           MAKEBC1.622   
+!   Function & Subroutine calls                                            MAKEBC1.623   
+                                                                           MAKEBC1.624   
+      EXTERNAL gen_intf,in_intf,intf_hintc,setpos,set_ppindex,             MAKEBC1.625   
+     &         um_readdump                                                 MAKEBC1.626   
+                                                                           MAKEBC1.627   
+!-  End of Header                                                          MAKEBC1.628   
+                                                                           MAKEBC1.629   
+      submodel_id    = 1                                                   MAKEBC1.630   
+      internal_model = 1                                                   MAKEBC1.631   
+                                                                           MAKEBC1.632   
+!     Go to start of dump                                                  MAKEBC1.633   
+      call setpos (unit_no,0,icode)                                        MAKEBC1.634   
+      if (icode.gt.0) then                                                 MAKEBC1.635   
+        write (6,*) 'Error in SETPOS for Model Dump.'                      MAKEBC1.636   
+        go to 9999   !  Return                                             MAKEBC1.637   
+      endif                                                                MAKEBC1.638   
+                                                                           MAKEBC1.639   
+!     Headers required from dump                                           MAKEBC1.640   
+      readhdr = .true.                                                     MAKEBC1.641   
+                                                                           MAKEBC1.642   
+!     Read in headers & data from dump                                     MAKEBC1.643   
+      call um_readdump (unit_no,a_fixhd,len_fixhd,                         MAKEBC1.644   
+     +     a_inthd,a_len_inthd,                                            MAKEBC1.645   
+     +     a_realhd,a_len_realhd,                                          MAKEBC1.646   
+     +     a_levdepc,a_len1_levdepc,a_len2_levdepc,                        MAKEBC1.647   
+     +     a_rowdepc,a_len1_rowdepc,a_len2_rowdepc,                        MAKEBC1.648   
+     +     a_coldepc,a_len1_coldepc,a_len2_coldepc,                        MAKEBC1.649   
+     +     a_flddepc,a_len1_flddepc,a_len2_flddepc,                        MAKEBC1.650   
+     +     a_extcnst,a_len_extcnst,                                        MAKEBC1.651   
+     +     a_dumphist,len_dumphist,                                        MAKEBC1.652   
+     +     a_cfi1,a_len_cfi1,a_cfi2,a_len_cfi2,a_cfi3,a_len_cfi3,          MAKEBC1.653   
+     +     a_lookup,len1_lookup,a_len2_lookup,                             MAKEBC1.654   
+     +     submodel_id,no_obj_d1,d1_addr,                                  MAKEBC1.655   
+     +     a_len_data,d1,                                                  MAKEBC1.656   
+*CALL ARGPPX                                                               MAKEBC1.657   
+     +     readhdr,icode,cmessage)                                         MAKEBC1.658   
+                                                                           MAKEBC1.659   
+      if (icode.gt.0) then                                                 MAKEBC1.660   
+        write (6,*) 'Error in UM_READDUMP for Model Dump.'                 MAKEBC1.661   
+        go to 9999   !  Return                                             MAKEBC1.662   
+      endif                                                                MAKEBC1.663   
+                                                                           MAKEBC1.664   
+!     Set up the Headers in the boundary dataset.                          MAKEBC1.665   
+!     Only done for first model dump                                       MAKEBC1.666   
+      if (jdump.eq.1) then                                                 MAKEBC1.667   
+                                                                           MAKEBC1.668   
+        write (6,*) ' '                                                    MAKEBC1.669   
+        write (6,*) ' Dump No ',jdump,' : Calling IN_INTF.'                MAKEBC1.670   
+        write (6,*) ' IN_INTF calls INTF_HINTC for Dump No 1.'             MAKEBC1.671   
+                                                                           MAKEBC1.672   
+        call in_intf (                                                     MAKEBC1.673   
+*CALL ARGSIZE                                                              MAKEBC1.674   
+*CALL ARGD1                                                                MAKEBC1.675   
+*CALL ARGDUMA                                                              MAKEBC1.676   
+*CALL ARGINFA                                                              MAKEBC1.677   
+     +                unit_no_bc,icode,cmessage)                           MAKEBC1.678   
+                                                                           MAKEBC1.679   
+        if (icode.gt.0) then                                               MAKEBC1.680   
+          write (6,*) 'Error in IN_INTF.'                                  MAKEBC1.681   
+          go to 9999   !  Return                                           MAKEBC1.682   
+        endif                                                              MAKEBC1.683   
+                                                                           MAKEBC1.684   
+!       Set UM Version for Boundary dataset                                MAKEBC1.685   
+        fixhd_intfa(12,1) = um_versn                                       MAKEBC1.686   
+                                                                           MAKEBC1.687   
+       endif                                                               MAKEBC1.688   
+                                                                           MAKEBC1.689   
+!     Calculate interpolation coeffcients between model and boundary       MAKEBC1.690   
+!     data. INTF_HINTC is called within IN_INTF for first dump.            MAKEBC1.691   
+      if (jdump.ge.2) then                                                 MAKEBC1.692   
+                                                                           MAKEBC1.693   
+        write (6,*) ' '                                                    MAKEBC1.694   
+        write (6,*) ' Dump No ',jdump,' : calling INTF_HINTC.'             MAKEBC1.695   
+                                                                           MAKEBC1.696   
+        call intf_hintc (                                                  MAKEBC1.697   
+     +       p_rows, u_rows, row_length, u_field,                          MAKEBC1.698   
+*CALL ARGSIZE                                                              MAKEBC1.699   
+*CALL ARGDUMA                                                              MAKEBC1.700   
+*CALL ARGINFA                                                              MAKEBC1.701   
+     +       1,len_intfa_p(1),len_intfa_u(1),                              MAKEBC1.702   
+     +       icode,cmessage,LLBOUTim(1))                                   MAKEBC1.703   
+                                                                           MAKEBC1.704   
+        if (icode.gt.0) then                                               MAKEBC1.705   
+          write (6,*) 'Error in INTF_HINTC.'                               MAKEBC1.706   
+          go to 9999   !  Return                                           MAKEBC1.707   
+        endif                                                              MAKEBC1.708   
+                                                                           MAKEBC1.709   
+      endif                                                                MAKEBC1.710   
+                                                                           MAKEBC1.711   
+!     Pointers to AK and BK data for model dump                            MAKEBC1.712   
+      jak       = 1                                                        MAKEBC1.713   
+      jbk       = jak+p_levels                                             MAKEBC1.714   
+                                                                           MAKEBC1.715   
+!     Determine pointers and ppindex for data in model dump                MAKEBC1.716   
+      call set_ppindex (jpstar,ju,jv,jtheta,jq,jqcf,jtracer,               MAKEBC1.717   
+     &     nitems,ppindex,len1_lookup,a_len2_lookup,a_lookup,              MAKEBC1.718   
+     &     l_lspice,icode,cmessage)                                        MAKEBC1.719   
+                                                                           MAKEBC1.720   
+      if (icode.gt.0) then                                                 MAKEBC1.721   
+        write (6,*) ' Error in SET_PPINDEX.'                               MAKEBC1.722   
+        go to 9999   !  Return                                             MAKEBC1.723   
+      endif                                                                MAKEBC1.724   
+                                                                           MAKEBC1.725   
+      write (6,*) ' '                                                      MAKEBC1.726   
+      write (6,*) ' pointers from set_ppindex'                             MAKEBC1.727   
+      write (6,*) ' jpstar  = ',jpstar                                     MAKEBC1.728   
+      write (6,*) ' ju      = ',ju(1)                                      MAKEBC1.729   
+      write (6,*) ' jv      = ',jv(1)                                      MAKEBC1.730   
+      write (6,*) ' jtheta  = ',jtheta(1)                                  MAKEBC1.731   
+      write (6,*) ' jq      = ',jq(1)                                      MAKEBC1.732   
+      write (6,*) ' jqcf    = ',jqcf(1)                                    MAKEBC1.733   
+      write (6,*) ' jtracer = ',jtracer(1,1)                               MAKEBC1.734   
+                                                                           MAKEBC1.735   
+      write (6,*) ' '                                                      MAKEBC1.736   
+      write (6,*) ' ppindex from set_ppindex'                              MAKEBC1.737   
+      write (6,*) ' ppindex(1)  = ',ppindex(1,1)                           MAKEBC1.738   
+      write (6,*) ' ppindex(2)  = ',ppindex(2,1)                           MAKEBC1.739   
+      write (6,*) ' ppindex(3)  = ',ppindex(3,1)                           MAKEBC1.740   
+      write (6,*) ' ppindex(5)  = ',ppindex(5,1)                           MAKEBC1.741   
+      write (6,*) ' ppindex(11) = ',ppindex(11,1)                          MAKEBC1.742   
+      write (6,*) ' ppindex(12) = ',ppindex(12,1)                          MAKEBC1.743   
+                                                                           MAKEBC1.744   
+      write (6,*) ' '                                                      MAKEBC1.745   
+      write (6,*) ' Dump No ',jdump,' : Calling GEN_INTF.'                 MAKEBC1.746   
+                                                                           MAKEBC1.747   
+!     Call GEN_INTF to generate boundary conditions for this dump          MAKEBC1.748   
+      call gen_intf (                                                      MAKEBC1.749   
+*CALL ARGSIZE                                                              MAKEBC1.750   
+*CALL ARGD1                                                                MAKEBC1.751   
+*CALL ARGDUMA                                                              MAKEBC1.752   
+*CALL ARGSTS                                                               MAKEBC1.753   
+*CALL ARGPTRA                                                              MAKEBC1.754   
+*CALL ARGCONA                                                              MAKEBC1.755   
+*CALL ARGINFA                                                              MAKEBC1.756   
+*CALL ARGPPX                                                               MAKEBC1.757   
+     +              internal_model,icode,cmessage)                         MAKEBC1.758   
+                                                                           MAKEBC1.759   
+      if (icode.gt.0) then                                                 MAKEBC1.760   
+        write (6,*) 'Error in GEN_INTF.'                                   MAKEBC1.761   
+        go to 9999   !  Return                                             MAKEBC1.762   
+      endif                                                                MAKEBC1.763   
+                                                                           MAKEBC1.764   
+ 9999 continue                                                             MAKEBC1.765   
+                                                                           MAKEBC1.766   
+      return                                                               MAKEBC1.767   
+      end                                                                  MAKEBC1.768   
+*ENDIF                                                                     MAKEBC1.769   

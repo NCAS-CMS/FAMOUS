@@ -1,0 +1,317 @@
+*IF DEF,CONTROL                                                            GTPPXPT1.2     
+C ******************************COPYRIGHT******************************    GTS2F400.12412 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.12413 
+C                                                                          GTS2F400.12414 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.12415 
+C restrictions as set forth in the contract.                               GTS2F400.12416 
+C                                                                          GTS2F400.12417 
+C                Meteorological Office                                     GTS2F400.12418 
+C                London Road                                               GTS2F400.12419 
+C                BRACKNELL                                                 GTS2F400.12420 
+C                Berkshire UK                                              GTS2F400.12421 
+C                RG12 2SZ                                                  GTS2F400.12422 
+C                                                                          GTS2F400.12423 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.12424 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.12425 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.12426 
+C Modelling at the above address.                                          GTS2F400.12427 
+C                                                                          GTS2F400.12428 
+!+ Reads required portion of PPXREF file into "look-up" arrays             GTPPXPT1.3     
+!                                                                          GTPPXPT1.4     
+!  Subroutine Interface:                                                   GTPPXPT1.5     
+                                                                           GTPPXPT1.6     
+      SUBROUTINE GETPPX_PART(NFT,NFTU,StmsrNam,Im_ident,RowNumber,         GSS2F401.230   
+*CALL ARGPPX                                                               GTPPXPT1.8     
+     &                       ErrorStatus,CMESSAGE)                         GSS1F400.341   
+      IMPLICIT NONE                                                        GTPPXPT1.10    
+!                                                                          GTPPXPT1.11    
+!  Description:                                                            GTPPXPT1.12    
+!    Reads records from PPXREF file into arrays PPXI (for integer data)    GTPPXPT1.13    
+!    and PPXC (for character data, i.e. name of diagnostic/prognostic).    GTPPXPT1.14    
+!    Only those ppxref records corresponding to entries in the STASH       GTPPXPT1.15    
+!    addresses array IN_S are read in. Also set up pointer array PPXPTR.   GTPPXPT1.16    
+!                                                                          GTPPXPT1.17    
+!  Method:                                                                 GTPPXPT1.18    
+!    Uses routines SETPOS and BUFFIN - these employ Cray-specific code     GTPPXPT1.19    
+!                                                                          GTPPXPT1.20    
+!  Current code owner: S.J.Swarbrick                                       GTPPXPT1.21    
+!                                                                          GTPPXPT1.22    
+!  History:                                                                GTPPXPT1.23    
+!  Version   Date       Comment                                            GTPPXPT1.24    
+!  =======   ====       =======                                            GTPPXPT1.25    
+!    3.5     Mar 95     Original code.  S.J.Swarbrick                      GTPPXPT1.26    
+!    4.0     Sept 95                    S.J.Swarbrick                      GSS1F400.342   
+!    4.0     Dec. 95   Check for ppxRecs LE (NDIAGP or NUM_DIAG_MAX)       ANF4F400.17    
+!                                       (N Farnon)                         ANF4F400.18    
+!    4.1     Apr. 96   Changes associated with new STASHmaster format      GSS1F401.6     
+!                      S.J.Swarbrick                                       GSS1F401.7     
+!    4.5    30/10/97   Read stash data on PE 0 for the T3E                 GBCVF405.437   
+!                      and distribute it.                                  GBCVF405.438   
+!                        Author: Bob Carruthers, Cray Research             GBCVF405.439   
+!                                                                          GTPPXPT1.27    
+!  Code description:                                                       GTPPXPT1.28    
+!    FORTRAN 77 + common Fortran 90 extensions.                            GTPPXPT1.29    
+!    Written to UM programming standards version 7.                        GTPPXPT1.30    
+!                                                                          GTPPXPT1.31    
+!  System component covered:                                               GTPPXPT1.32    
+!  System task:               Sub-Models Project                           GTPPXPT1.33    
+!                                                                          GTPPXPT1.34    
+!  Global Variables:                                                       GTPPXPT1.35    
+*CALL CSUBMODL                                                             GTPPXPT1.37    
+*CALL CPPXREF                                                              GTPPXPT1.38    
+*CALL PPXLOOK                                                              GTPPXPT1.40    
+*CALL C_MDI                                                                GTPPXPT1.41    
+*CALL CSTASH                                                               GRB0F401.5     
+*CALL STEXTEND                   ! Declares IN_S                           GTPPXPT1.43    
+                                                                           GTPPXPT1.44    
+!  Subroutine arguments                                                    GTPPXPT1.45    
+!    Scalar arguments with intent(in):                                     GTPPXPT1.47    
+      INTEGER      NFT,NFTU      ! Unit nos. for STASHmaster files         GSS2F401.231   
+      CHARACTER*13  Stmsrnam      ! Names of stash master files            GSS2F401.232   
+                                                                           GTPPXPT1.50    
+!    Array arguments with intent(out):                                     GTPPXPT1.51    
+      CHARACTER*80   CMESSAGE    ! Error return message                    GTPPXPT1.52    
+                                                                           GTPPXPT1.53    
+!    Error status:                                                         GTPPXPT1.54    
+      INTEGER        ErrorStatus ! Error return code                       GSS1F400.343   
+                                                                           GTPPXPT1.56    
+!  Local scalars:                                                          GTPPXPT1.57    
+      INTEGER      I,J,K,Model   ! Loop counters                           GSS1F400.344   
+      CHARACTER*80 STASH_MSTR    ! File name for STASH master              GSS2F401.233   
+      INTEGER      Im_index      ! Internal model index (run dependent)    GSS1F400.345   
+      INTEGER      Im_ident      ! Internal model identifier (absolute)    GSS1F400.346   
+      INTEGER      Section,Sec   ! section no.                             GSS2F401.234   
+      INTEGER      Item,Itm      ! item no.                                GSS2F401.235   
+      INTEGER      RowNumber     ! Row no. counter for PPXI, PPXC arrays   GTPPXPT1.67    
+      INTEGER      RowNum_U      ! Do. for PPXI_U, PPXC_U (user diags.)    GSS1F400.349   
+      CHARACTER*36 NAME                                                    GSS2F401.236   
+      CHARACTER*1  CHAR1                                                   GSS2F401.237   
+      INTEGER      FirstBlank                                              GSS2F401.238   
+      INTEGER      IOStatus                                                GSS2F401.239   
+                                                                           GTPPXPT1.68    
+!  Local arrays:                                                           GTPPXPT1.69    
+!  WARNING: must have PPXREF_CHARLEN=4*PPX_CHARWORD                        GTPPXPT1.70    
+!           to avoid overwriting                                           GTPPXPT1.71    
+      CHARACTER DNAM (PPXREF_CHARLEN) ! For char part of ppx record        GTPPXPT1.72    
+      INTEGER   CODES(PPXREF_CODELEN) ! For integer part of ppx record     GTPPXPT1.73    
+      INTEGER   IMASK(20)                                                  GSS2F401.240   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.440   
+                                                                           GBCVF405.441   
+      common/shmem_getppx_c1/ dnam                                         GBCVF405.442   
+cdir$ cache_align /shmem_getppx_c1/                                        GBCVF405.443   
+      common/shmem_getppx_c2/ char1                                        GBCVF405.444   
+cdir$ cache_align /shmem_getppx_c2/                                        GBCVF405.445   
+      common/shmem_getppx/ codes, iostatus, Model, Sec, Itm                GBCVF405.446   
+cdir$ cache_align /shmem_getppx/                                           GBCVF405.447   
+c                                                                          GBCVF405.448   
+      integer shmem_n_pes, msg, info, nproc, shmem_my_pe, mype             GBCVF405.449   
+c                                                                          GBCVF405.450   
+*ENDIF                                                                     GBCVF405.451   
+                                                                           GTPPXPT1.74    
+!  Function and subroutine calls:                                          GTPPXPT1.75    
+      EXTERNAL READSTM                                                     GSS2F401.241   
+!                                                                          GTPPXPT1.77    
+!- End of header -------------------------------------------------------   GTPPXPT1.78    
+!                                                                          GTPPXPT1.79    
+      ErrorStatus = 0                                                      GSS1F400.350   
+      IOStatus=0                                                           GSS2F401.242   
+C----------------------------------------------------------------------    ANF4F400.19    
+C Check that the no. of requested diagnostics does not exceed max          ANF4F400.20    
+C defined in comdecks VERSION and PPXLOOK.                                 ANF4F400.21    
+C                                                                          ANF4F400.22    
+      IF ( (ppxRecs .GT. NDIAGP) .OR. (ppxRecs .GT. NUM_DIAG_MAX) )        ANF4F400.23    
+     &THEN                                                                 ANF4F400.24    
+        WRITE(6,*) 'ERROR: no. of diags. reqested exceeds max'             ANF4F400.25    
+        WRITE(6,*) 'ppxRecs=',ppxRecs,' NDIAGP=',NDIAGP,                   ANF4F400.26    
+     &             ' NUM_DIAG_MAX=',NUM_DIAG_MAX                           ANF4F400.27    
+        Errorstatus=104                                                    ANF4F400.28    
+        CMESSAGE= 'GTPPXPT1: ppxRecs GT (NDIAGP or NUM_DIAG_MAX)'          ANF4F400.29    
+        GO TO 9999                                                         ANF4F400.30    
+      END IF                                                               ANF4F400.31    
+C----------------------------------------------------------------------    ANF4F400.32    
+!Open STASHmaster file for current internal model                          GSS2F401.243   
+!  Get directory name for STASHmaster & append rest of filename            GSS2F401.244   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.452   
+      mype=shmem_my_pe()                                                   GBCVF405.453   
+      nproc=shmem_n_pes()                                                  GBCVF405.454   
+*ENDIF                                                                     GBCVF405.455   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.456   
+      stash_mstr='empty '                                                  GBCVF405.457   
+      if(mype.eq.0) CALL GET_FILE(NFT,STASH_MSTR,80,ErrorStatus)           GBCVF405.458   
+*ELSE                                                                      GBCVF405.459   
+      CALL GET_FILE(NFT,STASH_MSTR,80,ErrorStatus)                         GSS2F401.245   
+*ENDIF                                                                     GBCVF405.460   
+      FirstBlank = 0                                                       GSS2F401.246   
+      DO I = 1,80                                                          GSS2F401.247   
+        IF (STASH_MSTR(I:I).EQ.' '.AND.FirstBlank.EQ.0)                    GSS2F401.248   
+     &                                   FirstBlank=I                      GSS2F401.249   
+      END DO                                                               GSS2F401.250   
+      STASH_MSTR(FirstBlank:FirstBlank)='/'                                GSS2F401.251   
+      STASH_MSTR(FirstBlank+1:FirstBlank+13)=StmsrNam                      GSS2F401.252   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.461   
+      if(mype.eq.0) OPEN(UNIT=NFT,FILE=STASH_MSTR,IOSTAT=IOStatus)         GBCVF405.462   
+                                                                           GBCVF405.463   
+      msg=7060                                                             GBCVF405.464   
+      info=0                                                               GBCVF405.465   
+      call gc_ibcast(msg, 1, 0, nproc, info, IOStatus)                     GBCVF405.466   
+                                                                           GBCVF405.467   
+*ELSE                                                                      GBCVF405.468   
+      OPEN(UNIT=NFT,FILE=STASH_MSTR,IOSTAT=IOStatus)                       GSS2F401.253   
+*ENDIF                                                                     GBCVF405.469   
+      IF(IOStatus.NE.0) THEN                                               GSS2F401.254   
+        WRITE(6,*) 'ERROR in routine GETPPX_PART'                          GSS2F401.255   
+        WRITE(6,*)                                                         GSS2F401.256   
+     & 'CANNOT OPEN STASHmaster FILE, IOSTATUS=',IOStatus                  GSS2F401.257   
+        WRITE(6,*) 'UNIT=',NFT,' FILE=',STASH_MSTR                         GSS2F401.258   
+        ErrorStatus=100                                                    GSS2F401.259   
+        CMESSAGE=' GETPPX_PART: ERROR OPENING STASHmaster'                 GSS2F401.260   
+        GOTO 9999                                                          GSS2F401.261   
+      END IF                                                               GSS2F401.262   
+                                                                           GTPPXPT1.102   
+! Read the required ppxref records into PPXI, PPXC                         GSS1F400.355   
+      Im_index    = INTERNAL_MODEL_INDEX(Im_ident)                         GSS2F401.263   
+      DO Section  = 0,PPXREF_SECTIONS                                      GSS2F401.264   
+        DO Item   = 1,PPXREF_ITEMS                                         GSS2F401.265   
+                                                                           GTPPXPT1.104   
+! Check whether there is a stash entry                                     GTPPXPT1.114   
+          IF (IN_S(1,Im_ident,Section,Item) .NE. 0) THEN                   GSS1F400.362   
+! Assign pointer value                                                     GTPPXPT1.116   
+            PPXPTR(Im_index,Section,Item) = RowNumber                      GSS1F400.363   
+                                                                           GSS2F401.266   
+!  OriginFlag was compressed down at end of STASH_PROC,                    GSS2F401.267   
+!  to contain only those items requested.                                  GSS2F401.268   
+                                                                           GSS2F401.269   
+            IF (OriginFlag(RowNumber).EQ.'U') THEN                         GSS1F400.367   
+!  Record is from user STASHmaster                                         GSS2F401.270   
+                                                                           GSS2F401.271   
+!  GETPPX saved all userSTASHmaster records, not just                      GSS2F401.272   
+!  those requested, so search for correct record.                          GSS2F401.273   
+              DO  I = 1,NUM_USR_DIAG_MAX                                   GSS1F400.370   
+                IF (PPXI_U(I,1).eq.Im_ident .and.                          GSS1F400.371   
+     &              PPXI_U(I,2).eq.Section .and.                           GSS1F400.372   
+     &              PPXI_U(I,3).eq.Item) THEN                              GSS1F400.373   
+!  Correct record found                                                    GSS2F401.274   
+                  RowNum_U = I                                             GSS1F400.374   
+                END IF                                                     GSS1F400.375   
+              END DO                                                       GSS1F400.376   
+! Read user ppxref record from transfer arrays                             GSS1F400.377   
+              DO I=1,PPXREF_CHARLEN                                        GSS1F400.378   
+                PPXC(RowNumber,I)=PPXC_U(RowNum_U,I)                       GSS1F400.379   
+              END DO                                                       GSS1F400.380   
+              DO I=1,PPXREF_CODELEN                                        GSS1F400.381   
+                PPXI(RowNumber,I)=PPXI_U(RowNum_U,I)                       GSS1F400.382   
+              END DO                                                       GSS1F400.383   
+              IF ((PPXI(RowNumber,1).NE.Im_ident).OR.                      GSS1F400.384   
+     &            (PPXI(RowNumber,2).NE.Section ).OR.                      GSS1F400.385   
+     &            (PPXI(RowNumber,3).NE.Item    )) THEN                    GSS1F400.386   
+                WRITE(6,*) 'ERROR, GETPPX_PART: '                          GSS1F400.387   
+                WRITE(6,*) 'Inconsistency in user ppxref transfer'         GSS1F400.388   
+                WRITE(6,*) 'Model,Section,Item: ',                         GSS1F400.389   
+     &                      Im_ident,Section,Item                          GSS1F400.390   
+                ErrorStatus=115                                            GSS1F400.391   
+                GO TO 9999                                                 GSS1F400.392   
+              END IF                                                       GSS1F400.393   
+                                                                           GSS2F401.275   
+            ELSE IF (OriginFlag(RowNumber).EQ.'P') THEN                    GSS1F400.394   
+                                                                           GSS2F401.276   
+! Find appropriate record in STASHmaster file and read it in               GSS2F401.277   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.470   
+ 100          continue                                                     GBCVF405.471   
+              if(mype.eq.0) READ(NFT,'(A1)') CHAR1                         GBCVF405.472   
+c                                                                          GBCVF405.473   
+              msg=7063                                                     GBCVF405.474   
+              info=0                                                       GBCVF405.475   
+              call gc_cbcast(msg, 1, 0, nproc, info, char1)                GBCVF405.476   
+c                                                                          GBCVF405.477   
+*ELSE                                                                      GBCVF405.478   
+ 100          READ(NFT,'(A1)') CHAR1                                       GSS2F401.278   
+*ENDIF                                                                     GBCVF405.479   
+              IF (CHAR1.EQ.'1') THEN                                       GSS2F401.279   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.480   
+                if(mype.eq.0) then                                         GBCVF405.481   
+                  BACKSPACE NFT                                            GBCVF405.482   
+                  READ(NFT,'(2X,3(I5,2X))') Model,Sec,Itm                  GBCVF405.483   
+                endif                                                      GBCVF405.484   
+c                                                                          GBCVF405.485   
+                msg=7066                                                   GBCVF405.486   
+                info=0                                                     GBCVF405.487   
+                call gc_ibcast(msg, 3, 0, nproc,info, model)               GBCVF405.488   
+c                                                                          GBCVF405.489   
+*ELSE                                                                      GBCVF405.490   
+                BACKSPACE NFT                                              GSS2F401.280   
+                READ(NFT,'(2X,3(I5,2X))') Model,Sec,Itm                    GSS2F401.281   
+*ENDIF                                                                     GBCVF405.491   
+                IF (Model.EQ.-1) THEN                                      GSS2F401.282   
+                  WRITE(6,*)                                               GSS2F401.283   
+     &           'GETPPX_PART: End of STASHmaster file ',                  GSS2F401.284   
+     &            StmsrNam,' reached'                                      GSS2F401.285   
+                  GO TO 1100                                               GSS2F401.286   
+                END IF                                                     GSS2F401.287   
+                IF (Sec.EQ.Section .AND. Itm.EQ.Item) THEN                 GSS2F401.288   
+!   Correct record found                                                   GSS2F401.289   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.492   
+                  if(mype.eq.0) then                                       GBCVF405.493   
+                    BACKSPACE NFT                                          GBCVF405.494   
+                    CALL READSTM                                           GBCVF405.495   
+     &               (IMASK,DNAM,CODES,NFT,ErrorStatus,CMESSAGE)           GBCVF405.496   
+                  endif                                                    GBCVF405.497   
+                                                                           GBCVF405.498   
+                  msg=7061                                                 GBCVF405.499   
+                  info=0                                                   GBCVF405.500   
+                  call gc_ibcast(msg, ppxref_codelen, 0, nproc,            GBCVF405.501   
+     2             info, codes)                                            GBCVF405.502   
+                  msg=7062                                                 GBCVF405.503   
+                  info=0                                                   GBCVF405.504   
+                  call gc_cbcast(msg, ppxref_charlen, 0, nproc,            GBCVF405.505   
+     2             info, dnam)                                             GBCVF405.506   
+*ELSE                                                                      GBCVF405.507   
+                  BACKSPACE NFT                                            GSS2F401.290   
+                  CALL READSTM                                             GSS2F401.291   
+     &           (IMASK,DNAM,CODES,NFT,ErrorStatus,CMESSAGE)               GSS2F401.292   
+*ENDIF                                                                     GBCVF405.508   
+!   Transfer STASHmaster record to look-up arrays                          GSS2F401.293   
+                  DO I=1,PPXREF_CHARLEN                                    GSS2F401.294   
+                    PPXC(RowNumber,I)=DNAM(I)                              GSS2F401.295   
+                  END DO                                                   GSS2F401.296   
+                  DO I=1,PPXREF_CODELEN                                    GSS2F401.297   
+                    PPXI(RowNumber,I)=CODES(I)                             GSS2F401.298   
+                  END DO                                                   GSS2F401.299   
+                ELSE                                                       GSS2F401.300   
+                  GO TO 100                                                GSS2F401.301   
+                END IF                                                     GSS2F401.302   
+              ELSE                                                         GSS2F401.303   
+                GO TO 100                                                  GSS2F401.304   
+              END IF                                                       GSS1F400.401   
+            ELSE IF (OriginFlag(RowNumber).NE.' ') THEN                    GSS1F400.447   
+              WRITE(6,*) 'ERROR, GETPPX_PART: INVALID OriginFlag'          GSS1F400.448   
+              WRITE(6,*) 'Row number, Flag'                                GSS1F400.449   
+              WRITE(6,*) RowNumber, OriginFlag(RowNumber)                  GSS1F400.450   
+                ErrorStatus=135                                            GSS2F401.305   
+                GO TO 9999                                                 GSS1F400.452   
+            END IF                                                         GSS1F400.453   
+                                                                           GTPPXPT1.188   
+            RowNumber = RowNumber + 1                                      GTPPXPT1.189   
+ 1100       CONTINUE                                                       GSS2F401.306   
+                                                                           GTPPXPT1.190   
+            IF ((RowNumber-1) .GT. ppxRecs) THEN                           GTPPXPT1.191   
+              WRITE(6,*) 'Error in GETPPX_PART:'                           GTPPXPT1.192   
+              WRITE(6,*)                                                   GTPPXPT1.193   
+     &       ' PPXI row number exceeds total no. of ppx records'           GTPPXPT1.194   
+              GO TO 9999                                                   GTPPXPT1.195   
+            END IF                                                         GTPPXPT1.196   
+                                                                           GTPPXPT1.197   
+          END IF   ! Stash entries                                         GTPPXPT1.198   
+        END DO     ! Items                                                 GTPPXPT1.200   
+      END DO     ! Sections                                                GSS2F401.307   
+                                                                           GTPPXPT1.203   
+ 9999 CONTINUE                                                             GTPPXPT1.204   
+                                                                           GSS2F401.308   
+*IF DEF,MPP,AND,DEF,T3E                                                    GBCVF405.509   
+      if(mype.eq.0) CLOSE(UNIT=NFT)                                        GBCVF405.510   
+*ELSE                                                                      GBCVF405.511   
+      CLOSE(UNIT=NFT)                                                      GSS2F401.309   
+*ENDIF                                                                     GBCVF405.512   
+      RETURN                                                               GTPPXPT1.205   
+      END                                                                  GTPPXPT1.206   
+!- End of Subroutine code ---------------------------------------------    GTPPXPT1.207   
+*ENDIF                                                                     GTPPXPT1.208   

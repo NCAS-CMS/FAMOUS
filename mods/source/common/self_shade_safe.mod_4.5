@@ -1,0 +1,209 @@
+*IDENT SELF_SHADE
+*/
+*/ CDJ 20/11/98
+*/
+*/ Self shading mod for use in HadCM3LC.
+*/  copy of:
+*/          ~t20ti/Modsets/UM44/self_shade2.mod
+*/
+*/
+*/ Ian J. Totterdell 981111
+*/ Mod to put effects of self-shading into the simple
+*/  light model currently used in HadOCC.
+*/
+*/-----------------------------------------------------------
+*/
+*DECK SOLSETSS
+      subroutine SOLSETSS (IMT,KM,NT,DELTA_SI,DZ,GRAV_SI,
+     &  RSOL,RZ,TR,ZDZ,ZDZZ,KFIX,DECAY,DELPSF,DELPSL,SOL_PEN)
+c
+      implicit none
+c
+*CALL CNTLOCN
+*CALL OARRYSIZ
+*CALL OTRACPNT
+c
+      integer
+     &  IMT
+     &, KM
+     &, NT
+     &, KFIX
+c
+      real
+     &  DELTA_SI
+     &, DZ(KM)
+     &, GRAV_SI
+     &, RSOL
+     &, RZ(KM)
+     &, TR(IMT,KM,NT)
+     &, ZDZ(KM)
+     &, ZDZZ(KM)
+     &, DECAY(KM)
+     &, DELPSF
+     &, DELPSL(IMT,0:KM)
+     &, SOL_PEN(IMT,0:KM)
+c
+c  External subroutine called.
+c
+      intrinsic
+     &  EXP
+c
+      integer
+     &  i
+     &, k
+     &, k_temp
+c
+      real
+     &  chla
+     &, eta1b
+     &, eta1c
+     &, eta1e(KM)
+     &, eta1l(KM)
+     &, eta1s
+     &, eta2b
+     &, eta2c
+     &, eta2e(KM)
+     &, eta2l(KM)
+     &, eta2s
+     &, fxa
+     &, grav
+     &, pebwcb
+     &, pebwcc
+     &, rsolc
+     &, sclfct
+c
+*CALL OBIOCONST
+c
+      fxa = c2n_p*c_mol_wt/( c2chl*chl2pig )
+c
+      eta1b = 1.0
+      eta1c = 0.02
+      eta2b = 0.059
+      eta2c = 0.02
+c
+      eta1b = eta1b*0.01
+      eta1c = eta1c*0.01
+      eta2b = eta2b*0.01
+      eta2c = eta2c*0.01
+c
+      grav = GRAV_SI*100.0
+      rsolc = 1.0 - RSOL
+c
+      DELPSF = -0.5*grav*DZ(1)*DZ(1)
+c
+c  Calculate layer of maximum penetration (200.0 m)
+c
+      k_temp = 1
+      do k=1,KM
+         k_temp = k
+         if ( ZDZ(k) .gt. 200.0e2 ) go to 5
+       enddo
+    5 continue
+      KFIX = k_temp
+c
+c  Loop over longitude and depth, calculating ETA, SOL_PEN and 
+c   DELPSL as we descend.
+c
+      do i=1,IMT
+c
+         SOL_PEN(i,0) = 1.0
+c
+         eta1s = 0.0
+         eta2s = 0.0
+c
+         do k=1,KFIX
+c
+            if( TR(i,k,PHYTO_TRACER) .ge. 0.0 )then
+               chla = fxa*TR(i,k,PHYTO_TRACER)
+             else
+               chla = 0.0
+             endif
+c
+            eta1l(k) = eta1b + eta1c*chla
+            eta1s = eta1s - eta1l(k)*DZ(k)
+            if( eta1s .lt. -180.0 )then
+               eta1e(k) = 0.0
+             else
+               eta1e(k) = EXP(eta1s)
+             endif
+c
+            eta2l(k) = eta2b + eta2c*chla
+            eta2s = eta2s - eta2l(k)*DZ(k)
+            if( eta2s .lt. -180.0 )then
+               eta2e(k) = 0.0
+             else
+               eta2e(k) = EXP(eta2s)
+             endif
+c
+            SOL_PEN(i,k) = RSOL*eta1e(k) + rsolc*eta2e(k)
+c
+c  End of loop (k=1,KFIX).
+c
+          enddo
+c
+         do k=KFIX,KM
+            SOL_PEN(i,k) = 0.0
+          enddo
+c
+c  Now, still in loop over i, calculate DELPSL.
+c
+         sclfct = -grav*DZ(1)/( 1.0 - SOL_PEN(i,1) )
+         DELPSL(i,0) = 0.0
+c
+         pebwcc = RSOL*( 1.0 - eta1e(1) )/eta1l(1) +
+     &     rsolc*( 1.0 - eta2e(1) )/eta2l(1) - ZDZ(1)*SOL_PEN(i,1)
+         pebwcb = ( 1.0 - SOL_PEN(i,1) )*ZDZZ(1)*(DZ(1)/RZ(1))
+         DELPSL(i,1) = ( pebwcb - pebwcc )*sclfct
+c
+         do k=2,KFIX
+c
+            pebwcc = pebwcc + RSOL*( eta1e(k-1) - eta1e(k) )/eta1l(k)
+     &        + rsolc*( eta2e(k-1) - eta2e(k) )/eta2l(k)
+     &        + ZDZ(k-1)*SOL_PEN(i,(k-1)) - ZDZ(k)*SOL_PEN(i,k)
+            pebwcb = pebwcb +
+     &        ( SOL_PEN(i,(k-1)) - SOL_PEN(i,k) )*ZDZZ(k)*(DZ(k)/RZ(k))
+            DELPSL(i,k) = ( pebwcb - pebwcc )*sclfct
+c
+          enddo
+c
+         do k=(KFIX+1),KM
+            DELPSL(i,k) = DELPSL(i,KFIX)
+          enddo
+c
+c  End of loop (i=1,IMT).
+c
+       enddo
+c
+c  Decay scale for wind mixing energy.
+c
+      do k=1,KM
+         DECAY(k) = EXP(-DZ(k)/(DELTA_SI*100.0))
+       enddo
+c  
+c  Return from SOLSETSS.
+c
+      return
+      end
+*C SOLSETSS
+*/
+*/-----------------------------------------------------------
+*/
+*/ Will need some mods in TRACER to call the subroutine
+*/  and use the output correctly.
+*/
+*DECLARE TRACER
+*B OJP0F404.795
+         IF (L_OBIOLOGY) THEN
+           call SOLSETSS (IMT,KM,NT,DELTA_SI,DZ,GRAV_SI,RSOL,GAMMA_DZ,
+     &       T,ZDZ,ZDZZ,KFIX_BIO,DECAY,DELPSF,DELPSL_LOC,SOL_PEN_BIO)
+           do K=0,KM
+             do I=1,IMT
+               SOL_PEN_LOC(I,K) = SOL_PEN_BIO(I,K)
+             enddo
+           enddo
+           KFIX = KFIX_BIO
+         ELSE
+*I OJP0F404.801
+         END IF
+*C TRACER
+*/ End of modset.

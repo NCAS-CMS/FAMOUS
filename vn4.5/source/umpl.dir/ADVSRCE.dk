@@ -1,0 +1,660 @@
+*IF DEF,OCEAN                                                              ADVSRCE.2     
+C *****************************COPYRIGHT******************************     ADVSRCE.3     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    ADVSRCE.4     
+C                                                                          ADVSRCE.5     
+C Use, duplication or disclosure of this code is subject to the            ADVSRCE.6     
+C restrictions as set forth in the contract.                               ADVSRCE.7     
+C                                                                          ADVSRCE.8     
+C                Meteorological Office                                     ADVSRCE.9     
+C                London Road                                               ADVSRCE.10    
+C                BRACKNELL                                                 ADVSRCE.11    
+C                Berkshire UK                                              ADVSRCE.12    
+C                RG12 2SZ                                                  ADVSRCE.13    
+C                                                                          ADVSRCE.14    
+C If no contract has been raised with this copy of the code, the use,      ADVSRCE.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      ADVSRCE.16    
+C to do so must first be obtained in writing from the Head of Numerical    ADVSRCE.17    
+C Modelling at the above address.                                          ADVSRCE.18    
+C ******************************COPYRIGHT******************************    ADVSRCE.19    
+C                                                                          ADVSRCE.20    
+!  subroutine: ADV_SOURCE                                                  ADVSRCE.21    
+!                                                                          ADVSRCE.22    
+!  Calculates the advection source term in the prognostic equations        ADVSRCE.23    
+!  for the ocean velocities and tracers. Contains options for              ADVSRCE.24    
+!  upstream differencing, centred differencing or the 3rd order QUICK      ADVSRCE.25    
+!  scheme depending on the value of SCHEME. Because it is meant to         ADVSRCE.26    
+!  be called from CLINIC and TRACER, all variables are defined with        ADVSRCE.27    
+!  local names, for instance the 'field' variables will refer to a         ADVSRCE.28    
+!  tracer or velocity field, depending on the calling routine.             ADVSRCE.29    
+!                                                                          ADVSRCE.30    
+!  The QUICK scheme (see B.P. Leonard, Comp. Methods in App. Mech.         ADVSRCE.31    
+!  Eng. 19 59-98 (1979), especially equation (23)) involves adding         ADVSRCE.32    
+!  a quadratic correction term to the linear interpolation of the          ADVSRCE.33    
+!  advected field used in centred differencing. The three field            ADVSRCE.34    
+!  points required are chosen, depending on the direction of the           ADVSRCE.35    
+!  normal cell-face velocity, with an upstream bias. The value of          ADVSRCE.36    
+!  the field at these three points is stored in the STENCIL array,         ADVSRCE.37    
+!  STENCIL(1) referring to the point furthest from the cell face etc.      ADVSRCE.38    
+!                                                                          ADVSRCE.39    
+!  Since it behaves like a diffusion term, the quadratic correction        ADVSRCE.40    
+!  is time-lagged for stability.                                           ADVSRCE.41    
+!                                                                          ADVSRCE.42    
+!  Current code owner: D.Storkey                                           ADVSRCE.43    
+!                                                                          ADVSRCE.44    
+! History:                                                                 ADVSRCE.45    
+! Version   Date     Comment                                               ADVSRCE.46    
+! -------   ----     -------                                               ADVSRCE.47    
+! 4.5       7/98     Original code. D.Storkey                              ADVSRCE.48    
+!                                                                          ADVSRCE.49    
+!                                                                          ADVSRCE.50    
+!                                                                          ADVSRCE.51    
+      subroutine ADV_SOURCE(                                               ADVSRCE.52    
+     & scheme,                                                             ADVSRCE.53    
+     & j,                                                                  ADVSRCE.54    
+     & i_max,j_max,k_max,                                                  ADVSRCE.55    
+     & source,                                                             ADVSRCE.56    
+     & x_div,y_div,h_div,z_div,                                            ADVSRCE.57    
+     & field,field_b,                                                      ADVSRCE.58    
+     & field_m,field_bm,                                                   ADVSRCE.59    
+     & field_p,field_bp,                                                   ADVSRCE.60    
+     & field_pp,field_bpp,                                                 ADVSRCE.61    
+     & fuw,fvn,fvs,w,                                                      ADVSRCE.62    
+     & fluxs,fluxn,flux_bot,                                               ADVSRCE.63    
+     & dxr,dyr,recip_cos,                                                  ADVSRCE.64    
+     & dz,dzz,                                                             ADVSRCE.65    
+     & levm,lev,levp,levpp,                                                ADVSRCE.66    
+     & l_oimpaddf,                                                         ADVSRCE.67    
+     & l_ofreesfc,                                                         ADVSRCE.68    
+     & l_bootstrap,                                                        ADVSRCE.69    
+     & l_ocyclic,                                                          ADVSRCE.70    
+     & J_OFFSET,imout,jmout,imout_hud,jmout_hud,ATTEND,HUDTEND,            ADVSRCE.71    
+     & NMEDLEV,m,NT,L_OMEDADV,L_OHUDOUT,sf_dtmed,sf_dsmed,WDTMED,          ADVSRCE.72    
+     & WDSMED,cosu                                                         ADVSRCE.73    
+     & )                                                                   ADVSRCE.74    
+                                                                           ADVSRCE.75    
+      implicit none                                                        ADVSRCE.76    
+                                                                           ADVSRCE.77    
+!-------------------------------------------------------------------       ADVSRCE.78    
+!  Declare argument list.                                                  ADVSRCE.79    
+!-------------------------------------------------------------------       ADVSRCE.80    
+                                                                           ADVSRCE.81    
+      integer                                                              ADVSRCE.82    
+     & j,                      ! in: Local (to this PE) value of j.        ADVSRCE.83    
+     & j_offset,               ! local offset from global row              ADVSRCE.84    
+     & i_max,j_max,k_max,      ! in: Local (to this PE) array              ADVSRCE.85    
+     &                         !     dimensions.                           ADVSRCE.86    
+     & scheme(2)               ! in: scheme(1) is the choice of            ADVSRCE.87    
+                               !     scheme in the horizontal and          ADVSRCE.88    
+                               !     scheme(2) in the vertical.            ADVSRCE.89    
+                               !     =0 for upstream differencing.         ADVSRCE.90    
+                               !     =1 for centred differencing           ADVSRCE.91    
+                               !     =2 for QUICK.                         ADVSRCE.92    
+      INTEGER                                                              ADVSRCE.93    
+     &    imout(4),jmout(4),imout_hud(4),jmout_hud(4),NMEDLEV,NT,m         ADVSRCE.94    
+                                                                           ADVSRCE.95    
+       INTEGER                                                             ADVSRCE.96    
+     & levm(i_max),   ! in: Number of levels at (i,j).                     ADVSRCE.97    
+     & lev(i_max),    ! in: Number of levels at (i,j).                     ADVSRCE.98    
+     & levp(i_max),   ! in: Number of levels at (i,j).                     ADVSRCE.99    
+     & levpp(i_max)   ! in: Number of levels at (i,j).                     ADVSRCE.100   
+                                                                           ADVSRCE.101   
+      real                                                                 ADVSRCE.102   
+     & source(i_max,k_max),    ! out: Advection term.                      ADVSRCE.103   
+                                                                           ADVSRCE.104   
+     & x_div(i_max,k_max),     ! out: STASH diagnostics: x- and y-         ADVSRCE.105   
+     & y_div(i_max,k_max),     !      divergences, horizontal              ADVSRCE.106   
+     & h_div(i_max,k_max+1),   !      divergence and z-divergence.         ADVSRCE.107   
+     & z_div(i_max,k_max),     !                                           ADVSRCE.108   
+                                                                           ADVSRCE.109   
+     & field(i_max,k_max),     !                                           ADVSRCE.110   
+     & field_b(i_max,k_max),   !                                           ADVSRCE.111   
+     & field_m(i_max,k_max),   !                                           ADVSRCE.112   
+     & field_bm(i_max,k_max),  ! in: The advected field. The b,m,          ADVSRCE.113   
+     & field_p(i_max,k_max),   !     and p suffixes have the usual         ADVSRCE.114   
+     & field_bp(i_max,k_max),  !     meanings.                             ADVSRCE.115   
+     & field_pp(i_max,k_max),  !                                           ADVSRCE.116   
+     & field_bpp(i_max,k_max), !                                           ADVSRCE.117   
+                                                                           ADVSRCE.118   
+     & fuw(i_max,k_max),       !                                           ADVSRCE.119   
+     & fvn(i_max,k_max),       ! in: Cell face velocities.                 ADVSRCE.120   
+     & fvs(i_max,k_max),       !                                           ADVSRCE.121   
+     & w(i_max,k_max+1),       !                                           ADVSRCE.122   
+                                                                           ADVSRCE.123   
+     & fluxs(i_max,k_max),     ! in: South-face fluxes.                    ADVSRCE.124   
+     & fluxn(i_max,k_max),     ! out: North-face fluxes.                   ADVSRCE.125   
+     & flux_bot(i_max,k_max+1),! out: Bottom-face fluxes, for STASH        ADVSRCE.126   
+     &                         !      diagnostics for biology.             ADVSRCE.127   
+                                                                           ADVSRCE.128   
+     & dxr(i_max),dyr(j_max),  !                                           ADVSRCE.129   
+     & dz(k_max),dzz(k_max+1), ! in: Grid spacings.                        ADVSRCE.130   
+                                                                           ADVSRCE.131   
+     & recip_cos(j_max)       ! in: Recip. cosine scaling factors.         ADVSRCE.132   
+                                                                           ADVSRCE.133   
+      REAL                                                                 ADVSRCE.134   
+     &     ATTEND(k_max,nt,4)                                              ADVSRCE.135   
+     &,    HUDTEND(k_max,nt,4)                                             ADVSRCE.136   
+     &,    wdtmed(i_max,k_max)                                             ADVSRCE.137   
+     &,    wdsmed(i_max,k_max)                                             ADVSRCE.138   
+     &,    cosu(j_max)                                                     ADVSRCE.139   
+                                                                           ADVSRCE.140   
+      logical                                                              ADVSRCE.141   
+     & l_oimpaddf,             ! in: Control for Crank-Nicholson.          ADVSRCE.142   
+     & l_ofreesfc,             ! in: Control for free surface.             ADVSRCE.143   
+     & l_bootstrap,            ! in: Control for row bootstrap             ADVSRCE.144   
+c                              !     calculation.                          ADVSRCE.145   
+     & l_ocyclic               ! in: cyclic e-w condition                  ADVSRCE.146   
+     &, L_OMEDADV              ! Advective Med outflow                     ADVSRCE.147   
+     &, L_OHUDOUT              ! Advective Hudson Bay outflow              ADVSRCE.148   
+     &, sf_dtmed,sf_dsmed      ! stash flags for med & hud diagnostics     ADVSRCE.149   
+                                                                           ADVSRCE.150   
+!------------------------------------------------------------------        ADVSRCE.151   
+!  Declare local variables.                                                ADVSRCE.152   
+!------------------------------------------------------------------        ADVSRCE.153   
+                                                                           ADVSRCE.154   
+      integer                                                              ADVSRCE.155   
+     & i,k                     ! Loop indices.                             ADVSRCE.156   
+                                                                           ADVSRCE.157   
+      real                                                                 ADVSRCE.158   
+     & face_field(i_max,k_max+1), ! Value of the field at the cell         ADVSRCE.159   
+     &                            ! face. Used successively for            ADVSRCE.160   
+     &                            ! west, north and top cell faces.        ADVSRCE.161   
+     & flux(i_max,k_max+1),       ! Fluxes. Used successively for          ADVSRCE.162   
+     &                            ! west- and top-face fluxes.             ADVSRCE.163   
+                                                                           ADVSRCE.164   
+     & signu,signv,signw,      ! =+0.5 if relevant velocity is >0.         ADVSRCE.165   
+                               ! =-0.5 if relevant velocity is <0.         ADVSRCE.166   
+                                                                           ADVSRCE.167   
+     & upos,uneg,vpos,vneg,    ! =1 if true, =0 if false, eg. if           ADVSRCE.168   
+     & wpos,wneg,              ! u is positive, then upos=1.               ADVSRCE.169   
+                                                                           ADVSRCE.170   
+     & stencil(7),             ! Value of field at this stencil            ADVSRCE.171   
+     &                         ! point.                                    ADVSRCE.172   
+     & upstream_levels         ! Number of levels at upstream point.       ADVSRCE.173   
+     &,FLUXMED(i_max,k_max,nt)                                             ADVSRCE.174   
+     &,FLUXHUD(i_max,k_max,nt)                                             ADVSRCE.175   
+     &,DTWORK(i_max,k_max)                                                 ADVSRCE.176   
+     &,DSWORK(i_max,k_max)                                                 ADVSRCE.177   
+                                                                           ADVSRCE.178   
+!===================================================================       ADVSRCE.179   
+!  Begin executable code.                                                  ADVSRCE.180   
+!===================================================================       ADVSRCE.181   
+                                                                           ADVSRCE.182   
+      if(.NOT.l_bootstrap) then                                            ADVSRCE.183   
+                                                                           ADVSRCE.184   
+C initialise the local outflow variables to zero                           ADVSRCE.185   
+       do k=1,k_max                                                        ADVSRCE.186   
+         do i=1,i_max                                                      ADVSRCE.187   
+           fluxmed(i,k,m)=0.                                               ADVSRCE.188   
+           fluxhud(i,k,m)=0.                                               ADVSRCE.189   
+         enddo                                                             ADVSRCE.190   
+       enddo                                                               ADVSRCE.191   
+!-------------------------------------------------------------------       ADVSRCE.192   
+!  1st, compute flux through west face of tracer box                       ADVSRCE.193   
+!-------------------------------------------------------------------       ADVSRCE.194   
+!                                                                          ADVSRCE.195   
+      if(scheme(1).eq.0) then                                              ADVSRCE.196   
+                                                                           ADVSRCE.197   
+!  upstream differencing.                                                  ADVSRCE.198   
+                                                                           ADVSRCE.199   
+        do k=1,k_max                                                       ADVSRCE.200   
+          do i=2,i_max                                                     ADVSRCE.201   
+            signu=sign(0.5,fuw(i,k))                                       ADVSRCE.202   
+            upos=0.5+signu                                                 ADVSRCE.203   
+            uneg=0.5-signu                                                 ADVSRCE.204   
+            face_field(i,k)=field_b(i-1,k)*upos+field_b(i,k)*uneg          ADVSRCE.205   
+          enddo ! over i                                                   ADVSRCE.206   
+          face_field(1,k)=0.                                               ADVSRCE.207   
+        enddo ! over k                                                     ADVSRCE.208   
+                                                                           ADVSRCE.209   
+      else                                                                 ADVSRCE.210   
+                                                                           ADVSRCE.211   
+!  centred differencing and QUICK.                                         ADVSRCE.212   
+                                                                           ADVSRCE.213   
+        do k=1,k_max                                                       ADVSRCE.214   
+          do i=2,i_max                                                     ADVSRCE.215   
+            face_field(i,k) = 0.5*(field(i,k)+field(i-1,k))                ADVSRCE.216   
+          enddo ! over i                                                   ADVSRCE.217   
+          face_field(1,k)=0.                                               ADVSRCE.218   
+        enddo ! over k                                                     ADVSRCE.219   
+                                                                           ADVSRCE.220   
+        if(scheme(1).eq.2) then                                            ADVSRCE.221   
+                                                                           ADVSRCE.222   
+!  QUICK correction.                                                       ADVSRCE.223   
+                                                                           ADVSRCE.224   
+!  Because there is only one EW wrap-round column in the model, the        ADVSRCE.225   
+!  i=2 and i=i_max points are treated as special cases.                    ADVSRCE.226   
+                                                                           ADVSRCE.227   
+          do k=1,k_max                                                     ADVSRCE.228   
+                                                                           ADVSRCE.229   
+! *** i=2 point ***                                                        ADVSRCE.230   
+          i=2                                                              ADVSRCE.231   
+            signu=sign(0.5,fuw(2,k))                                       ADVSRCE.232   
+            upos=0.5+signu                                                 ADVSRCE.233   
+            uneg=0.5-signu                                                 ADVSRCE.234   
+                                                                           ADVSRCE.235   
+            stencil(1)=field_b(i_max-1,k)*upos+field_b(3,k)*uneg           ADVSRCE.236   
+            stencil(2)=field_b(1      ,k)*upos+field_b(2,k)*uneg           ADVSRCE.237   
+            stencil(3)=field_b(2      ,k)*upos+field_b(1,k)*uneg           ADVSRCE.238   
+            upstream_levels=float(lev(i_max-1))*upos+                      ADVSRCE.239   
+     &                                     float(lev(3))*uneg              ADVSRCE.240   
+                                                                           ADVSRCE.241   
+!  If stencil(1) point is land, set equal to stencil(2).                   ADVSRCE.242   
+                                                                           ADVSRCE.243   
+            if(upstream_levels.lt.k) then                                  ADVSRCE.244   
+              stencil(1)=stencil(2)                                        ADVSRCE.245   
+            endif                                                          ADVSRCE.246   
+                                                                           ADVSRCE.247   
+            face_field(i,k)=face_field(i,k)                                ADVSRCE.248   
+     &             -0.125*(stencil(1)-2.0*stencil(2)+stencil(3))           ADVSRCE.249   
+                                                                           ADVSRCE.250   
+! *** i=3 -> i=i_max-1 points ***                                          ADVSRCE.251   
+                                                                           ADVSRCE.252   
+            do i=3,i_max-1                                                 ADVSRCE.253   
+              signu=sign(0.5,fuw(i,k))                                     ADVSRCE.254   
+              upos=0.5+signu                                               ADVSRCE.255   
+              uneg=0.5-signu                                               ADVSRCE.256   
+                                                                           ADVSRCE.257   
+              stencil(1)=field_b(i-2,k)*upos+field_b(i+1,k)*uneg           ADVSRCE.258   
+              stencil(2)=field_b(i-1,k)*upos+field_b(i  ,k)*uneg           ADVSRCE.259   
+              stencil(3)=field_b(i  ,k)*upos+field_b(i-1,k)*uneg           ADVSRCE.260   
+              upstream_levels=float(lev(i-2))*upos+float(lev(i+1))*uneg    ADVSRCE.261   
+                                                                           ADVSRCE.262   
+!  If stencil(1) point is land, set equal to stencil(2).                   ADVSRCE.263   
+                                                                           ADVSRCE.264   
+              if(upstream_levels.lt.k) then                                ADVSRCE.265   
+                stencil(1)=stencil(2)                                      ADVSRCE.266   
+              endif                                                        ADVSRCE.267   
+                                                                           ADVSRCE.268   
+              face_field(i,k)=face_field(i,k)                              ADVSRCE.269   
+     &               -0.125*(stencil(1)-2.0*stencil(2)+stencil(3))         ADVSRCE.270   
+                                                                           ADVSRCE.271   
+            enddo ! over i                                                 ADVSRCE.272   
+                                                                           ADVSRCE.273   
+!  *** i=i_max point ***                                                   ADVSRCE.274   
+          i=i_max                                                          ADVSRCE.275   
+            signu=sign(0.5,fuw(i_max,k))                                   ADVSRCE.276   
+            upos=0.5+signu                                                 ADVSRCE.277   
+            uneg=0.5-signu                                                 ADVSRCE.278   
+                                                                           ADVSRCE.279   
+            stencil(1)=field_b(i_max-2,k)*upos                             ADVSRCE.280   
+     &                          +field_b(2      ,k)*uneg                   ADVSRCE.281   
+            stencil(2)=field_b(i_max-1,k)*upos                             ADVSRCE.282   
+     &                          +field_b(i_max  ,k)*uneg                   ADVSRCE.283   
+            stencil(3)=field_b(i_max  ,k)*upos                             ADVSRCE.284   
+     &                          +field_b(i_max-1,k)*uneg                   ADVSRCE.285   
+            upstream_levels=float(lev(i_max-2))*upos                       ADVSRCE.286   
+     &                          +float(lev(2))*uneg                        ADVSRCE.287   
+                                                                           ADVSRCE.288   
+!  If stencil(1) point is land, set equal to stencil(2).                   ADVSRCE.289   
+                                                                           ADVSRCE.290   
+            if(upstream_levels.lt.k) then                                  ADVSRCE.291   
+              stencil(1)=stencil(2)                                        ADVSRCE.292   
+            endif                                                          ADVSRCE.293   
+                                                                           ADVSRCE.294   
+            face_field(i,k)=face_field(i,k)                                ADVSRCE.295   
+     &             -0.125*(stencil(1)-2.0*stencil(2)+stencil(3))           ADVSRCE.296   
+                                                                           ADVSRCE.297   
+          enddo ! over k                                                   ADVSRCE.298   
+                                                                           ADVSRCE.299   
+        endif ! scheme(1).eq.2                                             ADVSRCE.300   
+      endif   ! scheme(1).eq.0                                             ADVSRCE.301   
+                                                                           ADVSRCE.302   
+      do k=1,k_max                                                         ADVSRCE.303   
+        do i=1,i_max                                                       ADVSRCE.304   
+          flux(i,k)=fuw(i,k)*face_field(i,k)                               ADVSRCE.305   
+        enddo ! over i                                                     ADVSRCE.306   
+      enddo ! over k                                                       ADVSRCE.307   
+                                                                           ADVSRCE.308   
+C need to calculate the zonal flux divergence for the Med outflow,         ADVSRCE.309   
+C which looks at non-adjacent points. Also, in order to separate           ADVSRCE.310   
+C the rate of change advection and Med outflow diagnostics, the            ADVSRCE.311   
+C appropriate TEMPA values are zeroed.                                     ADVSRCE.312   
+       IF (L_OMEDADV) THEN                                                 ADVSRCE.313   
+                                                                           ADVSRCE.314   
+       IF (J+J_OFFSET.eq.jmout(1)) then                                    ADVSRCE.315   
+        do k=1,nmedlev                                                     ADVSRCE.316   
+         FLUXMED(imout(1)+1,K,M)=FUW(imout(1)+1,K)*attend(k,m,1)           ADVSRCE.317   
+         FLUX(imout(1)+1,K)=0.                                             ADVSRCE.318   
+        enddo                                                              ADVSRCE.319   
+       ENDIF                                                               ADVSRCE.320   
+                                                                           ADVSRCE.321   
+       IF (J+J_OFFSET.eq.jmout(2)) then                                    ADVSRCE.322   
+        do k=1,nmedlev                                                     ADVSRCE.323   
+         FLUXMED(imout(2)+1,K,M)=FUW(imout(2)+1,K)*attend(k,m,2)           ADVSRCE.324   
+         FLUX(imout(2)+1,K)=0.                                             ADVSRCE.325   
+        enddo                                                              ADVSRCE.326   
+       ENDIF                                                               ADVSRCE.327   
+                                                                           ADVSRCE.328   
+       IF (J+J_OFFSET.eq.jmout(3)) then                                    ADVSRCE.329   
+        do k=1,nmedlev                                                     ADVSRCE.330   
+         FLUXMED(imout(3),K,M)=FUW(imout(3),K)*attend(k,m,3)               ADVSRCE.331   
+         FLUX(imout(3),K)=0.                                               ADVSRCE.332   
+        enddo                                                              ADVSRCE.333   
+       ENDIF                                                               ADVSRCE.334   
+                                                                           ADVSRCE.335   
+       IF (J+J_OFFSET.eq.jmout(4)) then                                    ADVSRCE.336   
+        do k=1,nmedlev                                                     ADVSRCE.337   
+         FLUXMED(imout(4),K,M)=FUW(imout(4),K)*attend(k,m,4)               ADVSRCE.338   
+         FLUX(imout(4),K)=0.                                               ADVSRCE.339   
+        enddo                                                              ADVSRCE.340   
+       ENDIF                                                               ADVSRCE.341   
+                                                                           ADVSRCE.342   
+C need to calculate the zonal flux divergence for the Hudson Bay           ADVSRCE.343   
+C outflow, which looks at non-adjacent points. Also, in order to           ADVSRCE.344   
+C separate the rate of change advection and Med outflow diagnostics,       ADVSRCE.345   
+C the appropriate TEMPA values are zeroed.                                 ADVSRCE.346   
+                                                                           ADVSRCE.347   
+      IF (L_OHUDOUT) THEN                                                  ADVSRCE.348   
+       IF (J+J_OFFSET.eq.jmout_hud(1)) then                                ADVSRCE.349   
+        do k=1,k_max                                                       ADVSRCE.350   
+         FLUXHUD(imout_hud(1)+1,K,M)=FUW(imout_hud(1)+1,K)                 ADVSRCE.351   
+     &                   *hudtend(k,m,1)                                   ADVSRCE.352   
+         FLUX(imout_hud(1)+1,K)=0.                                         ADVSRCE.353   
+        enddo                                                              ADVSRCE.354   
+       ENDIF                                                               ADVSRCE.355   
+                                                                           ADVSRCE.356   
+       IF (J+J_OFFSET.eq.jmout_hud(2)) then                                ADVSRCE.357   
+        do k=1,k_max                                                       ADVSRCE.358   
+         FLUXHUD(imout_hud(2)+1,K,M)=FUW(imout_hud(2)+1,K)                 ADVSRCE.359   
+     &                   *hudtend(k,m,2)                                   ADVSRCE.360   
+         FLUX(imout_hud(2)+1,K)=0.                                         ADVSRCE.361   
+        enddo                                                              ADVSRCE.362   
+       ENDIF                                                               ADVSRCE.363   
+                                                                           ADVSRCE.364   
+       IF (J+J_OFFSET.eq.jmout_hud(3)) then                                ADVSRCE.365   
+        do k=1,k_max                                                       ADVSRCE.366   
+         FLUXHUD(imout_hud(3),K,M)=FUW(imout_hud(3),K)                     ADVSRCE.367   
+     &                   *hudtend(k,m,3)                                   ADVSRCE.368   
+         FLUX(imout_hud(3),K)=0.                                           ADVSRCE.369   
+        enddo                                                              ADVSRCE.370   
+       ENDIF                                                               ADVSRCE.371   
+                                                                           ADVSRCE.372   
+       IF (J+J_OFFSET.eq.jmout_hud(4)) then                                ADVSRCE.373   
+        do k=1,k_max                                                       ADVSRCE.374   
+         FLUXHUD(imout_hud(4),K,M)=FUW(imout_hud(4),K)                     ADVSRCE.375   
+     &                   *hudtend(k,m,4)                                   ADVSRCE.376   
+         FLUX(imout_hud(4),K)=0.                                           ADVSRCE.377   
+        enddo                                                              ADVSRCE.378   
+       ENDIF                                                               ADVSRCE.379   
+       ENDIF  ! L_OHUDOUT                                                  ADVSRCE.380   
+                                                                           ADVSRCE.381   
+       ENDIF  ! L_OMEDADV                                                  ADVSRCE.382   
+!                                                                          ADVSRCE.383   
+!-------------------------------------------------------------------       ADVSRCE.384   
+!  2nd, compute zonal flux divergence                                      ADVSRCE.385   
+!-------------------------------------------------------------------       ADVSRCE.386   
+!                                                                          ADVSRCE.387   
+      do k=1,k_max                                                         ADVSRCE.388   
+        do i=1,i_max-1                                                     ADVSRCE.389   
+c use if diagnostics required are u.grad(T)                                ADVSRCE.390   
+          x_div(i,k)=(face_field(i,k)-face_field(i+1,k))                   ADVSRCE.391   
+     &                                       *dxr(i)*recip_cos(j)          ADVSRCE.392   
+          x_div(i,k)=0.5*x_div(i,k)*(fuw(i,k)+fuw(i+1,k))                  ADVSRCE.393   
+          source(i,k)=(flux(i,k)-flux(i+1,k))*dxr(i)*recip_cos(j)          ADVSRCE.394   
+c use if diagnostics required are div(uT)                                  ADVSRCE.395   
+c          x_div(i,k)=(flux(i,k)-flux(i+1,k))*dxr(i)*recip_cos(j)          ADVSRCE.396   
+c          source(i,k)=x_div(i,k)                                          ADVSRCE.397   
+        enddo ! over i                                                     ADVSRCE.398   
+        x_div(i_max,k)=0.                                                  ADVSRCE.399   
+        source(i_max,k)=0.                                                 ADVSRCE.400   
+      enddo ! over k                                                       ADVSRCE.401   
+                                                                           ADVSRCE.402   
+      IF (L_OMEDADV) THEN                                                  ADVSRCE.403   
+C     Mediterranean outflow diagnostics:                                   ADVSRCE.404   
+        IF (SF_DTMED.and.(m.eq.1)) THEN                                    ADVSRCE.405   
+          DO K=1,K_max                                                     ADVSRCE.406   
+            DO I=1,i_max                                                   ADVSRCE.407   
+              DTWORK(I,K)=source(I,K)                                      ADVSRCE.408   
+            ENDDO                                                          ADVSRCE.409   
+          ENDDO                                                            ADVSRCE.410   
+        ENDIF                                                              ADVSRCE.411   
+                                                                           ADVSRCE.412   
+        IF (SF_DSMED.and.(m.eq.2)) THEN                                    ADVSRCE.413   
+          DO K=1,K_max                                                     ADVSRCE.414   
+           DO I=1,I_max                                                    ADVSRCE.415   
+             DSWORK(I,K)=source(I,K)                                       ADVSRCE.416   
+           ENDDO                                                           ADVSRCE.417   
+          ENDDO                                                            ADVSRCE.418   
+        ENDIF                                                              ADVSRCE.419   
+                                                                           ADVSRCE.420   
+C                                                                          ADVSRCE.421   
+C add in Mediterranean zonal flux divergence                               ADVSRCE.422   
+        DO K=1,K_max                                                       ADVSRCE.423   
+          DO I=1,I_max-1                                                   ADVSRCE.424   
+           source(I,K)=source(I,K)+(FLUXMED(I,K,M)-FLUXMED(I+1,K,M))       ADVSRCE.425   
+     &                                    *dxr(i)                          ADVSRCE.426   
+          ENDDO                                                            ADVSRCE.427   
+          source(I_max,K)=0.0                                              ADVSRCE.428   
+        ENDDO                                                              ADVSRCE.429   
+                                                                           ADVSRCE.430   
+        IF (L_OHUDOUT) THEN                                                ADVSRCE.431   
+C add in Hudson Bay zonal flux divergence                                  ADVSRCE.432   
+        DO K=1,K_max                                                       ADVSRCE.433   
+          DO I=1,i_max-1                                                   ADVSRCE.434   
+           source(I,K)=source(I,K)+(FLUXHUD(I,K,M)-FLUXHUD(I+1,K,M))       ADVSRCE.435   
+     &                                    *dxr(i)                          ADVSRCE.436   
+          ENDDO                                                            ADVSRCE.437   
+          source(I_max,K)=0.0                                              ADVSRCE.438   
+        ENDDO                                                              ADVSRCE.439   
+        ENDIF ! L_OHUDOUT                                                  ADVSRCE.440   
+                                                                           ADVSRCE.441   
+C     Mediterranean outflow diagnostics:                                   ADVSRCE.442   
+        IF (SF_DTMED.and.(m.eq.1)) THEN                                    ADVSRCE.443   
+          DO K=1,K_max                                                     ADVSRCE.444   
+           DO I=1,I_max                                                    ADVSRCE.445   
+             WDTMED(I,K)=source(I,K)-DTWORK(I,K)                           ADVSRCE.446   
+           ENDDO                                                           ADVSRCE.447   
+          ENDDO                                                            ADVSRCE.448   
+        ENDIF                                                              ADVSRCE.449   
+                                                                           ADVSRCE.450   
+        IF (SF_DSMED.and.(m.eq.2)) THEN                                    ADVSRCE.451   
+          DO K=1,K_max                                                     ADVSRCE.452   
+           DO I=1,I_max                                                    ADVSRCE.453   
+             WDSMED(I,K)=source(I,K)-DSWORK(I,K)                           ADVSRCE.454   
+           ENDDO                                                           ADVSRCE.455   
+          ENDDO                                                            ADVSRCE.456   
+        ENDIF                                                              ADVSRCE.457   
+                                                                           ADVSRCE.458   
+      ENDIF  ! L_OMEDADV                                                   ADVSRCE.459   
+                                                                           ADVSRCE.460   
+      endif ! not.l_bootstrap                                              ADVSRCE.461   
+                                                                           ADVSRCE.462   
+!-------------------------------------------------------------------       ADVSRCE.463   
+!  3rd, compute flux through north face of t box                           ADVSRCE.464   
+!-------------------------------------------------------------------       ADVSRCE.465   
+!                                                                          ADVSRCE.466   
+!  Note have to use fluxn, fluxs variables in the meridional               ADVSRCE.467   
+!  direction.                                                              ADVSRCE.468   
+!                                                                          ADVSRCE.469   
+      if(scheme(1).eq.0) then                                              ADVSRCE.470   
+                                                                           ADVSRCE.471   
+!  upstream differencing.                                                  ADVSRCE.472   
+                                                                           ADVSRCE.473   
+        do k=1,k_max                                                       ADVSRCE.474   
+          do i=1,i_max                                                     ADVSRCE.475   
+            signv=sign(0.5,fvn(i,k))                                       ADVSRCE.476   
+            vpos=0.5+signv                                                 ADVSRCE.477   
+            vneg=0.5-signv                                                 ADVSRCE.478   
+            face_field(i,k)=field_b(i,k)*vpos+field_bp(i,k)*vneg           ADVSRCE.479   
+          enddo ! over i                                                   ADVSRCE.480   
+        enddo   ! over k                                                   ADVSRCE.481   
+                                                                           ADVSRCE.482   
+      else                                                                 ADVSRCE.483   
+                                                                           ADVSRCE.484   
+!  centred differencing and QUICK.                                         ADVSRCE.485   
+                                                                           ADVSRCE.486   
+        do k=1,k_max                                                       ADVSRCE.487   
+          do i=1,i_max                                                     ADVSRCE.488   
+            face_field(i,k) = 0.5*(field(i,k)+field_p(i,k))                ADVSRCE.489   
+          enddo ! over i                                                   ADVSRCE.490   
+        enddo   ! over k                                                   ADVSRCE.491   
+                                                                           ADVSRCE.492   
+        if(scheme(1).eq.2) then                                            ADVSRCE.493   
+                                                                           ADVSRCE.494   
+!  QUICK correction.                                                       ADVSRCE.495   
+                                                                           ADVSRCE.496   
+          do k=1,k_max                                                     ADVSRCE.497   
+            do i=1,i_max                                                   ADVSRCE.498   
+              signv=sign(0.5,fvn(i,k))                                     ADVSRCE.499   
+              vpos=0.5+signv                                               ADVSRCE.500   
+              vneg=0.5-signv                                               ADVSRCE.501   
+                                                                           ADVSRCE.502   
+              stencil(1)=field_bm(i,k)*vpos+field_bpp(i,k)*vneg            ADVSRCE.503   
+              stencil(2)=field_b( i,k)*vpos+field_bp( i,k)*vneg            ADVSRCE.504   
+              stencil(3)=field_bp(i,k)*vpos+field_b(  i,k)*vneg            ADVSRCE.505   
+              upstream_levels=float(levm(i))*vpos+float(levpp(i))*vneg     ADVSRCE.506   
+                                                                           ADVSRCE.507   
+!  If stencil(1) point is land, set equal to stencil(2).                   ADVSRCE.508   
+                                                                           ADVSRCE.509   
+              if(upstream_levels.lt.k) then                                ADVSRCE.510   
+                stencil(1)=stencil(2)                                      ADVSRCE.511   
+              endif                                                        ADVSRCE.512   
+                                                                           ADVSRCE.513   
+              face_field(i,k)=face_field(i,k)                              ADVSRCE.514   
+     &                 -0.125*(stencil(1)-2.0*stencil(2)+stencil(3))       ADVSRCE.515   
+                                                                           ADVSRCE.516   
+            enddo ! over i                                                 ADVSRCE.517   
+          enddo   ! over k                                                 ADVSRCE.518   
+        endif ! scheme(1).eq.2                                             ADVSRCE.519   
+      endif   ! scheme(1).eq.0                                             ADVSRCE.520   
+                                                                           ADVSRCE.521   
+      do k=1,k_max                                                         ADVSRCE.522   
+        do i=1,i_max                                                       ADVSRCE.523   
+          fluxn(i,k)=fvn(i,k)*face_field(i,k)                              ADVSRCE.524   
+        enddo ! over i                                                     ADVSRCE.525   
+      enddo   ! over k                                                     ADVSRCE.526   
+                                                                           ADVSRCE.527   
+      if(.NOT.l_bootstrap) then                                            ADVSRCE.528   
+!-------------------------------------------------------------------       ADVSRCE.529   
+!  4th, compute meridional flux divergence                                 ADVSRCE.530   
+!-------------------------------------------------------------------       ADVSRCE.531   
+!                                                                          ADVSRCE.532   
+      do k=1,k_max                                                         ADVSRCE.533   
+        do i=1,i_max                                                       ADVSRCE.534   
+c use if diagnostics required are u.grad(T)                                ADVSRCE.535   
+          if(fvs(i,k).ne.0.0) then                                         ADVSRCE.536   
+            y_div(i,k)=(fluxs(i,k)/fvs(i,k)-face_field(i,k))*dyr(j)        ADVSRCE.537   
+          else                                                             ADVSRCE.538   
+            y_div(i,k)=-face_field(i,k)*dyr(j)                             ADVSRCE.539   
+          endif                                                            ADVSRCE.540   
+          y_div(i,k)=0.5*y_div(i,k)*(fvs(i,k)+fvn(i,k))                    ADVSRCE.541   
+          source(i,k)=source(i,k)+(fluxs(i,k)-fluxn(i,k))*dyr(j)           ADVSRCE.542   
+c use if diagnostics required are div(uT)                                  ADVSRCE.543   
+c          y_div(i,k)=(fluxs(i,k)-fluxn(i,k))*dyr(j)                       ADVSRCE.544   
+c          source(i,k)=source(i,k)+y_div(i,k)                              ADVSRCE.545   
+          h_div(i,k)=source(i,k)                                           ADVSRCE.546   
+        enddo ! over i                                                     ADVSRCE.547   
+      enddo ! over k                                                       ADVSRCE.548   
+                                                                           ADVSRCE.549   
+      if (.not.(l_oimpaddf)) then                                          ADVSRCE.550   
+!-------------------------------------------------------------------       ADVSRCE.551   
+!  5th, compute flux through top of t box                                  ADVSRCE.552   
+!-------------------------------------------------------------------       ADVSRCE.553   
+!                                                                          ADVSRCE.554   
+      if(scheme(2).eq.0) then                                              ADVSRCE.555   
+                                                                           ADVSRCE.556   
+!  upstream differencing.                                                  ADVSRCE.557   
+                                                                           ADVSRCE.558   
+        do k=2,k_max                                                       ADVSRCE.559   
+          do i=1,i_max                                                     ADVSRCE.560   
+            signw=sign(0.5,w(i,k))                                         ADVSRCE.561   
+            wpos=0.5+signw                                                 ADVSRCE.562   
+            wneg=0.5-signw                                                 ADVSRCE.563   
+            face_field(i,k)=field_b(i,k)*wpos+field_b(i,k-1)*wneg          ADVSRCE.564   
+          enddo ! over i                                                   ADVSRCE.565   
+        enddo   ! over k                                                   ADVSRCE.566   
+                                                                           ADVSRCE.567   
+      else if(scheme(2).eq.1) then                                         ADVSRCE.568   
+                                                                           ADVSRCE.569   
+!  centred differencing.                                                   ADVSRCE.570   
+                                                                           ADVSRCE.571   
+        do k=2,k_max                                                       ADVSRCE.572   
+          do i=1,i_max                                                     ADVSRCE.573   
+            face_field(i,k) = 0.5*(field(i,k-1)+field(i,k))                ADVSRCE.574   
+          enddo ! over i                                                   ADVSRCE.575   
+        enddo   ! over k                                                   ADVSRCE.576   
+                                                                           ADVSRCE.577   
+      else if(scheme(2).eq.2) then                                         ADVSRCE.578   
+                                                                           ADVSRCE.579   
+!  QUICK.                                                                  ADVSRCE.580   
+                                                                           ADVSRCE.581   
+        do k=2,k_max                                                       ADVSRCE.582   
+            do i=1,i_max                                                   ADVSRCE.583   
+            face_field(i,k) = 0.5*(dz(k  )*field(i,k-1)                    ADVSRCE.584   
+     &                            +dz(k-1)*field(i,k  ))/dzz(k)            ADVSRCE.585   
+                                                                           ADVSRCE.586   
+            signw=sign(0.5,w(i,k))                                         ADVSRCE.587   
+            wpos=0.5+signw                                                 ADVSRCE.588   
+            wneg=0.5-signw                                                 ADVSRCE.589   
+                                                                           ADVSRCE.590   
+            stencil(1)=field_b(i,k+1)*wpos+field_b(i,k-2)*wneg             ADVSRCE.591   
+            stencil(2)=field_b(i,k  )*wpos+field_b(i,k-1)*wneg             ADVSRCE.592   
+            stencil(3)=field_b(i,k-1)*wpos+field_b(i,k  )*wneg             ADVSRCE.593   
+                                                                           ADVSRCE.594   
+!  If stencil(1) point is land, set equal to stencil(2).                   ADVSRCE.595   
+                                                                           ADVSRCE.596   
+            if(                                                            ADVSRCE.597   
+     &         (k-2.lt.1.AND.wneg.eq.1).OR.                                ADVSRCE.598   
+     &           (k+1.gt.lev(i).AND.wpos.eq.1)) then                       ADVSRCE.599   
+              stencil(1)=stencil(2)                                        ADVSRCE.600   
+            endif                                                          ADVSRCE.601   
+                                                                           ADVSRCE.602   
+            face_field(i,k)=face_field(i,k)                                ADVSRCE.603   
+     &         -0.25*dz(k)*dz(k-1)                                         ADVSRCE.604   
+     &            *(stencil(1)/(dzz(k+1)*(dzz(k+1)+dzz(k)))                ADVSRCE.605   
+     &             -stencil(2)/(dzz(k+1)*dzz(k))                           ADVSRCE.606   
+     &             +stencil(3)/((dzz(k+1)+dzz(k))*dzz(k)))                 ADVSRCE.607   
+                                                                           ADVSRCE.608   
+          enddo ! over i                                                   ADVSRCE.609   
+        enddo   ! over k                                                   ADVSRCE.610   
+      endif   ! scheme(2).eq.0,1,2                                         ADVSRCE.611   
+                                                                           ADVSRCE.612   
+      do k=2,k_max                                                         ADVSRCE.613   
+        do i=1,i_max                                                       ADVSRCE.614   
+          flux(i,k)=w(i,k)*face_field(i,k)                                 ADVSRCE.615   
+        enddo ! over i                                                     ADVSRCE.616   
+      enddo   ! over k                                                     ADVSRCE.617   
+!                                                                          ADVSRCE.618   
+! The following calculation for the flux at the surface for the free       ADVSRCE.619   
+! surface solution follows the method used by Killworth and used in        ADVSRCE.620   
+! the MOMA code. It is not second order accurate.                          ADVSRCE.621   
+!                                                                          ADVSRCE.622   
+      if (l_ofreesfc) then                                                 ADVSRCE.623   
+        do i=1,i_max                                                       ADVSRCE.624   
+          face_field(i,1)=field(i,1)                                       ADVSRCE.625   
+          face_field(i,k_max+1)=0.0                                        ADVSRCE.626   
+          flux(i,1)=w(i,1)*field(i,1)                                      ADVSRCE.627   
+          flux(i,k_max+1)=0.0                                              ADVSRCE.628   
+        enddo                                                              ADVSRCE.629   
+      else                                                                 ADVSRCE.630   
+        do i=1,i_max                                                       ADVSRCE.631   
+          face_field(i,1)=0.0                                              ADVSRCE.632   
+          face_field(i,k_max+1)=0.0                                        ADVSRCE.633   
+          flux(i,1)=0.0                                                    ADVSRCE.634   
+          flux(i,k_max+1)=0.0                                              ADVSRCE.635   
+        enddo                                                              ADVSRCE.636   
+      endif     ! l_ofreesfc                                               ADVSRCE.637   
+                                                                           ADVSRCE.638   
+!-------------------------------------------------------------------       ADVSRCE.639   
+!  6th, add in vertical flux divergence                                    ADVSRCE.640   
+!-------------------------------------------------------------------       ADVSRCE.641   
+      do k=1,k_max                                                         ADVSRCE.642   
+        do i=1,i_max                                                       ADVSRCE.643   
+          flux_bot(i,k)=flux(i,k+1)                                        ADVSRCE.644   
+c use if diagnostics required are u.grad(T)                                ADVSRCE.645   
+          z_div(i,k)=(face_field(i,k+1)-face_field(i,k))/dz(k)             ADVSRCE.646   
+          z_div(i,k)=0.5*z_div(i,k)*(w(i,k)+w(i,k+1))                      ADVSRCE.647   
+          source(i,k)=source(i,k)+(flux(i,k+1)-flux(i,k))/dz(k)            ADVSRCE.648   
+c use if diagnostics required are div(uT)                                  ADVSRCE.649   
+c          z_div(i,k)=(flux(i,k+1)-flux(i,k))/dz(k)                        ADVSRCE.650   
+c          source(i,k)=source(i,k)+z_div(i,k)                              ADVSRCE.651   
+        enddo  !  over i                                                   ADVSRCE.652   
+      enddo ! over k                                                       ADVSRCE.653   
+                                                                           ADVSRCE.654   
+      endif ! l_oimpaddf = false                                           ADVSRCE.655   
+      endif ! not.l_bootstrap                                              ADVSRCE.656   
+                                                                           ADVSRCE.657   
+      return                                                               ADVSRCE.658   
+      end                                                                  ADVSRCE.659   
+!                                                                          ADVSRCE.660   
+*ENDIF                                                                     ADVSRCE.661   

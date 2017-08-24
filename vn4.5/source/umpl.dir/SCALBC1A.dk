@@ -1,0 +1,661 @@
+*IF DEF,C96_1A,OR,DEF,C96_1B                                               GPB3F403.287   
+*IF DEF,MPP                                                                GPB3F403.288   
+C *****************************COPYRIGHT******************************     SCALBC1A.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    SCALBC1A.4     
+C                                                                          SCALBC1A.5     
+C Use, duplication or disclosure of this code is subject to the            SCALBC1A.6     
+C restrictions as set forth in the contract.                               SCALBC1A.7     
+C                                                                          SCALBC1A.8     
+C                Meteorological Office                                     SCALBC1A.9     
+C                London Road                                               SCALBC1A.10    
+C                BRACKNELL                                                 SCALBC1A.11    
+C                Berkshire UK                                              SCALBC1A.12    
+C                RG12 2SZ                                                  SCALBC1A.13    
+C                                                                          SCALBC1A.14    
+C If no contract has been raised with this copy of the code, the use,      SCALBC1A.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      SCALBC1A.16    
+C to do so must first be obtained in writing from the Head of Numerical    SCALBC1A.17    
+C Modelling at the above address.                                          SCALBC1A.18    
+C ******************************COPYRIGHT******************************    SCALBC1A.19    
+!+ Passes out atmosphere LBCs to processors at boundaries                  SCALBC1A.20    
+!                                                                          SCALBC1A.21    
+! Subroutine Interface                                                     SCALBC1A.22    
+      SUBROUTINE SCATTER_ATMOS_LBCS(FULL_LBC,FULL_LENRIMDATA,              SCALBC1A.23    
+     &                              PART_LBC,PART_LENRIMDATA,              SCALBC1A.24    
+     &                              SCATTER_PE,                            SCALBC1A.25    
+     &                              ICODE,CMESSAGE)                        SCALBC1A.26    
+      IMPLICIT NONE                                                        SCALBC1A.27    
+!                                                                          SCALBC1A.28    
+! Description:                                                             SCALBC1A.29    
+! Scatters atmosphere LBCs to relevant processors at the                   SCALBC1A.30    
+! grid boundaries                                                          SCALBC1A.31    
+!                                                                          SCALBC1A.32    
+! Method:                                                                  SCALBC1A.33    
+! The code loops around over all the processors.  For each                 SCALBC1A.34    
+! processor there is then a loop over the four boundaries                  SCALBC1A.35    
+! (North, East, South and West) and if the processor is on                 SCALBC1A.36    
+! that particular boundary region, the appropriate data                    SCALBC1A.37    
+! is sent from SCATTER_PE's FULL_LBC array to that                         SCALBC1A.38    
+! processors PART_LBC array.                                               SCALBC1A.39    
+! The data is transferred via two arrays, buf (the data to be              SCALBC1A.40    
+! sent) and buf_expand (the data being received) which are both            SCALBC1A.41    
+! on COMMON, to make the comms work with CRAY shmem correctly.             SCALBC1A.42    
+!                                                                          SCALBC1A.43    
+! The data structure of the PART_LBC array is a little different           SCALBC1A.44    
+! from the "standard" LBC data structure as described in                   SCALBC1A.45    
+! documentation paper C7. The East and West boundarys are both             SCALBC1A.46    
+! dimensioned to have P_ROWS of data on all grids. Not all                 SCALBC1A.47    
+! of the rows are used (rows are used starting from the top, so            SCALBC1A.48    
+! some of the lower rows may not contain meaningful data on                SCALBC1A.49    
+! some processors)                                                         SCALBC1A.50    
+!                                                                          SCALBC1A.51    
+! Current code owner : Paul Burton                                         SCALBC1A.52    
+!                                                                          SCALBC1A.53    
+! History                                                                  SCALBC1A.54    
+!  Model    Date       Modification history from model version 4.1         SCALBC1A.55    
+!  version                                                                 SCALBC1A.56    
+!    4.1    3/1/96     New Deck for MPP code   P.Burton                    SCALBC1A.57    
+!    4.2    18/11/96   Tidy up use of COMMON blocks.  P.Burton             GPB3F402.85    
+!    4.2    23/10/96   Use GC_SETOPT to use GETs under GCOM_shmem          GPB2F402.352   
+!                      P.Burton                                            GPB2F402.353   
+!    4.4    08/12/97   Extend to cope with QCF prognostic if mixed         ARB1F404.380   
+!                      phase precip scheme in use.  R.T.H.Barnes.          ARB1F404.381   
+!    4.5    13/01/98   Removed SHMEM COMMON block and replaced by          GPB2F405.160   
+!                      dynamic arrays.                   P.Burton          GPB2F405.161   
+!                                                                          SCALBC1A.58    
+! Subroutine Arguments:                                                    SCALBC1A.59    
+                                                                           SCALBC1A.60    
+      INTEGER                                                              SCALBC1A.61    
+     &  FULL_LENRIMDATA   ! IN size of the FULL_LBC array                  SCALBC1A.62    
+     &, PART_LENRIMDATA   ! IN size of the PART_LBC array                  SCALBC1A.63    
+     &, SCATTER_PE        ! IN processor to scatter data from              SCALBC1A.64    
+     &, ICODE             ! OUT error code                                 SCALBC1A.65    
+                                                                           SCALBC1A.66    
+      CHARACTER*(80)                                                       SCALBC1A.67    
+     &  CMESSAGE          ! OUT error message                              SCALBC1A.68    
+                                                                           SCALBC1A.69    
+      REAL                                                                 SCALBC1A.70    
+     &  FULL_LBC(FULL_LENRIMDATA)  ! IN full LBC (only on SCATTER_PE)      SCALBC1A.71    
+     &, PART_LBC(PART_LENRIMDATA)  ! OUT local part of LBC                 SCALBC1A.72    
+                                                                           SCALBC1A.73    
+! Parameters and COMMON                                                    SCALBC1A.74    
+                                                                           SCALBC1A.75    
+*CALL PARVARS                                                              SCALBC1A.76    
+*CALL GCCOM                                                                GPB2F402.354   
+                                                                           SCALBC1A.77    
+      REAL                                                                 GPB2F405.162   
+     &  local_buf(FULL_LENRIMDATA)                                         GPB2F405.163   
+     &, buf3(FULL_LENRIMDATA)                                              GPB2F405.164   
+                                                                           SCALBC1A.80    
+! TYPESIZE contains information about the tracers, and also                SCALBC1A.81    
+! P_LEVELS, Q_LEVELS and RIMWIDTHA which we require                        SCALBC1A.82    
+*CALL TYPSIZE                                                              SCALBC1A.83    
+! CNTLATM contains L_LSPICE_BDY to say whether LBC file contains QCF       ARB1F404.382   
+*CALL CNTLATM                                                              ARB1F404.383   
+                                                                           SCALBC1A.84    
+! Local variables                                                          SCALBC1A.85    
+                                                                           SCALBC1A.86    
+      INTEGER                                                              SCALBC1A.87    
+     &  global_ROW_LENGTH ! length of row on global P grid                 SCALBC1A.88    
+     &, global_P_ROWS     ! number of rows on global P grid                SCALBC1A.89    
+     &, local_ROW_LENGTH  ! length of row on local P grid (no halos)       SCALBC1A.90    
+     &, local_U_ROW_LENGTH ! length of row on local U grid (no halos)      SCALBC1A.91    
+     &, local_P_ROWS      ! number of rows on local P grid (no halos)      SCALBC1A.92    
+     &, global_P_LENRIM   ! size of boundary data for single               SCALBC1A.93    
+!                         !   level on P grid for global data              SCALBC1A.94    
+     &, global_U_LENRIM   ! size of boundary data for single               SCALBC1A.95    
+!                         !   level on U grid for global data              SCALBC1A.96    
+     &, local_P_LENRIM    ! size of boundary data for single               SCALBC1A.97    
+!                         !    level on P grid for local data              SCALBC1A.98    
+     &, local_U_LENRIM    ! size of boundary data for single               SCALBC1A.99    
+!                         !    level on U grid for local data              SCALBC1A.100   
+                                                                           SCALBC1A.101   
+     &, global_FIRST_SIDE_ROW  ! first row for side LBC section            SCALBC1A.102   
+     &, global_LAST_P_SIDE_ROW ! last row for side LBC section             SCALBC1A.103   
+     &, global_LAST_U_SIDE_ROW ! last row for side LBC section             SCALBC1A.104   
+                                                                           SCALBC1A.105   
+     &, global_START_ROW       ! first row in global data in boundary      SCALBC1A.106   
+     &, local_START_ROW        ! first row in local data in boundary       SCALBC1A.107   
+     &, global_START_POINT     ! first point in row in global boundary     SCALBC1A.108   
+     &, local_START_POINT      ! first point in row in local boundary      SCALBC1A.109   
+     &, N_P_ROWS               ! number of rows on P grid in boundary      SCALBC1A.110   
+     &, N_P_POINTS             ! number of points in row on P grid         SCALBC1A.111   
+     &, N_U_ROWS               ! number of rows on U grid in boundary      SCALBC1A.112   
+     &, N_U_POINTS             ! number of points in row on U grid         SCALBC1A.113   
+     &, global_P_ROW_LEN       ! length of row on P grid in boundary       SCALBC1A.114   
+     &, global_U_ROW_LEN       ! length of row on U grid in boundary       SCALBC1A.115   
+     &, local_P_ROW_LEN        ! length of row on P grid in boundary       SCALBC1A.116   
+     &, local_U_ROW_LEN        ! length of row on U grid in boundary       SCALBC1A.117   
+     &, global_P_bound_off     ! offset of a P grid boundary               SCALBC1A.118   
+     &, local_P_bound_off      ! offset of a P grid boundary               SCALBC1A.119   
+     &, global_U_bound_off     ! offset of a U grid boundary               SCALBC1A.120   
+     &, local_U_bound_off      ! offset of a U grid boundary               SCALBC1A.121   
+                                                                           SCALBC1A.122   
+                                                                           SCALBC1A.123   
+     &, global_PSTAR_START      ! Start addresses of variables             SCALBC1A.124   
+     &, global_U_START          ! in the global LBC data                   SCALBC1A.125   
+     &, global_V_START          !                                          SCALBC1A.126   
+     &, global_THETA_START      !                                          SCALBC1A.127   
+     &, global_Q_START          !                                          SCALBC1A.128   
+     &, global_TR_START         ! (Tracer variables)                       SCALBC1A.129   
+     &, global_QCF_START        ! cloud ice if mixed phase scheme          ARB1F404.384   
+     &, global_P_EAST_DATA_off  ! offset of East P data in global LBC      SCALBC1A.130   
+     &, global_U_EAST_DATA_off  ! offset of East U data in global LBC      SCALBC1A.131   
+     &, global_P_SOUTH_DATA_off ! offset of South P data in global LBC     SCALBC1A.132   
+     &, global_U_SOUTH_DATA_off ! offset of South U data in global LBC     SCALBC1A.133   
+     &, global_P_WEST_DATA_off  ! offset of West P data in global LBC      SCALBC1A.134   
+     &, global_U_WEST_DATA_off  ! offset of West U data in global LBC      SCALBC1A.135   
+                                                                           SCALBC1A.136   
+     &, local_PSTAR_START       ! Start addresses of variables             SCALBC1A.137   
+     &, local_U_START           ! in the local LBC data                    SCALBC1A.138   
+     &, local_V_START           !                                          SCALBC1A.139   
+     &, local_THETA_START       !                                          SCALBC1A.140   
+     &, local_Q_START           !                                          SCALBC1A.141   
+     &, local_TR_START          ! (Tracer variables)                       SCALBC1A.142   
+     &, local_QCF_START         ! cloud ice if mixed phase scheme          ARB1F404.385   
+     &, local_P_EAST_DATA_off   ! offset of East P data in local LBC       SCALBC1A.143   
+     &, local_U_EAST_DATA_off   ! offset of East U data in local LBC       SCALBC1A.144   
+     &, local_P_SOUTH_DATA_off  ! offset of South P data in local LBC      SCALBC1A.145   
+     &, local_U_SOUTH_DATA_off  ! offset of South U data in local LBC      SCALBC1A.146   
+     &, local_P_WEST_DATA_off   ! offset of West P data in local LBC       SCALBC1A.147   
+     &, local_U_WEST_DATA_off   ! offset of West U data in local LBC       SCALBC1A.148   
+                                                                           SCALBC1A.149   
+      INTEGER                                                              SCALBC1A.150   
+     &  iproc  ! processor index                                           SCALBC1A.151   
+     &, bound_type ! loop index for loop over boundary types               SCALBC1A.152   
+     &, data_size  ! size of message to be sent                            SCALBC1A.153   
+     &, buf_pt     ! pointer to position in buffer array                   SCALBC1A.154   
+     &, ROW        ! loop index indicating row number                      SCALBC1A.155   
+     &, POINT      ! loop index indicating point along row                 SCALBC1A.156   
+     &, LEVEL      ! loop index indicating level                           SCALBC1A.157   
+     &, TVAR       ! loop index indicating tracer variable                 SCALBC1A.158   
+     &, info       ! return code from communications routines              SCALBC1A.159   
+                                                                           SCALBC1A.160   
+      INTEGER  ! magic numbers for boundary types                          SCALBC1A.161   
+     &  bt_top   ! top boundary                                            SCALBC1A.162   
+     &, bt_right ! right boundary                                          SCALBC1A.163   
+     &, bt_base  ! bottom boundary                                         SCALBC1A.164   
+     &, bt_left  ! left boundary                                           SCALBC1A.165   
+      PARAMETER(bt_top=1,bt_right=2,bt_base=3,bt_left=4)                   SCALBC1A.166   
+                                                                           SCALBC1A.167   
+      LOGICAL                                                              SCALBC1A.168   
+     &  iproc_at_left  ! processor at left of LPG                          SCALBC1A.169   
+     &, iproc_at_right ! processor at right of LPG                         SCALBC1A.170   
+     &, iproc_at_top   ! processor at top of LPG                           SCALBC1A.171   
+     &, iproc_at_base  ! processor at base of LPG                          SCALBC1A.172   
+                                                                           SCALBC1A.173   
+!--------------------------------------------------------------------      SCALBC1A.174   
+!--------------------------------------------------------------------      SCALBC1A.175   
+                                                                           SCALBC1A.176   
+! 1.0 Set up sizes and addresses for global data                           SCALBC1A.177   
+                                                                           SCALBC1A.178   
+! Set up some sizes for the global data                                    SCALBC1A.179   
+                                                                           SCALBC1A.180   
+      global_ROW_LENGTH=glsize(1)                                          SCALBC1A.181   
+      global_P_ROWS=glsize(2)                                              SCALBC1A.182   
+      global_P_LENRIM=(global_ROW_LENGTH+global_P_ROWS-2*RIMWIDTHA)*       SCALBC1A.183   
+     &              2*RIMWIDTHA                                            SCALBC1A.184   
+      global_U_LENRIM=global_P_LENRIM-4*RIMWIDTHA                          SCALBC1A.185   
+                                                                           SCALBC1A.186   
+! Set up some addresses                                                    SCALBC1A.187   
+                                                                           SCALBC1A.188   
+      global_PSTAR_START=1                                                 SCALBC1A.189   
+      global_U_START=global_P_LENRIM+1                                     SCALBC1A.190   
+      global_V_START=global_U_START+global_U_LENRIM*P_LEVELS               SCALBC1A.191   
+      global_THETA_START=global_V_START+global_U_LENRIM*P_LEVELS           SCALBC1A.192   
+      global_Q_START=global_THETA_START+global_P_LENRIM*P_LEVELS           SCALBC1A.193   
+      global_TR_START=global_Q_START+global_P_LENRIM*Q_LEVELS              SCALBC1A.194   
+      global_QCF_START=                                                    ARB1F404.386   
+     & global_TR_START+global_P_LENRIM*TR_LEVELS*TR_VARS                   ARB1F404.387   
+                                                                           SCALBC1A.195   
+      global_P_EAST_DATA_off=global_ROW_LENGTH*RIMWIDTHA                   SCALBC1A.196   
+      global_U_EAST_DATA_off=(global_ROW_LENGTH-1)*RIMWIDTHA               SCALBC1A.197   
+      global_P_SOUTH_DATA_off=global_P_EAST_DATA_off+                      SCALBC1A.198   
+     &                        (global_P_ROWS-2*RIMWIDTHA)*RIMWIDTHA        SCALBC1A.199   
+      global_U_SOUTH_DATA_off=global_U_EAST_DATA_off+                      SCALBC1A.200   
+     &                        (global_P_ROWS-2*RIMWIDTHA-1)*RIMWIDTHA      SCALBC1A.201   
+      global_P_WEST_DATA_off=global_P_SOUTH_DATA_off+                      SCALBC1A.202   
+     &                       global_ROW_LENGTH*RIMWIDTHA                   SCALBC1A.203   
+      global_U_WEST_DATA_off=global_U_SOUTH_DATA_off+                      SCALBC1A.204   
+     &                       (global_ROW_LENGTH-1)*RIMWIDTHA               SCALBC1A.205   
+                                                                           SCALBC1A.206   
+      global_FIRST_SIDE_ROW=RIMWIDTHA+1                                    SCALBC1A.207   
+      global_LAST_P_SIDE_ROW=global_P_ROWS-RIMWIDTHA                       SCALBC1A.208   
+      global_LAST_U_SIDE_ROW=global_LAST_P_SIDE_ROW-1                      SCALBC1A.209   
+                                                                           SCALBC1A.210   
+!--------------------------------------------------------------------      SCALBC1A.211   
+                                                                           SCALBC1A.212   
+! 2.0 Loop over processors                                                 SCALBC1A.213   
+                                                                           SCALBC1A.214   
+      DO iproc=first_comp_pe,last_comp_pe  ! loop over all processors      SCALBC1A.215   
+                                                                           SCALBC1A.216   
+                                                                           SCALBC1A.217   
+!   2.1 Set up logicals, sizes and addresses for local data                SCALBC1A.218   
+                                                                           SCALBC1A.219   
+! set up logicals indicating position on LPG                               SCALBC1A.220   
+        iproc_at_left=.FALSE.                                              SCALBC1A.221   
+        iproc_at_right=.FALSE.                                             SCALBC1A.222   
+        iproc_at_top=.FALSE.                                               SCALBC1A.223   
+        iproc_at_base=.FALSE.                                              SCALBC1A.224   
+        IF (g_gridpos(1,iproc) .EQ. 0) iproc_at_left=.TRUE.                SCALBC1A.225   
+        IF (g_gridpos(1,iproc) .EQ. nproc_x-1) iproc_at_right=.TRUE.       SCALBC1A.226   
+        IF (g_gridpos(2,iproc) .EQ. 0) iproc_at_top=.TRUE.                 SCALBC1A.227   
+        IF (g_gridpos(2,iproc) .EQ. nproc_y-1) iproc_at_base=.TRUE.        SCALBC1A.228   
+                                                                           SCALBC1A.229   
+! Set up the local data for this processor                                 SCALBC1A.230   
+        local_ROW_LENGTH=g_blsizep(1,iproc)  ! no halos                    SCALBC1A.231   
+        IF (iproc_at_right) THEN                                           SCALBC1A.232   
+!        ! This processor at right of LPG so one less point on             SCALBC1A.233   
+!        ! U grid                                                          SCALBC1A.234   
+          local_U_ROW_LENGTH=local_ROW_LENGTH-1                            SCALBC1A.235   
+        ELSE                                                               SCALBC1A.236   
+          local_U_ROW_LENGTH=local_ROW_LENGTH                              SCALBC1A.237   
+        ENDIF                                                              SCALBC1A.238   
+                                                                           SCALBC1A.239   
+        local_P_ROWS=g_blsizep(2,iproc)      ! again, no halos             SCALBC1A.240   
+        local_P_LENRIM=(local_ROW_LENGTH+local_P_ROWS)*                    SCALBC1A.241   
+     &                  2*RIMWIDTHA                                        SCALBC1A.242   
+        local_U_LENRIM=(local_U_ROW_LENGTH+local_P_ROWS)*                  SCALBC1A.243   
+     &                  2*RIMWIDTHA                                        SCALBC1A.244   
+                                                                           SCALBC1A.245   
+! Set up some addresses                                                    SCALBC1A.246   
+        local_PSTAR_START=1                                                SCALBC1A.247   
+        local_U_START=local_P_LENRIM+1                                     SCALBC1A.248   
+        local_V_START=local_U_START+local_U_LENRIM*P_LEVELS                SCALBC1A.249   
+        local_THETA_START=local_V_START+local_U_LENRIM*P_LEVELS            SCALBC1A.250   
+        local_Q_START=local_THETA_START+local_P_LENRIM*P_LEVELS            SCALBC1A.251   
+        local_TR_START=local_Q_START+local_P_LENRIM*Q_LEVELS               SCALBC1A.252   
+        local_QCF_START=                                                   ARB1F404.388   
+     &   local_TR_START+local_P_LENRIM*TR_LEVELS*TR_VARS                   ARB1F404.389   
+                                                                           SCALBC1A.253   
+        local_P_EAST_DATA_off=local_ROW_LENGTH*RIMWIDTHA                   SCALBC1A.254   
+        local_U_EAST_DATA_off=local_U_ROW_LENGTH*RIMWIDTHA                 SCALBC1A.255   
+        local_P_SOUTH_DATA_off=local_P_EAST_DATA_off+                      SCALBC1A.256   
+     &                         local_P_ROWS*RIMWIDTHA                      SCALBC1A.257   
+        local_U_SOUTH_DATA_off=local_U_EAST_DATA_off+                      SCALBC1A.258   
+     &                         local_P_ROWS*RIMWIDTHA                      SCALBC1A.259   
+        local_P_WEST_DATA_off=local_P_SOUTH_DATA_off+                      SCALBC1A.260   
+     &                        local_ROW_LENGTH*RIMWIDTHA                   SCALBC1A.261   
+        local_U_WEST_DATA_off=local_U_SOUTH_DATA_off+                      SCALBC1A.262   
+     &                        local_U_ROW_LENGTH*RIMWIDTHA                 SCALBC1A.263   
+                                                                           SCALBC1A.264   
+                                                                           SCALBC1A.265   
+!-------------------------------------------------------------------       SCALBC1A.266   
+                                                                           SCALBC1A.267   
+!   2.2 Loop over boundaries: North, East, South and West                  SCALBC1A.268   
+                                                                           SCALBC1A.269   
+        DO bound_type=bt_top,bt_left  ! loop over all boundaries           SCALBC1A.270   
+                                                                           SCALBC1A.271   
+          IF (((bound_type .EQ. bt_top) .AND. (iproc_at_top)) .OR.         SCALBC1A.272   
+     &       ((bound_type .EQ. bt_right) .AND. (iproc_at_right)) .OR.      SCALBC1A.273   
+     &        ((bound_type .EQ. bt_base) .AND. (iproc_at_base)) .OR.       SCALBC1A.274   
+     &        ((bound_type .EQ. bt_left) .AND. (iproc_at_left))) THEN      SCALBC1A.275   
+!             Processor iproc has a boundary of type bound_type            SCALBC1A.276   
+                                                                           SCALBC1A.277   
+                                                                           SCALBC1A.278   
+!      2.2.1 Set up data pointers and sizes for this boundary              SCALBC1A.279   
+                                                                           SCALBC1A.280   
+            IF ((bound_type .EQ. bt_top) .OR.   ! What type of             SCALBC1A.281   
+     &          (bound_type .EQ. bt_base)) THEN ! boundary is it?          SCALBC1A.282   
+                                                                           SCALBC1A.283   
+!             Northern or Southern boundary                                SCALBC1A.284   
+                                                                           SCALBC1A.285   
+              global_START_ROW=1                                           SCALBC1A.286   
+              local_START_ROW=1                                            SCALBC1A.287   
+                                                                           SCALBC1A.288   
+              global_START_POINT=g_datastart(1,iproc)                      SCALBC1A.289   
+              local_START_POINT=1                                          SCALBC1A.290   
+                                                                           SCALBC1A.291   
+              N_P_ROWS=RIMWIDTHA                                           SCALBC1A.292   
+              N_P_POINTS=local_ROW_LENGTH                                  SCALBC1A.293   
+              N_U_ROWS=RIMWIDTHA                                           SCALBC1A.294   
+              N_U_POINTS=local_U_ROW_LENGTH                                SCALBC1A.295   
+                                                                           SCALBC1A.296   
+              global_P_ROW_LEN=global_ROW_LENGTH                           SCALBC1A.297   
+              global_U_ROW_LEN=global_ROW_LENGTH-1                         SCALBC1A.298   
+              local_P_ROW_LEN=local_ROW_LENGTH                             SCALBC1A.299   
+              local_U_ROW_LEN=local_U_ROW_LENGTH                           SCALBC1A.300   
+                                                                           SCALBC1A.301   
+              IF (bound_type .EQ. bt_top) THEN  ! Northern boundary        SCALBC1A.302   
+                global_P_bound_off=0                                       SCALBC1A.303   
+                local_P_bound_off=0                                        SCALBC1A.304   
+                global_U_bound_off=0                                       SCALBC1A.305   
+                local_U_bound_off=0                                        SCALBC1A.306   
+              ELSE  ! Southern boundary                                    SCALBC1A.307   
+                global_P_bound_off=global_P_SOUTH_DATA_off                 SCALBC1A.308   
+                local_P_bound_off=local_P_SOUTH_DATA_off                   SCALBC1A.309   
+                global_U_bound_off=global_U_SOUTH_DATA_off                 SCALBC1A.310   
+                local_U_bound_off=local_U_SOUTH_DATA_off                   SCALBC1A.311   
+              ENDIF                                                        SCALBC1A.312   
+                                                                           SCALBC1A.313   
+            ELSE  ! Eastern or Western boundary                            SCALBC1A.314   
+                                                                           SCALBC1A.315   
+              global_START_ROW=MAX(g_datastart(2,iproc),                   SCALBC1A.316   
+     &                             global_FIRST_SIDE_ROW)-                 SCALBC1A.317   
+     &                         RIMWIDTHA                                   SCALBC1A.318   
+              local_START_ROW=1                                            SCALBC1A.319   
+                                                                           SCALBC1A.320   
+              global_START_POINT=1                                         SCALBC1A.321   
+              local_START_POINT=1                                          SCALBC1A.322   
+                                                                           SCALBC1A.323   
+              N_P_ROWS=MIN(g_datastart(2,iproc)+local_P_ROWS-1,            SCALBC1A.324   
+     &                     global_LAST_P_SIDE_ROW) -                       SCALBC1A.325   
+     &                 (global_START_ROW+RIMWIDTHA) + 1                    SCALBC1A.326   
+              N_P_POINTS=RIMWIDTHA                                         SCALBC1A.327   
+              N_U_ROWS=MIN(g_datastart(2,iproc)+local_P_ROWS-1,            SCALBC1A.328   
+     &                     global_LAST_U_SIDE_ROW) -                       SCALBC1A.329   
+     &                 (global_START_ROW+RIMWIDTHA) + 1                    SCALBC1A.330   
+              N_U_POINTS=RIMWIDTHA                                         SCALBC1A.331   
+                                                                           SCALBC1A.332   
+              global_P_ROW_LEN=RIMWIDTHA                                   SCALBC1A.333   
+              global_U_ROW_LEN=RIMWIDTHA                                   SCALBC1A.334   
+              local_P_ROW_LEN=RIMWIDTHA                                    SCALBC1A.335   
+              local_U_ROW_LEN=RIMWIDTHA                                    SCALBC1A.336   
+                                                                           SCALBC1A.337   
+              IF (bound_type .EQ. bt_right) THEN ! Eastern boundary        SCALBC1A.338   
+                global_P_bound_off=global_P_EAST_DATA_off                  SCALBC1A.339   
+                local_P_bound_off=local_P_EAST_DATA_off                    SCALBC1A.340   
+                global_U_bound_off=global_U_EAST_DATA_off                  SCALBC1A.341   
+                local_U_bound_off=local_U_EAST_DATA_off                    SCALBC1A.342   
+              ELSE ! Western boundary                                      SCALBC1A.343   
+                global_P_bound_off=global_P_WEST_DATA_off                  SCALBC1A.344   
+                local_P_bound_off=local_P_WEST_DATA_off                    SCALBC1A.345   
+                global_U_bound_off=global_U_WEST_DATA_off                  SCALBC1A.346   
+                local_U_bound_off=local_U_WEST_DATA_off                    SCALBC1A.347   
+              ENDIF                                                        SCALBC1A.348   
+                                                                           SCALBC1A.349   
+            ENDIF ! What type of boundary is it?                           SCALBC1A.350   
+                                                                           SCALBC1A.351   
+            data_size=(1+P_LEVELS+Q_LEVELS+(TR_VARS*TR_LEVELS))*           SCALBC1A.352   
+     &                   N_P_ROWS*N_P_POINTS +                             SCALBC1A.353   
+     &                 2*P_LEVELS*N_U_ROWS*N_U_POINTS                      SCALBC1A.354   
+            if (L_LSPICE_BDY) then                                         ARB1F404.390   
+              data_size=data_size+Q_LEVELS*N_P_ROWS*N_P_POINTS             ARB1F404.391   
+            end if                                                         ARB1F404.392   
+!           the size of the data to be sent to processor iproc             SCALBC1A.355   
+                                                                           SCALBC1A.356   
+!           Check the buffer is big enough                                 SCALBC1A.357   
+            IF (FULL_LENRIMDATA .LT.                                       GPB2F405.165   
+     &          data_size) THEN                                            SCALBC1A.359   
+              WRITE(6,*) 'ERROR Buffer not big enough in SCATTER_LBCS'     SCALBC1A.360   
+              WRITE(6,*) 'Buffer size is ',FULL_LENRIMDATA                 GPB2F405.166   
+              WRITE(6,*) 'Required size is ',data_size                     SCALBC1A.362   
+              ICODE=1                                                      SCALBC1A.363   
+              CMESSAGE='SCATTER_LBCS BUFFER TOO SMALL'                     SCALBC1A.364   
+              GOTO 9999                                                    SCALBC1A.365   
+            ENDIF                                                          SCALBC1A.366   
+                                                                           SCALBC1A.367   
+                                                                           SCALBC1A.368   
+!      2.2.2 Pack all the data for this boundary into the buf3 array       GPB3F402.89    
+                                                                           SCALBC1A.370   
+              CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)  ! scatter        GPB2F402.355   
+              info=GC_NONE                                                 GPB2F402.356   
+                                                                           GPB2F402.357   
+            IF (mype .EQ. SCATTER_PE) THEN  ! I'm scattering data          SCALBC1A.371   
+                                                                           SCALBC1A.372   
+              buf_pt=1                                                     SCALBC1A.373   
+                                                                           SCALBC1A.374   
+!             --- PSTAR ---                                                SCALBC1A.375   
+                                                                           SCALBC1A.376   
+              DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1          SCALBC1A.377   
+                DO POINT=global_START_POINT,                               SCALBC1A.378   
+     &                   global_START_POINT+N_P_POINTS-1                   SCALBC1A.379   
+                  buf3(buf_pt)=FULL_LBC(global_PSTAR_START-1+              GPB3F402.90    
+     &                                 global_P_bound_off+                 SCALBC1A.381   
+     &                                 POINT+                              SCALBC1A.382   
+     &                                 (ROW-1)*global_P_ROW_LEN)           SCALBC1A.383   
+                  buf_pt=buf_pt+1                                          SCALBC1A.384   
+                ENDDO                                                      SCALBC1A.385   
+              ENDDO                                                        SCALBC1A.386   
+                                                                           SCALBC1A.387   
+                                                                           SCALBC1A.388   
+!             --- U and V winds ---                                        SCALBC1A.389   
+                                                                           SCALBC1A.390   
+              DO LEVEL=1,P_LEVELS                                          SCALBC1A.391   
+                DO ROW=global_START_ROW,global_START_ROW+N_U_ROWS-1        SCALBC1A.392   
+                  DO POINT=global_START_POINT,                             SCALBC1A.393   
+     &                     global_START_POINT+N_U_POINTS-1                 SCALBC1A.394   
+                    buf3(buf_pt)=FULL_LBC(global_U_START-1+                GPB3F402.91    
+     &                                   global_U_bound_off+               SCALBC1A.396   
+     &                                   POINT+                            SCALBC1A.397   
+     &                                   (ROW-1)*global_U_ROW_LEN+         SCALBC1A.398   
+     &                                   (LEVEL-1)*global_U_LENRIM)        SCALBC1A.399   
+                    buf_pt=buf_pt+1                                        SCALBC1A.400   
+                    buf3(buf_pt)=FULL_LBC(global_V_START-1+                GPB3F402.92    
+     &                                   global_U_bound_off+               SCALBC1A.402   
+     &                                   POINT+                            SCALBC1A.403   
+     &                                   (ROW-1)*global_U_ROW_LEN+         SCALBC1A.404   
+     &                                   (LEVEL-1)*global_U_LENRIM)        SCALBC1A.405   
+                    buf_pt=buf_pt+1                                        SCALBC1A.406   
+                  ENDDO                                                    SCALBC1A.407   
+                ENDDO                                                      SCALBC1A.408   
+              ENDDO                                                        SCALBC1A.409   
+                                                                           SCALBC1A.410   
+                                                                           SCALBC1A.411   
+!             -- Theta ---                                                 SCALBC1A.412   
+                                                                           SCALBC1A.413   
+              DO LEVEL=1,P_LEVELS                                          SCALBC1A.414   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        SCALBC1A.415   
+                  DO POINT=global_START_POINT,                             SCALBC1A.416   
+     &                     global_START_POINT+N_P_POINTS-1                 SCALBC1A.417   
+                    buf3(buf_pt)=FULL_LBC(global_THETA_START-1+            GPB3F402.93    
+     &                                   global_P_bound_off+               SCALBC1A.419   
+     &                                   POINT+                            SCALBC1A.420   
+     &                                   (ROW-1)*global_P_ROW_LEN+         SCALBC1A.421   
+     &                                   (LEVEL-1)*global_P_LENRIM)        SCALBC1A.422   
+                    buf_pt=buf_pt+1                                        SCALBC1A.423   
+                  ENDDO                                                    SCALBC1A.424   
+                ENDDO                                                      SCALBC1A.425   
+              ENDDO                                                        SCALBC1A.426   
+                                                                           SCALBC1A.427   
+                                                                           SCALBC1A.428   
+!           --- Q ---                                                      SCALBC1A.429   
+                                                                           SCALBC1A.430   
+              DO LEVEL=1,Q_LEVELS                                          SCALBC1A.431   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        SCALBC1A.432   
+                  DO POINT=global_START_POINT,                             SCALBC1A.433   
+     &                     global_START_POINT+N_P_POINTS-1                 SCALBC1A.434   
+                    buf3(buf_pt)=FULL_LBC(global_Q_START-1+                GPB3F402.94    
+     &                                   global_P_bound_off+               SCALBC1A.436   
+     &                                   POINT+                            SCALBC1A.437   
+     &                                   (ROW-1)*global_P_ROW_LEN+         SCALBC1A.438   
+     &                                   (LEVEL-1)*global_P_LENRIM)        SCALBC1A.439   
+                    buf_pt=buf_pt+1                                        SCALBC1A.440   
+                  ENDDO                                                    SCALBC1A.441   
+                ENDDO                                                      SCALBC1A.442   
+              ENDDO                                                        SCALBC1A.443   
+                                                                           SCALBC1A.444   
+!             --- Tracer Variables ---                                     SCALBC1A.445   
+                                                                           SCALBC1A.446   
+              DO TVAR=1,TR_VARS                                            SCALBC1A.447   
+                DO LEVEL=1,TR_LEVELS                                       SCALBC1A.448   
+                  DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1      SCALBC1A.449   
+                    DO POINT=global_START_POINT,                           SCALBC1A.450   
+     &                       global_START_POINT+N_P_POINTS-1               SCALBC1A.451   
+                      buf3(buf_pt)=FULL_LBC(global_TR_START-1+             GPB3F402.95    
+     &                            global_P_bound_off+                      SCALBC1A.453   
+     &                            POINT+                                   SCALBC1A.454   
+     &                            (ROW-1)*global_P_ROW_LEN+                SCALBC1A.455   
+     &                            (LEVEL-1)*global_P_LENRIM+               SCALBC1A.456   
+     &                            (TVAR-1)*TR_LEVELS*global_P_LENRIM)      SCALBC1A.457   
+                       buf_pt=buf_pt+1                                     SCALBC1A.458   
+                     ENDDO                                                 SCALBC1A.459   
+                   ENDDO                                                   SCALBC1A.460   
+                 ENDDO                                                     SCALBC1A.461   
+               ENDDO                                                       SCALBC1A.462   
+                                                                           ARB1F404.393   
+            IF (L_LSPICE_BDY) THEN                                         ARB1F404.394   
+!           --- QCF ---                                                    ARB1F404.395   
+                                                                           ARB1F404.396   
+              DO LEVEL=1,Q_LEVELS                                          ARB1F404.397   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        ARB1F404.398   
+                  DO POINT=global_START_POINT,                             ARB1F404.399   
+     &                     global_START_POINT+N_P_POINTS-1                 ARB1F404.400   
+                    buf3(buf_pt)=FULL_LBC(global_QCF_START-1+              ARB1F404.401   
+     &                                   global_P_bound_off+               ARB1F404.402   
+     &                                   POINT+                            ARB1F404.403   
+     &                                   (ROW-1)*global_P_ROW_LEN+         ARB1F404.404   
+     &                                   (LEVEL-1)*global_P_LENRIM)        ARB1F404.405   
+                    buf_pt=buf_pt+1                                        ARB1F404.406   
+                  ENDDO                                                    ARB1F404.407   
+                ENDDO                                                      ARB1F404.408   
+              ENDDO                                                        ARB1F404.409   
+            END IF                                                         ARB1F404.410   
+                                                                           SCALBC1A.463   
+!      2.2.3 Send buf3 array to processor iproc into array local_buf       GPB3F402.96    
+                                                                           SCALBC1A.465   
+              CALL GC_RSEND(iproc+1000*bound_type,data_size,iproc,info,    SCALBC1A.466   
+     &                      local_buf,buf3)                                GPB3F402.97    
+                                                                           SCALBC1A.468   
+            ENDIF ! IF I'm doing the scatter                               SCALBC1A.469   
+                                                                           SCALBC1A.470   
+            CALL GC_SSYNC(nproc,info)                                      SCALBC1A.471   
+                                                                           SCALBC1A.472   
+                                                                           SCALBC1A.473   
+                                                                           GPB2F402.358   
+              CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_GET,info)  ! scatter        GPB2F402.359   
+              info=GC_NONE                                                 GPB2F402.360   
+            IF (mype .EQ. iproc) THEN  ! I'm processor iproc               SCALBC1A.474   
+                                                                           SCALBC1A.475   
+!      2.2.4 Receive our part of the LBC info local_buf                    GPB3F402.98    
+                                                                           SCALBC1A.477   
+              CALL GC_RRECV(iproc+1000*bound_type,data_size,SCATTER_PE,    SCALBC1A.478   
+     &                      info,local_buf,buf3)                           GPB3F402.99    
+                                                                           SCALBC1A.480   
+                                                                           SCALBC1A.481   
+!      2.2.5 Unpack local_buf into our PART_LBC array                      GPB3F402.100   
+                                                                           SCALBC1A.483   
+              buf_pt=1                                                     SCALBC1A.484   
+                                                                           SCALBC1A.485   
+                                                                           SCALBC1A.486   
+!             --- PSTAR ---                                                SCALBC1A.487   
+                                                                           SCALBC1A.488   
+              DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1            SCALBC1A.489   
+                DO POINT=local_START_POINT,                                SCALBC1A.490   
+     &                   local_START_POINT+N_P_POINTS-1                    SCALBC1A.491   
+                  PART_LBC(local_PSTAR_START-1+                            SCALBC1A.492   
+     &                     local_P_bound_off+                              SCALBC1A.493   
+     &                     POINT+                                          SCALBC1A.494   
+     &                     (ROW-1)*local_P_ROW_LEN)=                       SCALBC1A.495   
+     &                       local_buf(buf_pt)                             GPB3F402.101   
+                  buf_pt=buf_pt+1                                          SCALBC1A.497   
+                ENDDO                                                      SCALBC1A.498   
+              ENDDO                                                        SCALBC1A.499   
+                                                                           SCALBC1A.500   
+                                                                           SCALBC1A.501   
+!             --- U and V winds ---                                        SCALBC1A.502   
+                                                                           SCALBC1A.503   
+              DO LEVEL=1,P_LEVELS                                          SCALBC1A.504   
+                DO ROW=local_START_ROW,local_START_ROW+N_U_ROWS-1          SCALBC1A.505   
+                  DO POINT=local_START_POINT,                              SCALBC1A.506   
+     &                     local_START_POINT+N_U_POINTS-1                  SCALBC1A.507   
+                    PART_LBC(local_U_START-1+                              SCALBC1A.508   
+     &                       local_U_bound_off+                            SCALBC1A.509   
+     &                       POINT+                                        SCALBC1A.510   
+     &                       (ROW-1)*local_U_ROW_LEN+                      SCALBC1A.511   
+     &                       (LEVEL-1)*local_U_LENRIM)=                    SCALBC1A.512   
+     &                         local_buf(buf_pt)                           GPB3F402.102   
+                    buf_pt=buf_pt+1                                        SCALBC1A.514   
+                    PART_LBC(local_V_START-1+                              SCALBC1A.515   
+     &                       local_U_bound_off+                            SCALBC1A.516   
+     &                       POINT+                                        SCALBC1A.517   
+     &                       (ROW-1)*local_U_ROW_LEN+                      SCALBC1A.518   
+     &                       (LEVEL-1)*local_U_LENRIM)=                    SCALBC1A.519   
+     &                         local_buf(buf_pt)                           GPB3F402.103   
+                    buf_pt=buf_pt+1                                        SCALBC1A.521   
+                  ENDDO                                                    SCALBC1A.522   
+                ENDDO                                                      SCALBC1A.523   
+              ENDDO                                                        SCALBC1A.524   
+                                                                           SCALBC1A.525   
+                                                                           SCALBC1A.526   
+!             --- Theta ---                                                SCALBC1A.527   
+                                                                           SCALBC1A.528   
+              DO LEVEL=1,P_LEVELS                                          SCALBC1A.529   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          SCALBC1A.530   
+                  DO POINT=local_START_POINT,                              SCALBC1A.531   
+     &                     local_START_POINT+N_P_POINTS-1                  SCALBC1A.532   
+                    PART_LBC(local_THETA_START-1+                          SCALBC1A.537   
+     &                       local_P_bound_off+                            SCALBC1A.538   
+     &                       POINT+                                        SCALBC1A.539   
+     &                       (ROW-1)*local_P_ROW_LEN+                      SCALBC1A.540   
+     &                       (LEVEL-1)*local_P_LENRIM)=                    SCALBC1A.541   
+     &                         local_buf(buf_pt)                           GPB3F402.104   
+                    buf_pt=buf_pt+1                                        SCALBC1A.543   
+                  ENDDO                                                    SCALBC1A.544   
+                ENDDO                                                      SCALBC1A.545   
+              ENDDO                                                        SCALBC1A.546   
+                                                                           SCALBC1A.547   
+                                                                           SCALBC1A.548   
+!             --- Q ---                                                    SCALBC1A.549   
+                                                                           SCALBC1A.550   
+              DO LEVEL=1,Q_LEVELS                                          SCALBC1A.551   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          SCALBC1A.552   
+                  DO POINT=local_START_POINT,                              SCALBC1A.553   
+     &                     local_START_POINT+N_P_POINTS-1                  SCALBC1A.554   
+                    PART_LBC(local_Q_START-1+                              SCALBC1A.555   
+     &                       local_P_bound_off+                            SCALBC1A.556   
+     &                       POINT+                                        SCALBC1A.557   
+     &                       (ROW-1)*local_P_ROW_LEN+                      SCALBC1A.558   
+     &                       (LEVEL-1)*local_P_LENRIM)=                    SCALBC1A.559   
+     &                         local_buf(buf_pt)                           GPB3F402.105   
+                    buf_pt=buf_pt+1                                        SCALBC1A.561   
+                  ENDDO                                                    SCALBC1A.562   
+                ENDDO                                                      SCALBC1A.563   
+              ENDDO                                                        SCALBC1A.564   
+                                                                           SCALBC1A.565   
+!             --- Tracer Variables ---                                     SCALBC1A.566   
+                                                                           SCALBC1A.567   
+              DO TVAR=1,TR_VARS                                            SCALBC1A.568   
+                DO LEVEL=1,TR_LEVELS                                       SCALBC1A.569   
+                  DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1        SCALBC1A.570   
+                    DO POINT=local_START_POINT,                            SCALBC1A.571   
+     &                       local_START_POINT+N_P_POINTS-1                SCALBC1A.572   
+                      PART_LBC(global_TR_START-1+                          SCALBC1A.573   
+     &                         local_P_bound_off+                          SCALBC1A.574   
+     &                         POINT+                                      SCALBC1A.575   
+     &                         (ROW-1)*local_P_ROW_LEN+                    SCALBC1A.576   
+     &                         (LEVEL-1)*local_P_LENRIM+                   SCALBC1A.577   
+     &                         (TVAR-1)*TR_LEVELS*local_P_LENRIM)=         SCALBC1A.578   
+     &                           local_buf(buf_pt)                         GPB3F402.106   
+                      buf_pt=buf_pt+1                                      SCALBC1A.580   
+                     ENDDO                                                 SCALBC1A.581   
+                   ENDDO                                                   SCALBC1A.582   
+                 ENDDO                                                     SCALBC1A.583   
+               ENDDO                                                       SCALBC1A.584   
+                                                                           ARB1F404.411   
+            IF (L_LSPICE_BDY) THEN                                         ARB1F404.412   
+!           --- QCF ---                                                    ARB1F404.413   
+                                                                           ARB1F404.414   
+              DO LEVEL=1,Q_LEVELS                                          ARB1F404.415   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          ARB1F404.416   
+                  DO POINT=local_START_POINT,                              ARB1F404.417   
+     &                     local_START_POINT+N_P_POINTS-1                  ARB1F404.418   
+                    PART_LBC(local_QCF_START-1+                            ARB1F404.419   
+     &                       local_P_bound_off+                            ARB1F404.420   
+     &                       POINT+                                        ARB1F404.421   
+     &                       (ROW-1)*local_P_ROW_LEN+                      ARB1F404.422   
+     &                       (LEVEL-1)*local_P_LENRIM)=                    ARB1F404.423   
+     &                         local_buf(buf_pt)                           ARB1F404.424   
+                    buf_pt=buf_pt+1                                        ARB1F404.425   
+                  ENDDO                                                    ARB1F404.426   
+                ENDDO                                                      ARB1F404.427   
+              ENDDO                                                        ARB1F404.428   
+            END IF                                                         ARB1F404.429   
+                                                                           SCALBC1A.585   
+            ENDIF  ! If I'm processor iproc                                SCALBC1A.586   
+                                                                           SCALBC1A.587   
+            CALL GC_SSYNC(nproc,info)                                      SCALBC1A.588   
+                                                                           SCALBC1A.589   
+          ENDIF ! If this processor has boundary type bound_type           SCALBC1A.590   
+                                                                           SCALBC1A.591   
+        ENDDO ! bound_type: loop over boundary types                       SCALBC1A.592   
+                                                                           SCALBC1A.593   
+      ENDDO ! iproc : loop over processors                                 SCALBC1A.594   
+                                                                           SCALBC1A.595   
+                                                                           SCALBC1A.596   
+ 9999 CONTINUE  ! point to jump to if failure                              SCALBC1A.597   
+                                                                           SCALBC1A.598   
+      RETURN                                                               SCALBC1A.599   
+      END                                                                  SCALBC1A.600   
+*ENDIF                                                                     SCALBC1A.601   
+*ENDIF                                                                     GPB3F403.289   

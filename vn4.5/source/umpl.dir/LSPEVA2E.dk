@@ -1,0 +1,298 @@
+*IF DEF,A04_2E                                                             LSPEVA2E.2     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    LSPEVA2E.3     
+C                                                                          LSPEVA2E.4     
+C Use, duplication or disclosure of this code is subject to the            LSPEVA2E.5     
+C restrictions as set forth in the contract.                               LSPEVA2E.6     
+C                                                                          LSPEVA2E.7     
+C                Meteorological Office                                     LSPEVA2E.8     
+C                London Road                                               LSPEVA2E.9     
+C                BRACKNELL                                                 LSPEVA2E.10    
+C                Berkshire UK                                              LSPEVA2E.11    
+C                RG12 2SZ                                                  LSPEVA2E.12    
+C                                                                          LSPEVA2E.13    
+C If no contract has been raised with this copy of the code, the use,      LSPEVA2E.14    
+C duplication or disclosure of it is strictly prohibited.  Permission      LSPEVA2E.15    
+C to do so must first be obtained in writing from the Head of Numerical    LSPEVA2E.16    
+C Modelling at the above address.                                          LSPEVA2E.17    
+C ******************************COPYRIGHT******************************    LSPEVA2E.18    
+C                                                                          LSPEVA2E.19    
+C*LL  SUBROUTINE LSP_EVAP-----------------------------------------------   LSPEVA2E.20    
+!LL                                                                        LSPEVA2E.21    
+!LL  Purpose: Calculate the amount of evaporation from precipitation       LSPEVA2E.22    
+!LL           falling through one model layer, and the effects of this     LSPEVA2E.23    
+!LL           evaporation on Q and T in the layer.                         LSPEVA2E.24    
+!LL           This version uses the revised constants.                     LSPEVA2E.25    
+!LL                                                                        LSPEVA2E.26    
+!LL  Rewritten by S BETT                                                   LSPEVA2E.27    
+!LL                                                                        LSPEVA2E.28    
+!LL  Model            Modification history:                                LSPEVA2E.29    
+!LL version  date                                                          LSPEVA2E.30    
+!LL   4.4   11/08/97  New version optimised for T3E.                       LSPEVA2E.31    
+!LL                   Not bit-reproducible with ADJCTL1A.                  LSPEVA2E.32    
+CLL   4.4   11/08/97  Remove extra swapbound                               LSPEVA2E.33    
+!LL   4.4    03/08/97 Code changed to use vector sqrt and ** on T3E        LSPEVA2E.34    
+!LL                   A. Dickinson                                         LSPEVA2E.35    
+!LL                                                                        LSPEVA2E.36    
+!LL  Programming standard: Unified Model Documentation Paper No 3,         LSPEVA2E.37    
+!LL                        Version 4, dated 5/2/92.                        LSPEVA2E.38    
+!LL                                                                        LSPEVA2E.39    
+!LL  System component covered: Part of P26.                                LSPEVA2E.40    
+!LL                                                                        LSPEVA2E.41    
+!LL  Documentation: Unified Model Documentation Paper No 26.               LSPEVA2E.42    
+C*                                                                         LSPEVA2E.43    
+C*L  Arguments:---------------------------------------------------------   LSPEVA2E.44    
+      SUBROUTINE LSP_EVAP                                                  LSPEVA2E.45    
+     &(P,RHODZ,TIMESTEP,POINTS,Q,RAIN,SNOW,T)                              LSPEVA2E.46    
+      IMPLICIT NONE                                                        LSPEVA2E.47    
+      INTEGER          ! Input integer scalar :-                           LSPEVA2E.48    
+     & POINTS          ! IN Number of gridpoints being processed.          LSPEVA2E.49    
+      REAL             ! Input real arrays :-                              LSPEVA2E.50    
+     & P(POINTS)       ! IN pressure N /sq m                               LSPEVA2E.51    
+     &,RHODZ(POINTS)   ! IN Air mass p.u.a. in layer (kg per sq m).        LSPEVA2E.52    
+      REAL             ! Updated real arrays :-                            LSPEVA2E.53    
+     & Q(POINTS)       ! INOUT Specific humidity (kg water per kg air).    LSPEVA2E.54    
+     &,RAIN(POINTS)    ! INOUT Rainfall rate (kg per sq m per s).          LSPEVA2E.55    
+     &,SNOW(POINTS)    ! INOUT Snowfall rate (kg per sq m per s).          LSPEVA2E.56    
+     &,T(POINTS)       ! INOUT Temperature (K).                            LSPEVA2E.57    
+      REAL             ! Input real scalar :-                              LSPEVA2E.58    
+     & TIMESTEP        ! IN Timestep (s).                                  LSPEVA2E.59    
+C*                                                                         LSPEVA2E.60    
+C*L  Workspace usage: 1 real array--------------------------------------   LSPEVA2E.61    
+      REAL                                                                 LSPEVA2E.62    
+     & QS(POINTS)      !  Saturated sp humidity for (T,p) in layer         LSPEVA2E.63    
+C*L  external subprograms are called ---------------------------------     LSPEVA2E.64    
+      EXTERNAL QSAT                                                        LSPEVA2E.65    
+C*                                                                         LSPEVA2E.66    
+C*                                                                         LSPEVA2E.67    
+*CALL C_LHEAT                                                              LSPEVA2E.68    
+*CALL C_R_CP                                                               LSPEVA2E.69    
+!  Local (derived) physical constants ----------------------------------   LSPEVA2E.70    
+*CALL C_EVAPPN                                                             LSPEVA2E.71    
+*CALL C_EPSLON                                                             LSPEVA2E.72    
+      REAL LCRCP,LFRCP,LSRCP                                               LSPEVA2E.73    
+      PARAMETER(                                                           LSPEVA2E.74    
+     & LCRCP=LC/CP           ! Latent heat of condensation / Cp (K).       LSPEVA2E.75    
+     &,LFRCP=LF/CP           ! Latent heat of fusion / Cp (K).             LSPEVA2E.76    
+     &,LSRCP=LCRCP+LFRCP     ! Sum of the above (S for Sublimation).       LSPEVA2E.77    
+     &)                                                                    LSPEVA2E.78    
+      REAL ALPHF,ALPHL                  ! Derived parameters.              LSPEVA2E.79    
+      PARAMETER (                                                          LSPEVA2E.80    
+     & ALPHF=EPSILON*(LF+LC)/R          ! For frozen AlphaL calculation.   LSPEVA2E.81    
+     &,ALPHL=EPSILON*LC/R               ! For liquid AlphaL calculation.   LSPEVA2E.82    
+     &)                                                                    LSPEVA2E.83    
+!                                                                          LSPEVA2E.84    
+!  Define local variables-----------------------------------------------   LSPEVA2E.85    
+      INTEGER                                                              LSPEVA2E.86    
+     & I               ! Loop counter (horizontal field index).            LSPEVA2E.87    
+     &,J               ! Loop counter (rain or snow points)                LSPEVA2E.88    
+     &,NRAIN           ! No of rain points                                 LSPEVA2E.89    
+     &,NSNOW           ! No of snow points                                 LSPEVA2E.90    
+!   6 local variables which will effectively be expanded to workspace      LSPEVA2E.91    
+!   by the Cray (using vector registers) are required :-                   LSPEVA2E.92    
+      REAL             ! Real "workspace".  Contents at end of loop :-     LSPEVA2E.93    
+     & CEV             ! Bulk evporation coefficient (rain).               LSPEVA2E.94    
+     &,CSB             ! Bulk evporation coefficient (snow).               LSPEVA2E.95    
+     &,QEV             ! Evap rate from rain (kg wat per kg air per s).    LSPEVA2E.96    
+     &,QSB             ! Evap rate from snow (kg wat per kg air per s).    LSPEVA2E.97    
+     &,ALPHAL          ! factor from Clausius-Claperyon eqn                LSPEVA2E.98    
+     &,BL              ! factor due to implicit treatment                  LSPEVA2E.99    
+     &,C1              ! temporary store                                   LSPEVA2E.100   
+     &,C2              ! temporary store                                   LSPEVA2E.101   
+                                                                           LSPEVA2E.102   
+      REAL                                                                 LSPEVA2E.103   
+     & RHO(POINTS)     ! density of air in layer                           LSPEVA2E.104   
+     &,TEMP1(POINTS)   ! Work space                                        LSPEVA2E.105   
+     &,TEMP2(POINTS)   ! Work space                                        LSPEVA2E.106   
+     &,TEMP3(POINTS)   ! Work space                                        LSPEVA2E.107   
+      INTEGER                                                              LSPEVA2E.108   
+     & INDEX1(POINTS)  ! Index of rain or snow points                      LSPEVA2E.109   
+!-----------------------------------------------------------------------   LSPEVA2E.110   
+!L  Internal structure.                                                    LSPEVA2E.111   
+!L  0 Call qsat                                                            LSPEVA2E.112   
+!-----------------------------------------------------------------------   LSPEVA2E.113   
+      CALL QSAT(QS,T,P,POINTS)                                             LSPEVA2E.114   
+                                                                           LSPEVA2E.115   
+!                                                                          LSPEVA2E.116   
+!-----------------------------------------------------------------------   LSPEVA2E.117   
+! Calculate density of air in layer                                        LSPEVA2E.118   
+!-----------------------------------------------------------------------   LSPEVA2E.119   
+!                                                                          LSPEVA2E.120   
+      DO I=1,POINTS                                                        LSPEVA2E.121   
+       RHO(I) = P(I) / (R*T(I))                                            LSPEVA2E.122   
+      ENDDO                                                                LSPEVA2E.123   
+!                                                                          LSPEVA2E.124   
+!-----------------------------------------------------------------------   LSPEVA2E.125   
+!L  1. Perform calculations for rain.                                      LSPEVA2E.126   
+!                                                                          LSPEVA2E.127   
+!-----------------------------------------------------------------------   LSPEVA2E.128   
+!                                                                          LSPEVA2E.129   
+      NRAIN=0                                                              LSPEVA2E.130   
+      DO I=1,POINTS                                                        LSPEVA2E.131   
+        IF(RAIN(I).GT.0.0)THEN                                             LSPEVA2E.132   
+           NRAIN=NRAIN+1                                                   LSPEVA2E.133   
+           INDEX1(NRAIN)=I                                                 LSPEVA2E.134   
+       ENDIF                                                               LSPEVA2E.135   
+      ENDDO                                                                LSPEVA2E.136   
+                                                                           LSPEVA2E.137   
+      IF(NRAIN.GT.0) THEN                                                  LSPEVA2E.138   
+                                                                           LSPEVA2E.139   
+      DO J=1,NRAIN                                                         LSPEVA2E.140   
+       TEMP1(J)=RAIN(INDEX1(J))                                            LSPEVA2E.141   
+       TEMP2(J)=RHO(INDEX1(J))                                             LSPEVA2E.142   
+*IF -DEF,VECTLIB                                                           PXVECTLB.33    
+       TEMP3(J)=SQRT(TEMP2(J))                                             LSPEVA2E.144   
+       TEMP3(J)=TEMP3(J)*TEMP1(J)                                          LSPEVA2E.145   
+       TEMP1(J)=TEMP1(J)**LSRN_P4                                          LSPEVA2E.146   
+       TEMP2(J)=TEMP2(J)**LSRN_P3                                          LSPEVA2E.147   
+       TEMP3(J)=TEMP3(J)**LSRN_P2                                          LSPEVA2E.148   
+*ENDIF                                                                     LSPEVA2E.149   
+      ENDDO                                                                LSPEVA2E.150   
+*IF DEF,VECTLIB                                                            PXVECTLB.34    
+       CALL SQRT_V(NRAIN,TEMP2,TEMP3)                                      LSPEVA2E.152   
+       DO J=1,NRAIN                                                        LSPEVA2E.153   
+        TEMP3(J)=TEMP1(J)*TEMP3(J)                                         LSPEVA2E.154   
+       ENDDO                                                               LSPEVA2E.155   
+       CALL POWR_V(NRAIN,TEMP3,LSRN_P2,TEMP3)                              LSPEVA2E.156   
+       CALL POWR_V(NRAIN,TEMP1,LSRN_P4,TEMP1)                              LSPEVA2E.157   
+       CALL POWR_V(NRAIN,TEMP2,LSRN_P3,TEMP2)                              LSPEVA2E.158   
+*ENDIF                                                                     LSPEVA2E.159   
+                                                                           LSPEVA2E.160   
+!-----------------------------------------------------------------------   LSPEVA2E.161   
+!L  1.1 Calculate evaporation coefficient for rain (CEV).                  LSPEVA2E.162   
+!L      See eqs P26.9, P26.11.                                             LSPEVA2E.163   
+!-----------------------------------------------------------------------   LSPEVA2E.164   
+                                                                           LSPEVA2E.165   
+      DO J=1,NRAIN                                                         LSPEVA2E.166   
+         I=INDEX1(J)                                                       LSPEVA2E.167   
+          CEV = ((CEV2*T(I)+CEV1)*T(I)+CEV0)*(100000.0/P(I))               LSPEVA2E.168   
+          C1 = LSRN_A*TEMP3(J)                                             LSPEVA2E.169   
+          C2 = LSRN_B*TEMP1(J)*TEMP2(J)                                    LSPEVA2E.170   
+          CEV = CEV*(C1+C2)                                                LSPEVA2E.171   
+!-----------------------------------------------------------------------   LSPEVA2E.172   
+!L  1.2 Calculate implicit treatment factors alphal and bl                 LSPEVA2E.173   
+!L      See eqs P26.??, P26.??.                                            LSPEVA2E.174   
+!-----------------------------------------------------------------------   LSPEVA2E.175   
+          ALPHAL=ALPHL*QS(I)/(T(I)*T(I))                                   LSPEVA2E.176   
+          BL=1. + CEV*TIMESTEP*(1. + LCRCP*ALPHAL)                         LSPEVA2E.177   
+!-----------------------------------------------------------------------   LSPEVA2E.178   
+!L  1.3 Calculate evaporation rate, adjusted to be .LE. precip rate,       LSPEVA2E.179   
+!L      in kg water per sq m  per sec.  See eq P26.1.                      LSPEVA2E.180   
+!       Store result in QEV.  NB this is QEV*RHODZ in documentation.       LSPEVA2E.181   
+!-----------------------------------------------------------------------   LSPEVA2E.182   
+          QEV=MIN ( RAIN(I) , RHODZ(I)*CEV*MAX(0.0,QS(I)-Q(I))/BL )        LSPEVA2E.183   
+!-----------------------------------------------------------------------   LSPEVA2E.184   
+!L  1.4 Calculate effects of evaporation on precip rates and on Q and T.   LSPEVA2E.185   
+!L     See eqs P26.7,  P26.5, P26.6 respectively.                          LSPEVA2E.186   
+!                                                                          LSPEVA2E.187   
+!-----------------------------------------------------------------------   LSPEVA2E.188   
+!  Increment precipitation rates (kg per sq m per sec), Q (kg per kg)      LSPEVA2E.189   
+!  and T (K).  For the last 2 the change is integrated over the            LSPEVA2E.190   
+!  timestep.                                                               LSPEVA2E.191   
+!                                                                          LSPEVA2E.192   
+          RAIN(I)=RAIN(I)-QEV                                              LSPEVA2E.193   
+          Q(I)=Q(I)+QEV*TIMESTEP/RHODZ(I)                                  LSPEVA2E.194   
+          T(I)=T(I)-LCRCP*QEV*TIMESTEP/RHODZ(I)                            LSPEVA2E.195   
+                                                                           LSPEVA2E.196   
+      END DO  ! Loop over rain points                                      LSPEVA2E.197   
+      ENDIF   ! Rain                                                       LSPEVA2E.198   
+                                                                           LSPEVA2E.199   
+!-----------------------------------------------------------------------   LSPEVA2E.200   
+!L  2 Call qsat again since evap of rain may have altered T                LSPEVA2E.201   
+!-----------------------------------------------------------------------   LSPEVA2E.202   
+      CALL QSAT(QS,T,P,POINTS)                                             LSPEVA2E.203   
+                                                                           LSPEVA2E.204   
+!                                                                          LSPEVA2E.205   
+!-----------------------------------------------------------------------   LSPEVA2E.206   
+! Recalculate density of air in layer                                      LSPEVA2E.207   
+!-----------------------------------------------------------------------   LSPEVA2E.208   
+!                                                                          LSPEVA2E.209   
+       DO I=1,POINTS                                                       LSPEVA2E.210   
+        RHO(I) = P(I) / (R*T(I))                                           LSPEVA2E.211   
+       ENDDO                                                               LSPEVA2E.212   
+!                                                                          LSPEVA2E.213   
+!-----------------------------------------------------------------------   LSPEVA2E.214   
+!L  3. Perform calculations for snow.                                      LSPEVA2E.215   
+!                                                                          LSPEVA2E.216   
+!-----------------------------------------------------------------------   LSPEVA2E.217   
+!                                                                          LSPEVA2E.218   
+      NSNOW=0                                                              LSPEVA2E.219   
+      DO I=1,POINTS                                                        LSPEVA2E.220   
+        IF(SNOW(I).GT.0.0)THEN                                             LSPEVA2E.221   
+           NSNOW=NSNOW+1                                                   LSPEVA2E.222   
+           INDEX1(NSNOW)=I                                                 LSPEVA2E.223   
+       ENDIF                                                               LSPEVA2E.224   
+      ENDDO                                                                LSPEVA2E.225   
+                                                                           LSPEVA2E.226   
+      IF(NSNOW.GT.0) THEN                                                  LSPEVA2E.227   
+                                                                           LSPEVA2E.228   
+      DO J=1,NSNOW                                                         LSPEVA2E.229   
+       TEMP1(J)=SNOW(INDEX1(J))                                            LSPEVA2E.230   
+       TEMP2(J)=RHO(INDEX1(J))                                             LSPEVA2E.231   
+*IF -DEF,VECTLIB                                                           PXVECTLB.35    
+       TEMP3(J)=SQRT(TEMP2(J))                                             LSPEVA2E.233   
+       TEMP3(J)=TEMP3(J)*TEMP1(J)                                          LSPEVA2E.234   
+       TEMP1(J)=TEMP1(J)**LSSW_P4                                          LSPEVA2E.235   
+       TEMP2(J)=TEMP2(J)**LSSW_P3                                          LSPEVA2E.236   
+       TEMP3(J)=TEMP3(J)**LSSW_P2                                          LSPEVA2E.237   
+*ENDIF                                                                     LSPEVA2E.238   
+      ENDDO                                                                LSPEVA2E.239   
+*IF DEF,VECTLIB                                                            PXVECTLB.36    
+       CALL SQRT_V(NSNOW,TEMP2,TEMP3)                                      LSPEVA2E.241   
+       DO J=1,NSNOW                                                        LSPEVA2E.242   
+        TEMP3(J)=TEMP1(J)*TEMP3(J)                                         LSPEVA2E.243   
+       ENDDO                                                               LSPEVA2E.244   
+       CALL POWR_V(NSNOW,TEMP3,LSSW_P2,TEMP3)                              LSPEVA2E.245   
+       CALL POWR_V(NSNOW,TEMP1,LSSW_P4,TEMP1)                              LSPEVA2E.246   
+       CALL POWR_V(NSNOW,TEMP2,LSSW_P3,TEMP2)                              LSPEVA2E.247   
+*ENDIF                                                                     LSPEVA2E.248   
+                                                                           LSPEVA2E.249   
+!-----------------------------------------------------------------------   LSPEVA2E.250   
+!L  3.1 Calculate evaporation coefficient for snow (CSB).                  LSPEVA2E.251   
+!L      See eqs P26.10, P26.12                                             LSPEVA2E.252   
+!       MAX value of ASB(T) is at 243.58. This value is used for           LSPEVA2E.253   
+!       T below this. The quadratic fit has a root at about 301K, when     LSPEVA2E.254   
+!       there shouldn't be any snow.(The other root is at 185K)            LSPEVA2E.255   
+!-----------------------------------------------------------------------   LSPEVA2E.256   
+        DO J=1,NSNOW                                                       LSPEVA2E.257   
+          I=INDEX1(J)                                                      LSPEVA2E.258   
+          IF(T(I).LE.243.58) THEN                                          LSPEVA2E.259   
+            CSB=1.7405E-5*(100000.0/P(I))                                  LSPEVA2E.260   
+          ELSE                                                             LSPEVA2E.261   
+            CSB = ((CSB2*T(I)+CSB1)*T(I)+CSB0)*(100000/P(I))               LSPEVA2E.262   
+          ENDIF                                                            LSPEVA2E.263   
+          C1 = LSSW_A*TEMP3(J)                                             LSPEVA2E.264   
+          C2 = LSSW_B*TEMP2(J)*TEMP1(J)                                    LSPEVA2E.265   
+          CSB = CSB*(C1+C2)                                                LSPEVA2E.266   
+!-----------------------------------------------------------------------   LSPEVA2E.267   
+!L  3.2 Calculate implicit treatment factors alphal and bl                 LSPEVA2E.268   
+!L      See eqs P26.??, P26.??.                                            LSPEVA2E.269   
+!-----------------------------------------------------------------------   LSPEVA2E.270   
+          ALPHAL=ALPHF*QS(I)/(T(I)*T(I))                                   LSPEVA2E.271   
+          BL=1. + CSB*TIMESTEP*(1. + LSRCP*ALPHAL)                         LSPEVA2E.272   
+!-----------------------------------------------------------------------   LSPEVA2E.273   
+!L  3.3 Calculate evaporation rate, adjusted to be .LE. precip rate,       LSPEVA2E.274   
+!L      in kg water per sq m per sec.  See eq P26.2.                       LSPEVA2E.275   
+!       Store result in QSB.  NB this is QSB*RHODZ in documentation.       LSPEVA2E.276   
+!-----------------------------------------------------------------------   LSPEVA2E.277   
+          QSB=MIN ( SNOW(I) , RHODZ(I)*CSB*MAX(0.0,QS(I)-Q(I))/BL )        LSPEVA2E.278   
+!                                                                          LSPEVA2E.279   
+!-----------------------------------------------------------------------   LSPEVA2E.280   
+!L  3.4 Calculate effects of evaporation on precip rates and on Q and T.   LSPEVA2E.281   
+!L     See eqs  P26.8, P26.5, P26.6 respectively.                          LSPEVA2E.282   
+!                                                                          LSPEVA2E.283   
+!-----------------------------------------------------------------------   LSPEVA2E.284   
+!                                                                          LSPEVA2E.285   
+!  Increment precipitation rates (kg per sq m per sec), Q (kg per kg)      LSPEVA2E.286   
+!  and T (K).  For the last 2 the change is integrated over the            LSPEVA2E.287   
+!  timestep.                                                               LSPEVA2E.288   
+!                                                                          LSPEVA2E.289   
+          SNOW(I)=SNOW(I)-QSB                                              LSPEVA2E.290   
+          Q(I)=Q(I)+QSB*TIMESTEP/RHODZ(I)                                  LSPEVA2E.291   
+          T(I)=T(I)-LSRCP*QSB*TIMESTEP/RHODZ(I)                            LSPEVA2E.292   
+                                                                           LSPEVA2E.293   
+      END DO  ! Loop over snow points                                      LSPEVA2E.294   
+      ENDIF   ! Snow                                                       LSPEVA2E.295   
+!                                                                          LSPEVA2E.296   
+      RETURN                                                               LSPEVA2E.297   
+      END                                                                  LSPEVA2E.298   
+*ENDIF                                                                     LSPEVA2E.299   

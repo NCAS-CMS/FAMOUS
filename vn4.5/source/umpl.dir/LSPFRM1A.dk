@@ -1,0 +1,133 @@
+*IF DEF,A04_2B,OR,DEF,A04_2C,OR,DEF,A04_2E                                 ADM0F405.296   
+C ******************************COPYRIGHT******************************    GTS2F400.5419  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.5420  
+C                                                                          GTS2F400.5421  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.5422  
+C restrictions as set forth in the contract.                               GTS2F400.5423  
+C                                                                          GTS2F400.5424  
+C                Meteorological Office                                     GTS2F400.5425  
+C                London Road                                               GTS2F400.5426  
+C                BRACKNELL                                                 GTS2F400.5427  
+C                Berkshire UK                                              GTS2F400.5428  
+C                RG12 2SZ                                                  GTS2F400.5429  
+C                                                                          GTS2F400.5430  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.5431  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.5432  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.5433  
+C Modelling at the above address.                                          GTS2F400.5434  
+C ******************************COPYRIGHT******************************    GTS2F400.5435  
+C                                                                          GTS2F400.5436  
+C*LL  SUBROUTINE LSP_FRMT-----------------------------------------------   LSPFRM1A.3     
+CLL                                                                        LSPFRM1A.4     
+CLL  Purpose: Adjust partition of cloud water between ice and liquid,      LSPFRM1A.5     
+CLL           so that it is consistent with the temperature.  Then         LSPFRM1A.6     
+CLL           freeze or melt precipitation falling into the layer from     LSPFRM1A.7     
+CLL           above, when necessary.                                       LSPFRM1A.8     
+CLL                                                                        LSPFRM1A.9     
+CLL           In each case latent heating or cooling modifies the          LSPFRM1A.10    
+CLL           temperature, and in both cases all the water is assumed      LSPFRM1A.11    
+CLL           to undergo the phase change, unless this would take the      LSPFRM1A.12    
+CLL           temperature the other side of freezing, in which case the    LSPFRM1A.13    
+CLL           amount frozen or melted is limited to the amount needed      LSPFRM1A.14    
+CLL           to take the temperature to zero C precisely.                 LSPFRM1A.15    
+CLL                                                                        LSPFRM1A.16    
+CLL  Called by LS_PPN (P26) once for each model layer.                     LSPFRM1A.17    
+CLL                                                                        LSPFRM1A.18    
+CLL  Model            Modification history from model version 3.0:         LSPFRM1A.19    
+CLL version  date                                                          LSPFRM1A.20    
+CLL                                                                        LSPFRM1A.21    
+CLL  Programming standard: Unified Model Documentation Paper No 4,         LSPFRM1A.22    
+CLL                        Version 1, dated 12/9/89.                       LSPFRM1A.23    
+CLL                                                                        LSPFRM1A.24    
+CLL  System component covered: Part of P261.                               LSPFRM1A.25    
+CLL                                                                        LSPFRM1A.26    
+CLL  Documentation: Unified Model Documentation Paper No 26.               LSPFRM1A.27    
+C*                                                                         LSPFRM1A.28    
+C*L  Arguments:---------------------------------------------------------   LSPFRM1A.29    
+      SUBROUTINE LSP_FRMT                                                  LSPFRM1A.30    
+     +(RHODZ,TIMESTEP,POINTS,QCF,QCL,RAIN,SNOW,T)                          LSPFRM1A.31    
+      IMPLICIT NONE                                                        LSPFRM1A.32    
+      INTEGER POINTS        ! IN No. of gridpoints in batch.               LSPFRM1A.33    
+      REAL                                                                 LSPFRM1A.34    
+     + RHODZ(POINTS)        ! IN Mass of air in layer p.u.a. (kg/sq m).    LSPFRM1A.35    
+      REAL TIMESTEP         ! IN Timestep (seconds).                       LSPFRM1A.36    
+      REAL                                                                 LSPFRM1A.37    
+     + QCF(POINTS)          ! INOUT Cloud ice (kg water per kg air).       LSPFRM1A.38    
+     +,QCL(POINTS)          ! INOUT Cloud liquid water (kg per kg air).    LSPFRM1A.39    
+     +,RAIN(POINTS)         ! INOUT Rainfall rate (kg per sq m per s).     LSPFRM1A.40    
+     +,SNOW(POINTS)         ! INOUT Snowfall rate (kg per sq m per s).     LSPFRM1A.41    
+     +,T(POINTS)            ! INOUT Temperature (K).                       LSPFRM1A.42    
+C*                                                                         LSPFRM1A.43    
+C*L  No workspace nor external subprograms required---------------------   LSPFRM1A.44    
+*IF DEF,TIMER2                                                             LSPFRM1A.45    
+      EXTERNAL TIMER                                                       LSPFRM1A.46    
+*ENDIF                                                                     LSPFRM1A.47    
+C*  Common physical constants-------------------------------------------   LSPFRM1A.48    
+*CALL C_R_CP                                                               LSPFRM1A.49    
+*CALL C_LHEAT                                                              LSPFRM1A.50    
+*CALL C_0_DG_C                                                             LSPFRM1A.51    
+C   Local physical constants ---------------------------------------       LSPFRM1A.52    
+      REAL CPRLF,LFRCP                                                     LSPFRM1A.53    
+      PARAMETER (                                                          LSPFRM1A.54    
+     + LFRCP=LF/CP          ! Latent heat of fusion/Cp (K kg air/kg wat)   LSPFRM1A.55    
+     +,CPRLF=1./LFRCP       ! Reciprocal of LFRCP.                         LSPFRM1A.56    
+     +)                                                                    LSPFRM1A.57    
+C  Local variables------------------------------------------------------   LSPFRM1A.58    
+C  (a) Real scalar effectively expanded to workspace by the Cray, using    LSPFRM1A.59    
+C      vector registers.                                                   LSPFRM1A.60    
+      REAL                                                                 LSPFRM1A.61    
+     + WPC                  ! LOCAL Amounts of water undergoing phase      LSPFRM1A.62    
+C                           !       change.  2 different units are used.   LSPFRM1A.63    
+C  (b) Other scalar.                                                       LSPFRM1A.64    
+      INTEGER I             ! Loop counter (horizontal field index).       LSPFRM1A.65    
+C*                                                                         LSPFRM1A.66    
+*IF DEF,TIMER2                                                             LSPFRM1A.67    
+      CALL TIMER('LSPFRMT ',3)                                             LSPFRM1A.68    
+*ENDIF                                                                     LSPFRM1A.69    
+C-----------------------------------------------------------------------   LSPFRM1A.70    
+CL  Loop round gridpoints.                                                 LSPFRM1A.71    
+C-----------------------------------------------------------------------   LSPFRM1A.72    
+      DO 1 I=1,POINTS                                                      LSPFRM1A.73    
+C-----------------------------------------------------------------------   LSPFRM1A.74    
+CL 1. Adjust cloud water and temperature to make them consistent.          LSPFRM1A.75    
+CL    See equations P26.13 - P26.20.                                       LSPFRM1A.76    
+C-----------------------------------------------------------------------   LSPFRM1A.77    
+        IF(T(I).LE.TM)THEN                                                 LSPFRM1A.78    
+          WPC=MIN(QCL(I),CPRLF*(TM-T(I)))                      ! P26.13    LSPFRM1A.79    
+          QCL(I)=QCL(I)-WPC                                    ! P26.15    LSPFRM1A.80    
+          QCF(I)=QCF(I)+WPC                                    ! P26.16    LSPFRM1A.81    
+          T(I)=T(I)+WPC*LFRCP                                  ! P26.14    LSPFRM1A.82    
+        ELSE                                                               LSPFRM1A.83    
+          WPC=MIN(QCF(I),CPRLF*(T(I)-TM))                      ! P26.17    LSPFRM1A.84    
+          QCL(I)=QCL(I)+WPC                                    ! P26.19    LSPFRM1A.85    
+          QCF(I)=QCF(I)-WPC                                    ! P26.20    LSPFRM1A.86    
+          T(I)=T(I)-WPC*LFRCP                                  ! P26.18    LSPFRM1A.87    
+        ENDIF                                                              LSPFRM1A.88    
+C-----------------------------------------------------------------------   LSPFRM1A.89    
+CL 2. Freeze or melt precipitation, on basis of updated temperature.       LSPFRM1A.90    
+CL    See equations P26.21 - P26.28.                                       LSPFRM1A.91    
+C-----------------------------------------------------------------------   LSPFRM1A.92    
+        IF(T(I).LE.TM)THEN                                                 LSPFRM1A.93    
+          WPC=MIN(                                                         LSPFRM1A.94    
+     +            RAIN(I),                                                 LSPFRM1A.95    
+     +            CPRLF*(TM-T(I))*RHODZ(I)/TIMESTEP                        LSPFRM1A.96    
+     +            )                                            ! P26.21    LSPFRM1A.97    
+          RAIN(I)=RAIN(I)-WPC                                  ! P26.23    LSPFRM1A.98    
+          SNOW(I)=SNOW(I)+WPC                                  ! P26.24    LSPFRM1A.99    
+          T(I)=T(I)+WPC*TIMESTEP*LFRCP/RHODZ(I)                ! P26.22    LSPFRM1A.100   
+        ELSE                                                               LSPFRM1A.101   
+          WPC=MIN(                                                         LSPFRM1A.102   
+     +            SNOW(I),                                                 LSPFRM1A.103   
+     +            CPRLF*(T(I)-TM)*RHODZ(I)/TIMESTEP                        LSPFRM1A.104   
+     +            )                                            ! P26.21    LSPFRM1A.105   
+          RAIN(I)=RAIN(I)+WPC                                  ! P26.23    LSPFRM1A.106   
+          SNOW(I)=SNOW(I)-WPC                                  ! P26.24    LSPFRM1A.107   
+          T(I)=T(I)-WPC*TIMESTEP*LFRCP/RHODZ(I)                ! P26.22    LSPFRM1A.108   
+        ENDIF                                                              LSPFRM1A.109   
+    1 CONTINUE                                                             LSPFRM1A.110   
+*IF DEF,TIMER2                                                             LSPFRM1A.111   
+      CALL TIMER('LSPFRMT ',4)                                             LSPFRM1A.112   
+*ENDIF                                                                     LSPFRM1A.113   
+      RETURN                                                               LSPFRM1A.114   
+      END                                                                  LSPFRM1A.115   
+*ENDIF                                                                     LSPFRM1A.116   

@@ -1,0 +1,734 @@
+*IF DEF,C96_1A,OR,DEF,C96_1B                                               GTOLBC1A.2     
+*IF DEF,MPP                                                                GTOLBC1A.3     
+C *****************************COPYRIGHT******************************     GTOLBC1A.4     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    GTOLBC1A.5     
+C                                                                          GTOLBC1A.6     
+C Use, duplication or disclosure of this code is subject to the            GTOLBC1A.7     
+C restrictions as set forth in the contract.                               GTOLBC1A.8     
+C                                                                          GTOLBC1A.9     
+C                Meteorological Office                                     GTOLBC1A.10    
+C                London Road                                               GTOLBC1A.11    
+C                BRACKNELL                                                 GTOLBC1A.12    
+C                Berkshire UK                                              GTOLBC1A.13    
+C                RG12 2SZ                                                  GTOLBC1A.14    
+C                                                                          GTOLBC1A.15    
+C If no contract has been raised with this copy of the code, the use,      GTOLBC1A.16    
+C duplication or disclosure of it is strictly prohibited.  Permission      GTOLBC1A.17    
+C to do so must first be obtained in writing from the Head of Numerical    GTOLBC1A.18    
+C Modelling at the above address.                                          GTOLBC1A.19    
+C ******************************COPYRIGHT******************************    GTOLBC1A.20    
+!+ Gathers in ocean partial LBCs from boundaries to create                 GTOLBC1A.21    
+!  global LBC                                                              GTOLBC1A.22    
+!                                                                          GTOLBC1A.23    
+! Subroutine Interface                                                     GTOLBC1A.24    
+      SUBROUTINE GATHER_OCEAN_LBCS(FULL_LBC,FULL_LENRIMDATA,               GTOLBC1A.25    
+     &                             PART_LBC,PART_LENRIMDATA,               GTOLBC1A.26    
+     &                             GATHER_PE,                              GTOLBC1A.27    
+     &                             ICODE,CMESSAGE)                         GTOLBC1A.28    
+      IMPLICIT NONE                                                        GTOLBC1A.29    
+!                                                                          GTOLBC1A.30    
+! Description:                                                             GTOLBC1A.31    
+! Gathers ocean LBCs from relevant processors and assembles                GTOLBC1A.32    
+! a global LBC on processor GATHER_PE                                      GTOLBC1A.33    
+!                                                                          GTOLBC1A.34    
+! Method:                                                                  GTOLBC1A.35    
+! The code loops around over all the processors.  For each                 GTOLBC1A.36    
+! processor there is then a loop over the four boundaries                  GTOLBC1A.37    
+! (North, East, South and West) and if the processor is on                 GTOLBC1A.38    
+! that particular boundary region, the appropriate data                    GTOLBC1A.39    
+! is sent from that processor's PART_LBC array to                          GTOLBC1A.40    
+! GATHER_PE's FULL_LBC array.                                              GTOLBC1A.41    
+! The data is transferred via two arrays, buf (the data to be              GTOLBC1A.42    
+! sent) and buf_expand (the data being received) which are both            GTOLBC1A.43    
+! on COMMON, to make the comms work with CRAY shmem correctly.             GTOLBC1A.44    
+!                                                                          GTOLBC1A.45    
+! The East and West boundaries of PART_LBC are dimensioned to              GTOLBC1A.46    
+! have the same number of rows of data as the prognostic fields to         GTOLBC1A.47    
+! which they relate (with halo rows excluded).                             GTOLBC1A.48    
+!                                                                          GTOLBC1A.49    
+! History                                                                  GTOLBC1A.50    
+!  Model    Date       Modification history from model version 4.5         GTOLBC1A.51    
+!  version                                                                 GTOLBC1A.52    
+!   4.5   17/06/98    New Deck for MPP code. S.Ineson,M.Bell,P.Burton      GTOLBC1A.53    
+!                                                                          GTOLBC1A.54    
+! Subroutine Arguments:                                                    GTOLBC1A.55    
+                                                                           GTOLBC1A.56    
+      INTEGER                                                              GTOLBC1A.57    
+     &  FULL_LENRIMDATA   ! IN size of the FULL_LBC array                  GTOLBC1A.58    
+     &, PART_LENRIMDATA   ! IN size of the PART_LBC array                  GTOLBC1A.59    
+     &, GATHER_PE         ! IN processor to scatter data from              GTOLBC1A.60    
+     &, ICODE             ! OUT error code                                 GTOLBC1A.61    
+                                                                           GTOLBC1A.62    
+      CHARACTER*(80)                                                       GTOLBC1A.63    
+     &  CMESSAGE          ! OUT error message                              GTOLBC1A.64    
+                                                                           GTOLBC1A.65    
+      REAL                                                                 GTOLBC1A.66    
+     &  FULL_LBC(FULL_LENRIMDATA)  ! IN full LBC (only on GATHER-_PE)      GTOLBC1A.67    
+     &, PART_LBC(PART_LENRIMDATA)  ! OUT local part of LBC                 GTOLBC1A.68    
+                                                                           GTOLBC1A.69    
+! Parameters and COMMON                                                    GTOLBC1A.70    
+                                                                           GTOLBC1A.71    
+*CALL PARVARS                                                              GTOLBC1A.72    
+*CALL GCCOM                                                                GTOLBC1A.73    
+                                                                           GTOLBC1A.74    
+      REAL                                                                 GTOLBC1A.75    
+     &  local_buf(FULL_LENRIMDATA)                                         GTOLBC1A.76    
+     &, buf_expand(FULL_LENRIMDATA)                                        GTOLBC1A.77    
+                                                                           GTOLBC1A.78    
+*CALL TYPSIZE                                                              GTOLBC1A.79    
+*CALL CNTLOCN                                                              GTOLBC1A.80    
+                                                                           GTOLBC1A.81    
+! Local variables                                                          GTOLBC1A.82    
+                                                                           GTOLBC1A.83    
+      INTEGER                                                              GTOLBC1A.84    
+     &  global_ROW_LENGTH ! length of row on global P grid                 GTOLBC1A.85    
+     &, global_P_ROWS     ! number of rows on global P grid                GTOLBC1A.86    
+     &, local_ROW_LENGTH  ! length of row on local P grid (no halos)       GTOLBC1A.87    
+     &, local_U_ROW_LENGTH ! length of row on local U grid (no halos)      GTOLBC1A.88    
+     &, local_P_ROWS      ! number of rows on local P grid (no halos)      GTOLBC1A.89    
+     &, local_U_ROWS      ! number of rows on local U grid (no halos)      GTOLBC1A.90    
+     &, global_P_LENRIM   ! size of boundary data for single               GTOLBC1A.91    
+!                         !   level on P grid for global data              GTOLBC1A.92    
+     &, global_U_LENRIM   ! size of boundary data for single               GTOLBC1A.93    
+!                         !   level on U grid for global data              GTOLBC1A.94    
+     &, local_P_LENRIM    ! size of boundary data for single               GTOLBC1A.95    
+!                         !    level on P grid for local data              GTOLBC1A.96    
+     &, local_U_LENRIM    ! size of boundary data for single               GTOLBC1A.97    
+!                         !    level on U grid for local data              GTOLBC1A.98    
+                                                                           GTOLBC1A.99    
+     &, global_START_ROW       ! first row in global data in boundary      GTOLBC1A.100   
+     &, local_START_ROW        ! first row in local data in boundary       GTOLBC1A.101   
+     &, global_START_POINT     ! first point in row in global boundary     GTOLBC1A.102   
+     &, local_START_POINT      ! first point in row in local boundary      GTOLBC1A.103   
+     &, N_P_ROWS               ! number of rows on P grid in boundary      GTOLBC1A.104   
+     &, N_P_POINTS             ! number of points in row on P grid         GTOLBC1A.105   
+     &, N_U_ROWS               ! number of rows on U grid in boundary      GTOLBC1A.106   
+     &, N_U_POINTS             ! number of points in row on U grid         GTOLBC1A.107   
+     &, global_P_ROW_LEN       ! length of row on P grid in boundary       GTOLBC1A.108   
+     &, global_U_ROW_LEN       ! length of row on U grid in boundary       GTOLBC1A.109   
+     &, local_P_ROW_LEN        ! length of row on P grid in boundary       GTOLBC1A.110   
+     &, local_U_ROW_LEN        ! length of row on U grid in boundary       GTOLBC1A.111   
+     &, global_P_bound_off     ! offset of a P grid boundary               GTOLBC1A.112   
+     &, local_P_bound_off      ! offset of a P grid boundary               GTOLBC1A.113   
+     &, global_U_bound_off     ! offset of a U grid boundary               GTOLBC1A.114   
+     &, local_U_bound_off      ! offset of a U grid boundary               GTOLBC1A.115   
+                                                                           GTOLBC1A.116   
+                                                                           GTOLBC1A.117   
+     &, global_TRACER_START     ! Start addresses of variables             GTOLBC1A.118   
+     &, global_U_START          ! in the global LBC data                   GTOLBC1A.119   
+     &, global_V_START          !                                          GTOLBC1A.120   
+     &, global_STREAM_START     !                                          GTOLBC1A.121   
+     &, global_ICE_START                                                   GTOLBC1A.122   
+     &, global_P_EAST_DATA_off  ! offset of East P data in global LBC      GTOLBC1A.123   
+     &, global_U_EAST_DATA_off  ! offset of East U data in global LBC      GTOLBC1A.124   
+     &, global_P_SOUTH_DATA_off ! offset of South P data in global LBC     GTOLBC1A.125   
+     &, global_U_SOUTH_DATA_off ! offset of South U data in global LBC     GTOLBC1A.126   
+     &, global_P_WEST_DATA_off  ! offset of West P data in global LBC      GTOLBC1A.127   
+     &, global_U_WEST_DATA_off  ! offset of West U data in global LBC      GTOLBC1A.128   
+                                                                           GTOLBC1A.129   
+     &, local_TRACER_START      ! Start addresses of variables             GTOLBC1A.130   
+     &, local_U_START           ! in the local LBC data                    GTOLBC1A.131   
+     &, local_V_START           !                                          GTOLBC1A.132   
+     &, local_STREAM_START      !                                          GTOLBC1A.133   
+     &, local_ICE_START                                                    GTOLBC1A.134   
+     &, local_P_EAST_DATA_off   ! offset of East P data in local LBC       GTOLBC1A.135   
+     &, local_U_EAST_DATA_off   ! offset of East U data in local LBC       GTOLBC1A.136   
+     &, local_P_SOUTH_DATA_off  ! offset of South P data in local LBC      GTOLBC1A.137   
+     &, local_U_SOUTH_DATA_off  ! offset of South U data in local LBC      GTOLBC1A.138   
+     &, local_P_WEST_DATA_off   ! offset of West P data in local LBC       GTOLBC1A.139   
+     &, local_U_WEST_DATA_off   ! offset of West U data in local LBC       GTOLBC1A.140   
+                                                                           GTOLBC1A.141   
+     &, offset,offset_p,offset_u   ! used in calculation of offsets        GTOLBC1A.142   
+     &, numside_colso           !no of active boundary columns             GTOLBC1A.143   
+     &, numside_rowso           !no of active boundary rows                GTOLBC1A.144   
+                                                                           GTOLBC1A.145   
+      INTEGER                                                              GTOLBC1A.146   
+     &  iproc  ! processor index                                           GTOLBC1A.147   
+     &, bound_type ! loop index for loop over boundary types               GTOLBC1A.148   
+     &, data_size  ! size of message to be sent                            GTOLBC1A.149   
+     &, buf_pt     ! pointer to position in buffer array                   GTOLBC1A.150   
+     &, ROW        ! loop index indicating row number                      GTOLBC1A.151   
+     &, POINT      ! loop index indicating point along row                 GTOLBC1A.152   
+     &, LEVEL      ! loop index indicating level                           GTOLBC1A.153   
+     &, TVAR       ! loop index indicating tracer variable                 GTOLBC1A.154   
+     &, info       ! return code from communications routines              GTOLBC1A.155   
+                                                                           GTOLBC1A.156   
+      INTEGER  ! magic numbers for boundary types                          GTOLBC1A.157   
+     &  bt_top   ! top boundary                                            GTOLBC1A.158   
+     &, bt_right ! right boundary                                          GTOLBC1A.159   
+     &, bt_base  ! bottom boundary                                         GTOLBC1A.160   
+     &, bt_left  ! left boundary                                           GTOLBC1A.161   
+      PARAMETER(bt_top=1,bt_right=2,bt_base=3,bt_left=4)                   GTOLBC1A.162   
+                                                                           GTOLBC1A.163   
+      LOGICAL                                                              GTOLBC1A.164   
+     &  iproc_at_left  ! processor at left of LPG                          GTOLBC1A.165   
+     &, iproc_at_right ! processor at right of LPG                         GTOLBC1A.166   
+     &, iproc_at_top   ! processor at top of LPG                           GTOLBC1A.167   
+     &, iproc_at_base  ! processor at base of LPG                          GTOLBC1A.168   
+                                                                           GTOLBC1A.169   
+!--------------------------------------------------------------------      GTOLBC1A.170   
+                                                                           GTOLBC1A.171   
+! 1.0 Set up sizes and addresses for global data                           GTOLBC1A.172   
+                                                                           GTOLBC1A.173   
+! Set up some sizes                                                        GTOLBC1A.174   
+                                                                           GTOLBC1A.175   
+      global_ROW_LENGTH=glsize(1)                                          GTOLBC1A.176   
+      global_P_ROWS=glsize(2)                                              GTOLBC1A.177   
+                                                                           GTOLBC1A.178   
+! Find no of active rows, columns and set addresses for grid location      GTOLBC1A.179   
+                                                                           GTOLBC1A.180   
+      numside_rowso = 0                                                    GTOLBC1A.181   
+      numside_colso = 0                                                    GTOLBC1A.182   
+                                                                           GTOLBC1A.183   
+      IF ( L_OBDY_NORTH) THEN                                              GTOLBC1A.184   
+        offset_p = global_ROW_LENGTH * RIMWIDTHO                           GTOLBC1A.185   
+        offset_u = (global_ROW_LENGTH-1) * RIMWIDTHO                       GTOLBC1A.186   
+        numside_rowso = numside_rowso + rimwidtho                          GTOLBC1A.187   
+      ELSE                                                                 GTOLBC1A.188   
+        offset_p = 0                                                       GTOLBC1A.189   
+        offset_u = 0                                                       GTOLBC1A.190   
+      ENDIF                                                                GTOLBC1A.191   
+                                                                           GTOLBC1A.192   
+      IF ( L_OBDY_EAST) THEN                                               GTOLBC1A.193   
+        global_P_EAST_DATA_off = offset_p                                  GTOLBC1A.194   
+        global_U_EAST_DATA_off = offset_u                                  GTOLBC1A.195   
+        offset_p = offset_p + global_P_ROWS * RIMWIDTHO                    GTOLBC1A.196   
+        offset_u = offset_u + (global_P_ROWS-1) * RIMWIDTHO                GTOLBC1A.197   
+        numside_colso = numside_colso + rimwidtho                          GTOLBC1A.198   
+      ELSE                                                                 GTOLBC1A.199   
+        global_P_EAST_DATA_off = -1                                        GTOLBC1A.200   
+        global_U_EAST_DATA_off = -1                                        GTOLBC1A.201   
+      ENDIF                                                                GTOLBC1A.202   
+                                                                           GTOLBC1A.203   
+      IF ( L_OBDY_SOUTH) THEN                                              GTOLBC1A.204   
+        global_P_SOUTH_DATA_off = offset_p                                 GTOLBC1A.205   
+        global_U_SOUTH_DATA_off = offset_u                                 GTOLBC1A.206   
+        offset_p = offset_p + global_ROW_LENGTH * RIMWIDTHO                GTOLBC1A.207   
+        offset_u = offset_u + (global_ROW_LENGTH-1) * RIMWIDTHO            GTOLBC1A.208   
+        numside_rowso = numside_rowso + rimwidtho                          GTOLBC1A.209   
+      ELSE                                                                 GTOLBC1A.210   
+        global_P_SOUTH_DATA_off = -1                                       GTOLBC1A.211   
+        global_U_SOUTH_DATA_off = -1                                       GTOLBC1A.212   
+      ENDIF                                                                GTOLBC1A.213   
+                                                                           GTOLBC1A.214   
+      IF ( L_OBDY_WEST) THEN                                               GTOLBC1A.215   
+        global_P_WEST_DATA_off = offset_p                                  GTOLBC1A.216   
+        global_U_WEST_DATA_off = offset_u                                  GTOLBC1A.217   
+        numside_colso = numside_colso + rimwidtho                          GTOLBC1A.218   
+      ELSE                                                                 GTOLBC1A.219   
+        global_P_WEST_DATA_off = -1                                        GTOLBC1A.220   
+        global_U_WEST_DATA_off = -1                                        GTOLBC1A.221   
+      ENDIF                                                                GTOLBC1A.222   
+                                                                           GTOLBC1A.223   
+! Set up LENRIM sizes                                                      GTOLBC1A.224   
+                                                                           GTOLBC1A.225   
+      global_P_LENRIM = global_ROW_LENGTH*numside_rowso                    GTOLBC1A.226   
+     &                     + global_P_ROWS* numside_colso                  GTOLBC1A.227   
+                                                                           GTOLBC1A.228   
+      global_U_LENRIM = (global_ROW_LENGTH-1) *numside_rowso               GTOLBC1A.229   
+     &                     + (global_P_ROWS-1) * numside_colso             GTOLBC1A.230   
+                                                                           GTOLBC1A.231   
+! Set up addresses for variable types                                      GTOLBC1A.232   
+                                                                           GTOLBC1A.233   
+      IF (L_OBDY_TRACER) THEN                                              GTOLBC1A.234   
+        global_TRACER_START = 1                                            GTOLBC1A.235   
+        offset = global_P_LENRIM * KM_UI * NT_UI                           GTOLBC1A.236   
+      ELSE                                                                 GTOLBC1A.237   
+        global_TRACER_START = -1                                           GTOLBC1A.238   
+        offset = 0                                                         GTOLBC1A.239   
+      ENDIF                                                                GTOLBC1A.240   
+                                                                           GTOLBC1A.241   
+      IF (L_OBDY_UV) THEN                                                  GTOLBC1A.242   
+        global_U_START = offset + 1                                        GTOLBC1A.243   
+        global_V_START = offset + global_U_LENRIM * KM_UI + 1              GTOLBC1A.244   
+        offset = offset + 2 * global_U_LENRIM * KM_UI                      GTOLBC1A.245   
+      ELSE                                                                 GTOLBC1A.246   
+        global_U_START = -1                                                GTOLBC1A.247   
+        global_V_START = -1                                                GTOLBC1A.248   
+      ENDIF                                                                GTOLBC1A.249   
+                                                                           GTOLBC1A.250   
+      IF (L_OBDY_STREAM) THEN                                              GTOLBC1A.251   
+        global_STREAM_START = offset + 1                                   GTOLBC1A.252   
+        offset = offset + 2 * global_P_LENRIM                              GTOLBC1A.253   
+      ELSE                                                                 GTOLBC1A.254   
+        global_STREAM_START = -1                                           GTOLBC1A.255   
+      ENDIF                                                                GTOLBC1A.256   
+                                                                           GTOLBC1A.257   
+      IF (L_OBDY_ICE) THEN                                                 GTOLBC1A.258   
+        global_ICE_START = offset + 1                                      GTOLBC1A.259   
+      ELSE                                                                 GTOLBC1A.260   
+        global_ICE_START = -1                                              GTOLBC1A.261   
+      ENDIF                                                                GTOLBC1A.262   
+                                                                           GTOLBC1A.263   
+!--------------------------------------------------------------------      GTOLBC1A.264   
+                                                                           GTOLBC1A.265   
+! 2.0 Loop over processors                                                 GTOLBC1A.266   
+                                                                           GTOLBC1A.267   
+      DO iproc=first_comp_pe,last_comp_pe  ! loop over all processors      GTOLBC1A.268   
+                                                                           GTOLBC1A.269   
+                                                                           GTOLBC1A.270   
+!   2.1 Set up logicals, sizes and addresses for local data                GTOLBC1A.271   
+                                                                           GTOLBC1A.272   
+! set up logicals indicating position on LPG                               GTOLBC1A.273   
+        iproc_at_left=.FALSE.                                              GTOLBC1A.274   
+        iproc_at_right=.FALSE.                                             GTOLBC1A.275   
+        iproc_at_top=.FALSE.                                               GTOLBC1A.276   
+        iproc_at_base=.FALSE.                                              GTOLBC1A.277   
+        IF (g_gridpos(1,iproc) .EQ. 0) iproc_at_left=.TRUE.                GTOLBC1A.278   
+        IF (g_gridpos(1,iproc) .EQ. nproc_x-1) iproc_at_right=.TRUE.       GTOLBC1A.279   
+        IF (g_gridpos(2,iproc) .EQ. 0) iproc_at_top=.TRUE.                 GTOLBC1A.280   
+        IF (g_gridpos(2,iproc) .EQ. nproc_y-1) iproc_at_base=.TRUE.        GTOLBC1A.281   
+                                                                           GTOLBC1A.282   
+! Set up the local data for this processor                                 GTOLBC1A.283   
+                                                                           GTOLBC1A.284   
+        local_ROW_LENGTH=g_blsizep(1,iproc)  ! no halos                    GTOLBC1A.285   
+        IF (iproc_at_right) THEN                                           GTOLBC1A.286   
+          local_U_ROW_LENGTH=local_ROW_LENGTH-1                            GTOLBC1A.287   
+        ELSE                                                               GTOLBC1A.288   
+          local_U_ROW_LENGTH=local_ROW_LENGTH                              GTOLBC1A.289   
+        ENDIF                                                              GTOLBC1A.290   
+                                                                           GTOLBC1A.291   
+        local_P_ROWS=g_blsizep(2,iproc)      ! again, no halos             GTOLBC1A.292   
+        IF (iproc_at_base) THEN                                            GTOLBC1A.293   
+          local_U_ROWS=local_P_ROWS-1                                      GTOLBC1A.294   
+        ELSE                                                               GTOLBC1A.295   
+          local_U_ROWS=local_P_ROWS                                        GTOLBC1A.296   
+        ENDIF                                                              GTOLBC1A.297   
+                                                                           GTOLBC1A.298   
+        local_P_LENRIM=local_ROW_LENGTH * numside_rowso                    GTOLBC1A.299   
+     &                     +local_P_ROWS * numside_colso                   GTOLBC1A.300   
+        local_U_LENRIM=local_U_ROW_LENGTH * numside_rowso                  GTOLBC1A.301   
+     &                     +local_U_ROWS * numside_colso                   GTOLBC1A.302   
+                                                                           GTOLBC1A.303   
+! Set up some addresses for variable types                                 GTOLBC1A.304   
+                                                                           GTOLBC1A.305   
+        IF (L_OBDY_TRACER) THEN                                            GTOLBC1A.306   
+          local_TRACER_START = 1                                           GTOLBC1A.307   
+          offset = local_P_LENRIM * KM_UI                                  GTOLBC1A.308   
+        ELSE                                                               GTOLBC1A.309   
+          local_TRACER_START = -1                                          GTOLBC1A.310   
+          offset = 0                                                       GTOLBC1A.311   
+        ENDIF                                                              GTOLBC1A.312   
+                                                                           GTOLBC1A.313   
+        IF (L_OBDY_UV) THEN                                                GTOLBC1A.314   
+          local_U_START = offset + 1                                       GTOLBC1A.315   
+          local_V_START = offset + local_U_LENRIM * KM_UI + 1              GTOLBC1A.316   
+          offset = offset + 2 * local_U_LENRIM * KM_UI                     GTOLBC1A.317   
+        ELSE                                                               GTOLBC1A.318   
+          local_U_START = -1                                               GTOLBC1A.319   
+          local_V_START = -1                                               GTOLBC1A.320   
+        ENDIF                                                              GTOLBC1A.321   
+                                                                           GTOLBC1A.322   
+        IF (L_OBDY_STREAM) THEN                                            GTOLBC1A.323   
+          local_STREAM_START = offset + 1                                  GTOLBC1A.324   
+          offset = offset + 2 * local_P_LENRIM                             GTOLBC1A.325   
+        ELSE                                                               GTOLBC1A.326   
+          local_STREAM_START = -1                                          GTOLBC1A.327   
+        ENDIF                                                              GTOLBC1A.328   
+                                                                           GTOLBC1A.329   
+        IF (L_OBDY_ICE) THEN                                               GTOLBC1A.330   
+          local_ICE_START = offset + 1                                     GTOLBC1A.331   
+          offset = offset + 3 * local_P_LENRIM                             GTOLBC1A.332   
+        ELSE                                                               GTOLBC1A.333   
+          local_ICE_START = -1                                             GTOLBC1A.334   
+        ENDIF                                                              GTOLBC1A.335   
+                                                                           GTOLBC1A.336   
+! Set up some addresses for grid location                                  GTOLBC1A.337   
+                                                                           GTOLBC1A.338   
+        IF ( L_OBDY_NORTH) THEN                                            GTOLBC1A.339   
+          offset_p = local_ROW_LENGTH * RIMWIDTHO                          GTOLBC1A.340   
+          offset_u = local_U_ROW_LENGTH * RIMWIDTHO                        GTOLBC1A.341   
+        ELSE                                                               GTOLBC1A.342   
+          offset_p = 0                                                     GTOLBC1A.343   
+          offset_u = 0                                                     GTOLBC1A.344   
+        ENDIF                                                              GTOLBC1A.345   
+                                                                           GTOLBC1A.346   
+        IF ( L_OBDY_EAST) THEN                                             GTOLBC1A.347   
+          local_P_EAST_DATA_off = offset_p                                 GTOLBC1A.348   
+          local_U_EAST_DATA_off = offset_u                                 GTOLBC1A.349   
+          offset_p = offset_p + local_P_ROWS * RIMWIDTHO                   GTOLBC1A.350   
+          offset_u = offset_u + local_U_ROWS * RIMWIDTHO                   GTOLBC1A.351   
+        ELSE                                                               GTOLBC1A.352   
+          local_P_EAST_DATA_off = -1                                       GTOLBC1A.353   
+          local_U_EAST_DATA_off = -1                                       GTOLBC1A.354   
+        ENDIF                                                              GTOLBC1A.355   
+                                                                           GTOLBC1A.356   
+        IF ( L_OBDY_SOUTH) THEN                                            GTOLBC1A.357   
+          local_P_SOUTH_DATA_off = offset_p                                GTOLBC1A.358   
+          local_U_SOUTH_DATA_off = offset_u                                GTOLBC1A.359   
+          offset_p = local_ROW_LENGTH * RIMWIDTHO                          GTOLBC1A.360   
+          offset_u = local_U_ROW_LENGTH * RIMWIDTHO                        GTOLBC1A.361   
+        ELSE                                                               GTOLBC1A.362   
+          local_P_SOUTH_DATA_off = -1                                      GTOLBC1A.363   
+          local_U_SOUTH_DATA_off = -1                                      GTOLBC1A.364   
+        ENDIF                                                              GTOLBC1A.365   
+                                                                           GTOLBC1A.366   
+        IF ( L_OBDY_WEST) THEN                                             GTOLBC1A.367   
+          local_P_WEST_DATA_off = offset_p                                 GTOLBC1A.368   
+          local_U_WEST_DATA_off = offset_u                                 GTOLBC1A.369   
+        ELSE                                                               GTOLBC1A.370   
+          local_P_WEST_DATA_off = -1                                       GTOLBC1A.371   
+          local_U_WEST_DATA_off = -1                                       GTOLBC1A.372   
+        ENDIF                                                              GTOLBC1A.373   
+                                                                           GTOLBC1A.374   
+!-------------------------------------------------------------------       GTOLBC1A.375   
+                                                                           GTOLBC1A.376   
+!   2.2 Loop over boundaries: North, East, South and West                  GTOLBC1A.377   
+                                                                           GTOLBC1A.378   
+!   For the ocean model the order of the boundary data order is N,E,S,W.   GTOLBC1A.379   
+!   Howvever, row 1 of the ocean model is the the southern most row.       GTOLBC1A.380   
+!   Hence, the northern bdy data, bt_top ==> processors, iproc_at_base     GTOLBC1A.381   
+!          the southern bdy data,bt_base ==> processors, iproc_at_top      GTOLBC1A.382   
+                                                                           GTOLBC1A.383   
+        DO bound_type=bt_top,bt_left  ! loop over all boundaries           GTOLBC1A.384   
+                                                                           GTOLBC1A.385   
+          IF (((bound_type .EQ. bt_top) .AND. (iproc_at_base)              GTOLBC1A.386   
+     &              .AND. (L_OBDY_NORTH))    .OR.                          GTOLBC1A.387   
+     &       ((bound_type .EQ. bt_right) .AND. (iproc_at_right)            GTOLBC1A.388   
+     &              .AND. (L_OBDY_EAST))      .OR.                         GTOLBC1A.389   
+     &       ((bound_type .EQ. bt_base) .AND. (iproc_at_top)               GTOLBC1A.390   
+     &              .AND. (L_OBDY_SOUTH))      .OR.                        GTOLBC1A.391   
+     &       ((bound_type .EQ. bt_left) .AND. (iproc_at_left)              GTOLBC1A.392   
+     &              .AND. (L_OBDY_WEST)))             THEN                 GTOLBC1A.393   
+!             Processor iproc has a boundary of type bound_type            GTOLBC1A.394   
+                                                                           GTOLBC1A.395   
+                                                                           GTOLBC1A.396   
+!      2.2.1 Set up data pointers and sizes for this boundary              GTOLBC1A.397   
+                                                                           GTOLBC1A.398   
+            IF ((bound_type .EQ. bt_top) .OR.   ! What type of             GTOLBC1A.399   
+     &          (bound_type .EQ. bt_base)) THEN ! boundary is it?          GTOLBC1A.400   
+                                                                           GTOLBC1A.401   
+!             Northern or Southern boundary                                GTOLBC1A.402   
+                                                                           GTOLBC1A.403   
+              global_START_ROW=1                                           GTOLBC1A.404   
+              local_START_ROW=1                                            GTOLBC1A.405   
+                                                                           GTOLBC1A.406   
+              global_START_POINT=g_datastart(1,iproc)                      GTOLBC1A.407   
+              local_START_POINT=1                                          GTOLBC1A.408   
+                                                                           GTOLBC1A.409   
+              N_P_ROWS=RIMWIDTHO                                           GTOLBC1A.410   
+              N_P_POINTS=local_ROW_LENGTH                                  GTOLBC1A.411   
+              N_U_ROWS=RIMWIDTHO                                           GTOLBC1A.412   
+              N_U_POINTS=local_U_ROW_LENGTH                                GTOLBC1A.413   
+                                                                           GTOLBC1A.414   
+              global_P_ROW_LEN=global_ROW_LENGTH                           GTOLBC1A.415   
+              local_P_ROW_LEN=local_ROW_LENGTH                             GTOLBC1A.416   
+              global_U_ROW_LEN=global_ROW_LENGTH-1                         GTOLBC1A.417   
+              local_U_ROW_LEN=local_U_ROW_LENGTH                           GTOLBC1A.418   
+                                                                           GTOLBC1A.419   
+              IF (bound_type .EQ. bt_top) THEN  ! Northern boundary        GTOLBC1A.420   
+                global_P_bound_off=0                                       GTOLBC1A.421   
+                local_P_bound_off=0                                        GTOLBC1A.422   
+                global_U_bound_off=0                                       GTOLBC1A.423   
+                local_U_bound_off=0                                        GTOLBC1A.424   
+              ELSE  ! Southern boundary                                    GTOLBC1A.425   
+                global_P_bound_off=global_P_SOUTH_DATA_off                 GTOLBC1A.426   
+                local_P_bound_off=local_P_SOUTH_DATA_off                   GTOLBC1A.427   
+                global_U_bound_off=global_U_SOUTH_DATA_off                 GTOLBC1A.428   
+                local_U_bound_off=local_U_SOUTH_DATA_off                   GTOLBC1A.429   
+              ENDIF                                                        GTOLBC1A.430   
+                                                                           GTOLBC1A.431   
+            ELSE  ! Eastern or Western boundary                            GTOLBC1A.432   
+                                                                           GTOLBC1A.433   
+              global_START_ROW=g_datastart(2,iproc)                        GTOLBC1A.434   
+              local_START_ROW=1                                            GTOLBC1A.435   
+                                                                           GTOLBC1A.436   
+              global_START_POINT=1                                         GTOLBC1A.437   
+              local_START_POINT=1                                          GTOLBC1A.438   
+                                                                           GTOLBC1A.439   
+              N_P_ROWS=local_P_ROWS                                        GTOLBC1A.440   
+              N_P_POINTS=RIMWIDTHO                                         GTOLBC1A.441   
+              N_U_ROWS=local_U_ROWS                                        GTOLBC1A.442   
+              N_U_POINTS=RIMWIDTHO                                         GTOLBC1A.443   
+                                                                           GTOLBC1A.444   
+              global_P_ROW_LEN=RIMWIDTHO                                   GTOLBC1A.445   
+              local_P_ROW_LEN=RIMWIDTHO                                    GTOLBC1A.446   
+              global_U_ROW_LEN=RIMWIDTHO                                   GTOLBC1A.447   
+              local_U_ROW_LEN=RIMWIDTHO                                    GTOLBC1A.448   
+                                                                           GTOLBC1A.449   
+              IF (bound_type .EQ. bt_right) THEN ! Eastern boundary        GTOLBC1A.450   
+                global_P_bound_off=global_P_EAST_DATA_off                  GTOLBC1A.451   
+                local_P_bound_off=local_P_EAST_DATA_off                    GTOLBC1A.452   
+                global_U_bound_off=global_U_EAST_DATA_off                  GTOLBC1A.453   
+                local_U_bound_off=local_U_EAST_DATA_off                    GTOLBC1A.454   
+              ELSE ! Western boundary                                      GTOLBC1A.455   
+                global_P_bound_off=global_P_WEST_DATA_off                  GTOLBC1A.456   
+                local_P_bound_off=local_P_WEST_DATA_off                    GTOLBC1A.457   
+                global_U_bound_off=global_U_WEST_DATA_off                  GTOLBC1A.458   
+                local_U_bound_off=local_U_WEST_DATA_off                    GTOLBC1A.459   
+              ENDIF                                                        GTOLBC1A.460   
+                                                                           GTOLBC1A.461   
+            ENDIF ! What type of boundary is it?                           GTOLBC1A.462   
+                                                                           GTOLBC1A.463   
+!  Find size of the data to be sent to processor iproc                     GTOLBC1A.464   
+                                                                           GTOLBC1A.465   
+            data_size=0                                                    GTOLBC1A.466   
+            IF (L_OBDY_TRACER) data_size =                                 GTOLBC1A.467   
+     &           data_size + KM_UI * NT_UI * N_P_ROWS * N_P_POINTS         GTOLBC1A.468   
+            IF (L_OBDY_UV) data_size =                                     GTOLBC1A.469   
+     &           data_size + 2 * KM_UI * N_U_ROWS * N_U_POINTS             GTOLBC1A.470   
+            IF (L_OBDY_STREAM) data_size =                                 GTOLBC1A.471   
+     &           data_size + 2 * N_P_ROWS * N_P_POINTS                     GTOLBC1A.472   
+            IF (L_OBDY_ICE) data_size =                                    GTOLBC1A.473   
+     &           data_size + 3 * N_P_ROWS * N_P_POINTS                     GTOLBC1A.474   
+                                                                           GTOLBC1A.475   
+!           Check the buffer is big enough                                 GTOLBC1A.476   
+            IF (FULL_LENRIMDATA .LT.                                       GTOLBC1A.477   
+     &          data_size) THEN                                            GTOLBC1A.478   
+              WRITE(6,*) 'ERROR Buffer not big enough in GATHER_LBCS'      GTOLBC1A.479   
+              WRITE(6,*) 'Buffer size is ',FULL_LENRIMDATA                 GTOLBC1A.480   
+              WRITE(6,*) 'Required size is ',data_size                     GTOLBC1A.481   
+              ICODE=1                                                      GTOLBC1A.482   
+              CMESSAGE='SCATTER_LBCS BUFFER TOO SMALL'                     GTOLBC1A.483   
+              GOTO 9999                                                    GTOLBC1A.484   
+            ENDIF                                                          GTOLBC1A.485   
+                                                                           GTOLBC1A.486   
+                                                                           GTOLBC1A.487   
+!      2.2.2 Pack all the data for this boundary into the buf array        GTOLBC1A.488   
+                                                                           GTOLBC1A.489   
+              CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! gather         GTOLBC1A.490   
+              info=GC_NONE                                                 GTOLBC1A.491   
+                                                                           GTOLBC1A.492   
+            IF (mype .EQ. iproc) THEN  ! I'm processor iproc               GTOLBC1A.493   
+                                                                           GTOLBC1A.494   
+              buf_pt=1                                                     GTOLBC1A.495   
+                                                                           GTOLBC1A.496   
+!             --- TRACERS ---                                              GTOLBC1A.497   
+                                                                           GTOLBC1A.498   
+              IF (L_OBDY_TRACER) THEN                                      GTOLBC1A.499   
+                                                                           GTOLBC1A.500   
+              DO TVAR=1,NT_UI                                              GTOLBC1A.501   
+                DO LEVEL=1,KM_UI                                           GTOLBC1A.502   
+                  DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1        GTOLBC1A.503   
+                    DO POINT=local_START_POINT,                            GTOLBC1A.504   
+     &                       local_START_POINT+N_P_POINTS-1                GTOLBC1A.505   
+                      local_buf(buf_pt)=PART_LBC(local_TRACER_START-1+     GTOLBC1A.506   
+     &                              local_P_bound_off+                     GTOLBC1A.507   
+     &                              POINT+                                 GTOLBC1A.508   
+     &                              (ROW-1)*local_P_ROW_LEN+               GTOLBC1A.509   
+     &                              (LEVEL-1)*local_P_LENRIM+              GTOLBC1A.510   
+     &                              (TVAR-1)*KM_UI*local_P_LENRIM)         GTOLBC1A.511   
+                      buf_pt=buf_pt+1                                      GTOLBC1A.512   
+                     ENDDO                                                 GTOLBC1A.513   
+                   ENDDO                                                   GTOLBC1A.514   
+                 ENDDO                                                     GTOLBC1A.515   
+               ENDDO                                                       GTOLBC1A.516   
+                                                                           GTOLBC1A.517   
+               ENDIF      !  L_OBDY_TRACER                                 GTOLBC1A.518   
+                                                                           GTOLBC1A.519   
+!             --- U,V CURRENTS ---                                         GTOLBC1A.520   
+                                                                           GTOLBC1A.521   
+               IF (L_OBDY_UV) THEN                                         GTOLBC1A.522   
+                                                                           GTOLBC1A.523   
+                 DO LEVEL=1,KM_UI                                          GTOLBC1A.524   
+                   DO ROW=local_START_ROW,local_START_ROW+N_U_ROWS-1       GTOLBC1A.525   
+                     DO POINT=local_START_POINT,                           GTOLBC1A.526   
+     &                       local_START_POINT+N_U_POINTS-1                GTOLBC1A.527   
+                       local_buf(buf_pt)=PART_LBC(local_U_START-1+         GTOLBC1A.528   
+     &                              local_U_bound_off+                     GTOLBC1A.529   
+     &                              POINT+                                 GTOLBC1A.530   
+     &                              (ROW-1)*local_U_ROW_LEN+               GTOLBC1A.531   
+     &                               (LEVEL-1)*local_U_LENRIM)             GTOLBC1A.532   
+                       buf_pt=buf_pt+1                                     GTOLBC1A.533   
+                     ENDDO                                                 GTOLBC1A.534   
+                   ENDDO                                                   GTOLBC1A.535   
+                 ENDDO                                                     GTOLBC1A.536   
+                                                                           GTOLBC1A.537   
+                 DO LEVEL=1,KM_UI                                          GTOLBC1A.538   
+                   DO ROW=local_START_ROW,local_START_ROW+N_U_ROWS-1       GTOLBC1A.539   
+                     DO POINT=local_START_POINT,                           GTOLBC1A.540   
+     &                       local_START_POINT+N_U_POINTS-1                GTOLBC1A.541   
+                       local_buf(buf_pt)=PART_LBC(local_V_START-1+         GTOLBC1A.542   
+     &                              local_U_bound_off+                     GTOLBC1A.543   
+     &                              POINT+                                 GTOLBC1A.544   
+     &                              (ROW-1)*local_U_ROW_LEN+               GTOLBC1A.545   
+     &                              (LEVEL-1)*local_U_LENRIM)              GTOLBC1A.546   
+                       buf_pt=buf_pt+1                                     GTOLBC1A.547   
+                     ENDDO                                                 GTOLBC1A.548   
+                   ENDDO                                                   GTOLBC1A.549   
+                 ENDDO                                                     GTOLBC1A.550   
+                                                                           GTOLBC1A.551   
+               ENDIF      !  L_OBDY_UV                                     GTOLBC1A.552   
+                                                                           GTOLBC1A.553   
+!             --- STREAMFUNCTION ---                                       GTOLBC1A.554   
+                                                                           GTOLBC1A.555   
+               IF (L_OBDY_STREAM) THEN                                     GTOLBC1A.556   
+                                                                           GTOLBC1A.557   
+                DO TVAR=1,2                                                GTOLBC1A.558   
+                 DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1         GTOLBC1A.559   
+                   DO POINT=local_START_POINT,                             GTOLBC1A.560   
+     &                       local_START_POINT+N_P_POINTS-1                GTOLBC1A.561   
+                     local_buf(buf_pt)=PART_LBC(local_STREAM_START-1+      GTOLBC1A.562   
+     &                              local_P_bound_off+                     GTOLBC1A.563   
+     &                              POINT+                                 GTOLBC1A.564   
+     &                              (ROW-1)*local_P_ROW_LEN+               GTOLBC1A.565   
+     &                              (TVAR-1)*local_P_LENRIM)               GTOLBC1A.566   
+                     buf_pt=buf_pt+1                                       GTOLBC1A.567   
+                   ENDDO                                                   GTOLBC1A.568   
+                 ENDDO                                                     GTOLBC1A.569   
+                ENDDO                                                      GTOLBC1A.570   
+                                                                           GTOLBC1A.571   
+               ENDIF      !  L_OBDY_STREAM                                 GTOLBC1A.572   
+                                                                           GTOLBC1A.573   
+!             --- SEA ICE ---                                              GTOLBC1A.574   
+                                                                           GTOLBC1A.575   
+              IF (L_OBDY_ICE) THEN                                         GTOLBC1A.576   
+                                                                           GTOLBC1A.577   
+               DO TVAR=1,3                                                 GTOLBC1A.578   
+                DO ROW=local_START_ROW,local_START_ROW+N_P_ROWS-1          GTOLBC1A.579   
+                  DO POINT=local_START_POINT,                              GTOLBC1A.580   
+     &                 local_START_POINT+N_P_POINTS-1                      GTOLBC1A.581   
+                    local_buf(buf_pt)= PART_LBC(local_ICE_START-1+         GTOLBC1A.582   
+     &                             local_P_bound_off+                      GTOLBC1A.583   
+     &                             POINT+                                  GTOLBC1A.584   
+     &                            (ROW-1)*local_P_ROW_LEN+                 GTOLBC1A.585   
+     &                            (TVAR-1)*local_P_LENRIM)                 GTOLBC1A.586   
+                    buf_pt=buf_pt+1                                        GTOLBC1A.587   
+                  ENDDO                                                    GTOLBC1A.588   
+                ENDDO                                                      GTOLBC1A.589   
+               ENDDO                                                       GTOLBC1A.590   
+                                                                           GTOLBC1A.591   
+              ENDIF     !  L_OBDY_ICE                                      GTOLBC1A.592   
+                                                                           GTOLBC1A.593   
+!      2.2.3 Send local_buf array to processor GATHER_PE                   GTOLBC1A.594   
+!            into array buf_expand                                         GTOLBC1A.595   
+                                                                           GTOLBC1A.596   
+              CALL GC_RSEND(iproc+1000*bound_type,data_size,               GTOLBC1A.597   
+     &                      GATHER_PE,info,buf_expand,local_buf)           GTOLBC1A.598   
+                                                                           GTOLBC1A.599   
+            ENDIF  ! If I'm processor iproc                                GTOLBC1A.600   
+                                                                           GTOLBC1A.601   
+            CALL GC_SSYNC(nproc,info)                                      GTOLBC1A.602   
+                                                                           GTOLBC1A.603   
+              CALL GC_SETOPT(GC_SHM_DIR,GC_SHM_PUT,info)  ! gather         GTOLBC1A.604   
+              info=GC_NONE                                                 GTOLBC1A.605   
+            IF (mype .EQ. GATHER_PE) THEN                                  GTOLBC1A.606   
+!             I'm the processor who will gather together all the local     GTOLBC1A.607   
+!             LBCs and assemble them into a global version                 GTOLBC1A.608   
+                                                                           GTOLBC1A.609   
+              CALL GC_RRECV(iproc+1000*bound_type,data_size,               GTOLBC1A.610   
+     &                      iproc,info,buf_expand,local_buf)               GTOLBC1A.611   
+                                                                           GTOLBC1A.612   
+!      2.2.5 Unpack buf_expand into the FULL_LBC array                     GTOLBC1A.613   
+                                                                           GTOLBC1A.614   
+              buf_pt=1                                                     GTOLBC1A.615   
+                                                                           GTOLBC1A.616   
+!             --- TRACERS ---                                              GTOLBC1A.617   
+                                                                           GTOLBC1A.618   
+              IF (L_OBDY_TRACER) THEN                                      GTOLBC1A.619   
+                                                                           GTOLBC1A.620   
+              DO TVAR=1,NT_UI                                              GTOLBC1A.621   
+                DO LEVEL=1,KM_UI                                           GTOLBC1A.622   
+                  DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1      GTOLBC1A.623   
+                    DO POINT=global_START_POINT,                           GTOLBC1A.624   
+     &                       global_START_POINT+N_P_POINTS-1               GTOLBC1A.625   
+                      FULL_LBC(global_TRACER_START-1+                      GTOLBC1A.626   
+     &                         global_P_bound_off+                         GTOLBC1A.627   
+     &                         POINT+                                      GTOLBC1A.628   
+     &                         (ROW-1)*global_P_ROW_LEN+                   GTOLBC1A.629   
+     &                         (LEVEL-1)*global_P_LENRIM+                  GTOLBC1A.630   
+     &                         (TVAR-1)*KM_UI*global_P_LENRIM)=            GTOLBC1A.631   
+     &                   buf_expand(buf_pt)                                GTOLBC1A.632   
+                       buf_pt=buf_pt+1                                     GTOLBC1A.633   
+                     ENDDO                                                 GTOLBC1A.634   
+                   ENDDO                                                   GTOLBC1A.635   
+                 ENDDO                                                     GTOLBC1A.636   
+               ENDDO                                                       GTOLBC1A.637   
+                                                                           GTOLBC1A.638   
+               ENDIF    ! L_OBDY_TRACER                                    GTOLBC1A.639   
+                                                                           GTOLBC1A.640   
+!             --- U,V CURRENTS ---                                         GTOLBC1A.641   
+                                                                           GTOLBC1A.642   
+              IF (L_OBDY_UV) THEN                                          GTOLBC1A.643   
+                                                                           GTOLBC1A.644   
+                DO LEVEL=1,KM_UI                                           GTOLBC1A.645   
+                  DO ROW=global_START_ROW,global_START_ROW+N_U_ROWS-1      GTOLBC1A.646   
+                    DO POINT=global_START_POINT,                           GTOLBC1A.647   
+     &                       global_START_POINT+N_U_POINTS-1               GTOLBC1A.648   
+                      FULL_LBC(global_U_START-1+                           GTOLBC1A.649   
+     &                         global_U_bound_off+                         GTOLBC1A.650   
+     &                         POINT+                                      GTOLBC1A.651   
+     &                         (ROW-1)*global_U_ROW_LEN+                   GTOLBC1A.652   
+     &                         (LEVEL-1)*global_U_LENRIM)=                 GTOLBC1A.653   
+     &                   buf_expand(buf_pt)                                GTOLBC1A.654   
+                       buf_pt=buf_pt+1                                     GTOLBC1A.655   
+                     ENDDO                                                 GTOLBC1A.656   
+                   ENDDO                                                   GTOLBC1A.657   
+                 ENDDO                                                     GTOLBC1A.658   
+                                                                           GTOLBC1A.659   
+                DO LEVEL=1,KM_UI                                           GTOLBC1A.660   
+                  DO ROW=global_START_ROW,global_START_ROW+N_U_ROWS-1      GTOLBC1A.661   
+                    DO POINT=global_START_POINT,                           GTOLBC1A.662   
+     &                       global_START_POINT+N_U_POINTS-1               GTOLBC1A.663   
+                      FULL_LBC(global_V_START-1+                           GTOLBC1A.664   
+     &                         global_U_bound_off+                         GTOLBC1A.665   
+     &                         POINT+                                      GTOLBC1A.666   
+     &                         (ROW-1)*global_U_ROW_LEN+                   GTOLBC1A.667   
+     &                         (LEVEL-1)*global_U_LENRIM)=                 GTOLBC1A.668   
+     &                   buf_expand(buf_pt)                                GTOLBC1A.669   
+                       buf_pt=buf_pt+1                                     GTOLBC1A.670   
+                     ENDDO                                                 GTOLBC1A.671   
+                   ENDDO                                                   GTOLBC1A.672   
+                 ENDDO                                                     GTOLBC1A.673   
+                                                                           GTOLBC1A.674   
+               ENDIF    ! L_OBDY_UV                                        GTOLBC1A.675   
+                                                                           GTOLBC1A.676   
+!             --- STREAMFUNCTION ---                                       GTOLBC1A.677   
+                                                                           GTOLBC1A.678   
+              IF (L_OBDY_STREAM) THEN                                      GTOLBC1A.679   
+                                                                           GTOLBC1A.680   
+               DO TVAR = 1,2                                               GTOLBC1A.681   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        GTOLBC1A.682   
+                  DO POINT=global_START_POINT,                             GTOLBC1A.683   
+     &                       global_START_POINT+N_P_POINTS-1               GTOLBC1A.684   
+                    FULL_LBC(global_STREAM_START-1+                        GTOLBC1A.685   
+     &                         global_P_bound_off+                         GTOLBC1A.686   
+     &                         POINT+                                      GTOLBC1A.687   
+     &                         (ROW-1)*global_P_ROW_LEN+                   GTOLBC1A.688   
+     &                         (TVAR-1)*global_P_LENRIM)=                  GTOLBC1A.689   
+     &                   buf_expand(buf_pt)                                GTOLBC1A.690   
+                     buf_pt=buf_pt+1                                       GTOLBC1A.691   
+                   ENDDO                                                   GTOLBC1A.692   
+                 ENDDO                                                     GTOLBC1A.693   
+               ENDDO                                                       GTOLBC1A.694   
+                                                                           GTOLBC1A.695   
+               ENDIF    ! L_OBDY_STREAM                                    GTOLBC1A.696   
+                                                                           GTOLBC1A.697   
+!             --- SEA ICE ---                                              GTOLBC1A.698   
+                                                                           GTOLBC1A.699   
+              IF (L_OBDY_ICE) THEN                                         GTOLBC1A.700   
+                                                                           GTOLBC1A.701   
+               DO TVAR=1,3                                                 GTOLBC1A.702   
+                DO ROW=global_START_ROW,global_START_ROW+N_P_ROWS-1        GTOLBC1A.703   
+                  DO POINT=global_START_POINT,                             GTOLBC1A.704   
+     &                 global_START_POINT+N_P_POINTS-1                     GTOLBC1A.705   
+                    FULL_LBC(global_ICE_START-1+                           GTOLBC1A.706   
+     &                         global_P_bound_off+                         GTOLBC1A.707   
+     &                         POINT+                                      GTOLBC1A.708   
+     &                         (ROW-1)*global_P_ROW_LEN+                   GTOLBC1A.709   
+     &                         (TVAR-1)*global_P_LENRIM)=                  GTOLBC1A.710   
+     &                   buf_expand(buf_pt)                                GTOLBC1A.711   
+                    buf_pt=buf_pt+1                                        GTOLBC1A.712   
+                  ENDDO                                                    GTOLBC1A.713   
+                ENDDO                                                      GTOLBC1A.714   
+               ENDDO                                                       GTOLBC1A.715   
+                                                                           GTOLBC1A.716   
+              ENDIF      !  L_OBDY_ICE                                     GTOLBC1A.717   
+                                                                           GTOLBC1A.718   
+            ENDIF  ! If I'm processor GATHER_PE                            GTOLBC1A.719   
+                                                                           GTOLBC1A.720   
+            CALL GC_SSYNC(nproc,info)                                      GTOLBC1A.721   
+                                                                           GTOLBC1A.722   
+          ENDIF ! If this processor has boundary type bound_type           GTOLBC1A.723   
+                                                                           GTOLBC1A.724   
+        ENDDO ! bound_type: loop over boundary types                       GTOLBC1A.725   
+                                                                           GTOLBC1A.726   
+      ENDDO ! iproc : loop over processors                                 GTOLBC1A.727   
+                                                                           GTOLBC1A.728   
+                                                                           GTOLBC1A.729   
+ 9999 CONTINUE  ! point to jump to if failure                              GTOLBC1A.730   
+                                                                           GTOLBC1A.731   
+      RETURN                                                               GTOLBC1A.732   
+      END                                                                  GTOLBC1A.733   
+*ENDIF                                                                     GTOLBC1A.734   
+*ENDIF                                                                     GTOLBC1A.735   

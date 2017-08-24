@@ -1,0 +1,531 @@
+*IF DEF,A08_5A                                                             SOILHT5A.2     
+C *****************************COPYRIGHT******************************     SOILHT5A.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    SOILHT5A.4     
+C                                                                          SOILHT5A.5     
+C Use, duplication or disclosure of this code is subject to the            SOILHT5A.6     
+C restrictions as set forth in the contract.                               SOILHT5A.7     
+C                                                                          SOILHT5A.8     
+C                Meteorological Office                                     SOILHT5A.9     
+C                London Road                                               SOILHT5A.10    
+C                BRACKNELL                                                 SOILHT5A.11    
+C                Berkshire UK                                              SOILHT5A.12    
+C                RG12 2SZ                                                  SOILHT5A.13    
+C                                                                          SOILHT5A.14    
+C If no contract has been raised with this copy of the code, the use,      SOILHT5A.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      SOILHT5A.16    
+C to do so must first be obtained in writing from the Head of Numerical    SOILHT5A.17    
+C Modelling at the above address.                                          SOILHT5A.18    
+C ******************************COPYRIGHT******************************    SOILHT5A.19    
+!    SUBROUTINE SOIL_HTC------------------------------------------------   SOILHT5A.20    
+!                                                                          SOILHT5A.21    
+! Subroutine Interface:                                                    SOILHT5A.22    
+      SUBROUTINE SOIL_HTC (                                                SOILHT5A.23    
+     & NPNTS,NSHYD,SOIL_PTS,SOIL_INDEX,B,DZ,HCAP,HCON,LYING_SNOW           SOILHT5A.24    
+     &,SATHH,SURF_HT_FLUX,TIMESTEP,V_SAT,W_FLUX                            SOILHT5A.25    
+     &,SMCL,STHU,STHF,TSOIL                                                SOILHT5A.26    
+     +,LTIMER                                                              SOILHT5A.27    
+     +)                                                                    SOILHT5A.28    
+                                                                           SOILHT5A.29    
+      IMPLICIT NONE                                                        SOILHT5A.30    
+!                                                                          SOILHT5A.31    
+! Description:                                                             SOILHT5A.32    
+!     Updates deep soil temperatures, frozen and unfrozen                  SOILHT5A.33    
+!     frozen soil water content. Calls the following subroutines:          SOILHT5A.34    
+!                                                                          SOILHT5A.35    
+!     HEAT_CON - to calculate the soil thermal conductivity                SOILHT5A.36    
+!                                                     (Cox, 6/95)          SOILHT5A.37    
+!                                                                          SOILHT5A.38    
+! Documentation : UM Documentation Paper 25                                SOILHT5A.39    
+!                                                                          SOILHT5A.40    
+! Current Code Owner : David Gregory                                       SOILHT5A.41    
+!                                                                          SOILHT5A.42    
+! History:                                                                 SOILHT5A.43    
+! Version   Date     Comment                                               SOILHT5A.44    
+! -------   ----     -------                                               SOILHT5A.45    
+!  4.1               New deck.   Peter Cox                                 SOILHT5A.46    
+!  4.4      24/11/97   Offset avoids calculations on uninitialised         GSM1F404.59    
+!                      MPP halos of SMCFU and SMCFF. S.D.Mullerworth       GSM1F404.60    
+!LL   4.5   18/06/98  Changed Timer calls to indicate non-barrier          GPB8F405.35    
+!LL                                                   P.Burton             GPB8F405.36    
+!  4.5  22/06/98  Extra Fujitsu vectorization directive for                GRB0F405.177   
+!                 snow insulation loop.  R.Barnes@ecmwf.int                GRB0F405.178   
+!                                                                          SOILHT5A.47    
+! Code Description:                                                        SOILHT5A.48    
+!   Language: FORTRAN 77 + common extensions.                              SOILHT5A.49    
+!                                                                          SOILHT5A.50    
+! System component covered: P25                                            SOILHT5A.51    
+! System Task: P25                                                         SOILHT5A.52    
+!                                                                          SOILHT5A.53    
+                                                                           SOILHT5A.54    
+! Global variables:                                                        SOILHT5A.55    
+*CALL C_SOILH                                                              SOILHT5A.56    
+                                                                           SOILHT5A.57    
+! Subroutine arguments                                                     SOILHT5A.58    
+!   Scalar arguments with intent(IN) :                                     SOILHT5A.59    
+      INTEGER                                                              SOILHT5A.60    
+     & NPNTS                ! IN Number of gridpoints.                     SOILHT5A.61    
+     &,NSHYD                ! IN Number of soil moisture levels.           SOILHT5A.62    
+     &,SOIL_PTS             ! IN Number of soil points.                    SOILHT5A.63    
+                                                                           SOILHT5A.64    
+      REAL                                                                 SOILHT5A.65    
+     & TIMESTEP             ! IN Model timestep (s).                       SOILHT5A.66    
+                                                                           SOILHT5A.67    
+                                                                           SOILHT5A.68    
+!   Array arguments with intent(IN) :                                      SOILHT5A.69    
+      INTEGER                                                              SOILHT5A.70    
+     & SOIL_INDEX(NPNTS)    ! IN Array of soil points.                     SOILHT5A.71    
+                                                                           SOILHT5A.72    
+      REAL                                                                 SOILHT5A.73    
+     & B(NPNTS)             ! IN Clapp-Hornberger exponent.                SOILHT5A.74    
+     &,DZ(NSHYD)            ! IN Thicknesses of the soil layers (m).       SOILHT5A.75    
+     &,HCAP(NPNTS)          ! IN Soil heat capacity (J/K/m3).              SOILHT5A.76    
+     &,HCON(NPNTS)          ! IN Soil thermal conductivity (W/m/K).        SOILHT5A.77    
+     &,LYING_SNOW(NPNTS)    ! IN Lying snow (kg/m2).                       SOILHT5A.78    
+     &,SATHH(NPNTS)         ! IN Saturated soil water pressure (m).        SOILHT5A.79    
+     &,SMCL(NPNTS,NSHYD)    ! IN Soil moisture content of each             SOILHT5A.80    
+!                           !    layer (kg/m2).                            SOILHT5A.81    
+     &,SURF_HT_FLUX(NPNTS)  ! IN Net downward surface heat flux (W/m2).    SOILHT5A.82    
+     &,V_SAT(NPNTS)         ! IN Volumetric soil moisture                  SOILHT5A.83    
+!                           !    concentration at saturation               SOILHT5A.84    
+!                           !    (m3 H2O/m3 soil).                         SOILHT5A.85    
+     +,W_FLUX(NPNTS,0:NSHYD)! IN The fluxes of water between layers        SOILHT5A.86    
+!                           !    (kg/m2/s).                                SOILHT5A.87    
+C                                                                          SOILHT5A.88    
+      LOGICAL LTIMER        ! Logical switch for TIMER diags               SOILHT5A.89    
+                                                                           SOILHT5A.90    
+!   Array arguments with intent(OUT) :                                     SOILHT5A.91    
+                                                                           SOILHT5A.92    
+!   Array arguments with intent(INOUT) :                                   SOILHT5A.93    
+      REAL                                                                 SOILHT5A.94    
+     & STHF(NPNTS,NSHYD)    ! INOUT Frozen soil moisture content of        SOILHT5A.95    
+!                           !       each layer as a fraction of            SOILHT5A.96    
+!                           !       saturation.                            SOILHT5A.97    
+     &,STHU(NPNTS,NSHYD)    ! INOUT Unfrozen soil moisture content of      SOILHT5A.98    
+!                           !       each layer as a fraction of            SOILHT5A.99    
+!                           !       saturation.                            SOILHT5A.100   
+     &,TSOIL(NPNTS,NSHYD)   ! INOUT Sub-surface temperatures (K).          SOILHT5A.101   
+                                                                           SOILHT5A.102   
+! Local scalars:                                                           SOILHT5A.103   
+      INTEGER                                                              SOILHT5A.104   
+     & I,J,M,N              ! WORK Loop counters.                          SOILHT5A.105   
+     &,J_ITER               ! WORK Number of soil points which require     SOILHT5A.106   
+!                           !      iteration.                              SOILHT5A.107   
+     &,MMAX                 ! WORK Maximum number of iterations on         SOILHT5A.108   
+!                           !      temperature.                            SOILHT5A.109   
+     &,FIRST_SOIL_PT        ! First soil point                             GSM1F404.61    
+      REAL                                                                 SOILHT5A.110   
+     & FACUR                ! WORK Required flux conservation accuracy     SOILHT5A.111   
+!                           !      (W/m2).                                 SOILHT5A.112   
+     &,SNOW_DEPTH           ! WORK Depth of lying snow (m).                SOILHT5A.113   
+     &,TACUR                ! WORK Required accuracy of temperature        SOILHT5A.114   
+!                           !      calculation (Celsius).                  SOILHT5A.115   
+      PARAMETER( MMAX=3, FACUR=0.01, TACUR=0.00000 )                       SOILHT5A.116   
+                                                                           SOILHT5A.117   
+! Local arrays:                                                            SOILHT5A.118   
+      INTEGER                                                              SOILHT5A.119   
+     & ITER_PTS(NPNTS)      ! WORK Array of soil points which require      SOILHT5A.120   
+!                           !      iteration.                              SOILHT5A.121   
+                                                                           SOILHT5A.122   
+      REAL                                                                 SOILHT5A.123   
+     & CEACUR(NPNTS)        ! WORK Flux conservation accuracy of the       SOILHT5A.124   
+!                           !      calculation (W/m2)                      SOILHT5A.125   
+     &,DHSL0(NPNTS,NSHYD)   ! WORK Total heat increment to the layer       SOILHT5A.126   
+!                           !      (J/m2/timestep)                         SOILHT5A.127   
+     &,DHSL(NPNTS,NSHYD)    ! WORK The heat available to update the        SOILHT5A.128   
+!                           !      layer temperature (J/m2/timestep)       SOILHT5A.129   
+     &,DHSLA(NPNTS,NSHYD)   ! WORK The heat increment due to advection o   SOILHT5A.130   
+!                           !      heat by moisture fluxes (J/m2/timeste   SOILHT5A.131   
+     &,DSMCLF(NPNTS,NSHYD)  ! WORK The increment to the layer frozen       SOILHT5A.132   
+!                           !      soil moisture (kg/m2/timestep).         SOILHT5A.133   
+     &,DTHU(NPNTS,NSHYD)    ! WORK Rate of change of volumetric unfrozen   SOILHT5A.134   
+!                           !      soil moisture concentration with        SOILHT5A.135   
+!                           !      temperature (m3 liquid H2O/m3 soil/K)   SOILHT5A.136   
+     &,DTSL(NPNTS,NSHYD)    ! WORK The increment to the layer temperatur   SOILHT5A.137   
+!                           !      (K/timestep).                           SOILHT5A.138   
+     &,HCAPT(NPNTS)         ! WORK The total volumetric heat capacity      SOILHT5A.139   
+!                           !      (soil+water) of the layer (J/m3/K).     SOILHT5A.140   
+     &,HC(NPNTS,NSHYD)      ! WORK The thermal conductivity of each        SOILHT5A.141   
+!                           !      layer (W/m/K).                          SOILHT5A.142   
+     &,HCONS(NPNTS)         ! WORK The thermal conductivity between        SOILHT5A.143   
+!                           !      adjacent soil layers (W/m/K).           SOILHT5A.144   
+     &,H_FLUX(NPNTS,0:NSHYD) !WORK The fluxes of heat between layers       SOILHT5A.145   
+!                           !      (W/m2).                                 SOILHT5A.146   
+     &,SIFACT(NPNTS)        ! WORK Snow insulation factor.                 SOILHT5A.147   
+     &,SMCLF(NPNTS,NSHYD)   ! WORK Frozen moisture content of each         SOILHT5A.148   
+!                           !      soil layer (kg/m2).                     SOILHT5A.149   
+     &,SMCLF0(NPNTS,NSHYD)  ! WORK Previous value of SMCLF (kg/m2).        SOILHT5A.150   
+     &,SMCLSAT(NPNTS,NSHYD) ! WORK The saturation moisture content of      SOILHT5A.151   
+!                           !      each layer (kg/m2).                     SOILHT5A.152   
+     &,SMCLU(NPNTS,NSHYD)   ! WORK Unfrozen moisture content of each       SOILHT5A.153   
+!                           !      soil layer (kg/m2).                     SOILHT5A.154   
+     &,SMCLU0(NPNTS,NSHYD)  ! WORK Previous value of SMCLU (kg/m2).        SOILHT5A.155   
+     &,SMCFU(NPNTS)         ! WORK Fractional saturation (unfrozen water   SOILHT5A.156   
+!                           !      at layer boundaries.                    SOILHT5A.157   
+     &,SMCFF(NPNTS)         ! WORK Fractional saturation (frozen water)    SOILHT5A.158   
+!                           !      at layer boundaries.                    SOILHT5A.159   
+     &,TMAX(NPNTS,NSHYD)    ! WORK Temperature above which all water is    SOILHT5A.160   
+!                           !      unfrozen (Celsius)                      SOILHT5A.161   
+     &,TSL(NPNTS,0:NSHYD)   ! WORK Soil layer temperatures (Celsius)       SOILHT5A.162   
+!                           !      TSL(0) temperature of incoming water.   SOILHT5A.163   
+!                           !      TSL(1:NSHYD) sub-surface soil           SOILHT5A.164   
+!                           !      temperatures .                          SOILHT5A.165   
+     &,TSL0(NPNTS,0:NSHYD)  ! WORK Previous value of TSL (Celsius).        SOILHT5A.166   
+                                                                           SOILHT5A.167   
+! Function & Subroutine calls:                                             SOILHT5A.168   
+      EXTERNAL                                                             SOILHT5A.169   
+     & HEAT_CON                                                            SOILHT5A.170   
+                                                                           SOILHT5A.171   
+*CALL C_DENSTY                                                             SOILHT5A.172   
+*CALL C_LHEAT                                                              SOILHT5A.173   
+*CALL C_PERMA                                                              SOILHT5A.174   
+*CALL C_0_DG_C                                                             SOILHT5A.175   
+                                                                           SOILHT5A.176   
+      IF (LTIMER) THEN                                                     SOILHT5A.177   
+        CALL TIMER('SOILHTC ',103)                                         GPB8F405.37    
+      ENDIF                                                                SOILHT5A.179   
+                                                                           SOILHT5A.180   
+!-----------------------------------------------------------------------   SOILHT5A.181   
+! Initialisations                                                          SOILHT5A.182   
+!-----------------------------------------------------------------------   SOILHT5A.183   
+      FIRST_SOIL_PT=SOIL_INDEX(1)                                          GSM1F404.62    
+                                                                           GSM1F404.63    
+      DO J=1,SOIL_PTS                                                      SOILHT5A.184   
+        I=SOIL_INDEX(J)                                                    SOILHT5A.185   
+        TSL(I,0)=TSOIL(I,1)-ZERODEGC                                       SOILHT5A.186   
+      ENDDO                                                                SOILHT5A.187   
+                                                                           SOILHT5A.188   
+      DO N=1,NSHYD                                                         SOILHT5A.189   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.190   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.191   
+!-----------------------------------------------------------------------   SOILHT5A.192   
+! Define soil layer temperatures TSL (in celsius).                         SOILHT5A.193   
+!-----------------------------------------------------------------------   SOILHT5A.194   
+          TSL(I,N)=TSOIL(I,N)-ZERODEGC                                     SOILHT5A.195   
+        ENDDO                                                              SOILHT5A.196   
+      ENDDO                                                                SOILHT5A.197   
+                                                                           SOILHT5A.198   
+      DO N=1,NSHYD                                                         SOILHT5A.199   
+! CDIR$ IVDEP here would force vectorization but changes results!          SOILHT5A.200   
+! Fujitsu vectorization directive                                          GRB0F405.179   
+!OCL NOVREC                                                                GRB0F405.180   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.201   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.202   
+!-----------------------------------------------------------------------   SOILHT5A.203   
+! Diagnose the frozen and unfrozen water.                                  SOILHT5A.204   
+!-----------------------------------------------------------------------   SOILHT5A.205   
+                                                                           SOILHT5A.206   
+          SMCLSAT(I,N)=RHO_WATER*DZ(N)*V_SAT(I)                            SOILHT5A.207   
+          SMCLF(I,N)=SMCLSAT(I,N)*STHF(I,N)                                SOILHT5A.208   
+          SMCLU(I,N)=SMCL(I,N)-SMCLF(I,N)                                  SOILHT5A.209   
+        ENDDO                                  !  J=1,SOIL_PTS             SOILHT5A.210   
+      ENDDO                                    ! N=1,NSHYD                 SOILHT5A.211   
+                                                                           SOILHT5A.212   
+!----------------------------------------------------------------------    SOILHT5A.213   
+! Calculate the heat conductivity between adjacent layers                  SOILHT5A.214   
+!----------------------------------------------------------------------    SOILHT5A.215   
+      DO N=1,NSHYD-1                                                       SOILHT5A.217   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.218   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.219   
+          SMCFU(I)=(DZ(N+1)*STHU(I,N)+DZ(N)*STHU(I,N+1))                   SOILHT5A.220   
+     &              /(DZ(N+1)+DZ(N))                                       SOILHT5A.221   
+          SMCFF(I)=(DZ(N+1)*STHF(I,N)+DZ(N)*STHF(I,N+1))                   SOILHT5A.222   
+     &              /(DZ(N+1)+DZ(N))                                       SOILHT5A.223   
+        ENDDO                                                              SOILHT5A.224   
+        CALL HEAT_CON(NPNTS-FIRST_SOIL_PT+1,HCON(FIRST_SOIL_PT)            GSM1F404.64    
+     &    ,SMCFU(FIRST_SOIL_PT),SMCFF(FIRST_SOIL_PT)                       GSM1F404.65    
+     &    ,V_SAT(FIRST_SOIL_PT),HCONS(FIRST_SOIL_PT),LTIMER)               GSM1F404.66    
+        DO J=1,SOIL_PTS                                                    SOILHT5A.227   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.228   
+          HC(I,N)=HCONS(I)                                                 SOILHT5A.229   
+        ENDDO                                                              SOILHT5A.230   
+      ENDDO                                                                SOILHT5A.231   
+                                                                           SOILHT5A.232   
+!--------------------------------------------------------------------      SOILHT5A.233   
+! Calculate the snow insulation factor                                     SOILHT5A.234   
+!--------------------------------------------------------------------      SOILHT5A.235   
+! Fujitsu vectorization directive                                          GRB0F405.181   
+!OCL NOVREC                                                                GRB0F405.182   
+      DO J=1,SOIL_PTS                                                      SOILHT5A.236   
+        I=SOIL_INDEX(J)                                                    SOILHT5A.237   
+        IF (LYING_SNOW(I) .GT. 0.0) THEN                                   SOILHT5A.238   
+          SNOW_DEPTH = LYING_SNOW(I) / RHO_SNOW                            SOILHT5A.239   
+          IF (SNOW_DEPTH .LE. (0.5*DZ(1))) THEN                            SOILHT5A.240   
+            SIFACT(I)=1.0                                                  SOILHT5A.241   
+     &            /(1.0+2*SNOW_DEPTH/(DZ(1) + DZ(2)))                      SOILHT5A.242   
+          ELSE                                                             SOILHT5A.243   
+            SIFACT(I)=(DZ(1)+DZ(2))                                        SOILHT5A.244   
+     &          /(HC(I,1)/SNOW_HCON*(2*SNOW_DEPTH-DZ(1))                   SOILHT5A.245   
+     &            +2*DZ(1)+DZ(2))                                          SOILHT5A.246   
+          ENDIF                                                            SOILHT5A.247   
+        ELSE                                                               SOILHT5A.248   
+          SIFACT(I)=1.0                                                    SOILHT5A.249   
+        ENDIF                                                              SOILHT5A.250   
+      ENDDO                                                                SOILHT5A.251   
+                                                                           SOILHT5A.252   
+!--------------------------------------------------------------------      SOILHT5A.253   
+! Calculate heat fluxes across layer boundaries                            SOILHT5A.254   
+!--------------------------------------------------------------------      SOILHT5A.255   
+      DO N=1,NSHYD-1                                                       SOILHT5A.256   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.257   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.258   
+          H_FLUX(I,N)=-HC(I,N)*2.0*(TSL(I,N+1)-TSL(I,N))                   SOILHT5A.259   
+     &                            /(DZ(N+1)+DZ(N))                         SOILHT5A.260   
+        ENDDO                                                              SOILHT5A.261   
+      ENDDO                                                                SOILHT5A.262   
+CDIR$ IVDEP                                                                SOILHT5A.263   
+! Fujitsu vectorization directive                                          GRB0F405.183   
+!OCL NOVREC                                                                GRB0F405.184   
+      DO J=1,SOIL_PTS                                                      SOILHT5A.264   
+        I=SOIL_INDEX(J)                                                    SOILHT5A.265   
+        H_FLUX(I,NSHYD)=0.0                                                SOILHT5A.266   
+        H_FLUX(I,0)=SURF_HT_FLUX(I)                                        SOILHT5A.267   
+        H_FLUX(I,1)=SIFACT(I)*H_FLUX(I,1)                                  SOILHT5A.268   
+      ENDDO                                                                SOILHT5A.269   
+                                                                           SOILHT5A.270   
+!--------------------------------------------------------------------      SOILHT5A.271   
+! Calculate the advection of heat by moisture fluxes                       SOILHT5A.272   
+!--------------------------------------------------------------------      SOILHT5A.273   
+      DO N=2,NSHYD-1                                                       SOILHT5A.274   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.275   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.276   
+          DHSLA(I,N)=TIMESTEP*HCAPW*DZ(N)*                                 SOILHT5A.277   
+     &    (W_FLUX(I,N-1)*(TSL(I,N-1)-TSL(I,N))/(DZ(N)+DZ(N-1))             SOILHT5A.278   
+     &     +W_FLUX(I,N)*(TSL(I,N)-TSL(I,N+1))/(DZ(N)+DZ(N+1)))             SOILHT5A.279   
+        ENDDO                                                              SOILHT5A.280   
+      ENDDO                                                                SOILHT5A.281   
+                                                                           SOILHT5A.282   
+CDIR$ IVDEP                                                                SOILHT5A.283   
+! Fujitsu vectorization directive                                          GRB0F405.185   
+!OCL NOVREC                                                                GRB0F405.186   
+      DO J=1,SOIL_PTS                                                      SOILHT5A.284   
+        I=SOIL_INDEX(J)                                                    SOILHT5A.285   
+        DHSLA(I,1)=TIMESTEP*HCAPW*DZ(1)*                                   SOILHT5A.286   
+     &   (W_FLUX(I,0)*(TSL(I,0)-TSL(I,1))/DZ(1)                            SOILHT5A.287   
+     &   +W_FLUX(I,1)*(TSL(I,1)-TSL(I,2))/(DZ(1)+DZ(2)))                   SOILHT5A.288   
+        DHSLA(I,NSHYD)=TIMESTEP*HCAPW*DZ(NSHYD)*                           SOILHT5A.289   
+     &               W_FLUX(I,NSHYD-1)*(TSL(I,NSHYD-1)-TSL(I,NSHYD))       SOILHT5A.290   
+     &               /(DZ(NSHYD)+DZ(NSHYD-1))                              SOILHT5A.291   
+      ENDDO                                                                SOILHT5A.292   
+                                                                           SOILHT5A.293   
+      DO N=1,NSHYD                                                         SOILHT5A.294   
+CDIR$ IVDEP                                                                SOILHT5A.295   
+! Fujitsu vectorization directive                                          GRB0F405.187   
+!OCL NOVREC                                                                GRB0F405.188   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.296   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.297   
+!-----------------------------------------------------------------------   SOILHT5A.298   
+! Calculate TMAX, the temperature above which all soil water is            SOILHT5A.299   
+! unfrozen. Check that (SMCLSAT/SMCL)**B will not overflow when SMCL is    ACB1F404.2     
+! very small. The function EPSILON  gives the number of type (real) of     ACB1F404.3     
+! SMCL that is negligeable compared to 1.                                  ACB1F404.4     
+!-----------------------------------------------------------------------   SOILHT5A.301   
+*IF DEF,SCMA,AND,-DEF,T3E                                                  AJC0F405.243   
+          IF (SMCL(I,N).GT. SMCLSAT(I,N)*1E-20) THEN                       AJC0F405.244   
+*ELSE                                                                      AJC0F405.245   
+          IF (SMCL(I,N) .GT. SMCLSAT(I,N)*(EPSILON(SMCL(I,N)) ) )THEN      ACB1F404.5     
+*ENDIF                                                                     AJC0F405.246   
+            TMAX(I,N)=-SATHH(I)/DPSIDT                                     SOILHT5A.303   
+     &             *(SMCLSAT(I,N)/SMCL(I,N))**(B(I))                       SOILHT5A.304   
+          ELSE                                                             SOILHT5A.305   
+            TMAX(I,N)=-ZERODEGC                                            SOILHT5A.306   
+          ENDIF                                                            SOILHT5A.307   
+          TMAX(I,N)=MAX(TMAX(I,N),-ZERODEGC)                               SOILHT5A.308   
+                                                                           SOILHT5A.309   
+          DHSL0(I,N)=TIMESTEP*(H_FLUX(I,N-1)-H_FLUX(I,N))                  SOILHT5A.310   
+     &                 +DHSLA(I,N)                                         SOILHT5A.311   
+                                                                           SOILHT5A.312   
+                                                                           SOILHT5A.313   
+          DHSL(I,N)=DHSL0(I,N)                                             SOILHT5A.314   
+                                                                           SOILHT5A.315   
+!-----------------------------------------------------------------------   SOILHT5A.316   
+! Calculate the soil temperature increments                                SOILHT5A.317   
+!-----------------------------------------------------------------------   SOILHT5A.318   
+          TSL0(I,N)=TSL(I,N)                                               SOILHT5A.319   
+          SMCLF0(I,N)=SMCLF(I,N)                                           SOILHT5A.320   
+          SMCLU0(I,N)=SMCLU(I,N)                                           SOILHT5A.321   
+                                                                           SOILHT5A.322   
+          IF (TSL(I,N).GT.TMAX(I,N)) THEN         ! All water unfrozen     SOILHT5A.323   
+            DTHU(I,N)=0.0                                                  SOILHT5A.324   
+          ELSEIF (TSL(I,N).EQ.TMAX(I,N).AND.      ! Remains unfrozen       SOILHT5A.325   
+     &            DHSL(I,N).GE.0.0) THEN                                   SOILHT5A.326   
+            DTHU(I,N)=0.0                                                  SOILHT5A.327   
+          ELSE                                    ! Phase changes          SOILHT5A.328   
+            DTHU(I,N)=DPSIDT*SMCLSAT(I,N)                                  SOILHT5A.329   
+     &               /(B(I)*SATHH(I)*RHO_WATER*DZ(N))                      SOILHT5A.330   
+     &               *(-DPSIDT*TSL(I,N)/SATHH(I))**(-1.0/B(I)-1.0)         SOILHT5A.331   
+          ENDIF                                                            SOILHT5A.332   
+                                                                           SOILHT5A.333   
+          HCAPT(I)=HCAP(I)+(HCAPW-HCAPI)*SMCLU(I,N)/DZ(N)                  SOILHT5A.334   
+     &            +HCAPI*SMCL(I,N)/DZ(N)                                   SOILHT5A.335   
+     &            +RHO_WATER*DTHU(I,N)*((HCAPW-HCAPI)*TSL(I,N)+LF)         SOILHT5A.336   
+                                                                           SOILHT5A.337   
+          DTSL(I,N)=1.0/(HCAPT(I)*DZ(N))*DHSL(I,N)                         SOILHT5A.338   
+          TSL(I,N)=TSL(I,N)+DTSL(I,N)                                      SOILHT5A.339   
+                                                                           SOILHT5A.340   
+!-----------------------------------------------------------------------   SOILHT5A.341   
+! If the temperature increment is small and frozen water exists            SOILHT5A.342   
+! assume that the excess energy goes into phase change                     SOILHT5A.343   
+!-----------------------------------------------------------------------   SOILHT5A.344   
+           IF (ABS(DTSL(I,N)).LT.TACUR.AND.                                SOILHT5A.345   
+     &         TSL(I,N).LE.TMAX(I,N)) THEN                                 SOILHT5A.346   
+             DSMCLF(I,N)=-DHSL(I,N)/((HCAPW-HCAPI)*TSL(I,N)+LF)            SOILHT5A.347   
+             DSMCLF(I,N)=MAX(DSMCLF(I,N),-SMCLF(I,N))                      SOILHT5A.348   
+             DSMCLF(I,N)=MIN(DSMCLF(I,N),SMCLU(I,N))                       SOILHT5A.349   
+             SMCLU(I,N)=SMCLU(I,N)-DSMCLF(I,N)                             SOILHT5A.350   
+             SMCLF(I,N)=SMCLF(I,N)+DSMCLF(I,N)                             SOILHT5A.351   
+           ENDIF                                                           SOILHT5A.352   
+                                                                           SOILHT5A.353   
+!-----------------------------------------------------------------------   SOILHT5A.354   
+! Check to see if the discontinuity in HCAPT at TMAX has been crossed      SOILHT5A.355   
+! - if it has return to TMAX                                               SOILHT5A.356   
+!-----------------------------------------------------------------------   SOILHT5A.357   
+          IF ((TSL(I,N)-TMAX(I,N))*(TSL0(I,N)-TMAX(I,N))                   SOILHT5A.358   
+     &        .LT.0.0) THEN                                                SOILHT5A.359   
+            DTSL(I,N)=DTSL(I,N)+(TMAX(I,N)-TSL(I,N))                       SOILHT5A.360   
+            TSL(I,N)=TMAX(I,N)                                             SOILHT5A.361   
+          ENDIF                                                            SOILHT5A.362   
+                                                                           SOILHT5A.363   
+!-----------------------------------------------------------------------   SOILHT5A.364   
+! Diagnose unfrozen and frozen water contents                              SOILHT5A.365   
+!-----------------------------------------------------------------------   SOILHT5A.366   
+          IF (TSL(I,N).GE.TMAX(I,N)) THEN                                  SOILHT5A.367   
+            SMCLU(I,N)=SMCL(I,N)                                           SOILHT5A.368   
+            SMCLF(I,N)=0.0                                                 SOILHT5A.369   
+          ELSE                                                             SOILHT5A.370   
+            SMCLU(I,N)=SMCLSAT(I,N)                                        SOILHT5A.371   
+     &                *(-DPSIDT*TSL(I,N)/SATHH(I))**(-1.0/B(I))            SOILHT5A.372   
+            SMCLF(I,N)=SMCL(I,N)-SMCLU(I,N)                                SOILHT5A.373   
+          ENDIF                                                            SOILHT5A.374   
+                                                                           SOILHT5A.375   
+!-----------------------------------------------------------------------   SOILHT5A.376   
+! Calculate the error in heat conservation                                 SOILHT5A.377   
+!-----------------------------------------------------------------------   SOILHT5A.378   
+          DSMCLF(I,N)=SMCLF(I,N)-SMCLF0(I,N)                               SOILHT5A.379   
+          DHSL(I,N)=DHSL(I,N)-(HCAP(I)*DZ(N)+HCAPW*SMCLU0(I,N)             SOILHT5A.380   
+     &                        +HCAPI*SMCLF0(I,N))*DTSL(I,N)                SOILHT5A.381   
+     &                   -DSMCLF(I,N)*((HCAPI-HCAPW)*TSL0(I,N)-LF)         SOILHT5A.382   
+                                                                           SOILHT5A.383   
+!-----------------------------------------------------------------------   SOILHT5A.384   
+! Calculate the error in flux conservation                                 SOILHT5A.385   
+!-----------------------------------------------------------------------   SOILHT5A.386   
+          CEACUR(I)=ABS(DHSL(I,N))/TIMESTEP                                SOILHT5A.387   
+                                                                           SOILHT5A.388   
+        ENDDO                                                              SOILHT5A.389   
+                                                                           SOILHT5A.390   
+!-----------------------------------------------------------------------   SOILHT5A.391   
+! Define the array of points which fail to meet the flux criterion         SOILHT5A.392   
+!-----------------------------------------------------------------------   SOILHT5A.393   
+        J_ITER=0                                                           SOILHT5A.394   
+C          CDIR$ IVDEP                                                     SOILHT5A.395   
+! Fujitsu vectorization directive                                          GRB0F405.189   
+!OCL NOVREC                                                                GRB0F405.190   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.396   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.397   
+                                                                           SOILHT5A.398   
+          IF (CEACUR(I) .GT. FACUR) THEN                                   SOILHT5A.399   
+            J_ITER=J_ITER+1                                                SOILHT5A.400   
+            ITER_PTS(J_ITER)=J                                             SOILHT5A.401   
+          ENDIF                                                            SOILHT5A.402   
+                                                                           SOILHT5A.403   
+        ENDDO                                                              SOILHT5A.404   
+                                                                           SOILHT5A.405   
+                                                                           SOILHT5A.406   
+!-----------------------------------------------------------------------   SOILHT5A.407   
+! Iterate on these points                                                  SOILHT5A.408   
+!-----------------------------------------------------------------------   SOILHT5A.409   
+        DO M=1,MMAX-1                                                      SOILHT5A.410   
+CDIR$ IVDEP                                                                SOILHT5A.411   
+! Fujitsu vectorization directive                                          GRB0F405.191   
+!OCL NOVREC                                                                GRB0F405.192   
+          DO J=1,J_ITER                                                    SOILHT5A.412   
+            I=SOIL_INDEX(ITER_PTS(J))                                      SOILHT5A.413   
+                                                                           SOILHT5A.414   
+            TSL0(I,N)=TSL(I,N)                                             SOILHT5A.415   
+            SMCLF0(I,N)=SMCLF(I,N)                                         SOILHT5A.416   
+            SMCLU0(I,N)=SMCLU(I,N)                                         SOILHT5A.417   
+                                                                           SOILHT5A.418   
+            IF (TSL(I,N).GT.TMAX(I,N)) THEN         ! All water unfrozen   SOILHT5A.419   
+              DTHU(I,N)=0.0                                                SOILHT5A.420   
+            ELSEIF (TSL(I,N).EQ.TMAX(I,N).AND.      ! Remains unfrozen     SOILHT5A.421   
+     &              DHSL(I,N).GE.0.0) THEN                                 SOILHT5A.422   
+              DTHU(I,N)=0.0                                                SOILHT5A.423   
+            ELSE                                    ! Phase changes        SOILHT5A.424   
+              DTHU(I,N)=DPSIDT*SMCLSAT(I,N)                                SOILHT5A.425   
+     &                 /(B(I)*SATHH(I)*RHO_WATER*DZ(N))                    SOILHT5A.426   
+     &                 *(-DPSIDT*TSL(I,N)/SATHH(I))**(-1.0/B(I)-1.0)       SOILHT5A.427   
+            ENDIF                                                          SOILHT5A.428   
+                                                                           SOILHT5A.429   
+            HCAPT(I)=HCAP(I)+(HCAPW-HCAPI)*SMCLU(I,N)/DZ(N)                SOILHT5A.430   
+     &              +HCAPI*SMCL(I,N)/DZ(N)                                 SOILHT5A.431   
+     &              +RHO_WATER*DTHU(I,N)*((HCAPW-HCAPI)*TSL(I,N)+LF)       SOILHT5A.432   
+                                                                           SOILHT5A.433   
+            DTSL(I,N)=1.0/(HCAPT(I)*DZ(N))*DHSL(I,N)                       SOILHT5A.434   
+            TSL(I,N)=TSL(I,N)+DTSL(I,N)                                    SOILHT5A.435   
+                                                                           SOILHT5A.436   
+!-----------------------------------------------------------------------   SOILHT5A.437   
+! If the temperature increment is small and frozen water exists            SOILHT5A.438   
+! assume that the excess energy goes into phase change                     SOILHT5A.439   
+!-----------------------------------------------------------------------   SOILHT5A.440   
+            IF (ABS(DTSL(I,N)).LT.TACUR.AND.                               SOILHT5A.441   
+     &          TSL(I,N).LE.TMAX(I,N)) THEN                                SOILHT5A.442   
+              DSMCLF(I,N)=-DHSL(I,N)/((HCAPW-HCAPI)*TSL(I,N)+LF)           SOILHT5A.443   
+              DSMCLF(I,N)=MAX(DSMCLF(I,N),-SMCLF(I,N))                     SOILHT5A.444   
+              DSMCLF(I,N)=MIN(DSMCLF(I,N),SMCLU(I,N))                      SOILHT5A.445   
+              SMCLU(I,N)=SMCLU(I,N)-DSMCLF(I,N)                            SOILHT5A.446   
+              SMCLF(I,N)=SMCLF(I,N)+DSMCLF(I,N)                            SOILHT5A.447   
+            ENDIF                                                          SOILHT5A.448   
+                                                                           SOILHT5A.449   
+!-----------------------------------------------------------------------   SOILHT5A.450   
+! Check to see if the discontinuity in HCAPT at TMAX has been crossed      SOILHT5A.451   
+! - if it has return to TMAX                                               SOILHT5A.452   
+!-----------------------------------------------------------------------   SOILHT5A.453   
+            IF ((TSL(I,N)-TMAX(I,N))*(TSL0(I,N)-TMAX(I,N))                 SOILHT5A.454   
+     &          .LT.0.0) THEN                                              SOILHT5A.455   
+              DTSL(I,N)=DTSL(I,N)+(TMAX(I,N)-TSL(I,N))                     SOILHT5A.456   
+              TSL(I,N)=TMAX(I,N)                                           SOILHT5A.457   
+            ENDIF                                                          SOILHT5A.458   
+                                                                           SOILHT5A.459   
+!-----------------------------------------------------------------------   SOILHT5A.460   
+! Diagnose unfrozen and frozen water contents                              SOILHT5A.461   
+!-----------------------------------------------------------------------   SOILHT5A.462   
+            IF (TSL(I,N).GE.TMAX(I,N)) THEN                                SOILHT5A.463   
+              SMCLU(I,N)=SMCL(I,N)                                         SOILHT5A.464   
+              SMCLF(I,N)=0.0                                               SOILHT5A.465   
+            ELSE                                                           SOILHT5A.466   
+              SMCLU(I,N)=SMCLSAT(I,N)                                      SOILHT5A.467   
+     &                  *(-DPSIDT*TSL(I,N)/SATHH(I))**(-1.0/B(I))          SOILHT5A.468   
+              SMCLF(I,N)=SMCL(I,N)-SMCLU(I,N)                              SOILHT5A.469   
+            ENDIF                                                          SOILHT5A.470   
+                                                                           SOILHT5A.471   
+!-----------------------------------------------------------------------   SOILHT5A.472   
+! Calculate the error in heat conservation                                 SOILHT5A.473   
+!-----------------------------------------------------------------------   SOILHT5A.474   
+            DSMCLF(I,N)=SMCLF(I,N)-SMCLF0(I,N)                             SOILHT5A.475   
+            DHSL(I,N)=DHSL(I,N)-(HCAP(I)*DZ(N)+HCAPW*SMCLU0(I,N)           SOILHT5A.476   
+     &                          +HCAPI*SMCLF0(I,N))*DTSL(I,N)              SOILHT5A.477   
+     &                     -DSMCLF(I,N)*((HCAPI-HCAPW)*TSL0(I,N)-LF)       SOILHT5A.478   
+                                                                           SOILHT5A.479   
+          ENDDO                                                            SOILHT5A.480   
+        ENDDO                                                              SOILHT5A.481   
+      ENDDO                                                                SOILHT5A.482   
+                                                                           SOILHT5A.483   
+!-----------------------------------------------------------------------   SOILHT5A.484   
+! Diagnose soil temperatures (K) and fractional values of unfrozen and     SOILHT5A.485   
+! frozen water.                                                            SOILHT5A.486   
+!-----------------------------------------------------------------------   SOILHT5A.487   
+                                                                           SOILHT5A.488   
+      DO N=1,NSHYD                                                         SOILHT5A.489   
+        DO J=1,SOIL_PTS                                                    SOILHT5A.490   
+          I=SOIL_INDEX(J)                                                  SOILHT5A.491   
+          TSOIL(I,N)=TSL(I,N)+ZERODEGC                                     SOILHT5A.492   
+          STHU(I,N)=SMCLU(I,N)/SMCLSAT(I,N)                                SOILHT5A.493   
+          STHF(I,N)=SMCLF(I,N)/SMCLSAT(I,N)                                SOILHT5A.494   
+        ENDDO                                                              SOILHT5A.495   
+      ENDDO                                                                SOILHT5A.496   
+      IF (LTIMER) THEN                                                     SOILHT5A.497   
+        CALL TIMER('SOILHTC ',104)                                         GPB8F405.38    
+      ENDIF                                                                SOILHT5A.499   
+                                                                           SOILHT5A.500   
+      RETURN                                                               SOILHT5A.501   
+      END                                                                  SOILHT5A.502   
+*ENDIF                                                                     SOILHT5A.503   

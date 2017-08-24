@@ -1,0 +1,731 @@
+*IDENT ccouple
+*/
+*/ Coupling mod for FAMOUS with MOSES 2.2 & coastal tiling. 
+*/
+*/ Based on the mod ccouple (t20rt) with updated STASH codes etc.
+*/ 
+*/ Decks modified: DOARAV1,TRANA2O1,TRANO2A1,SWAPA2O2,SWAPO2A2,INITA2O1
+*/
+*/ Annette Osprey 3 September 2007
+*/
+*/
+*DC DOARAV1
+*D OJG1F403.3
+     &,DATA_TARG,ADJUST_TARG,ICODE,CMESSAGE)                            
+*I OJG1F403.28    
+     &,ADJUST_TARG(LROW_TARG,*)
+*D DOARAV1.82,DOARAV1.83   
+          IF (MASK_TARG(IX2,IY2).EQV.WANT) THEN                         
+          IF (COUNT_TARG(IX2,IY2).NE.0) THEN                            
+*I DOARAV1.91    
+            ELSE
+            IF(ADJUST.EQ.5)THEN
+            TEMP_TARG=0.0
+            ELSEIF(ADJUST.EQ.6)THEN
+            TEMP_TARG=1.0
+            ELSE
+            TEMP_TARG=DATA_TARG(IX2,IY2)
+            ENDIF
+            ENDIF
+*I OJG1F403.54    
+            ELSEIF (ADJUST.EQ.3) THEN
+              ADJUST_TARG(IX2,IY2)=DATA_TARG(IX2,IY2)-TEMP_TARG
+            ELSEIF (ADJUST.EQ.4) THEN
+              IF (TEMP_TARG.EQ.0) THEN
+                ADJUST_TARG(IX2,IY2)=1.0
+              ELSE
+                ADJUST_TARG(IX2,IY2)=DATA_TARG(IX2,IY2)/TEMP_TARG
+              ENDIF
+            ELSEIF (ADJUST.EQ.5) THEN
+              DATA_TARG(IX2,IY2)=DATA_TARG(IX2,IY2)+TEMP_TARG
+            ELSEIF (ADJUST.EQ.6) THEN
+              DATA_TARG(IX2,IY2)=DATA_TARG(IX2,IY2)*TEMP_TARG
+*DC TRANA2O1
+*I TRANA2O1.40    
+     + FRAC,
+*I TRANA2O1.120   
+     + FRAC(ICOLS,JROWS),    ! IN FRACTIONAL LAND MASK
+*I TRANA2O1.169   
+     +,ADJUSTMENT(ICOLS,JROWS) ! RATIO/DELTA stored for 2nd do_areaver 
+     +                       ! call. Assumes atm size:ICOLS & JROWS
+     +,DUMMY(IMT,JMT)
+*I OJG1F403.58    
+     &,index_back(maxl)
+*I OJG1F403.59    
+     &,backweight(maxl)
+*D OJG1F403.60
+*D OJG1F403.64
+*I OJG1F403.67    
+*IF DEF,CSRV_TWO_WAY
+C
+C    New arrays required to invert the coupling fields during 
+C    conservative interpolation
+C
+      REAL
+     & wmixinv(imt,jmt)      ! wind mixing power 
+     &,blueinv(imt,jmt)      ! penetrative solar
+     &,heatinv(imt,jmt)      ! non penetrative heat fluxes
+     &,pmininv(imt,jmt)      ! precipitation - evaporation
+     &,riverinv(imt,jmt)     ! river outflow
+     &,snowinv(imt,jmt)      ! snowfall
+     &,sublminv(imt,jmt)     ! sublimation
+     &,btmltinv(imt,jmt)     ! sea ice diffusive heat flux
+     &,tpmltinv(imt,jmt)     ! sea ice top melt heat flux
+C-----------------------------------------------------------------------
+C
+C    The coupling is done in 3 stages:
+C
+C    1  Atmospheric fields are interpolated onto the ocean grid
+C    2  The ocean fields are back interpolated onto the atmospheric 
+C       grid, and the ratio/difference between the original atmosphere. 
+C       and the back-interpolated atmosphere is calculated.
+C    3  The ratio/difference from 2 is then applied to the ocean 
+C       field to give the correct oceanic values for conservation to 
+C       be maintained.
+C
+C    The logic is as follows (assuming the atmosphere and ocean grids 
+C    are orientated oppositely in latitude).
+C
+C    Pre_areaver calculates weights for A==>O and O==>A. The weights 
+C    are valid for atmospheric mask amasktp, and inverted ocean, with 
+C    inverted mask omaskd.
+C
+C    Stage 2: use Do_areaver from O==>A. Invert =true, results go onto 
+C             atmospheric mask.
+C
+C    Stage 3: use Do_areaver from A==>O. Invert =false. The weights will
+C             assume the ocean is inverted, therefore it must be 
+C             flipped before do_areaver is used, and omaskd must 
+C             be specified. The resulting ocean field will be upside dow
+C             therefore it must be inverted again after do_areaver has 
+C             been called.
+C
+C
+C   Summary
+C
+C   *    pre_areaver called twice, A==>O(inverted) and O(inverted)==>A
+C   *    field X is interpolated from A==>O
+C   *    do_areaver O(inv)==>A produces the differences/ratios on the 
+C        atmospheric mask
+C   *    ocean field is inverted
+C   *    do_areaver A==>O(inv) calculates new ocean field
+C   *    ocean field is inverted
+C=======================================================================
+C
+*I OOM3F403.4     
+       REAL VALMAX,VALMIN             ! Field A==>O test variables
+       REAL WRKMAX,WRKMIN
+       PARAMETER(WRKMAX=-1.0e10,WRKMIN=1.0e10)
+*I TRANA2O1.308   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMTM1
+      DO I=1,IMT
+      IF(USTRSOUT(I,J).GT.VALMAX)VALMAX=USTRSOUT(I,J)
+      IF(USTRSOUT(I,J).LT.VALMIN)VALMIN=USTRSOUT(I,J)
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'USTRSOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMTM1
+      DO I=1,IMT
+      IF(VSTRSOUT(I,J).GT.VALMAX)VALMAX=VSTRSOUT(I,J)
+      IF(VSTRSOUT(I,J).LT.VALMIN)VALMIN=VSTRSOUT(I,J)
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'VSTRSOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.73    
+*IF DEF,CSRV_TWO_WAY
+      call pre_areaver(irt,xuo,jmt,ocyd,global,imt,.false.
+     &,omaskd,icols,xua,jrows,yua,.true.,.true.
+     &,lenl,count_a,base_a,index_arav,weight,icode,cmessage)
+      lenl=maxl
+      call pre_areaver(icols,xua,jrows,yua,.true.,icols,.false.
+     &,amasktp,irt,xuo,jmt,ocyd,global,.true.
+     &,lenl,count_o,base_o,index_back,backweight,icode,cmessage)
+*ELSE
+*I TRANA2O1.374   
+*ENDIF                                                                  
+*I OJG1F403.80    
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,wmixout,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,4
+     &,wmixin,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            wmixinv(i,j)=wmixout(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &   count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &   wmixinv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            wmixout(i,j)=wmixinv(i,jmt+1-j)
+          enddo
+        enddo
+      else 
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    wmixout,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.83
+     &,wmixin,adjustment,icode,cmessage)                                
+*ENDIF
+*D CJG6F401.95
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.387   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(WMIXOUT(I,J).GT.VALMAX)VALMAX=WMIXOUT(I,J)
+      IF(WMIXOUT(I,J).LT.VALMIN)VALMIN=WMIXOUT(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'WMIXOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.87    
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,blueout,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,4
+     &,bluein,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            blueinv(i,j)=blueout(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    blueinv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            blueout(i,j)=blueinv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    blueout,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.90
+     &,bluein,adjustment,icode,cmessage)                                
+*ENDIF
+*D CJG6F401.102
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.412   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(BLUEOUT(I,J).GT.VALMAX)VALMAX=BLUEOUT(I,J)
+      IF(BLUEOUT(I,J).LT.VALMIN)VALMIN=BLUEOUT(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'BLUEOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.94    
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,heatflux,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,3
+     &,worka,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            heatinv(i,j)=heatflux(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    heatinv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            heatflux(i,j)=heatinv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    heatflux,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.97
+     &,worka,adjustment,icode,cmessage)                                 
+*ENDIF
+*D CJG6F401.109
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.438   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(HEATFLUX(I,J).GT.VALMAX)VALMAX=HEATFLUX(I,J)
+      IF(HEATFLUX(I,J).LT.VALMIN)VALMIN=HEATFLUX(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'HEATFLUX A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.101   
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,pminuse,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,3
+     &,worka,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            pmininv(i,j)=pminuse(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    pmininv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            pminuse(i,j)=pmininv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    pminuse,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.104
+     &,worka,adjustment,icode,cmessage)                                 
+*ENDIF
+*D CJG6F401.116
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.469   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(PMINUSE(I,J).GT.VALMAX)VALMAX=PMINUSE(I,J)
+      IF(PMINUSE(I,J).LT.VALMIN)VALMIN=PMINUSE(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'PMINUSE A==>O  MAX/MIN ',VALMAX,VALMIN
+*D TRANA2O1.488
+c  Note River run off if there is some land
+          IF (FRAC(I,J).GT.0.) THEN
+*I TRANA2O1.492   
+     &        FRAC(I,J)/(1.-FRAC(K,L)) *
+*I OJG1F403.108   
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,riverout,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,4
+     &,worka,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            riverinv(i,j)=riverout(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    riverinv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            riverout(i,j)=riverinv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    riverout,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.111
+     &,worka,adjustment,icode,cmessage)                                 
+*ENDIF
+*D CJG6F401.123
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.506   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(RIVEROUT(I,J).GT.VALMAX)VALMAX=RIVEROUT(I,J)
+      IF(RIVEROUT(I,J).LT.VALMIN)VALMIN=RIVEROUT(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'RIVEROUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.115   
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,snowout,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,4
+     &,worka,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            snowinv(i,j)=snowout(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    snowinv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            snowout(i,j)=snowinv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    snowout,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.118
+     &,worka,adjustment,icode,cmessage)                                 
+*ENDIF
+*D CJG6F401.131
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.531   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(SNOWOUT(I,J).GT.VALMAX)VALMAX=SNOWOUT(I,J)
+      IF(SNOWOUT(I,J).LT.VALMIN)VALMIN=SNOWOUT(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'SNOWOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.122   
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,sublmout,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,3
+     &,sublmin,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            sublminv(i,j)=sublmout(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    sublminv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            sublmout(i,j)=sublminv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    sublmout,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.125
+     &,sublmin,adjustment,icode,cmessage)                               
+*ENDIF
+*D CJG6F401.138
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.544   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(SUBLMOUT(I,J).GT.VALMAX)VALMAX=SUBLMOUT(I,J)
+      IF(SUBLMOUT(I,J).LT.VALMIN)VALMIN=SUBLMOUT(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'SUBLMOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.129   
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,btmltout,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,3
+     &,btmltin,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            btmltinv(i,j)=btmltout(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    btmltinv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            btmltout(i,j)=btmltinv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,5,
+     &    btmltout,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.132
+     &,btmltin,adjustment,icode,cmessage)                               
+*ENDIF
+*D CJG6F401.145
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.557   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(BTMLTOUT(I,J).GT.VALMAX)VALMAX=BTMLTOUT(I,J)
+      IF(BTMLTOUT(I,J).LT.VALMIN)VALMIN=BTMLTOUT(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'BTMLTOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*I OJG1F403.136   
+*IF DEF,CSRV_TWO_WAY
+      call do_areaver(irt,jmt,imt,invert,tpmltout,icols,jrows
+     &,count_a,base_a,icols,.false.,amasktp,index_arav,weight,4
+     &,tpmltin,adjustment,icode,cmessage)
+      if (invert.eqv..true.) then
+        do j=1,jmt
+          do i=1,imt
+            tpmltinv(i,j)=tpmltout(i,jmt+1-j)
+          enddo
+        enddo
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    tpmltinv,dummy,icode,cmessage)
+        do j=1,jmt
+          do i=1,imt
+            tpmltout(i,j)=tpmltinv(i,jmt+1-j)
+          enddo
+        enddo
+      else
+        call do_areaver(icols,jrows,icols,.false.,adjustment,irt,jmt,
+     &    count_o,base_o,imt,.false.,omaskd,index_back,backweight,6,
+     &    tpmltout,dummy,icode,cmessage)
+      endif
+*ELSE
+*D OJG1F403.139
+     &,tpmltin,adjustment,icode,cmessage)                               
+*ENDIF
+*D CJG6F401.152
+     &,work,adjustment,icode,cmessage)                                  
+*I TRANA2O1.570   
+      VALMAX=WRKMAX
+      VALMIN=WRKMIN
+      DO J=1,JMT
+      DO I=1,IMT
+      IF(OMASKD(I,J).EQV..FALSE.)THEN
+      IF(TPMLTOUT(I,J).GT.VALMAX)VALMAX=TPMLTOUT(I,J)
+      IF(TPMLTOUT(I,J).LT.VALMIN)VALMIN=TPMLTOUT(I,J)
+      ENDIF
+      ENDDO
+      ENDDO
+*     WRITE(6,*)'TPMLTOUT A==>O  MAX/MIN ',VALMAX,VALMIN
+*DC TRANO2A1
+*D TRANO2A1.140
+     +,I,J,K                 ! Working indices                          
+*I TRANO2A1.202   
+     &,DUMMY(IMT,JMT)          ! Dummy argument (for DO_AREAVER)
+*I TRANO2A1.210   
+      REAL VALMAX,VALMIN      ! Max & min values passed O--> A
+      REAL WRKMAX,WRKMIN      ! Max & min work start points
+      PARAMETER(WRKMAX=-1.0e10,WRKMIN=1.0e10)
+*D OJG1F403.146
+     &,0,UOUT,DUMMY,ICODE,CMESSAGE)                                     
+*D OJG1F403.150
+     &,0,VOUT,DUMMY,ICODE,CMESSAGE)  
+*D OJG1F403.154
+     &,0,AICEOUT,DUMMY,ICODE,CMESSAGE)                                  
+*D TRANO2A1.536
+          IF(INVERT)THEN
+          K=JMT+1-J
+          ELSE
+          K=J
+          ENDIF
+          IF (OMASK(I,K).EQV..FALSE.) THEN                              
+*D OJG1F403.158
+     &,0,WORK_A,DUMMY,ICODE,CMESSAGE)                                   
+*D TRANO2A1.570
+        IF (AMASKTP(I,J).EQV..FALSE.) THEN                              
+*D TRANO2A1.584
+        IF(INVERT)THEN
+        K=JMT+1-J
+        ELSE
+        K=J
+        ENDIF
+        IF (OMASK(I,K).EQV..FALSE.)                                     
+*D OJG1F403.162
+     &,0,HSNOWOUT,DUMMY,ICODE,CMESSAGE)                                 
+*D OJG1F403.166
+     &,0,WORK_A,DUMMY,ICODE,CMESSAGE)                                   
+*D TRANO2A1.630
+C*IF DEF,SEAICE                                                         
+*D TRANO2A1.640,TRANO2A1.654  
+C     DO 420 J = 1,JROWS                                                
+C       DO 415 I = 1,ICOLS                                              
+C         IF (WORK_A(I,J) .NE. RMDI) THEN                               
+C           IF (AICEOUT(I,J) .EQ. 0.0) THEN                             
+C             TSTAROUT(I,J) = WORK_A(I,J) + ZERODEGC                    
+C           ELSEIF (AICEREF(I,J) .GE. AICEMIN) THEN                     
+C             TSTAROUT(I,J) = TFS + ( AICEOUT(I,J)/AICEREF(I,J) )       
+C    +                             *( TSTAROUT(I,J) - TFS )             
+C           ELSE                                                        
+C             TSTAROUT(I,J) = TFS                                       
+C           ENDIF                                                       
+C         ENDIF                                                         
+C415     CONTINUE                                                       
+C420   CONTINUE                                                         
+C*ELSE                                                                  
+*D TRANO2A1.657
+          IF (AMASKTP(I,J) .EQV..FALSE.) THEN                           
+*D TRANO2A1.660,TRANO2A1.662  
+ 425     CONTINUE                                                       
+ 430   CONTINUE                                                         
+C*ENDIF
+*DC SWAPA2O2
+*B SWAPA2O2.159
+      REAL FLAND_GLO(G_P_FIELD),FLAND_LOC(P_FIELD)
+      LOGICAL AMASKTP(G_P_FIELD)
+*I SWAPA2O2.345   
+*IF DEF,TRANGRID,OR,DEF,RIVERS
+      CALL FROM_LAND_POINTS(FLAND_LOC,D1(JFRAC_LAND),
+     & atmos_landmask_local,
+     & lasize(1)*lasize(2),number_of_landpts_out)
+
+      CALL GATHER_FIELD(FLAND_LOC,FLAND_GLO,
+     & lasize(1),lasize(2),glsize(1),glsize(2),
+     & gather_pe,GC_ALL_PROC_GROUP,info)
+      IF(mype.EQ.gather_pe) THEN
+        DO I=1,G_P_FIELD
+        AMASKTP(I)=(FLAND_GLO(I).EQ.1.0)
+        ENDDO
+      ENDIF
+*ENDIF
+*D SWAPA2O2.481   
+     + AMASKTP,FLAND_GLO,
+*DC SWAPO2A2
+*I SWAPO2A2.162    
+*IF DEF,TRANGRID
+      LOGICAL
+     &       AMASK(G_P_FIELD)
+      REAL FLAND_GLO(G_P_FIELD),FLAND_LOC(P_FIELD)
+     & ,TSTAR_SSI(P_FIELD)
+      INTEGER NLANDPT
+*ENDIF
+*I SWAPO2A2.319   
+*IF DEF,TRANGRID
+C
+C Unpack the fractional land mask, reassign land fraction of 0.0 to the 
+C points where there is no land (previously missing data) and 
+C define a mask which is .true. over all points that are land only.
+C Transo2a will take effect only where this mask is .false. (some 
+C sea).
+C
+      CALL FROM_LAND_POINTS(FLAND_LOC,D1(JFRAC_LAND),
+     & atmos_landmask_local,
+     & lasize(1)*lasize(2),NLANDPT)
+
+*     write(6,*) 'lasize(1,2),nlandpt: ',lasize(1),lasize(2),nlandpt
+*     write(6,*) 'atmos_landmask_local: ',atmos_landmask_local
+*     write(6,*) 'FLAND_LOC: ',FLAND_LOC
+
+      do i=1,p_field
+        if (fland_loc(i).eq.rmdi) fland_loc(i)=0
+      enddo
+*     write(6,*) 'FLAND_LOC zeroed: ',FLAND_LOC
+
+
+      CALL GATHER_FIELD(FLAND_LOC,FLAND_GLO,
+     & lasize(1),lasize(2),glsize(1),glsize(2),
+     & gather_pe,GC_ALL_PROC_GROUP,info)
+      IF(info.NE.0) THEN      ! Check return code
+         CMESSAGE='SWAPO2A : ERROR in gather of FLAND_GLO'
+         ICODE=20
+         GO TO 999
+      ENDIF
+
+      if(mype.eq.gather_pe) then
+      DO I=1,G_P_FIELD
+        AMASK(I)=(FLAND_GLO(I).EQ.1.0)
+*       WRITE(6,*)'FLAND_GLO',AMASK(I),FLAND_GLO(I)
+      ENDDO
+      ENDIF
+*ENDIF
+*D SWAPO2A2.332
+     & XUO,XTO,YUO,YTO,XTA,XUA,YTA,YUA,AMASK,                           
+*I SWAPO2A2.407
+*/ need to add this to the MPP version, since omitted initially
+*/ back on the standard atmosphere decomposition
+C
+C     Diagnose the new grid box means for TSTAR based upon the
+C     open sea surface temperature (field 507/TSTAR_SEA)
+C     which is passed by TRANSO2A
+C
+      DO I=0,P_FIELD-1
+        TSTAR_SSI(I+1)=0.0
+c        IF(atmos_landmask_local(i+1).EQV..FALSE.)THEN
+        IF(fland_loc(i+1).NE.1.)THEN
+c       IF(AMASK(I+1).EQV..FALSE.)THEN
+c          IF(LTLEADS.EQV..FALSE.) D1(JTSTAR_SEA+I)=TFS
+          IF((LTLEADS.EQV..FALSE.).AND.(D1(JICE_FRACTION+I).GT.0))
+     &          D1(JTSTAR_SEA+I)=TFS
+          D1(JTSTAR_SICE+I)=AMIN1(D1(JTSTAR_SICE+I),TFS)
+          TSTAR_SSI(I+1) =D1(JICE_FRACTION+I) *D1(JTSTAR_SICE+I)+
+     &                 (1.0-D1(JICE_FRACTION+I))*D1(JTSTAR_SEA+I)
+        ENDIF
+        D1(JTSTAR+I)=FLAND_LOC(I+1) *D1(JTSTAR_LAND+I)+
+     &          (1.0-FLAND_LOC(I+1))*TSTAR_SSI(I+1)
+      ENDDO
+
+      CALL SWAPBOUNDS(D1(JTSTAR),lasize(1),lasize(2),offx,offy,
+     &                   swap_levels)
+      CALL SET_SIDES(D1(JTSTAR),lasize(1)*lasize(2),lasize(1),
+     &                   swap_levels,fld_type_p)
+
+      CALL SWAPBOUNDS(D1(JTSTAR_SICE),lasize(1),lasize(2),offx,offy,
+     &                   swap_levels)
+      CALL SET_SIDES(D1(JTSTAR_SICE),lasize(1)*lasize(2),lasize(1),
+     &                   swap_levels,fld_type_p)
+
+      CALL SWAPBOUNDS(D1(JTSTAR_SEA),lasize(1),lasize(2),offx,offy,
+     &                   swap_levels)
+      CALL SET_SIDES(D1(JTSTAR_SEA),lasize(1)*lasize(2),lasize(1),
+     &                   swap_levels,fld_type_p)
+
+
+*DC INITA2O1
+*D GSS2F305.117
+      CALL FINDPTR(ATMOS_IM, 3,392,                                     
+*D INITA2O1.99
+        ICODE=3392                                                      
+*D GSS2F305.118
+      CALL FINDPTR(ATMOS_IM, 3,394,                                     
+*D INITA2O1.121
+        ICODE=3394                                                      
+*D GSS2F305.121
+      CALL FINDPTR(ATMOS_IM, 1,260,                                     
+*D INITA2O1.179
+        ICODE=1260                                                      
+*D GSS2F305.129
+      CALL FINDPTR(ATMOS_IM, 3,353,                                     
+*D INITA2O1.329
+        ICODE=3353                                                      
+*D INITA2O1.449
+      JA_TSTAR=JTSTAR_SEA                                               
+*D INITA2O1.451
+        ICODE=507                                                       
+*D INITA2O1.522
+        ICODE=507                                                       
+*/
+*/       - End of mod ccouple
+*/
+*/ ------------------------------------------------------------------

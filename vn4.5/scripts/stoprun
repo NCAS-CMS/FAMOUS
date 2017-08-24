@@ -1,0 +1,213 @@
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+# WARNING this has only been tested on the CRAY & HP (24/11/94)
+#LL---------------------------------------------------------------------
+#LL  Script:  stoprun
+#LL---------------------------------------------------------------------
+#LL
+#LL  Purpose: Write to the errflag file associated with a run a
+#LL           message telling the model to stop.
+#LL
+#LL  Author:  R A Stratton        Date : 16 June 1992
+#LL  Reviewer: ???????????        Date of review:
+#LL
+#LL  Tested under OS version: UNICOS 6.1.5A
+#LL
+#LL  Code version no: 1.0         Date: 16 June 1992
+#LL
+#LL  Modification History:
+#LL  01/03/95  4.0  After a crash there could be more than one /tmp/nqs*
+#LL                 directory per run on the Cray.  Added loop to
+#LL                 write to ERRFLAG file in each such directory, to
+#LL                 ensure run is stopped.  K Rogers
+#LL  06/10/95  4.0  Distinguish between operator and user stopruns.KR
+#LL  05/06/97  4.3  Added code to ensure, a call to stoprun by an
+#LL                 operator, is only applied to jobs in a given
+#LL                 list of queues.  (S Robertson)
+#LL  05/06/97  4.4  Tidied up format of echo -e statements. K Rogers
+#LL  Programming standard: UM Doc Paper 3A, version 1 (29/10/90)
+#LL
+#LL  Project task: C0
+#LL
+#LL  Logical components covered: ???
+#LL
+#LL  External documentation:
+#LL    UM Doc Paper ???
+#LL
+#L   -------------------------------------------------------------------
+#L   argument list
+#L
+#L     $1   - RUNID of model
+#L     -o   - should be set ONLY if called by operator
+#L
+#L Syntax:
+#L         stoprun [-o] runid
+#L    eg.  stoprun cabcd          (for user with runid cabcd)
+#L
+#L   -------------------------------------------------------------------
+#L
+#L
+#L
+#L Variables which can be imported:
+#L   OPSTARTDIR - directory in which the restart file for a run is kept
+#L                (default path is set in script and used if the var
+#L                 is unset)
+#L Local variables:
+#L
+#L   ERRFLAG    - pathname of error flag file.
+#L   ERRFLAGS   - pathname of error flag file.
+#L   QLIST      - : separated list of queues names
+#L   OPQLIST	- O(perator)Q(ueue)LIST a file with the names of queues
+#L                which an operator can stoprun jobs in
+#L   OPSTARTDIR - the directory where restart files are located
+#L   QSUBREQID  - is the qsub nqs identifier for the job
+#L   RUNID      - $1 the runid of the model
+#L   STOPMSG    - string in ERRFLAG defining whether stopped by
+#L                user or operator
+#L----------------------------------------------------------------------
+# Please specify $TMPDIR in setvars
+TEMP=$TMPDIR
+export TEMP
+
+#L
+#L Step 0 - check arguments to script correct
+#L
+if test $# -lt 1
+then
+   echo -e " @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+   echo -e " @ You must supply the five character runid for your model @"
+   echo -e " @ The correct way of running this script is               @"
+   echo -e " @                                                         @"
+   echo -e " @   stoprun runid                                         @"
+   echo -e " @                                                         @"
+   echo -e " @ where runid is the experiment name eg cai7a             @"
+   echo -e " @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+   exit
+fi
+
+# Find whether stoprun has been called by operator or user
+
+STOPMSG='stoprun: User'
+OPSR=false 	# OP(erator)S(top)R(un) - default is false
+
+while getopts o OPTION
+do
+  case $OPTION in
+    o)
+      # set the (operator) stoprun message
+      STOPMSG='stoprun: Operator'
+      # set flag to indicate this is an operator stoprun
+      OPSR=true ;;
+    *) echo -e "This option is invalid continuing with stoprun."
+       break;;
+   esac
+done
+
+if (( $OPTIND > 1 ))
+then
+  (( numswitches = OPTIND - 1))
+  shift numswitches
+fi
+
+RUNID=$1
+
+# Carry out checks for an operator stoprun
+if [[ "$OPSR" = true ]]
+then
+  # set up paths
+  OPSTARTDIR=${OPSTARTDIR:-/u/m20/cprod/opstartinfo/}
+  OPQLIST=${OPQLIST:-/u/m20/cprod/opqlist}
+
+  # get a list of queues which may be stoprunned by an operator
+  QLIST=`cat $OPQLIST`
+
+  WORKLEFT=true
+
+  while $WORKLEFT
+  do
+    # get the qsub request id
+    QSUBREQID=`$UM_AWK -F= /SUB_NQSREQUEST/'{print $2}' \
+$OPSTARTDIR/$RUNID* 2>&1`
+
+    CC=$?
+    if test $CC -ne 0 -o "$QSUBREQID" = ""
+    then
+      echo -e "stoprun: failed to get queue information for $RUNID, \r
+continuing operator stoprun."
+      break
+    fi
+
+    # get name of queue the job wish to stoprun is currently running in
+    QINFO=`qstat -a $QSUBREQID | $UM_AWK "/$QSUBREQID/"'{print $4}' |\
+ $UM_SED 's/@.*//g`
+
+    CC=$?
+    if test $CC -ne 0 -o "$QINFO" = ""
+    then
+      echo -e "stoprun: failed to get queue information for $RUNID, \r
+continuing operator stoprun."
+      break
+    fi
+
+    if [[ "$QLIST" = *"$QINFO"* ]]
+    then
+      # the job is running in a valid queue for an operator stoprun
+      echo -e $STOPMSG
+      # completed checks for operator stoprun no work left exit loop
+      WORKLEFT=false
+    else
+      echo -e "Operator stoprun requested for job not in queue"
+      cat "$OPQLIST"
+      echo -e "Nothing done exiting."
+      exit 2
+    fi
+  done
+fi
+
+#L
+#L Step 1 - find location of errflag file for this run
+#L
+
+ERRFLAGS=`ls $TEMP/* |$UM_GREP $RUNID.errflag`
+CC=$?
+if test $CC -ne 0
+then
+  echo -e "========================================================"
+  echo -e " Running $0 - script to stop a model run"
+  echo -e " Script has failed to find file $RUNID.errflag"
+  echo -e "in any directory under $TEMP.  If your model has finished"
+  echo -e "compiling and started running please report this problem."
+  echo -e "(Note that jobs cannot be stoprunned until they start running.)"
+  echo -e "========================================================"
+else
+#L
+#L Step 2 - overwrite present message with one to cause the run to stop
+#L          going through each errflagfile found
+#L
+for ERRFLAG in $ERRFLAGS
+do
+cat > $ERRFLAG << EOF
+T $STOPMSG request to stop model run `date`
+EOF
+  CC=$?
+  if test $CC -ne 0
+  then
+    echo -e "========================================================"
+    echo -e "$0 failed to write to errflag $ERRFLAG at `date`"
+    echo -e "========================================================"
+  else
+    echo -e "========================================================"
+    echo -e "$0 sent request to stop run using $ERRFLAG at `date`"
+    echo -e "========================================================"
+  fi
+done
+fi
+
+#L----------------------------------------------------------------------

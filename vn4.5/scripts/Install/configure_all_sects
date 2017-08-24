@@ -1,0 +1,189 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#
+#  Script: configure_all_sects
+#
+#  Description:
+#
+#  Interface and arguments: configure_all_sects [-n]
+#
+#  Author: S Robertson
+#  Owner: S Robertson
+#
+#  History:
+#  Vn   Date      Change
+#  4.2		  Original Code. (S Robertson)
+#  4.3	17.03.97  Portability changes made. (N.Farnon)
+#  4.4  27.08.97  Added code to support the -n nosubmit option and for
+#		  portability isolated the MetOffice specific steps
+#		  within an IF DEF,METOCRAY.  Also added a script
+#                 header and some comments. (S Robertson)   	
+#  4.4  15.12.97  Correct problem with failures to build sections
+#                 with no build combinations. (A. Brady)
+#  4.5  14.07.98  Moved functions to a separate file and
+#                    autoloaded them. (A Van der Wal)
+#  4.5  25.09.98  Change from prg_2.0.3.4 to prg_3.0.2.1
+#  4.5  12.10.98  Take out the module load mpt.1.1.0.2 line
+#
+#  -n : do not submit the section version build scripts
+#
+#  Script called by:
+#  Script calls:
+#
+#  Variables that must be imported:
+#
+#  Variables that can be imported:
+#    OBJXREF	the obj_xref file to be used by configure_execs
+#    OUTDIR	directory which contains executable build scripts
+# 		and the output from submission of these scripts
+#    SRCDIR	build directory for the small executables
+#    TOPDIR	top level UM directory path i.e. $UMDIR/vn$VN
+#    UMDIR	pathname for the UM files and directories
+#    VN		a given version of the UM
+#  Variables that are exported:
+#  Local variables:
+#    DATE	a unique identifier based on the date
+#    USAGE  	a string defining usage of configure_execs
+#------------------------------------------------
+
+
+# Variable declarations.
+
+USAGE="USAGE: configure_all_sects [-n]"
+DATE=`date +%d%m%y_%H%M`
+UMDIR=${UMDIR:-/u/um1}
+VN=4.5
+TOPDIR=${TOPDIR:-$UMDIR/vn$VN}
+OBJXREF=${OBJXREF:-$TOPDIR/source/obj_xref}
+OUTDIR=${OUTDIR:-$TOPDIR/build_sects_$DATE}
+SRCDIR=${SRCDIR:-$TOPDIR/src}
+
+# load functions
+. $UMDIR/vn$VN/scripts/setglobalvars
+autoload flower
+
+# Test options and arguments.
+
+getopts n argument
+case $argument in
+  n)  SUBMIT=off;;
+ \*)  print "$OPTARG is not a valid option"
+  print "$USAGE"
+  exit 2;;
+esac
+echo -e $OPTIND
+if (( $OPTIND >= 1 ))
+then
+  (( numswitches = OPTIND - 1))
+  shift numswitches
+fi
+
+# incorrect no of arguments - terminate the calling process
+if test $# -le 1
+then
+ :
+else
+ NAME=$0
+ echo -e "$NAME: Error "
+ echo -e $USAGE
+ exit 1
+fi
+
+# process the options to the script
+SUBMIT=${SUBMIT:-on}
+
+# set up
+umask 002
+mkdir -p $OUTDIR
+
+# create a build script for each section version referenced in
+# the obj_xref file
+
+for sect in `cat $OBJXREF|\
+   $UM_GREP -E -v \
+   '^COMP_GEN_OPTS|^DEF_SWITCHES|^COMPILE|^MACHINE|^SECTION|^#|^$'|\
+   $UM_AWK '{print $1}'|\
+   sort|uniq|flower`
+do
+  echo -e "Generating script $OUTDIR/$sect.script"
+  cat <<EOF >> $OUTDIR/$sect.script
+#!/bin/ksh
+# QSUB -r $sect
+# QSUB -lT 6000
+# QSUB -lM 14Mw
+# QSUB -q prime
+# QSUB -eo
+# QSUB -nr
+# QSUB -J m
+# QSUB -ro
+
+umask 002
+
+# remove any error checking files remaining from a previous build
+rm -f \\
+  $OUTDIR/$sect.out \\
+  $OUTDIR/$sect.success \\
+  $OUTDIR/$sect.error
+
+# call qsconf to extract the source code for the given section
+$UMDIR/vn$VN/scripts/qsconf \\
+  -cgopts normal \\
+  -outdir `dirname $SRCDIR` \\
+  -sections $sect 1> $OUTDIR/$sect.out 2>&1
+
+test=\$?
+if [ "\$test" -ne 0 ]
+then
+  # extraction unsuccessful exit from configure_all_sects
+  touch $OUTDIR/$sect.error
+  echo -e "$sect: completed with errors"
+  exit 1
+fi
+
+# extraction successful move to the build directory, set
+# up the programming environment and execute make
+if [ -d "$SRCDIR/$sect" ]
+then
+  cd $SRCDIR/$sect
+
+
+  make 1>> $OUTDIR/$sect.out 2>&1
+
+  test=\$?
+  if [ "\$test" -ne 0 ]
+  then
+    # make unsuccessful exit from configure_all_sects
+    touch $OUTDIR/$sect.error
+    echo -e "$sect: completed with errors"
+    exit 1
+  fi
+
+  # make successful exit normally
+  touch $OUTDIR/$sect.success
+else
+  touch $OUTDIR/$sect.nocomb
+fi
+exit 0
+EOF
+
+chmod a+x $OUTDIR/$sect.script
+
+if [[ $SUBMIT = "on" ]]
+then
+  # Default submission method...hand-edit if necessary
+  $OUTDIR/$sect.script
+else
+  # submission of build scripts is not required
+  :
+fi
+
+done
+exit 0

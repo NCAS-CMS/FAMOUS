@@ -1,0 +1,756 @@
+*IF DEF,A03_6A                                                             ACB1F405.7     
+C *****************************COPYRIGHT******************************     LEAF5B.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    LEAF5B.4     
+C                                                                          LEAF5B.5     
+C Use, duplication or disclosure of this code is subject to the            LEAF5B.6     
+C restrictions as set forth in the contract.                               LEAF5B.7     
+C                                                                          LEAF5B.8     
+C                Meteorological Office                                     LEAF5B.9     
+C                London Road                                               LEAF5B.10    
+C                BRACKNELL                                                 LEAF5B.11    
+C                Berkshire UK                                              LEAF5B.12    
+C                RG12 2SZ                                                  LEAF5B.13    
+C                                                                          LEAF5B.14    
+C If no contract has been raised with this copy of the code, the use,      LEAF5B.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      LEAF5B.16    
+C to do so must first be obtained in writing from the Head of Numerical    LEAF5B.17    
+C Modelling at the above address.                                          LEAF5B.18    
+C ******************************COPYRIGHT******************************    LEAF5B.19    
+                                                                           LEAF5B.20    
+!!!********************************************************************    LEAF5B.21    
+!!! Calculates the leaf resistance and net photosynthesis using:           LEAF5B.22    
+!!!  (i) Collatz et al. (1992) C3 photosynthesis model                     LEAF5B.23    
+!!! (ii) Jacobs (1994) CI/CA closure.                                      LEAF5B.24    
+!!!                                                                        LEAF5B.25    
+!!! Written by Peter Cox (February 1996)                                   LEAF5B.26    
+! 4.5    Jul. 98  Kill the IBM specific lines (JCThil)                     AJC1F405.130   
+!!!********************************************************************    LEAF5B.27    
+      SUBROUTINE LEAF_C3 (LAND_PTS                                         LEAF5B.28    
+     &,                   LAND_INDEX,P1                                    LEAF5B.30    
+     &,                   LAND_FIELD,P_FIELD                               LEAF5B.32    
+     &,                   VEG_PTS,VEG_INDEX                                LEAF5B.33    
+     &,                   FT,DQ,APAR,TL,CA,OA,PSTAR                        LEAF5B.34    
+     &,                   NL0,FSMC                                         LEAF5B.35    
+     &,                   GL,AL,CI,RD,LTIMER)                              LEAF5B.36    
+                                                                           LEAF5B.37    
+      IMPLICIT NONE                                                        LEAF5B.38    
+                                                                           LEAF5B.39    
+      INTEGER                                                              LEAF5B.40    
+     & LAND_PTS               ! IN Number of land points to be             LEAF5B.41    
+!                                  processed.                              LEAF5B.42    
+     &,LAND_FIELD             ! IN Total number of land points.            LEAF5B.43    
+     &,LAND_INDEX(LAND_PTS)   ! IN Index of land points.                   LEAF5B.45    
+     &,P1                     ! IN First P point to be processed.          LEAF5B.46    
+     &,P_FIELD                ! IN Total number of P points.               LEAF5B.48    
+     &,VEG_PTS                ! IN Number of vegetated points.             LEAF5B.49    
+     &,VEG_INDEX(LAND_FIELD)  ! IN Index of vegetated points               LEAF5B.50    
+!                                  on the land grid.                       LEAF5B.51    
+                                                                           LEAF5B.52    
+      INTEGER                                                              LEAF5B.53    
+     & FT(LAND_FIELD)         ! IN Plant functional type.                  LEAF5B.54    
+                                                                           LEAF5B.55    
+      REAL                                                                 LEAF5B.56    
+     & DQ(LAND_FIELD)         ! IN Canopy level specific humidity          LEAF5B.57    
+!                                  deficit (kg H2O/kg air).                LEAF5B.58    
+     &,APAR(LAND_FIELD)       ! IN Absorbed PAR (W/m2)                     LEAF5B.59    
+     &,TL(P_FIELD)            ! IN Leaf temperature (K).                   LEAF5B.60    
+     &,CA(LAND_FIELD)         ! IN Canopy CO2 pressure (Pa).               LEAF5B.61    
+     &,OA(LAND_FIELD)         ! IN Atmospheric O2 pressure (Pa).           LEAF5B.62    
+     &,PSTAR(P_FIELD)         ! IN Atmospheric pressure (Pa).              LEAF5B.63    
+     &,NL0(LAND_FIELD)        ! IN Leaf nitrogen conncentration            LEAF5B.64    
+!                                 (kg N/kg C).                             LEAF5B.65    
+     &,FSMC(LAND_FIELD)       ! IN Soil water factor.                      LEAF5B.66    
+                                                                           LEAF5B.67    
+! OUTPUT                                                                   LEAF5B.68    
+      REAL                                                                 LEAF5B.69    
+     & GL(LAND_FIELD)         ! OUT Leaf conductance for H2O (m/s).        LEAF5B.70    
+     &,AL(LAND_FIELD)         ! OUT Net Leaf photosynthesis                LEAF5B.71    
+!                                   (mol CO2/m2/s).                        LEAF5B.72    
+     &,RD(LAND_FIELD)         ! OUT Dark respiration (mol CO2/m2/s).       LEAF5B.73    
+     &,CI(LAND_FIELD)         ! OUT Internal CO2 pressure (Pa).            LEAF5B.74    
+                                                                           LEAF5B.75    
+                                                                           LEAF5B.76    
+! WORKspace                                                                LEAF5B.77    
+      REAL                                                                 LEAF5B.78    
+     & ACR(LAND_FIELD)        ! WORK Absorbed PAR (mol photons/m2/s).      LEAF5B.79    
+     &,B1(LAND_FIELD)         ! WORK Coefficients of the quadratic.        LEAF5B.80    
+     &,B2(LAND_FIELD)         !                    "                       LEAF5B.81    
+     &,B3(LAND_FIELD)         !                    "                       LEAF5B.82    
+     &,CCP(LAND_FIELD)        ! WORK Photorespiratory compensatory         LEAF5B.83    
+!                                  point (mol/m3).                         LEAF5B.84    
+     &,CONV(LAND_FIELD)       ! WORK Factor for converting mol/m3          LEAF5B.85    
+!                                  into Pa (J/mol).                        LEAF5B.86    
+     &,DENOM(LAND_FIELD)      ! WORK Denominator in equation for VCM       LEAF5B.87    
+     &,GLCO2(LAND_FIELD)      ! WORK Leaf conductance for CO2 (m/s).       LEAF5B.88    
+     &,KC(LAND_FIELD)         ! WORK Michaelis constant for CO2 (Pa)       LEAF5B.89    
+     &,KO(LAND_FIELD)         ! WORK Michaelis constant for O2 (Pa).       LEAF5B.90    
+     &,QTENF(LAND_FIELD)      ! WORK Q10 function.                         LEAF5B.91    
+     &,TAU(LAND_FIELD)        ! WORK CO2/O2 specificity ratio.             LEAF5B.92    
+     &,TDEGC(LAND_FIELD)      ! WORK Leaf temperature (deg C).             LEAF5B.93    
+     &,VCM(LAND_FIELD)        ! WORK Maximum rate of carboxylation         LEAF5B.94    
+!                                    of Rubisco (mol CO2/m2/s).            LEAF5B.95    
+     &,VCMAX(LAND_FIELD)      ! WORK Maximum rate of carboxylation         LEAF5B.96    
+!                                    of Rubisco - without the              LEAF5B.97    
+!                                    temperature factor                    LEAF5B.98    
+!                                    (mol CO2/m2/s).                       LEAF5B.99    
+     &,WL(LAND_FIELD)         ! WORK Gross leaf phtosynthesis              LEAF5B.100   
+!                                    (mol CO2/m2/s).                       LEAF5B.101   
+     &,WCARB(LAND_FIELD)      ! WORK Carboxylation,                        LEAF5B.102   
+     &,WLITE(LAND_FIELD)      !      Light, and                            LEAF5B.103   
+     &,WEXPT(LAND_FIELD)      !      export limited gross                  LEAF5B.104   
+!                                    photosynthetic rates                  LEAF5B.105   
+!                                    (mol CO2/m2/s).                       LEAF5B.106   
+     &,WP(LAND_FIELD)         ! WORK Smoothed minimum of                   LEAF5B.107   
+!                                    Carboxylation and Light               LEAF5B.108   
+!                                    limited gross photosynthesis          LEAF5B.109   
+!                                    (mol CO2/m2/s).                       LEAF5B.110   
+                                                                           LEAF5B.111   
+      INTEGER                                                              LEAF5B.112   
+     & CLOS_INDEX(LAND_FIELD) ! WORK Index of land points                  LEAF5B.113   
+!                                    with closed stomata.                  LEAF5B.114   
+     &,CLOS_PTS               ! WORK Number of land points                 LEAF5B.115   
+!                                    with closed stomata.                  LEAF5B.116   
+     &,OPEN_INDEX(LAND_FIELD) ! WORK Index of land points                  LEAF5B.117   
+!                                    with open stomata.                    LEAF5B.118   
+     &,OPEN_PTS               ! WORK Number of land points                 LEAF5B.119   
+!                                    with open stomata.                    LEAF5B.120   
+                                                                           LEAF5B.121   
+      LOGICAL                                                              LEAF5B.122   
+     & LTIMER                                                              LEAF5B.123   
+                                                                           LEAF5B.124   
+      INTEGER                                                              LEAF5B.125   
+     & I,J,L                  ! WORK Loop counters.                        LEAF5B.126   
+                                                                           LEAF5B.127   
+!-----------------------------------------------------------------------   LEAF5B.128   
+! Functional Type dependent parameters                                     LEAF5B.129   
+!-----------------------------------------------------------------------   LEAF5B.130   
+      INTEGER                                                              LEAF5B.131   
+     & C3(4)                  ! 1 for C3 Plants, 0 for C4 Plants.          LEAF5B.132   
+                                                                           LEAF5B.133   
+      REAL                                                                 LEAF5B.134   
+     & ALPHA(4)               ! Quantum efficiency                         LEAF5B.135   
+!                               (mol CO2/mol PAR photons).                 LEAF5B.136   
+     &,DQCRIT(4)              ! Critical humidity deficit                  LEAF5B.137   
+!                               (kg H2O/kg air).                           LEAF5B.138   
+     &,F0(4)                  ! CI/CA for DQ = 0.                          LEAF5B.139   
+     &,GLMIN(4)               ! Minimum leaf conductance for H2O           LEAF5B.140   
+!                               (m/s).                                     LEAF5B.141   
+!----------------------------------------------------------------------    LEAF5B.142   
+!                        BT     NT    C3G    C4G                           LEAF5B.143   
+!----------------------------------------------------------------------    LEAF5B.144   
+      DATA C3      /      1,     1,     1,     0 /                         LEAF5B.145   
+      DATA ALPHA   /   0.08,  0.08,  0.08, 0.040 /                         LEAF5B.146   
+      DATA DQCRIT  /  0.090, 0.060, 0.150, 0.075 /                         LEAF5B.147   
+      DATA F0      /  0.875, 0.875, 0.925, 0.800 /                         LEAF5B.148   
+      DATA GLMIN   / 1.0E-6,1.0E-6,1.0E-6,1.0E-6 /                         LEAF5B.149   
+                                                                           LEAF5B.150   
+!-------------------------------------------------------------------       LEAF5B.151   
+! Parameters                                                               LEAF5B.152   
+!-------------------------------------------------------------------       LEAF5B.153   
+      REAL                                                                 LEAF5B.154   
+     & BETA1, BETA2   ! Coupling coefficients for co-limitation.           LEAF5B.155   
+     &,FDC3, FDC4     ! Dark respiration coefficients for C3, C4           LEAF5B.156   
+     &,NEFFC3, NEFFC4 ! Constant relating VCMAX and leaf N                 LEAF5B.157   
+!                       from Schulze et al. 1994 (AMAX = 0.4E-3 * NL       LEAF5B.158   
+!                       - assuming dry matter is 40% carbon by mass)       LEAF5B.159   
+!                       and Jacobs 1994:                                   LEAF5B.160   
+!                       C3 : VCMAX = 2 * AMAX ; C4 : VCMAX = AMAX          LEAF5B.161   
+!                       (mol/m2/s)                                         LEAF5B.162   
+     &,R              ! Gas constant (J/K/mol).                            LEAF5B.163   
+     &,RATIO          ! Ratio of leaf resistance for CO2 to leaf           LEAF5B.164   
+!                       resistance for H2O.                                LEAF5B.165   
+     &,ZERODEGC       ! Zero Celsius (K).                                  LEAF5B.166   
+                                                                           LEAF5B.167   
+      PARAMETER (BETA1 = 0.83, BETA2 = 0.93                                LEAF5B.168   
+     &,          FDC3 = 0.015,  FDC4 = 0.025                               LEAF5B.169   
+     &,          NEFFC3 = 0.8E-3, NEFFC4 = 0.4E-3                          LEAF5B.170   
+     &,          R = 8.3144  , RATIO = 1.6                                 LEAF5B.171   
+     &,          ZERODEGC = 273.15)                                        LEAF5B.172   
+                                                                           LEAF5B.173   
+      IF (LTIMER) THEN                                                     LEAF5B.174   
+        CALL TIMER('LEAF_C3  ',103)                                        GPB8F405.168   
+      ENDIF                                                                LEAF5B.176   
+                                                                           LEAF5B.177   
+!----------------------------------------------------------------------    LEAF5B.178   
+! Initialise counters                                                      LEAF5B.179   
+!----------------------------------------------------------------------    LEAF5B.180   
+      CLOS_PTS = 0                                                         LEAF5B.181   
+      OPEN_PTS = 0                                                         LEAF5B.182   
+                                                                           LEAF5B.183   
+      DO J=1,VEG_PTS                                                       LEAF5B.184   
+        L = VEG_INDEX(J)                                                   LEAF5B.185   
+!----------------------------------------------------------------------    LEAF5B.186   
+! Only carry out calculations for points with C3 plants                    LEAF5B.187   
+!----------------------------------------------------------------------    LEAF5B.188   
+        IF (C3(FT(L)).EQ.1) THEN                                           LEAF5B.189   
+                                                                           LEAF5B.190   
+!----------------------------------------------------------------------    LEAF5B.191   
+! Calculate the points with closed stomata                                 LEAF5B.192   
+!----------------------------------------------------------------------    LEAF5B.193   
+          IF (FSMC(L).EQ.0.0 .OR. DQ(L).GE.DQCRIT(FT(L))                   LEAF5B.194   
+     &                       .OR. APAR(L).LE.0.0) THEN                     LEAF5B.195   
+            CLOS_PTS = CLOS_PTS + 1                                        LEAF5B.196   
+            CLOS_INDEX(CLOS_PTS) = J                                       LEAF5B.197   
+          ELSE                                                             LEAF5B.198   
+            OPEN_PTS = OPEN_PTS + 1                                        LEAF5B.199   
+            OPEN_INDEX(OPEN_PTS) = J                                       LEAF5B.200   
+          ENDIF                                                            LEAF5B.201   
+                                                                           LEAF5B.202   
+        ENDIF                                                              LEAF5B.203   
+                                                                           LEAF5B.204   
+      ENDDO                                                                LEAF5B.205   
+                                                                           LEAF5B.206   
+!----------------------------------------------------------------------    LEAF5B.207   
+! Calculate the photosynthetic parameters                                  LEAF5B.208   
+!----------------------------------------------------------------------    LEAF5B.209   
+CDIR$ IVDEP                                                                LEAF5B.210   
+! Fujitsu vectorization directive                                          GRB0F405.397   
+!OCL NOVREC                                                                GRB0F405.398   
+      DO J=1,OPEN_PTS                                                      LEAF5B.211   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.212   
+        I = LAND_INDEX(L)                                                  LEAF5B.216   
+                                                                           LEAF5B.218   
+        VCMAX(L) = NEFFC3 * NL0(L)                                         LEAF5B.219   
+        TDEGC(L) = TL(I) - ZERODEGC                                        LEAF5B.220   
+                                                                           LEAF5B.221   
+        TAU(L) = 2600.0 * (0.57 ** (0.1 * (TDEGC(L) - 25.0)))              LEAF5B.222   
+        CCP(L) = 0.5 * OA(L) / TAU(L)                                      LEAF5B.223   
+                                                                           LEAF5B.224   
+                                                                           LEAF5B.225   
+        QTENF(L) = VCMAX(L) * (2.0 ** (0.1 * (TDEGC(L) - 25.0)))           LEAF5B.226   
+        DENOM(L) = (1 + EXP (0.3 * (TDEGC(L) - 36.0)))                     LEAF5B.227   
+        VCM(L) = QTENF(L) / DENOM(L)                                       LEAF5B.228   
+        RD(L) = FDC3 * VCM(L)                                              LEAF5B.229   
+                                                                           LEAF5B.230   
+!----------------------------------------------------------------------    LEAF5B.231   
+! Calculate the factor for converting mol/m3 into Pa (J/m3).               LEAF5B.232   
+!----------------------------------------------------------------------    LEAF5B.233   
+        CONV(L) = R * TL(I)                                                LEAF5B.234   
+                                                                           LEAF5B.235   
+      ENDDO                                                                LEAF5B.236   
+                                                                           LEAF5B.237   
+CDIR$ IVDEP                                                                LEAF5B.238   
+! Fujitsu vectorization directive                                          GRB0F405.399   
+!OCL NOVREC                                                                GRB0F405.400   
+      DO J=1,CLOS_PTS                                                      LEAF5B.239   
+        L = VEG_INDEX(CLOS_INDEX(J))                                       LEAF5B.240   
+        I = LAND_INDEX(L)                                                  LEAF5B.244   
+                                                                           LEAF5B.246   
+        VCMAX(L) = NEFFC3 * NL0(L)                                         LEAF5B.247   
+        TDEGC(L) = TL(I) - ZERODEGC                                        LEAF5B.248   
+                                                                           LEAF5B.249   
+        QTENF(L) = VCMAX(L) * (2.0 ** (0.1 * (TDEGC(L) - 25.0)))           LEAF5B.250   
+        DENOM(L) = (1 + EXP (0.3 * (TDEGC(L) - 36.0)))                     LEAF5B.251   
+        VCM(L) = QTENF(L) / DENOM(L)                                       LEAF5B.252   
+        RD(L) = FDC3 * VCM(L)                                              LEAF5B.253   
+                                                                           LEAF5B.254   
+!----------------------------------------------------------------------    LEAF5B.255   
+! Calculate the factor for converting mol/m3 into Pa (J/m3).               LEAF5B.256   
+!----------------------------------------------------------------------    LEAF5B.257   
+        CONV(L) = R * TL(I)                                                LEAF5B.258   
+                                                                           LEAF5B.259   
+      ENDDO                                                                LEAF5B.260   
+                                                                           LEAF5B.261   
+!----------------------------------------------------------------------    LEAF5B.262   
+! Carry out calculations for points with open stomata                      LEAF5B.263   
+!----------------------------------------------------------------------    LEAF5B.264   
+      DO J=1,OPEN_PTS                                                      LEAF5B.265   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.266   
+                                                                           LEAF5B.267   
+!----------------------------------------------------------------------    LEAF5B.268   
+! Calculate the internal CO2 pressure (Jacobs, 1994).                      LEAF5B.269   
+!----------------------------------------------------------------------    LEAF5B.270   
+        CI(L) = (CA(L) - CCP(L)) * F0(FT(L))                               LEAF5B.271   
+     &        * (1 - DQ(L) / DQCRIT(FT(L))) + CCP(L)                       LEAF5B.272   
+                                                                           LEAF5B.273   
+!----------------------------------------------------------------------    LEAF5B.274   
+! Convert absorbed PAR into mol PAR photons/m2/s                           LEAF5B.275   
+!----------------------------------------------------------------------    LEAF5B.276   
+        ACR(L) = APAR(L) / 2.19E5                                          LEAF5B.277   
+                                                                           LEAF5B.278   
+      ENDDO                                                                LEAF5B.279   
+                                                                           LEAF5B.280   
+!----------------------------------------------------------------------    LEAF5B.281   
+! Calculate the gross photosynthesis for RuBP-Carboxylase, Light and       LEAF5B.282   
+! Export limited photosynthesis (Collatz et al., 1992).                    LEAF5B.283   
+!----------------------------------------------------------------------    LEAF5B.284   
+CDIR$ IVDEP                                                                LEAF5B.285   
+! Fujitsu vectorization directive                                          GRB0F405.401   
+!OCL NOVREC                                                                GRB0F405.402   
+      DO J=1,OPEN_PTS                                                      LEAF5B.286   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.287   
+                                                                           LEAF5B.288   
+        KC(L) = 30.0 * (2.1 ** (0.1 * (TDEGC(L) - 25.0)))                  LEAF5B.289   
+        KO(L) = 30000.0 * (1.2 ** (0.1 * (TDEGC(L) - 25.0)))               LEAF5B.290   
+                                                                           LEAF5B.291   
+        WCARB(L) = VCM(L) * (CI(L) - CCP(L))                               LEAF5B.292   
+     &           / (CI(L) + KC(L) * (1. + OA(L) / KO(L)))                  LEAF5B.293   
+                                                                           LEAF5B.294   
+        WLITE(L) = ALPHA(FT(L)) * ACR(L) * (CI(L) - CCP(L))                LEAF5B.295   
+     &           / (CI(L) + 2 * CCP(L))                                    LEAF5B.296   
+                                                                           LEAF5B.297   
+        WEXPT(L) = 0.5 * VCM(L)                                            LEAF5B.298   
+                                                                           LEAF5B.299   
+      ENDDO                                                                LEAF5B.300   
+                                                                           LEAF5B.301   
+!----------------------------------------------------------------------    LEAF5B.302   
+! Calculate the co-limited rate of gross photosynthesis                    LEAF5B.303   
+!----------------------------------------------------------------------    LEAF5B.304   
+                                                                           LEAF5B.305   
+CDIR$ IVDEP                                                                LEAF5B.306   
+! Fujitsu vectorization directive                                          GRB0F405.403   
+!OCL NOVREC                                                                GRB0F405.404   
+      DO J=1,OPEN_PTS                                                      LEAF5B.307   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.308   
+                                                                           LEAF5B.309   
+        B1(L) = BETA1                                                      LEAF5B.310   
+        B2(L) = - (WCARB(L) + WLITE(L))                                    LEAF5B.311   
+        B3(L) = WCARB(L) * WLITE(L)                                        LEAF5B.312   
+                                                                           LEAF5B.313   
+        WP(L) = -B2(L)/(2*B1(L))                                           LEAF5B.314   
+     .         - SQRT(B2(L)*B2(L)/(4*B1(L)*B1(L)) - B3(L)/B1(L))           LEAF5B.315   
+                                                                           LEAF5B.316   
+      ENDDO                                                                LEAF5B.317   
+                                                                           LEAF5B.318   
+CDIR$ IVDEP                                                                LEAF5B.319   
+! Fujitsu vectorization directive                                          GRB0F405.405   
+!OCL NOVREC                                                                GRB0F405.406   
+      DO J=1,OPEN_PTS                                                      LEAF5B.320   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.321   
+                                                                           LEAF5B.322   
+        B1(L) = BETA2                                                      LEAF5B.323   
+        B2(L) = - (WP(L) + WEXPT(L))                                       LEAF5B.324   
+        B3(L) = WP(L) * WEXPT(L)                                           LEAF5B.325   
+                                                                           LEAF5B.326   
+        WL(L) = -B2(L)/(2*B1(L))                                           LEAF5B.327   
+     .         - SQRT(B2(L)*B2(L)/(4*B1(L)*B1(L)) - B3(L)/B1(L))           LEAF5B.328   
+                                                                           LEAF5B.329   
+      ENDDO                                                                LEAF5B.330   
+                                                                           LEAF5B.331   
+!----------------------------------------------------------------------    LEAF5B.332   
+! Carry out calculations for points with open stomata                      LEAF5B.333   
+!----------------------------------------------------------------------    LEAF5B.334   
+CDIR$ IVDEP                                                                LEAF5B.335   
+! Fujitsu vectorization directive                                          GRB0F405.407   
+!OCL NOVREC                                                                GRB0F405.408   
+      DO J=1,OPEN_PTS                                                      LEAF5B.336   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.337   
+                                                                           LEAF5B.338   
+!----------------------------------------------------------------------    LEAF5B.339   
+! Calculate the net rate of photosynthesis                                 LEAF5B.340   
+!----------------------------------------------------------------------    LEAF5B.341   
+        AL(L) = (WL(L) - RD(L)) * FSMC(L)                                  LEAF5B.342   
+                                                                           LEAF5B.343   
+!----------------------------------------------------------------------    LEAF5B.344   
+! Diagnose the leaf conductance                                            LEAF5B.345   
+!----------------------------------------------------------------------    LEAF5B.346   
+        GLCO2(L) = (AL(L) * CONV(L)) / (CA(L) - CI(L))                     LEAF5B.347   
+        GL(L) = RATIO * GLCO2(L)                                           LEAF5B.348   
+                                                                           LEAF5B.349   
+      ENDDO                                                                LEAF5B.350   
+                                                                           LEAF5B.351   
+!----------------------------------------------------------------------    LEAF5B.352   
+! Close stomata at points with negative or zero net photosynthesis         LEAF5B.353   
+! or where the leaf resistance exceeds its maximum value.                  LEAF5B.354   
+!----------------------------------------------------------------------    LEAF5B.355   
+CDIR$ IVDEP                                                                LEAF5B.356   
+! Fujitsu vectorization directive                                          GRB0F405.409   
+!OCL NOVREC                                                                GRB0F405.410   
+      DO J=1,OPEN_PTS                                                      LEAF5B.357   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.358   
+                                                                           LEAF5B.359   
+        IF (GL(L).LE.GLMIN(FT(L)) .OR. AL(L).LE.0.0) THEN                  LEAF5B.360   
+          GL(L) = GLMIN(FT(L))                                             LEAF5B.361   
+          GLCO2(L) = GL(L) / RATIO                                         LEAF5B.362   
+          AL(L) = -RD(L) * FSMC(L)                                         LEAF5B.363   
+          CI(L) = CA(L) - AL(L) * CONV(L) / GLCO2(L)                       LEAF5B.364   
+        ENDIF                                                              LEAF5B.365   
+                                                                           LEAF5B.366   
+      ENDDO                                                                LEAF5B.367   
+                                                                           LEAF5B.368   
+!----------------------------------------------------------------------    LEAF5B.369   
+! Define fluxes and conductances for points with closed stomata            LEAF5B.370   
+!----------------------------------------------------------------------    LEAF5B.371   
+CDIR$ IVDEP                                                                LEAF5B.372   
+! Fujitsu vectorization directive                                          GRB0F405.411   
+!OCL NOVREC                                                                GRB0F405.412   
+      DO J=1,CLOS_PTS                                                      LEAF5B.373   
+        L = VEG_INDEX(CLOS_INDEX(J))                                       LEAF5B.374   
+                                                                           LEAF5B.375   
+        GL(L) = GLMIN(FT(L))                                               LEAF5B.376   
+        GLCO2(L) = GL(L) / RATIO                                           LEAF5B.377   
+        AL(L) = -RD(L) * FSMC(L)                                           LEAF5B.378   
+        CI(L) = CA(L) - AL(L) * CONV(L) / GLCO2(L)                         LEAF5B.379   
+                                                                           LEAF5B.380   
+      ENDDO                                                                LEAF5B.381   
+                                                                           LEAF5B.382   
+      IF (LTIMER) THEN                                                     LEAF5B.383   
+        CALL TIMER('LEAF_C3  ',104)                                        GPB8F405.169   
+      ENDIF                                                                LEAF5B.385   
+                                                                           LEAF5B.386   
+      RETURN                                                               LEAF5B.387   
+      END                                                                  LEAF5B.388   
+                                                                           LEAF5B.389   
+!**********************************************************************    LEAF5B.390   
+! Calculates the leaf resistance and net photosynthesis using:             LEAF5B.391   
+!  (i) Collatz et al. (1991) C4 photosynthesis model                       LEAF5B.392   
+! (ii) Jacobs (1994) CI/CA closure.                                        LEAF5B.393   
+!                                                                          LEAF5B.394   
+! Written by Peter Cox (February 1996)                                     LEAF5B.395   
+!**********************************************************************    LEAF5B.396   
+      SUBROUTINE LEAF_C4 (LAND_PTS                                         LEAF5B.397   
+     &,                   LAND_INDEX,P1                                    LEAF5B.399   
+     &,                   LAND_FIELD,P_FIELD                               LEAF5B.401   
+     &,                   VEG_PTS,VEG_INDEX                                LEAF5B.402   
+     &,                   FT,DQ,APAR,TL,CA,OA,PSTAR                        LEAF5B.403   
+     &,                   NL0,FSMC                                         LEAF5B.404   
+     &,                   GL,AL,CI,RD,LTIMER)                              LEAF5B.405   
+                                                                           LEAF5B.406   
+      IMPLICIT NONE                                                        LEAF5B.407   
+                                                                           LEAF5B.408   
+      INTEGER                                                              LEAF5B.409   
+     & LAND_PTS               ! IN Number of land points to be             LEAF5B.410   
+!                                  processed.                              LEAF5B.411   
+     &,LAND_FIELD             ! IN Total number of land points.            LEAF5B.412   
+     &,LAND_INDEX(LAND_PTS)   ! IN Index of land points.                   LEAF5B.414   
+     &,P1                     ! IN First P point to be processed.          LEAF5B.415   
+     &,P_FIELD                ! IN Total number of P points.               LEAF5B.417   
+     &,VEG_PTS                ! IN Number of vegetated points.             LEAF5B.418   
+     &,VEG_INDEX(LAND_FIELD)  ! IN Index of vegetated points               LEAF5B.419   
+!                                  on the land grid.                       LEAF5B.420   
+                                                                           LEAF5B.421   
+      INTEGER                                                              LEAF5B.422   
+     & FT(LAND_FIELD)         ! IN Plant functional type.                  LEAF5B.423   
+                                                                           LEAF5B.424   
+      REAL                                                                 LEAF5B.425   
+     & DQ(LAND_FIELD)         ! IN Canopy level specific humidity          LEAF5B.426   
+!                                  deficit (kg H2O/kg air).                LEAF5B.427   
+     &,APAR(LAND_FIELD)       ! IN Absorbed PAR (W/m2)                     LEAF5B.428   
+     &,TL(P_FIELD)            ! IN Leaf temperature (K).                   LEAF5B.429   
+     &,CA(LAND_FIELD)         ! IN Canopy CO2 pressure (Pa).               LEAF5B.430   
+     &,OA(LAND_FIELD)         ! IN Atmospheric O2 pressure (Pa).           LEAF5B.431   
+     &,PSTAR(P_FIELD)         ! IN Atmospheric pressure (Pa).              LEAF5B.432   
+     &,NL0(LAND_FIELD)        ! IN Leaf nitrogen conncentration            LEAF5B.433   
+!                                  (kg N/kg C).                            LEAF5B.434   
+     &,FSMC(LAND_FIELD)       ! IN Soil water factor.                      LEAF5B.435   
+                                                                           LEAF5B.436   
+! OUTPUT                                                                   LEAF5B.437   
+      REAL                                                                 LEAF5B.438   
+     & GL(LAND_FIELD)         ! OUT Leaf conductance for H2O (m/s).        LEAF5B.439   
+     &,AL(LAND_FIELD)         ! OUT Net Leaf photosynthesis                LEAF5B.440   
+!                                   (mol CO2/m2/s).                        LEAF5B.441   
+     &,RD(LAND_FIELD)         ! OUT Dark respiration (mol CO2/m2/s).       LEAF5B.442   
+     &,CI(LAND_FIELD)         ! OUT Internal CO2 pressure (Pa).            LEAF5B.443   
+                                                                           LEAF5B.444   
+!WORKspace                                                                 LEAF5B.445   
+      REAL                                                                 LEAF5B.446   
+     & ACR(LAND_FIELD)        ! WORK Absorbed PAR (mol photons/m2/s).      LEAF5B.447   
+     &,B1(LAND_FIELD)         ! WORK Coefficients of the quadratic.        LEAF5B.448   
+     &,B2(LAND_FIELD)         !                   "                        LEAF5B.449   
+     &,B3(LAND_FIELD)         !                   "                        LEAF5B.450   
+     &,CCP(LAND_FIELD)        ! WORK Photorespiratory compensatory         LEAF5B.451   
+!                                    point (mol/m3).                       LEAF5B.452   
+     &,CONV(LAND_FIELD)       ! WORK Factor for converting mol/m3          LEAF5B.453   
+!                                    into Pa (J/mol).                      LEAF5B.454   
+     &,DENOM(LAND_FIELD)      ! WORK Denominator in equation for VCM       LEAF5B.455   
+     &,GLCO2(LAND_FIELD)      ! WORK Leaf conductance for CO2 (m/s).       LEAF5B.456   
+     &,QTENF(LAND_FIELD)      ! WORK Q10 function.                         LEAF5B.457   
+     &,TDEGC(LAND_FIELD)      ! WORK Leaf temperature (deg C).             LEAF5B.458   
+     &,VCM(LAND_FIELD)        ! WORK Maximum rate of carboxylation         LEAF5B.459   
+!                                    of Rubisco (mol CO2/m2/s).            LEAF5B.460   
+     &,VCMAX(LAND_FIELD)      ! WORK Maximum rate of carboxylation         LEAF5B.461   
+!                                    of Rubisco - without the              LEAF5B.462   
+!                                    temperature factor                    LEAF5B.463   
+!                                    (mol CO2/m2/s).                       LEAF5B.464   
+     &,WL(LAND_FIELD)         ! WORK Gross leaf phtosynthesis              LEAF5B.465   
+!                                    (mol CO2/m2/s).                       LEAF5B.466   
+     &,WCARB(LAND_FIELD)      ! WORK Carboxylation,                        LEAF5B.467   
+     &,WLITE(LAND_FIELD)      !      Light, and                            LEAF5B.468   
+     &,WEXPT(LAND_FIELD)      !      export limited gross                  LEAF5B.469   
+!                                    photosynthetic rates                  LEAF5B.470   
+!                                    (mol CO2/m2/s).                       LEAF5B.471   
+     &,WP(LAND_FIELD)         ! WORK Smoothed minimum of Carboxylation     LEAF5B.472   
+!                                    and Light limited gross               LEAF5B.473   
+!                                    photosynthesis (mol CO2/m2/s).        LEAF5B.474   
+                                                                           LEAF5B.475   
+      INTEGER                                                              LEAF5B.476   
+     & CLOS_INDEX(LAND_FIELD) ! WORK Index of land points                  LEAF5B.477   
+!                                    with closed stomata.                  LEAF5B.478   
+     &,CLOS_PTS               ! WORK Number of land points                 LEAF5B.479   
+!                                    with closed stomata.                  LEAF5B.480   
+     &,OPEN_INDEX(LAND_FIELD) ! WORK Index of land points                  LEAF5B.481   
+!                                    with open stomata.                    LEAF5B.482   
+     &,OPEN_PTS               ! WORK Number of land points                 LEAF5B.483   
+!                                    with open stomata.                    LEAF5B.484   
+                                                                           LEAF5B.485   
+      LOGICAL                                                              LEAF5B.486   
+     & LTIMER                                                              LEAF5B.487   
+                                                                           LEAF5B.488   
+      INTEGER                                                              LEAF5B.489   
+     & I,J,L                  ! WORK Loop counters.                        LEAF5B.490   
+                                                                           LEAF5B.491   
+!-----------------------------------------------------------------------   LEAF5B.492   
+! Functional Type dependent parameters                                     LEAF5B.493   
+!-----------------------------------------------------------------------   LEAF5B.494   
+      INTEGER                                                              LEAF5B.495   
+     & C3(4)                  ! 1 for C3 Plants, 0 for C4 Plants.          LEAF5B.496   
+                                                                           LEAF5B.497   
+      REAL                                                                 LEAF5B.498   
+     & ALPHA(4)               ! Quantum efficiency                         LEAF5B.499   
+!                               (mol CO2/mol PAR photons).                 LEAF5B.500   
+     &,DQCRIT(4)              ! Critical humidity deficit                  LEAF5B.501   
+!                               (kg H2O/kg air).                           LEAF5B.502   
+     &,F0(4)                  ! CI/CA for DQ = 0.                          LEAF5B.503   
+     &,GLMIN(4)               ! Minimum leaf conductance for H2O           LEAF5B.504   
+!                               (m/s).                                     LEAF5B.505   
+!----------------------------------------------------------------------    LEAF5B.506   
+!                        BT     NT    C3G    C4G                           LEAF5B.507   
+!----------------------------------------------------------------------    LEAF5B.508   
+      DATA C3      /      1,     1,     1,     0 /                         LEAF5B.509   
+      DATA ALPHA   /   0.08,  0.08,  0.08, 0.040 /                         LEAF5B.510   
+      DATA DQCRIT  /  0.090, 0.060, 0.150, 0.075 /                         LEAF5B.511   
+      DATA F0      /  0.875, 0.875, 0.925, 0.800 /                         LEAF5B.512   
+      DATA GLMIN   / 1.0E-6,1.0E-6,1.0E-6,1.0E-6 /                         LEAF5B.513   
+                                                                           LEAF5B.514   
+!-------------------------------------------------------------------       LEAF5B.515   
+! Parameters                                                               LEAF5B.516   
+!-------------------------------------------------------------------       LEAF5B.517   
+      REAL                                                                 LEAF5B.518   
+     & BETA1, BETA2   ! Coupling coefficients for co-limitation.           LEAF5B.519   
+     &,FDC3, FDC4     ! Dark respiration coefficients for C3, C4           LEAF5B.520   
+     &,NEFFC3, NEFFC4 ! Constant relating VCMAX and leaf N                 LEAF5B.521   
+!                       from Schulze et al. 1994 (AMAX = 0.4E-3 * NL       LEAF5B.522   
+!                       - assuming dry matter is 40% carbon by mass)       LEAF5B.523   
+!                       and Jacobs 1994:                                   LEAF5B.524   
+!                       C3 : VCMAX = 2 * AMAX ; C4 : VCMAX = AMAX          LEAF5B.525   
+!                       (mol/m2/s)                                         LEAF5B.526   
+     &,R              ! Gas constant (J/K/mol).                            LEAF5B.527   
+     &,RATIO          ! Ratio of leaf resistance for CO2 to leaf           LEAF5B.528   
+!                     ! resistance for H2O.                                LEAF5B.529   
+     &,ZERODEGC       ! Zero Celsius (K).                                  LEAF5B.530   
+                                                                           LEAF5B.531   
+      PARAMETER (BETA1 = 0.83, BETA2 = 0.93                                LEAF5B.532   
+     &,          FDC3 = 0.015,  FDC4 = 0.025                               LEAF5B.533   
+     &,          NEFFC3 = 0.8E-3, NEFFC4 = 0.4E-3                          LEAF5B.534   
+     &,          R = 8.3144  , RATIO = 1.6                                 LEAF5B.535   
+     &,          ZERODEGC = 273.15)                                        LEAF5B.536   
+                                                                           LEAF5B.537   
+      IF (LTIMER) THEN                                                     LEAF5B.538   
+        CALL TIMER('LEAF_C4  ',103)                                        GPB8F405.170   
+      ENDIF                                                                LEAF5B.540   
+                                                                           LEAF5B.541   
+!----------------------------------------------------------------------    LEAF5B.542   
+! Initialise counters                                                      LEAF5B.543   
+!----------------------------------------------------------------------    LEAF5B.544   
+      CLOS_PTS = 0                                                         LEAF5B.545   
+      OPEN_PTS = 0                                                         LEAF5B.546   
+                                                                           LEAF5B.547   
+      DO J=1,VEG_PTS                                                       LEAF5B.548   
+        L = VEG_INDEX(J)                                                   LEAF5B.549   
+!----------------------------------------------------------------------    LEAF5B.550   
+! Only carry out calculations for points with C4 plants                    LEAF5B.551   
+!----------------------------------------------------------------------    LEAF5B.552   
+        IF (C3(FT(L)).EQ.0) THEN                                           LEAF5B.553   
+                                                                           LEAF5B.554   
+!----------------------------------------------------------------------    LEAF5B.555   
+! Calculate the points with closed stomata                                 LEAF5B.556   
+!----------------------------------------------------------------------    LEAF5B.557   
+          IF (FSMC(L).EQ.0.0 .OR. DQ(L).GE.DQCRIT(FT(L))                   LEAF5B.558   
+     &                       .OR. APAR(L).LE.0.0) THEN                     LEAF5B.559   
+            CLOS_PTS = CLOS_PTS + 1                                        LEAF5B.560   
+            CLOS_INDEX(CLOS_PTS) = J                                       LEAF5B.561   
+          ELSE                                                             LEAF5B.562   
+            OPEN_PTS = OPEN_PTS + 1                                        LEAF5B.563   
+            OPEN_INDEX(OPEN_PTS) = J                                       LEAF5B.564   
+          ENDIF                                                            LEAF5B.565   
+                                                                           LEAF5B.566   
+        ENDIF                                                              LEAF5B.567   
+                                                                           LEAF5B.568   
+      ENDDO                                                                LEAF5B.569   
+                                                                           LEAF5B.570   
+!----------------------------------------------------------------------    LEAF5B.571   
+! Calculate the photosynthetic parameters                                  LEAF5B.572   
+!----------------------------------------------------------------------    LEAF5B.573   
+CDIR$ IVDEP                                                                LEAF5B.574   
+! Fujitsu vectorization directive                                          GRB0F405.413   
+!OCL NOVREC                                                                GRB0F405.414   
+      DO J=1,OPEN_PTS                                                      LEAF5B.575   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.576   
+        I = LAND_INDEX(L)                                                  LEAF5B.580   
+                                                                           LEAF5B.582   
+        VCMAX(L) = NEFFC4 * NL0(L)                                         LEAF5B.583   
+        TDEGC(L) = TL(I) - ZERODEGC                                        LEAF5B.584   
+                                                                           LEAF5B.585   
+        CCP(L) = 0.0                                                       LEAF5B.586   
+                                                                           LEAF5B.587   
+        QTENF(L) = VCMAX(L) * (2.0 ** (0.1 * (TDEGC(L) - 25.0)))           LEAF5B.588   
+        DENOM(L) = (1 + EXP (0.3 * (TDEGC(L) - 36.0)))                     LEAF5B.589   
+     &           * (1 + EXP (0.3 * (13.0 - TDEGC(L))))                     LEAF5B.590   
+        VCM(L) = QTENF(L) / DENOM(L)                                       LEAF5B.591   
+                                                                           LEAF5B.592   
+        RD(L) = FDC4 * VCM(L)                                              LEAF5B.593   
+                                                                           LEAF5B.594   
+!----------------------------------------------------------------------    LEAF5B.595   
+! Calculate the factor for converting mol/m3 into Pa (J/m3).               LEAF5B.596   
+!----------------------------------------------------------------------    LEAF5B.597   
+        CONV(L) = R * TL(I)                                                LEAF5B.598   
+                                                                           LEAF5B.599   
+      ENDDO                                                                LEAF5B.600   
+                                                                           LEAF5B.601   
+CDIR$ IVDEP                                                                LEAF5B.602   
+! Fujitsu vectorization directive                                          GRB0F405.415   
+!OCL NOVREC                                                                GRB0F405.416   
+      DO J=1,CLOS_PTS                                                      LEAF5B.603   
+        L = VEG_INDEX(CLOS_INDEX(J))                                       LEAF5B.604   
+        I = LAND_INDEX(L)                                                  LEAF5B.608   
+                                                                           LEAF5B.610   
+        VCMAX(L) = NEFFC4 * NL0(L)                                         LEAF5B.611   
+        TDEGC(L) = TL(I) - ZERODEGC                                        LEAF5B.612   
+                                                                           LEAF5B.613   
+        QTENF(L) = VCMAX(L) * (2.0 ** (0.1 * (TDEGC(L) - 25.0)))           LEAF5B.614   
+        DENOM(L) = (1 + EXP (0.3 * (TDEGC(L) - 36.0)))                     LEAF5B.615   
+     &           * (1 + EXP (0.3 * (13.0 - TDEGC(L))))                     LEAF5B.616   
+        VCM(L) = QTENF(L) / DENOM(L)                                       LEAF5B.617   
+                                                                           LEAF5B.618   
+        RD(L) = FDC4 * VCM(L)                                              LEAF5B.619   
+                                                                           LEAF5B.620   
+!----------------------------------------------------------------------    LEAF5B.621   
+! Calculate the factor for converting mol/m3 into Pa (J/m3).               LEAF5B.622   
+!----------------------------------------------------------------------    LEAF5B.623   
+        CONV(L) = R * TL(I)                                                LEAF5B.624   
+                                                                           LEAF5B.625   
+      ENDDO                                                                LEAF5B.626   
+                                                                           LEAF5B.627   
+!----------------------------------------------------------------------    LEAF5B.628   
+! Carry out calculations for points with open stomata                      LEAF5B.629   
+!----------------------------------------------------------------------    LEAF5B.630   
+      DO J=1,OPEN_PTS                                                      LEAF5B.631   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.632   
+                                                                           LEAF5B.633   
+!----------------------------------------------------------------------    LEAF5B.634   
+! Calculate the internal CO2 pressure (Jacobs, 1994).                      LEAF5B.635   
+!----------------------------------------------------------------------    LEAF5B.636   
+        CI(L) = (CA(L) - CCP(L)) * F0(FT(L))                               LEAF5B.637   
+     &        * (1 - DQ(L) / DQCRIT(FT(L))) + CCP(L)                       LEAF5B.638   
+                                                                           LEAF5B.639   
+!----------------------------------------------------------------------    LEAF5B.640   
+! Convert absorbed PAR into mol PAR photons/m2/s                           LEAF5B.641   
+!----------------------------------------------------------------------    LEAF5B.642   
+        ACR(L) = APAR(L) / 2.19E5                                          LEAF5B.643   
+                                                                           LEAF5B.644   
+      ENDDO                                                                LEAF5B.645   
+                                                                           LEAF5B.646   
+!----------------------------------------------------------------------    LEAF5B.647   
+! Calculate the gross photosynthesis for RuBP-Carboxylase, Light and       LEAF5B.648   
+! Export limited photosynthesis (Collatz et al., 1992).                    LEAF5B.649   
+!----------------------------------------------------------------------    LEAF5B.650   
+      DO J=1,OPEN_PTS                                                      LEAF5B.651   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.652   
+        I = LAND_INDEX(L)                                                  LEAF5B.656   
+                                                                           LEAF5B.658   
+        WCARB(L) = VCM(L)                                                  LEAF5B.659   
+                                                                           LEAF5B.660   
+        WLITE(L) = ALPHA(FT(L)) * ACR(L)                                   LEAF5B.661   
+                                                                           LEAF5B.662   
+        WEXPT(L) = 20000.0 * VCM(L) * CI(L) / PSTAR(I)                     LEAF5B.663   
+                                                                           LEAF5B.664   
+      ENDDO                                                                LEAF5B.665   
+                                                                           LEAF5B.666   
+!----------------------------------------------------------------------    LEAF5B.667   
+! Calculate the co-limited rate of gross photosynthesis                    LEAF5B.668   
+!----------------------------------------------------------------------    LEAF5B.669   
+                                                                           LEAF5B.670   
+CDIR$ IVDEP                                                                LEAF5B.671   
+! Fujitsu vectorization directive                                          GRB0F405.417   
+!OCL NOVREC                                                                GRB0F405.418   
+      DO J=1,OPEN_PTS                                                      LEAF5B.672   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.673   
+                                                                           LEAF5B.674   
+        B1(L) = BETA1                                                      LEAF5B.675   
+        B2(L) = - (WCARB(L) + WLITE(L))                                    LEAF5B.676   
+        B3(L) = WCARB(L) * WLITE(L)                                        LEAF5B.677   
+                                                                           LEAF5B.678   
+        WP(L) = -B2(L)/(2*B1(L))                                           LEAF5B.679   
+     .         - SQRT(B2(L)*B2(L)/(4*B1(L)*B1(L)) - B3(L)/B1(L))           LEAF5B.680   
+                                                                           LEAF5B.681   
+      ENDDO                                                                LEAF5B.682   
+                                                                           LEAF5B.683   
+CDIR$ IVDEP                                                                LEAF5B.684   
+! Fujitsu vectorization directive                                          GRB0F405.419   
+!OCL NOVREC                                                                GRB0F405.420   
+      DO J=1,OPEN_PTS                                                      LEAF5B.685   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.686   
+                                                                           LEAF5B.687   
+        B1(L) = BETA2                                                      LEAF5B.688   
+        B2(L) = - (WP(L) + WEXPT(L))                                       LEAF5B.689   
+        B3(L) = WP(L) * WEXPT(L)                                           LEAF5B.690   
+                                                                           LEAF5B.691   
+        WL(L) = -B2(L)/(2*B1(L))                                           LEAF5B.692   
+     .         - SQRT(B2(L)*B2(L)/(4*B1(L)*B1(L)) - B3(L)/B1(L))           LEAF5B.693   
+                                                                           LEAF5B.694   
+      ENDDO                                                                LEAF5B.695   
+                                                                           LEAF5B.696   
+!----------------------------------------------------------------------    LEAF5B.697   
+! Carry out calculations for points with open stomata                      LEAF5B.698   
+!----------------------------------------------------------------------    LEAF5B.699   
+CDIR$ IVDEP                                                                LEAF5B.700   
+! Fujitsu vectorization directive                                          GRB0F405.421   
+!OCL NOVREC                                                                GRB0F405.422   
+      DO J=1,OPEN_PTS                                                      LEAF5B.701   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.702   
+                                                                           LEAF5B.703   
+!----------------------------------------------------------------------    LEAF5B.704   
+! Calculate the net rate of photosynthesis                                 LEAF5B.705   
+!----------------------------------------------------------------------    LEAF5B.706   
+        AL(L) = (WL(L) - RD(L)) * FSMC(L)                                  LEAF5B.707   
+                                                                           LEAF5B.708   
+!----------------------------------------------------------------------    LEAF5B.709   
+! Diagnose the leaf conductance                                            LEAF5B.710   
+!----------------------------------------------------------------------    LEAF5B.711   
+        GLCO2(L) = (AL(L) * CONV(L)) / (CA(L) - CI(L))                     LEAF5B.712   
+        GL(L) = GLCO2(L) * RATIO                                           LEAF5B.713   
+                                                                           LEAF5B.714   
+      ENDDO                                                                LEAF5B.715   
+                                                                           LEAF5B.716   
+!----------------------------------------------------------------------    LEAF5B.717   
+! Close stomata at points with negative or zero net photosynthesis         LEAF5B.718   
+! or where the leaf resistance exceeds its maximum value.                  LEAF5B.719   
+!----------------------------------------------------------------------    LEAF5B.720   
+CDIR$ IVDEP                                                                LEAF5B.721   
+! Fujitsu vectorization directive                                          GRB0F405.423   
+!OCL NOVREC                                                                GRB0F405.424   
+      DO J=1,OPEN_PTS                                                      LEAF5B.722   
+        L = VEG_INDEX(OPEN_INDEX(J))                                       LEAF5B.723   
+                                                                           LEAF5B.724   
+        IF (GL(L).LE.GLMIN(FT(L)) .OR. AL(L).LE.0.0) THEN                  LEAF5B.725   
+          GL(L) = GLMIN(FT(L))                                             LEAF5B.726   
+          GLCO2(L) = GL(L) / RATIO                                         LEAF5B.727   
+          AL(L) = -RD(L) * FSMC(L)                                         LEAF5B.728   
+          CI(L) = CA(L) - AL(L) * CONV(L) / GLCO2(L)                       LEAF5B.729   
+        ENDIF                                                              LEAF5B.730   
+                                                                           LEAF5B.731   
+      ENDDO                                                                LEAF5B.732   
+                                                                           LEAF5B.733   
+!----------------------------------------------------------------------    LEAF5B.734   
+! Define fluxes and conductances for points with closed stomata            LEAF5B.735   
+!----------------------------------------------------------------------    LEAF5B.736   
+CDIR$ IVDEP                                                                LEAF5B.737   
+! Fujitsu vectorization directive                                          GRB0F405.425   
+!OCL NOVREC                                                                GRB0F405.426   
+      DO J=1,CLOS_PTS                                                      LEAF5B.738   
+        L = VEG_INDEX(CLOS_INDEX(J))                                       LEAF5B.739   
+                                                                           LEAF5B.740   
+        GL(L) = GLMIN(FT(L))                                               LEAF5B.741   
+        GLCO2(L) = GL(L) / RATIO                                           LEAF5B.742   
+        AL(L) = -RD(L) * FSMC(L)                                           LEAF5B.743   
+        CI(L) = CA(L) - AL(L) * CONV(L) / GLCO2(L)                         LEAF5B.744   
+                                                                           LEAF5B.745   
+      ENDDO                                                                LEAF5B.746   
+                                                                           LEAF5B.747   
+      IF (LTIMER) THEN                                                     LEAF5B.748   
+        CALL TIMER('LEAF_C4  ',104)                                        GPB8F405.171   
+      ENDIF                                                                LEAF5B.750   
+                                                                           LEAF5B.751   
+      RETURN                                                               LEAF5B.752   
+      END                                                                  LEAF5B.753   
+*ENDIF                                                                     LEAF5B.754   

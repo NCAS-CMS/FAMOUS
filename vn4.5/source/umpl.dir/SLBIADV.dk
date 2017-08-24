@@ -1,0 +1,294 @@
+*IF DEF,S40_1A                                                             SJC0F305.3     
+C ******************************COPYRIGHT******************************    GTS2F400.9037  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9038  
+C                                                                          GTS2F400.9039  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9040  
+C restrictions as set forth in the contract.                               GTS2F400.9041  
+C                                                                          GTS2F400.9042  
+C                Meteorological Office                                     GTS2F400.9043  
+C                London Road                                               GTS2F400.9044  
+C                BRACKNELL                                                 GTS2F400.9045  
+C                Berkshire UK                                              GTS2F400.9046  
+C                RG12 2SZ                                                  GTS2F400.9047  
+C                                                                          GTS2F400.9048  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9049  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9050  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9051  
+C Modelling at the above address.                                          GTS2F400.9052  
+C ******************************COPYRIGHT******************************    GTS2F400.9053  
+C                                                                          GTS2F400.9054  
+!+ C grid upwind ice advection scheme for use in slab models.              SLBIADV.3     
+!                                                                          SLBIADV.4     
+! Subroutine Interface:                                                    SLBIADV.5     
+      subroutine slab_ice_advect(                                          SLBIADV.6     
+     & icols,jrows,jrowsm1,lglobal                                         SLBIADV.7     
+     &,delta_lat,delta_long,timestep,a                                     SLBIADV.8     
+     &,uice,vice,hmask,umask,icy                                           SLBIADV.9     
+     &,cos_p_latitude,cos_u_latitude,sin_u_latitude                        SLBIADV.10    
+     &,aice,hice,hsnow,areas                                               SJC1F400.272   
+     & )                                                                   SLBIADV.12    
+                                                                           SLBIADV.13    
+      IMPLICIT NONE                                                        SLBIADV.14    
+!                                                                          SLBIADV.15    
+! Description:                                                             SLBIADV.16    
+!   Advects ice thickness, compactness and snow depth on Arakawa           SLBIADV.17    
+!   C grid for slab ocean model using upwind advection.                    SLBIADV.18    
+!                                                                          SLBIADV.19    
+! Method:                                                                  SLBIADV.20    
+! First copy primary variables to wrokspace to avoid data dependency.      SLBIADV.21    
+! Each point in the grid is treated in turn with extra loops for the       SLBIADV.22    
+! first and last rows. The area of each grid square and the length of      SLBIADV.23    
+! each face is calculated using spherical geometry. The sign of the        SLBIADV.24    
+! velocities on each face is used to determine the upwind value of         SLBIADV.25    
+! the primary fields being advected (ice depth, ice fraction and snow      SLBIADV.26    
+! depth) and increments due to advection accross each face are             SLBIADV.27    
+! determined (and masked so that land is not advected). These facial       SLBIADV.28    
+! increments are combined to give a change in each property for the        SLBIADV.29    
+! grid box. The same process is then carried out for the polar rows.       SLBIADV.30    
+!                                                                          SLBIADV.31    
+! Current Code Owner: J F Thomson                                          SLBIADV.32    
+!                                                                          SLBIADV.33    
+! History:                                                                 SLBIADV.34    
+! Version   Date     Comment                                               SLBIADV.35    
+! -------   ----     -------                                               SLBIADV.36    
+!  3.4     26/06/94  Original code. J.F.Thomson                            SLBIADV.37    
+!  4.0               Diagnose grid box areas and correct masking.          SJC1F400.273   
+!                     J.F.Crossley                                         SJC1F400.274   
+!                                                                          SLBIADV.38    
+! Code Description:                                                        SLBIADV.39    
+!   Language: FORTRAN 77 + common extensions.                              SLBIADV.40    
+!   This code is written to UMDP3 v6 programming standards.                SLBIADV.41    
+!                                                                          SLBIADV.42    
+! System component covered:                                                SLBIADV.43    
+! System Task:              P40                                            SLBIADV.44    
+!                                                                          SLBIADV.45    
+! Declarations:                                                            SLBIADV.46    
+!   These are of the form:-                                                SLBIADV.47    
+!                                                                          SLBIADV.48    
+! Global variables (*CALLed COMDECKs etc...):                              SLBIADV.49    
+                                                                           SLBIADV.50    
+! Subroutine arguments                                                     SLBIADV.51    
+!   Scalar arguments with intent(in):                                      SLBIADV.52    
+      integer icols          ! number of columns.                          SLBIADV.53    
+      integer jrows          ! number of rows.                             SLBIADV.54    
+      integer jrowsm1        ! number of rows minus 1.                     SLBIADV.55    
+      logical lglobal        ! true for a global model.                    SLBIADV.56    
+      real delta_lat         ! zonal grid spacing in degrees.              SLBIADV.57    
+      real delta_long        ! meridional grid spacing in degrees.         SLBIADV.58    
+      real timestep          ! timestep in seconds.                        SLBIADV.59    
+      real a                 ! radius of earth in metres.                  SLBIADV.60    
+                                                                           SLBIADV.61    
+!   Array  arguments with intent(in):                                      SLBIADV.62    
+      real uice(icols,jrowsm1)           ! zonal sea ice velocity.         SLBIADV.63    
+      real vice(icols,jrowsm1)           ! meridional sea ice velocity.    SLBIADV.64    
+      real hmask(icols,jrows)            ! 0.0 for ha land 1.0 for sea.    SJC1F400.275   
+      real umask(icols,jrowsm1)          ! 0.0 for uv land 1.0 for sea.    SJC1F400.276   
+      logical icy(icols,jrows)           ! true if ice is present.         SLBIADV.67    
+      real cos_p_latitude(icols,jrows)   ! cos(latitude) at p points       SLBIADV.68    
+      real cos_u_latitude(icols,jrowsm1) ! cos(latitude) at u points       SLBIADV.69    
+      real sin_u_latitude(icols,jrowsm1) ! sin(latitude) at u points       SLBIADV.70    
+                                                                           SLBIADV.71    
+!   Scalar arguments with intent(InOut):                                   SLBIADV.72    
+                                                                           SLBIADV.73    
+!   Array  arguments with intent(InOut):                                   SLBIADV.74    
+      real aice(icols,jrows)             ! ice compactness.                SLBIADV.75    
+      real hice(icols,jrows)             ! ice thickness.                  SLBIADV.76    
+      real hsnow(icols,jrows)            ! snow depth.                     SLBIADV.77    
+                                                                           SLBIADV.78    
+!   Scalar arguments with intent(out):                                     SLBIADV.79    
+                                                                           SLBIADV.80    
+!   Array  arguments with intent(out):                                     SLBIADV.81    
+      real areas(icols,jrows)            ! grid box areas                  SJC1F400.277   
+                                                                           SLBIADV.82    
+! Local parameters:                                                        SLBIADV.83    
+      real fract_pole           ! fraction of polar grid area/next row     SLBIADV.84    
+      parameter ( fract_pole = 0.125 )                                     SLBIADV.85    
+                                                                           SLBIADV.86    
+! Local scalars:                                                           SLBIADV.87    
+      real um,vm,ump,vmp        ! velocity components on each box face.    SLBIADV.88    
+      real qinx,qinxp,qiny,qinyp! advective ice depth increments.          SLBIADV.89    
+      real qinyp_pole, qiny_pole! advective ice depth incs (poles)         SLBIADV.90    
+      real qax,qaxp,qay,qayp    ! advective ice fraction increments.       SLBIADV.91    
+      real qayp_pole, qay_pole  ! advective ice fraction incs (poles)      SLBIADV.92    
+      real qsx,qsxp,qsy,qsyp    ! advective snow depth increments          SLBIADV.93    
+      real qsyp_pole, qsy_pole  ! advective snow depth incs (poles)        SLBIADV.94    
+      real qijh,qija,qijs       ! grid box mean advective incs.            SLBIADV.95    
+      real area                 ! grid box area in square metres.          SLBIADV.96    
+      real facey,faceyp,facex,facexp ! lengths of faces in metres.         SLBIADV.97    
+      logical lcheck            ! true if a surrounding point is icy.      SLBIADV.98    
+      integer icolsm1           ! number of columns minus 1                SLBIADV.99    
+      integer icolsm2           ! number of columns minus 2                SLBIADV.100   
+      integer jrowsm2           ! number of rows minus 2                   SLBIADV.101   
+      integer i,i1,i2           ! loop indices                             SLBIADV.102   
+      integer j                 ! loop index                               SLBIADV.103   
+                                                                           SLBIADV.104   
+! Local dynamic arrays:                                                    SLBIADV.105   
+      real hice_init(icols,jrows) ! initial ice thickness.                 SLBIADV.106   
+      real aice_init(icols,jrows) ! initial ice compactness.               SLBIADV.107   
+      real hsno_init(icols,jrows) ! initial snow depth.                    SLBIADV.108   
+                                                                           SLBIADV.109   
+! Function & Subroutine calls:                                             SLBIADV.110   
+                                                                           SLBIADV.111   
+!- End of header                                                           SLBIADV.112   
+! start executable code                                                    SLBIADV.113   
+!                                                                          SLBIADV.114   
+*IF DEF,TIMER                                                              SLBIADV.115   
+      call timer('slbiadv',3)                                              SLBIADV.116   
+*ENDIF                                                                     SLBIADV.117   
+      icolsm1=icols-1                                                      SLBIADV.118   
+      icolsm2=icols-2                                                      SLBIADV.119   
+      jrowsm2=jrows-2                                                      SLBIADV.120   
+      qinyp_pole=0.0                                                       SLBIADV.121   
+      qiny_pole=0.0                                                        SLBIADV.122   
+      qayp_pole=0.0                                                        SLBIADV.123   
+      qay_pole=0.0                                                         SLBIADV.124   
+      qsyp_pole=0.0                                                        SLBIADV.125   
+      qsy_pole=0.0                                                         SLBIADV.126   
+!                                                                          SLBIADV.127   
+! Copy initial ice thickness, compactness and snow depth to workspace      SLBIADV.128   
+      do j=1,jrows                                                         SLBIADV.129   
+        do i=1,icols                                                       SLBIADV.130   
+          hice_init(i,j) = hice(i,j)                                       SLBIADV.131   
+          aice_init(i,j) = aice(i,j)                                       SLBIADV.132   
+          hsno_init(i,j) = hsnow(i,j)                                      SLBIADV.133   
+        end do                                                             SLBIADV.134   
+      end do                                                               SLBIADV.135   
+!                                                                          SLBIADV.136   
+! Loop over grid advecting primary variables.                              SLBIADV.137   
+      do j=1,jrowsm2                                                       SLBIADV.138   
+        do i=1,icols                                                       SLBIADV.139   
+          i1=i+1                                                           SLBIADV.140   
+          i2=i+2                                                           SLBIADV.141   
+          if (i1.gt.icols) i1=i1-icols                                     SLBIADV.142   
+          if (i2.gt.icols) i2=i2-icols                                     SLBIADV.143   
+          if ( hmask(i1,j+1).gt.0.1 ) then                                 SJC1F400.278   
+            area   = ABS( a**2 * delta_long * (sin_u_latitude(i,j+1)       SJC1F400.279   
+     &               -sin_u_latitude(i,j)) )                               SJC1F400.280   
+            areas(i1,j+1) = area                                           SJC1F400.281   
+          endif                                                            SJC1F400.282   
+          lcheck = (icy(i,j+1).or.icy(i1,j+1).or.icy(i1,j)                 SLBIADV.144   
+     &              .or.icy(i1,j+2).or.icy(i2,j+1))                        SLBIADV.145   
+          if ( hmask(i1,j+1).gt.0.1 .and. lcheck ) then                    SLBIADV.146   
+!                                                                          SLBIADV.147   
+            facex  = ABS ( a * delta_lat )                                 SLBIADV.150   
+            facexp = facex                                                 SLBIADV.151   
+            facey  = ABS ( a*cos_u_latitude(i,j)*delta_long )              SLBIADV.152   
+            faceyp = ABS ( a*cos_u_latitude(i,j+1)*delta_long )            SLBIADV.153   
+!                                                                          SLBIADV.154   
+            um  = uice(i,j)                                                SLBIADV.155   
+            vm  = vice(i,j)                                                SLBIADV.156   
+            ump = uice(i1,j)                                               SLBIADV.157   
+            vmp = vice(i,j+1)                                              SLBIADV.158   
+!                                                                          SLBIADV.159   
+            if (um.ge.0.)  qinx  = um*hice_init(i,j+1)*hmask(i,j+1)        SLBIADV.160   
+            if (um.lt.0.)  qinx  = um*hice_init(i1,j+1)*hmask(i1,j+1)      SLBIADV.161   
+            if (vm.ge.0.)  qiny  =-vm*hice_init(i1,j+1)*hmask(i1,j+1)      SJC1F400.283   
+            if (vm.lt.0.)  qiny  =-vm*hice_init(i1,j)*hmask(i1,j)          SJC1F400.284   
+            if (ump.ge.0.) qinxp =-ump*hice_init(i1,j+1)*hmask(i1,j+1)     SLBIADV.164   
+            if (ump.lt.0.) qinxp =-ump*hice_init(i2,j+1)*hmask(i2,j+1)     SLBIADV.165   
+            if (vmp.ge.0.) qinyp = vmp*hice_init(i1,j+2)*hmask(i1,j+2)     SJC1F400.285   
+            if (vmp.lt.0.) qinyp = vmp*hice_init(i1,j+1)*hmask(i1,j+1)     SJC1F400.286   
+            if (j.eq.1)    qiny_pole=qiny_pole-qiny*facey                  SLBIADV.168   
+     &                               *timestep/(area*fract_pole)           SLBIADV.169   
+            if (j.eq.1) areas(i1,j) = area*fract_pole                      SJC1F400.287   
+            if (j.eq.jrowsm2)qinyp_pole=qinyp_pole-qinyp*faceyp            SLBIADV.170   
+     &                               *timestep/(area*fract_pole)           SLBIADV.171   
+            if (j.eq.jrowsm2) areas(i1,j+2) = area*fract_pole              SJC1F400.288   
+!                                                                          SLBIADV.172   
+            if (um.ge.0.)  qax  = um*aice_init(i,j+1)*hmask(i,j+1)         SLBIADV.173   
+            if (um.lt.0.)  qax  = um*aice_init(i1,j+1)*hmask(i1,j+1)       SLBIADV.174   
+            if (vm.ge.0.)  qay  =-vm*aice_init(i1,j+1)*hmask(i1,j+1)       SJC1F400.289   
+            if (vm.lt.0.)  qay  =-vm*aice_init(i1,j)*hmask(i1,j)           SJC1F400.290   
+            if (ump.ge.0.) qaxp =-ump*aice_init(i1,j+1)*hmask(i1,j+1)      SLBIADV.177   
+            if (ump.lt.0.) qaxp =-ump*aice_init(i2,j+1)*hmask(i2,j+1)      SLBIADV.178   
+            if (vmp.ge.0.) qayp = vmp*aice_init(i1,j+2)*hmask(i1,j+2)      SJC1F400.291   
+            if (vmp.lt.0.) qayp = vmp*aice_init(i1,j+1)*hmask(i1,j+1)      SJC1F400.292   
+            if (j.eq.1)    qay_pole=qay_pole-qay*facey                     SLBIADV.181   
+     &                               *timestep/(area*fract_pole)           SLBIADV.182   
+            if (j.eq.jrowsm2)qayp_pole=qayp_pole-qayp*faceyp               SLBIADV.183   
+     &                               *timestep/(area*fract_pole)           SLBIADV.184   
+!                                                                          SLBIADV.185   
+            if (um.ge.0.)  qsx  = qax*hsno_init(i,j+1)                     SLBIADV.186   
+            if (um.lt.0.)  qsx  = qax*hsno_init(i1,j+1)                    SLBIADV.187   
+            if (vm.ge.0.)  qsy  = qay*hsno_init(i1,j+1)                    SLBIADV.188   
+            if (vm.lt.0.)  qsy  = qay*hsno_init(i1,j)                      SLBIADV.189   
+            if (ump.ge.0.) qsxp = qaxp*hsno_init(i1,j+1)                   SLBIADV.190   
+            if (ump.lt.0.) qsxp = qaxp*hsno_init(i2,j+1)                   SLBIADV.191   
+            if (vmp.ge.0.) qsyp = qayp*hsno_init(i1,j+2)                   SLBIADV.192   
+            if (vmp.lt.0.) qsyp = qayp*hsno_init(i1,j+1)                   SLBIADV.193   
+!                                                                          SLBIADV.194   
+            qijh = hice(i1,j+1)                                            SLBIADV.195   
+            qija = aice(i1,j+1)                                            SLBIADV.196   
+            qijs = hsnow(i1,j+1)*qija                                      SLBIADV.197   
+!                                                                          SLBIADV.198   
+       hice(i1,j+1) = qijh + ( qinx*facex + qinxp*facexp + qiny*facey      SLBIADV.199   
+     &      + qinyp*faceyp ) * timestep/area                               SLBIADV.200   
+       aice(i1,j+1) = qija + ( qax*facex + qaxp*facexp + qay*facey         SLBIADV.201   
+     &      + qayp*faceyp ) * timestep/area                                SLBIADV.202   
+            if (aice(i1,j+1).gt.0.0) then                                  SLBIADV.203   
+       hsnow(i1,j+1)= ( qijs + ( qsx*facex + qsxp*facexp + qsy*facey       SLBIADV.204   
+     &        + qsyp*faceyp ) * timestep/area )/aice(i1,j+1)               SLBIADV.205   
+              if (j.eq.1)    qsy_pole=qsy_pole-qsy*facey                   SLBIADV.206   
+     &                                *timestep/(area*0.125)               SLBIADV.207   
+              if (j.eq.jrowsm2)qsyp_pole=qsyp_pole-qsyp*faceyp             SLBIADV.208   
+     &                                 *timestep/(area*0.125)              SLBIADV.209   
+            endif                                                          SLBIADV.210   
+!                                                                          SLBIADV.211   
+          endif                                                            SLBIADV.212   
+        end do                                                             SLBIADV.213   
+      end do                                                               SLBIADV.214   
+!                                                                          SLBIADV.215   
+! Special code for polar rows.                                             SLBIADV.216   
+      qiny_pole=qiny_pole/icols                                            SLBIADV.217   
+      qinyp_pole=qinyp_pole/icols                                          SLBIADV.218   
+      qay_pole=qay_pole/icols                                              SLBIADV.219   
+      qayp_pole=qayp_pole/icols                                            SLBIADV.220   
+      qsy_pole=qsy_pole/icols                                              SLBIADV.221   
+      qsyp_pole=qsyp_pole/icols                                            SLBIADV.222   
+! First row.                                                               SLBIADV.223   
+      do i=1,icols                                                         SLBIADV.224   
+        i1=i+1                                                             SLBIADV.225   
+        i2=i+2                                                             SLBIADV.226   
+        if (i1.gt.icols) i1=i1-icols                                       SLBIADV.227   
+        if (i2.gt.icols) i2=i2-icols                                       SLBIADV.228   
+        lcheck = (icy(i,1).or.icy(i1,1).or.icy(i1,2)                       SLBIADV.229   
+     &            .or.icy(i2,1))                                           SLBIADV.230   
+        if (hmask(i1,1).gt.0.1 .and. lcheck) then                          SLBIADV.231   
+!                                                                          SLBIADV.232   
+          qijh = hice(i1,1)                                                SLBIADV.233   
+          qija = aice(i1,1)                                                SLBIADV.234   
+          qijs = hsnow(i1,1)*qija                                          SLBIADV.235   
+!                                                                          SLBIADV.236   
+          hice(i1,1) = qijh + qiny_pole                                    SLBIADV.237   
+          aice(i1,1) = qija + qay_pole                                     SLBIADV.238   
+          if (aice(i1,1).gt.0.0)                                           SLBIADV.239   
+     &     hsnow(i1,1)= ( qijs + qsy_pole ) / aice(i1,1)                   SLBIADV.240   
+        endif                                                              SLBIADV.241   
+      end do                                                               SLBIADV.242   
+! Last row.                                                                SLBIADV.243   
+      do i=1,icols                                                         SLBIADV.244   
+        i1=i+1                                                             SLBIADV.245   
+        i2=i+2                                                             SLBIADV.246   
+        if (i1.gt.icols) i1=i1-icols                                       SLBIADV.247   
+        if (i2.gt.icols) i2=i2-icols                                       SLBIADV.248   
+        lcheck = (icy(i,jrows).or.icy(i1,jrows).or.icy(i1,jrowsm1)         SLBIADV.249   
+     &            .or.icy(i2,jrows))                                       SLBIADV.250   
+        if (hmask(i1,jrows).gt.0.1 .and. lcheck) then                      SLBIADV.251   
+!                                                                          SLBIADV.252   
+          qijh = hice(i1,jrows)                                            SLBIADV.253   
+          qija = aice(i1,jrows)                                            SLBIADV.254   
+          qijs = hsnow(i1,jrows)*qija                                      SLBIADV.255   
+!                                                                          SLBIADV.256   
+          hice(i1,jrows) = qijh + qinyp_pole                               SLBIADV.257   
+          aice(i1,jrows) = qija + qayp_pole                                SLBIADV.258   
+          if (aice(i1,jrows).gt.0.0)                                       SLBIADV.259   
+     &      hsnow(i1,jrows)= ( qijs + qsyp_pole ) / aice(i1,jrows)         SLBIADV.260   
+        endif                                                              SLBIADV.261   
+      end do                                                               SLBIADV.262   
+!                                                                          SLBIADV.263   
+*IF DEF,TIMER                                                              SLBIADV.264   
+      call timer('slbiadv',4)                                              SLBIADV.265   
+*ENDIF                                                                     SLBIADV.266   
+      return                                                               SLBIADV.267   
+      end                                                                  SLBIADV.268   
+*ENDIF                                                                     SLBIADV.269   

@@ -1,0 +1,146 @@
+*IF DEF,FLUXPROC                                                           FPSEARCH.2     
+C ******************************COPYRIGHT******************************    FPSEARCH.3     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    FPSEARCH.4     
+C                                                                          FPSEARCH.5     
+C Use, duplication or disclosure of this code is subject to the            FPSEARCH.6     
+C restrictions as set forth in the contract.                               FPSEARCH.7     
+C                                                                          FPSEARCH.8     
+C                Meteorological Office                                     FPSEARCH.9     
+C                London Road                                               FPSEARCH.10    
+C                BRACKNELL                                                 FPSEARCH.11    
+C                Berkshire UK                                              FPSEARCH.12    
+C                RG12 2SZ                                                  FPSEARCH.13    
+C                                                                          FPSEARCH.14    
+C If no contract has been raised with this copy of the code, the use,      FPSEARCH.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      FPSEARCH.16    
+C to do so must first be obtained in writing from the Head of Numerical    FPSEARCH.17    
+C Modelling at the above address.                                          FPSEARCH.18    
+C ******************************COPYRIGHT******************************    FPSEARCH.19    
+C                                                                          FPSEARCH.20    
+C Programming standard: Unified Model Documentation Paper No 3             FPSEARCH.21    
+C                       Version No 1 15/1/90                               FPSEARCH.22    
+C History:                                                                 FPSEARCH.23    
+C version  date         change                                             FPSEARCH.24    
+C 4.5      03/09/98     New code                                           FPSEARCH.25    
+C                                                                          FPSEARCH.26    
+! Author:     M. J. Bell                                                   FPSEARCH.27    
+!----------------------------------------------------------------------    FPSEARCH.28    
+! contains routines: set_searches                                          FPSEARCH.29    
+!                                                                          FPSEARCH.30    
+! Purpose: Flux processing routine.                                        FPSEARCH.31    
+!          To determine the number of times spiral_s should be called      FPSEARCH.32    
+!          for a particular grid                                           FPSEARCH.33    
+!----------------------------------------------------------------------    FPSEARCH.34    
+      subroutine set_searches ( ncols, nrows, LCyclic, sea_land,           FPSEARCH.35    
+     #           lsm, n_pts_unres, index_unres, max_no_searches,           FPSEARCH.36    
+     #           n_calls_spiral, n_pts_spiral, icode)                      FPSEARCH.37    
+                                                                           FPSEARCH.38    
+      implicit none                                                        FPSEARCH.39    
+                                                                           FPSEARCH.40    
+! declaration of argument list                                             FPSEARCH.41    
+                                                                           FPSEARCH.42    
+! intent IN                                                                FPSEARCH.43    
+      integer ncols    ! IN # of columns in target field                   FPSEARCH.44    
+      integer nrows    ! IN # of rows in target field                      FPSEARCH.45    
+      logical LCyclic  ! IN T => target grid is cyclic                     FPSEARCH.46    
+      integer sea_land ! IN =0 for sea field  =1/-1 for land field         FPSEARCH.47    
+      integer lsm (ncols * nrows) ! IN land sea mask of target grid        FPSEARCH.48    
+      integer n_pts_unres  ! IN # of unresolved points on target grid      FPSEARCH.49    
+      integer index_unres(n_pts_unres) ! IN indices of unresolved points   FPSEARCH.50    
+      integer max_no_searches ! IN maximum number of searches allowed      FPSEARCH.51    
+                                                                           FPSEARCH.52    
+! intent OUT or IN/OUT                                                     FPSEARCH.53    
+      integer n_calls_spiral  ! OUT number of searches required            FPSEARCH.54    
+      integer n_pts_spiral(max_no_searches) ! OUT nsearch to use           FPSEARCH.55    
+                                            !     on each search           FPSEARCH.56    
+      integer icode  ! IN/OUT error code ; > 0 => fatal error detected     FPSEARCH.57    
+                                                                           FPSEARCH.58    
+                                                                           FPSEARCH.59    
+! declaration of parameters                                                FPSEARCH.60    
+*CALL C_MDI                                                                FPSEARCH.61    
+                                                                           FPSEARCH.62    
+! declaration of globals used                                              FPSEARCH.63    
+*CALL CUNITNOS                                                             FPSEARCH.64    
+*CALL CMESS                                                                FPSEARCH.65    
+                                                                           FPSEARCH.66    
+! declaration of local arrays                                              FPSEARCH.67    
+       real field ( ncols * nrows )    ! local field (on target grid)      FPSEARCH.68    
+       integer index_work ( n_pts_unres ) ! working set of                 FPSEARCH.69    
+                        ! unresolved pts (updated by call to spiral_s)     FPSEARCH.70    
+       integer n_pts_unresolved (0:max_no_searches)  !  number of pts      FPSEARCH.71    
+                        ! unresolved after each call                       FPSEARCH.72    
+                                                                           FPSEARCH.73    
+! declaration of local scalars                                             FPSEARCH.74    
+       integer i, iloop   ! loop indices                                   FPSEARCH.75    
+       integer n_pts_work ! working copy of # of unresolved points         FPSEARCH.76    
+                          ! (updated by each call to spiral_s)             FPSEARCH.77    
+       integer nsearch    ! number of points in search "radius"            FPSEARCH.78    
+                                                                           FPSEARCH.79    
+       external spiral_s                                                   FPSEARCH.80    
+!----------------------------------------------------------------------    FPSEARCH.81    
+! 0. Preliminaries                                                         FPSEARCH.82    
+      CSub = 'set_searches'  ! subroutine name for error messages          FPSEARCH.83    
+                                                                           FPSEARCH.84    
+! 1. Set up a data field with rmdi values at unresolved points             FPSEARCH.85    
+!    and zero values elsewhere.                                            FPSEARCH.86    
+                                                                           FPSEARCH.87    
+      do i = 1, ncols * nrows                                              FPSEARCH.88    
+        field ( i ) = 0.0                                                  FPSEARCH.89    
+      end do                                                               FPSEARCH.90    
+                                                                           FPSEARCH.91    
+      do i = 1, n_pts_unres                                                FPSEARCH.92    
+        field ( index_unres ( i ) ) = rmdi                                 FPSEARCH.93    
+      end do                                                               FPSEARCH.94    
+                                                                           FPSEARCH.95    
+! 2. Make working copies of index_unres and n_pts_unres                    FPSEARCH.96    
+      n_pts_work = n_pts_unres                                             FPSEARCH.97    
+      n_pts_unresolved(0) = n_pts_unres                                    FPSEARCH.98    
+                                                                           FPSEARCH.99    
+      do i = 1, n_pts_unres                                                FPSEARCH.100   
+        index_work ( i )  = index_unres ( i )                              FPSEARCH.101   
+      end do                                                               FPSEARCH.102   
+                                                                           FPSEARCH.103   
+! 3. Start loop which increments the number of points in search radius;    FPSEARCH.104   
+!    double search radius at the start of each loop                        FPSEARCH.105   
+                                                                           FPSEARCH.106   
+      do iloop = 1, max_no_searches                                        FPSEARCH.107   
+        if (iloop .eq. 1) then                                             FPSEARCH.108   
+          nsearch = 1                                                      FPSEARCH.109   
+        else                                                               FPSEARCH.110   
+          nsearch = 2 * nsearch                                            FPSEARCH.111   
+        end if                                                             FPSEARCH.112   
+                                                                           FPSEARCH.113   
+! 4. call spiral_s                                                         FPSEARCH.114   
+                                                                           FPSEARCH.115   
+        call spiral_s(lsm,index_work,n_pts_work,                           FPSEARCH.116   
+     #       nrows,ncols,field,nsearch,sea_land,LCyclic)                   FPSEARCH.117   
+                                                                           FPSEARCH.118   
+! save value of nsearch and number of unresolved points                    FPSEARCH.119   
+        n_pts_spiral (iloop) = nsearch                                     FPSEARCH.120   
+        n_pts_unresolved(iloop) = n_pts_work                               FPSEARCH.121   
+                                                                           FPSEARCH.122   
+! 5. if # of unresolved points is zero, exit the routine                   FPSEARCH.123   
+        if ( n_pts_work .eq. 0) then                                       FPSEARCH.124   
+           n_calls_spiral = iloop                                          FPSEARCH.125   
+           write(UnStd,*)CStd,CSub, ' step 5.: ', n_calls_spiral,          FPSEARCH.126   
+     #  ' calls to spiral_s resolve all sea points on this grid. ',        FPSEARCH.127   
+     #  ' Points per call are: ',                                          FPSEARCH.128   
+     #  (n_pts_unresolved(i), i=0,iloop-1)                                 FPSEARCH.129   
+           go to 9999                                                      FPSEARCH.130   
+        end if                                                             FPSEARCH.131   
+                                                                           FPSEARCH.132   
+! 6. end loop incrementing search radius and return with an error          FPSEARCH.133   
+                                                                           FPSEARCH.134   
+      end do !  iloop                                                      FPSEARCH.135   
+                                                                           FPSEARCH.136   
+      icode = 33                                                           FPSEARCH.137   
+      write(UnErr,*)CErr,CSub, ' step 6.: ', n_pts_work,                   FPSEARCH.138   
+     #  ' unresolved points still exist after max_no_searches. ',          FPSEARCH.139   
+     #  ' Points per call are: ',                                          FPSEARCH.140   
+     #  (n_pts_unresolved(i), i=0,max_no_searches)                         FPSEARCH.141   
+                                                                           FPSEARCH.142   
+9999  continue                                                             FPSEARCH.143   
+      return                                                               FPSEARCH.144   
+      end                                                                  FPSEARCH.145   
+!----------------------------------------------------------------------    FPSEARCH.146   
+*ENDIF                                                                     FPSEARCH.147   

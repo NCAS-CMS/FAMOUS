@@ -1,0 +1,137 @@
+*IF DEF,OCEAN,AND,DEF,MPP,AND,DEF,T3E                                      OSWAP1D.2     
+C ******************************COPYRIGHT******************************    OSWAP1D.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    OSWAP1D.4     
+C                                                                          OSWAP1D.5     
+C Use, duplication or disclosure of this code is subject to the            OSWAP1D.6     
+C restrictions as set forth in the contract.                               OSWAP1D.7     
+C                                                                          OSWAP1D.8     
+C                Meteorological Office                                     OSWAP1D.9     
+C                London Road                                               OSWAP1D.10    
+C                BRACKNELL                                                 OSWAP1D.11    
+C                Berkshire UK                                              OSWAP1D.12    
+C                RG12 2SZ                                                  OSWAP1D.13    
+C                                                                          OSWAP1D.14    
+C If no contract has been raised with this copy of the code, the use,      OSWAP1D.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      OSWAP1D.16    
+C to do so must first be obtained in writing from the Head of Numerical    OSWAP1D.17    
+C Modelling at the above address.                                          OSWAP1D.18    
+C                                                                          OSWAP1D.19    
+!+ Parallel UM: Updates halo areas                                         OSWAP1D.20    
+!                                                                          OSWAP1D.21    
+! Subroutine interface:                                                    OSWAP1D.22    
+      SUBROUTINE SWAP_1D(FIELD,X_SIZE,Y_SIZE,X_OFF,Y_OFF,N_LEVELS)         OSWAP1D.23    
+                                                                           OSWAP1D.24    
+      IMPLICIT NONE                                                        OSWAP1D.25    
+!                                                                          OSWAP1D.26    
+! Description:                                                             OSWAP1D.27    
+! This routine fills the halo areas (of size X_OFF in the x dimension      OSWAP1D.28    
+! of the only level of the array FIELD with the appropriate data from      OSWAP1D.29    
+! adjacent processors.                                                     OSWAP1D.30    
+! This is based on the vn4.2 version of SWAPBOUNDS, but has been           OSWAP1D.31    
+! rewritten specifically for the ocean SOR code which deals only           OSWAP1D.32    
+! with single level fields decomposed in 1-dimension.                      OSWAP1D.33    
+!                                                                          OSWAP1D.34    
+! Method:                                                                  OSWAP1D.35    
+! Data to be sent to adjacent processors is packed into a sending          OSWAP1D.36    
+! array (which is on a COMMON block for shmem useage), and                 OSWAP1D.37    
+! sent to the relevant processors using shmem_get.                         OSWAP1D.38    
+!                                                                          OSWAP1D.39    
+! Current Code Owner: R. Hill                                              OSWAP1D.40    
+!                                                                          OSWAP1D.41    
+! Date: 25/3/97                                                            OSWAP1D.42    
+!                                                                          OSWAP1D.43    
+! Author: R. Hill, D. Salmond                                              OSWAP1D.44    
+!                                                                          OSWAP1D.45    
+! Modification History:                                                    OSWAP1D.46    
+!  Model    Date     Description                                           OSWAP1D.47    
+!  version                                                                 OSWAP1D.48    
+!                                                                          OSWAP1D.49    
+!*****************************************************************         OSWAP1D.50    
+! Subroutine Arguments:                                                    OSWAP1D.51    
+                                                                           OSWAP1D.52    
+      INTEGER                                                              OSWAP1D.53    
+     &   X_SIZE       ! IN  : X dimension of field (inc. halos)            OSWAP1D.54    
+     &,  Y_SIZE       ! IN  : Y dimension of field (inc. halos)            OSWAP1D.55    
+     &,  X_OFF        ! IN  : X halo size                                  OSWAP1D.56    
+     &,  Y_OFF        ! IN  : Y halo size                                  OSWAP1D.57    
+     & , N_LEVELS     ! IN  : Number of levels to be swapped               OSWAP1D.58    
+                                                                           OSWAP1D.59    
+      REAL FIELD(X_SIZE*Y_SIZE,N_LEVELS)                                   OSWAP1D.60    
+!                     ! IN/OUT : Field to take place in                    OSWAP1D.61    
+!                     !          boundary data exchange.                   OSWAP1D.62    
+                                                                           OSWAP1D.63    
+! Parameters and Common blocks                                             OSWAP1D.64    
+                                                                           OSWAP1D.65    
+*CALL PARVARS                                                              OSWAP1D.66    
+*CALL GCCOM                                                                OSWAP1D.67    
+*CALL AMAXSIZE                                                             OSWAP1D.68    
+*CALL BUFFERS                                                              OSWAP1D.69    
+                                                                           OSWAP1D.70    
+! Local variables                                                          OSWAP1D.71    
+                                                                           OSWAP1D.72    
+      INTEGER i,j,k, ioff, isize, jsize, info                              OSWAP1D.73    
+                                                                           OSWAP1D.74    
+! ------------------------------------------------------------------       OSWAP1D.75    
+                                                                           OSWAP1D.76    
+c                                                                          OSWAP1D.77    
+c     Assumes XOFF=0 and YOFF=1, and NLEVELS = 1                           OSWAP1D.78    
+c                                                                          OSWAP1D.79    
+      call barrier()                                                       OSWAP1D.80    
+                                                                           OSWAP1D.81    
+C     Get ready for Northern neighbour                                     OSWAP1D.82    
+                                                                           OSWAP1D.83    
+      K = 1                                                                OSWAP1D.84    
+      ! Note: in the ocean, PNorth actually refers to                      OSWAP1D.85    
+      ! the sothern neighbour and PSouth to the northern                   OSWAP1D.86    
+      ! neighbour. This is a peculiarity caused by the                     OSWAP1D.87    
+      ! fact that the control code which sets up these values              OSWAP1D.88    
+      ! was written with the atmosphere in mind (the atmosphere            OSWAP1D.89    
+      ! works north to south, whereas the ocean works south to             OSWAP1D.90    
+      ! north!!)                                                           OSWAP1D.91    
+                                                                           OSWAP1D.92    
+C       Set up info for the Southern neighbour                             OSWAP1D.93    
+        IF (neighbour(PNorth) .NE. NoDomain) THEN                          OSWAP1D.94    
+                                                                           OSWAP1D.95    
+          DO i = 1, X_SIZE                                                 OSWAP1D.96    
+            BUF1(i)= FIELD(X_SIZE+i,k)                                     OSWAP1D.97    
+          ENDDO                                                            OSWAP1D.98    
+                                                                           OSWAP1D.99    
+        ENDIF                                                              OSWAP1D.100   
+                                                                           OSWAP1D.101   
+C       Set up info for Northern neighbour                                 OSWAP1D.102   
+                                                                           OSWAP1D.103   
+        IF (neighbour(PSouth) .NE. NoDomain) THEN                          OSWAP1D.104   
+                                                                           OSWAP1D.105   
+          DO i = 1, X_SIZE                                                 OSWAP1D.106   
+            BUF3(i)=  FIELD(X_SIZE*(Y_SIZE-2)+i,k)                         OSWAP1D.107   
+          ENDDO                                                            OSWAP1D.108   
+                                                                           OSWAP1D.109   
+        ENDIF                                                              OSWAP1D.110   
+                                                                           OSWAP1D.111   
+                                                                           OSWAP1D.112   
+      call barrier()                                                       OSWAP1D.113   
+                                                                           OSWAP1D.114   
+C       Receive from Southern neighbour                                    OSWAP1D.115   
+                                                                           OSWAP1D.116   
+      IF (neighbour(PNorth) .NE. NoDomain) THEN                            OSWAP1D.117   
+                                                                           OSWAP1D.118   
+          call shmem_get(FIELD(1,k),                                       OSWAP1D.119   
+     1          BUF3(1)                                                    OSWAP1D.120   
+     &               ,X_SIZE,neighbour(PNorth))                            OSWAP1D.121   
+                                                                           OSWAP1D.122   
+      ENDIF                                                                OSWAP1D.123   
+                                                                           OSWAP1D.124   
+C     Receive from Northern neighbour                                      OSWAP1D.125   
+                                                                           OSWAP1D.126   
+      IF (neighbour(PSouth) .NE. NoDomain) THEN                            OSWAP1D.127   
+           call shmem_get(FIELD(X_SIZE*(Y_SIZE-1)+1,k),                    OSWAP1D.128   
+     1          BUF1(1),X_SIZE                                             OSWAP1D.129   
+     &              ,neighbour(PSouth))                                    OSWAP1D.130   
+                                                                           OSWAP1D.131   
+      ENDIF                                                                OSWAP1D.132   
+                                                                           OSWAP1D.133   
+      call barrier()                                                       OSWAP1D.134   
+                                                                           OSWAP1D.135   
+      RETURN                                                               OSWAP1D.136   
+      END                                                                  OSWAP1D.137   
+*ENDIF                                                                     OSWAP1D.138   

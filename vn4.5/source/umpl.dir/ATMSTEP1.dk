@@ -1,0 +1,708 @@
+*IF DEF,CONTROL,AND,DEF,ATMOS                                              ATMSTEP1.2     
+C ******************************COPYRIGHT******************************    GTS2F400.397   
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.398   
+C                                                                          GTS2F400.399   
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.400   
+C restrictions as set forth in the contract.                               GTS2F400.401   
+C                                                                          GTS2F400.402   
+C                Meteorological Office                                     GTS2F400.403   
+C                London Road                                               GTS2F400.404   
+C                BRACKNELL                                                 GTS2F400.405   
+C                Berkshire UK                                              GTS2F400.406   
+C                RG12 2SZ                                                  GTS2F400.407   
+C                                                                          GTS2F400.408   
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.409   
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.410   
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.411   
+C Modelling at the above address.                                          GTS2F400.412   
+C ******************************COPYRIGHT******************************    GTS2F400.413   
+C                                                                          GTS2F400.414   
+CLL Subroutine ATM_STEP -----------------------------------------------    ATMSTEP1.3     
+CLL                                                                        ATMSTEP1.4     
+CLL Purpose : Performs an atmosphere timestep.                             ATMSTEP1.5     
+CLL          Call order is dynamics then physics then assimilation if      ATMSTEP1.6     
+CLL          required. If boundary updating required, calls                ATMSTEP1.7     
+CLL          BOUNDVAL. If boundary values required for the regional        ATMSTEP1.8     
+CLL          model calls GEN_INTF.                                         ATMSTEP1.9     
+CLL                                                                        ATMSTEP1.10    
+CLL Level 2 control routine                                                ATMSTEP1.11    
+CLL Version for CRAY YMP                                                   ATMSTEP1.12    
+CLL                                                                        ATMSTEP1.13    
+CLL  Model            Modification history from model version 3.0:         ATMSTEP1.14    
+CLL version  Date                                                          ATMSTEP1.15    
+CLL   3.1  22/01/93  Add debugging code under *DEF BITCOM10 to assist      TJ270193.14    
+CLL                  bit compare tests across new releases of the model.   TJ270193.15    
+CLL  3.1    8/02/93 : added comdeck CHSUNITS to define NUNITS for          RS030293.194   
+CLL                   CCONTROL                                             RS030293.195   
+CLL   3.1   17/2/93 : Add timer routine for GEN_INTF. D Robinson           DR240293.1     
+CLL   3.2    13/07/93 Changed CHARACTER*(*) to CHARACTER*(80) for          TS150793.22    
+CLL                   portability and correct calls to TIMER - first       TS150793.23    
+CLL                   argument should be an 8 character name.              TS150793.24    
+CLL                   Author: Tracey Smith.                                TS150793.25    
+CLL   3.2  16/06/93  Dynamic allocation of main arrays. R T H Barnes       @DYALLOC.460   
+CLL   3.3  30/09/93  Option on frequency of convection scheme calls,       RB300993.7     
+CLL                  using COMDECKS ARGCNVI,TYPCNVI.    R.T.H.Barnes.      RB300993.8     
+CLL   3.3   24/09/93 : added P_FIELDDA to argument list for portable       NF171193.11    
+CLL                    dynamic arrays. Author: Paul Burton                 NF171193.12    
+CLL   3.4  21/07/94  DEF BITCOM10 replaced by LOGICAL L_WRIT_ATMSTEP       GSS1F304.1085  
+CLL                  Time step control mechanism for WRITD1 added          GSS1F304.1086  
+CLL                  DEF LBOUTA replaced by LOGICAL LLBOUTA                GSS1F304.1087  
+CLL                  Comdeck C_GLOBAL *CALLed (declares LGLOBAL)           GSS1F304.1088  
+CLL                  Comdeck C_WRITD  *CALLed (time step control data      GSS1F304.1089  
+CLL                                            for WRITD1)                 GSS1F304.1090  
+CLL                  Arguments LLBOUTA, LCAL360 passed to GEN_INTF         GSS1F304.1091  
+CLL                                                  S.J.Swarbrick         GSS1F304.1092  
+CLL   3.4   1/8/94  Add code for Var outer loop processing S. Bell         VSB1F304.44    
+CLL  3.4  29/11/94  Add TR_VARS to AC_CTL arg.list for portability         ANF1F304.1     
+CLL                 and P_FIELD,P_LEVELS to ST_DIAG2.  RTHBarnes.          ANF1F304.2     
+CLL  3.5  5/6/95    Submodels project. Introduced *CALL ARGPPX             GSS2F305.87    
+CLL                 PPXLOOK to pass ppx lookup arrays to VAR_COPY.         GSS2F305.88    
+CLL                  S.J.Swarbrick                                         GSS2F305.89    
+CLL  4.0  31/08/95  Option for dynamics timestep different from            ARB0F400.39    
+CLL                 physics/assm. timestep.                RTHBarnes       ARB0F400.40    
+CLL  4.0  05/01/96: Pass dynamic allocated arrays to AC_CTL1.              ABM3F400.43    
+CLL                 (N Farnon)                                             ABM3F400.44    
+!LL  4.0 23/11/95 : added Q_FIELDS to argument list of ATM_DYN.            AYY2F400.331   
+!LL                                 Author: Andrew Bushell                 AYY2F400.332   
+!LL  4.0 04/12/95 : Mod for dynamic array put in at vn3.5 - for lexcon.    AYY2F400.333   
+!LL                                 Author: N. Farnon                      AYY2F400.334   
+!LL  4.1 18/04/96 : Initialise the TYPFLDPT variables, and pass as         GPB0F401.131   
+!                   arguments to ATM_DYN and ATM_PHYS                      GPB0F401.132   
+!                                                       P.Burton           GPB0F401.133   
+CLL  4.1 14/05/96 : Add TR_VARS to ST_DIAG2 arg.list.                      ADP0F401.1     
+CLL                                 Author: D.Podd                         ADP0F401.2     
+CLL 4.1 6/2/96     Extra LAND_FIELD and SM_LEVELS to argument              AJS1F401.158   
+CLL 4.1 6/2/96     list of ATM_PHYS                                        AJS1F401.159   
+CLL                J.Smith                                                 AJS1F401.160   
+!    4.1  16/01/96  Pass ARGPPX to GEN_INTF. D. Robinson.                  APB4F401.1     
+CLL   4.1  22/05/96  Replaced *DEF FAST with FRADIO to allow fast          GGH3F401.7     
+CLL                  radiation i/o code to be used. G Henderson            GGH3F401.8     
+!LL 4.3 6/3/97     Moved loop for multiple dynamics timesteps down         GPB3F403.4     
+!LL                to atmdyn.                    P.Burton                  GPB3F403.5     
+!LL  4.3  14/04/97  Changed WRITD1 calls to DUMPCTL1 for MPP. K Rogers     GKR4F403.39    
+!    4.4  4/7/97:  Add call to IAU_CTL. C.D.Jones/Stuart Bell              VSB2F404.1     
+!LL  4.4  30/09/97  Allocate dimension TILE_FIELD for 7A boundary layer    ARE1F404.1     
+!LL                 and hydrology         R. Essery                        ARE1F404.2     
+!!! 4.4 Dynamically allocate dimensions to RADHEAT according to            ARN1F404.64    
+!!!     version of Section 3 used.      Cyndy Bunton                       ARN1F404.65    
+!!  4.5  26/05/98 Force user to define array sizes if new BDYLYR version   ACB2F405.25    
+!!                used.      C.Bunton                                      ACB2F405.26    
+!LL  4.5  21/04/98  Added ARGFLDPT to ST_DIAG subroutine calls             GSM1F405.565   
+!LL                 S.D.Mullerworth                                        GSM1F405.566   
+CLL Programming standard : unified model documentation paper No 3          ATMSTEP1.17    
+CLL                                                                        ATMSTEP1.18    
+CLL System components covered : P1                                         ATMSTEP1.19    
+CLL                                                                        ATMSTEP1.20    
+CLL System task : P0                                                       ATMSTEP1.21    
+CLL                                                                        ATMSTEP1.22    
+CLL Documentation : Unified model documentation paper no. P0               ATMSTEP1.23    
+CLL                 version No 11 dated (26/11/90)                         ATMSTEP1.24    
+CLLEND -----------------------------------------------------------------   ATMSTEP1.25    
+C*L Arguments                                                              ATMSTEP1.26    
+                                                                           ATMSTEP1.27    
+      SUBROUTINE ATM_STEP(                                                 @DYALLOC.461   
+*CALL ARGSZSP                                                              @DYALLOC.462   
+*CALL ARGSZSPA                                                             @DYALLOC.463   
+*CALL ARGSZSPO                                                             @DYALLOC.464   
+*CALL ARGSP                                                                @DYALLOC.465   
+*CALL ARGSPA                                                               @DYALLOC.466   
+*CALL ARGSPO                                                               @DYALLOC.467   
+*CALL ARGSIZE                                                              @DYALLOC.468   
+*CALL ARGCNVI                                                              RB300993.9     
+*CALL ARGPPX                                                               GSS2F305.90    
+*IF DEF,FRADIO                                                             GGH3F401.9     
+     &                    RADINCS,                                         @DYALLOC.470   
+*ENDIF                                                                     @DYALLOC.471   
+     &   P_FIELDDA,                                                        NF171193.13    
+     &                    ICODE,CMESSAGE)                                  @DYALLOC.472   
+                                                                           ATMSTEP1.29    
+      IMPLICIT NONE                                                        ATMSTEP1.30    
+                                                                           @DYALLOC.473   
+*CALL CMAXSIZE                                                             @DYALLOC.474   
+*CALL SPINDEX                                                              @DYALLOC.475   
+*CALL TYPSZSP                                                              @DYALLOC.476   
+*CALL TYPSZSPA                                                             @DYALLOC.477   
+*CALL TYPSZSPO                                                             @DYALLOC.478   
+*CALL TYPSP                                                                @DYALLOC.479   
+*CALL TYPSPA                                                               @DYALLOC.480   
+*CALL TYPSPO                                                               @DYALLOC.481   
+*CALL TYPSIZE                                                              @DYALLOC.482   
+*CALL TYPCNVI                                                              RB300993.10    
+*IF DEF,FRADIO                                                             GGH3F401.10    
+*CALL CRADINCS                                                             @DYALLOC.484   
+*ENDIF                                                                     @DYALLOC.485   
+                                                                           ATMSTEP1.31    
+      INTEGER                                                              ATMSTEP1.32    
+     &   P_FIELDDA,   ! IN : copy of P_FIELD for dynamic array             NF171193.14    
+     &     RADHEAT_DIM1,              ! Required for array dimensions      ARN1F404.66    
+!                                     ! for RADHEAT                        ARN1F404.67    
+     &       ICODE        ! Return code : 0 Normal Exit                    ATMSTEP1.33    
+C                         !             : >0 Error                         ATMSTEP1.34    
+                                                                           ATMSTEP1.35    
+      CHARACTER*80                                                         TS150793.26    
+     &       CMESSAGE     ! Error message if return code >0                ATMSTEP1.37    
+      LOGICAL L_RADHEAT               ! Flag for version of Section 3.     ARN1F404.68    
+                                                                           ATMSTEP1.38    
+C INTEGRATE ATMOSPHERE 1 TIMESTEP                                          ATMSTEP1.39    
+                                                                           ATMSTEP1.40    
+*CALL CSUBMODL                                                             ATMSTEP1.41    
+*CALL CHSUNITS                                                             RS030293.196   
+*CALL CCONTROL                                                             ATMSTEP1.42    
+*CALL CTIME                                                                @DYALLOC.486   
+*CALL C_GLOBAL                                                             GSS1F304.1093  
+*CALL C_WRITD                                                              GSS1F304.1094  
+*CALL CPPXREF                                                              GSS2F305.91    
+*CALL PPXLOOK                                                              GSS2F305.92    
+*IF DEF,MPP                                                                GPB0F401.134   
+*CALL PARVARS                                                              GPB0F401.135   
+*ENDIF                                                                     GPB0F401.136   
+*CALL TYPFLDPT                                                             GPB0F401.137   
+                                                                           ATMSTEP1.48    
+C External subroutines called                                              ATMSTEP1.49    
+                                                                           ATMSTEP1.50    
+      EXTERNAL                                                             ATMSTEP1.51    
+     &       AC_CTL,                                                       ATMSTEP1.52    
+     &       ATM_DYN,                                                      ATMSTEP1.53    
+     &       ATM_PHYS,                                                     ATMSTEP1.54    
+     &       ST_DIAG1,                                                     ATMSTEP1.55    
+     &       ST_DIAG2,                                                     ATMSTEP1.56    
+     &       ST_MAXLEN,                                                    @DYALLOC.487   
+     &       BOUNDVAL,                                                     ATMSTEP1.57    
+     &       GEN_INTF,                                                     ATMSTEP1.58    
+     &       MMPPINIT,                                                     @DYALLOC.488   
+     &       MMPP_CTL,                                                     @DYALLOC.489   
+     &       THLQT2THQ, ! convert thetal,qt to thata,q,cl,cf               ARB0F400.41    
+     &       STASH,                                                        ATMSTEP1.59    
+     &       TIMER                                                         @DYALLOC.490   
+     &      ,Var_Copy,Var_Ctl                                              VSB1F304.45    
+     &      ,DUMPCTL                                                       GKR4F403.40    
+     &      ,IAU                                                           VSB2F404.2     
+                                                                           ATMSTEP1.65    
+C Local Variables                                                          ATMSTEP1.66    
+                                                                           ATMSTEP1.67    
+      INTEGER                                                              ATMSTEP1.68    
+     &       I,          ! loop variable                                   ARB0F400.42    
+     &       STASH_LEN,                                                    ATMSTEP1.69    
+     &       TILE_FIELD,                                                   ARE1F404.3     
+     &       A_STEP      ! local timestep no. for atmosphere               ARB0F400.43    
+      REAL                                                                 ATMSTEP1.71    
+     &       PSTAR_OLD(P_FIELDDA)  ! array to hold old value of Pstar      NF171193.15    
+     &      ,DYN_TIMESTEP          ! modified timestep for dynamics        ARB0F400.44    
+                                                                           ATMSTEP1.74    
+      ICODE=0                                                              ATMSTEP1.75    
+      CMESSAGE='  '                                                        ATMSTEP1.76    
+                                                                           GPB0F401.138   
+*IF DEF,MPP                                                                GPB0F401.139   
+! QAN fix                                                                  GPB0F401.140   
+! Set PSTAR_OLD to zeros (removes any junk from halo areas)                GPB0F401.141   
+      DO I=1,P_FIELD                                                       GPB0F401.142   
+        PSTAR_OLD(I)=0.0                                                   GPB0F401.143   
+      ENDDO                                                                GPB0F401.144   
+*ENDIF                                                                     GPB0F401.145   
+                                                                           GPB0F401.146   
+! Set up the TYPFLDPT variables                                            GPB0F401.147   
+*CALL SETFLDPT                                                             GPB0F401.148   
+                                                                           GPB0F401.149   
+!  Set local A_STEP to generic control value STEPim(a_im)                  GDR3F305.8     
+      A_STEP = STEPim(a_im)                                                GDR3F305.9     
+                                                                           ATMSTEP1.77    
+      IF (L_WRIT_ATMSTEP .OR. L_WRIT_DYN .OR. L_WRIT_PHY) THEN             GSS1F304.1096  
+                                                                           GSS1F304.1097  
+        IF (A_STEP .EQ. 1) THEN                                            GSS1F304.1098  
+        WRITD1_TEST_PREV = 0                                               GSS1F304.1099  
+        END IF                                                             GSS1F304.1100  
+                                                                           GSS1F304.1101  
+        WRITD1_TEST = (A_STEP - T_WRITD1_START)/T_WRITD1_INT               GSS1F304.1102  
+                                                                           GSS1F304.1103  
+        IF (A_STEP .LT. T_WRITD1_START) WRITD1_TEST = 0                    GSS1F304.1104  
+                                                                           GSS1F304.1105  
+      END IF                                                               GSS1F304.1106  
+                                                                           GSS1F304.1107  
+      WRITE(6,*) 'ATMOS TIMESTEP ',A_STEP                                  ARB0F400.45    
+                                                                           ATMSTEP1.79    
+C   Call max/min and patch prints if requested                             ATMSTEP1.80    
+                                                                           ATMSTEP1.81    
+      CALL MMPPINIT(                                                       @DYALLOC.492   
+*CALL ARGSIZE                                                              @DYALLOC.493   
+*CALL ARTD1                                                                @DYALLOC.494   
+*CALL ARTDUMA                                                              @DYALLOC.495   
+*CALL ARTPTRA                                                              @DYALLOC.496   
+*CALL ARTCONA                                                              @DYALLOC.497   
+     &              ICODE,CMESSAGE)                                        @DYALLOC.498   
+                                                                           ATMSTEP1.96    
+CL ---------In Section 18----- Incremental Analysis updated (VAR) -----    VSB2F404.3     
+      IF (L_IAU) THEN                                                      VSB2F404.4     
+        CALL IAU_CTL(                                                      VSB2F404.5     
+*CALL ARTDUMA                                                              VSB2F404.6     
+*CALL ARTD1                                                                VSB2F404.7     
+*CALL ARGSIZE                                                              VSB2F404.8     
+*CALL ARTPTRA                                                              VSB2F404.9     
+*CALL ARTCONA                                                              VSB2F404.10    
+*CALL ARGPPX                                                               VSB2F404.11    
+     &               ICODE,CMESSAGE)                                       VSB2F404.12    
+      ENDIF                                                                VSB2F404.13    
+      IF (ICODE .GT. 0) GOTO 9999                                          VSB2F404.14    
+CL ---------------------------------------------------------------------   VSB2F404.15    
+      IF( .NOT. L_3DVAR )THEN                                              VSB1F304.46    
+! skip dynamics and physics if doing 3DVAR                                 VSB1F304.47    
+                                                                           ATMSTEP1.145   
+CL ---------Sections 10-13----- Dynamics routines ---------------------    ATMSTEP1.146   
+                                                                           VSB1F304.48    
+                                                                           ATMSTEP1.147   
+      IF(LTIMER) THEN                                                      ATMSTEP1.148   
+      CALL TIMER('DYNAMICS',5)                                             GPB1F401.9     
+        CALL TIMER('ATM_DYN ',3)                                           TS150793.27    
+      END IF                                                               ATMSTEP1.150   
+                                                                           ATMSTEP1.151   
+                                                                           VSB1F304.49    
+!  Get max of STASH_MAXLEN values for sections 10-13.                      ARB0F400.46    
+      CALL ST_MAXLEN(STASH_LEN,10,13,atmos_im,                             GDR4F305.1     
+*CALL ARGSIZE                                                              @DYALLOC.504   
+*CALL ARTSTS                                                               @DYALLOC.505   
+     &                          ICODE,CMESSAGE)                            @DYALLOC.506   
+                                                                           ATMSTEP1.155   
+      IF (L_WRIT_ATMSTEP .AND.                                             GSS1F304.1108  
+     &    (A_STEP.LE.T_WRITD1_END .OR. T_WRITD1_END .EQ. 0)) THEN          GSS1F304.1109  
+                                                                           TJ270193.22    
+      IF (A_STEP.EQ.T_WRITD1_START .OR.                                    GSS1F304.1110  
+     &    WRITD1_TEST.GT.WRITD1_TEST_PREV) THEN                            GSS1F304.1111  
+                                                                           GSS1F304.1112  
+           CALL DUMPCTL (                                                  GKR4F403.41    
+*CALL ARGSIZE                                                              GKR4F403.42    
+*CALL ARTD1                                                                GKR4F403.43    
+*CALL ARTDUMA                                                              GKR4F403.44    
+*CALL ARTDUMO                                                              GKR4F403.45    
+*CALL ARTDUMW                                                              GKR4F403.46    
+*CALL ARTCONA                                                              GKR4F403.47    
+*CALL ARTPTRA                                                              GKR4F403.48    
+*CALL ARTSTS                                                               GKR4F403.49    
+*CALL ARGPPX                                                               GKR4F403.50    
+     &          atmos_sm,0,.TRUE.,'bf_atm_dyn',a_step,                     GIE1F405.22    
+     &          ICODE,CMESSAGE)                                            GKR4F403.52    
+                                                                           GSS1F304.1114  
+      END IF                                                               GSS1F304.1115  
+                                                                           GSS1F304.1116  
+      END IF                                                               GSS1F304.1117  
+                                                                           GSS1F304.1118  
+!  Adjust timestep for option of multiple dynamics sweeps.                 ARB0F400.47    
+      IF (A_SWEEPS_DYN .gt. 1) THEN                                        ARB0F400.48    
+        DYN_TIMESTEP = SECS_PER_STEPim(a_im)/A_SWEEPS_DYN                  ARB0F400.49    
+      ELSE                                                                 ARB0F400.50    
+        DYN_TIMESTEP = SECS_PER_STEPim(a_im)                               ARB0F400.51    
+      END IF                                                               ARB0F400.52    
+                                                                           ARB0F400.53    
+                                                                           ARB0F400.67    
+      CALL ATM_DYN(U_FIELD,P_FIELD,P_LEVELS,Q_LEVELS,P_ROWS,               AYY2F400.335   
+     &             NUM_STASH_LEVELS,                                       AYY2F400.336   
+     &             STASH_LEN,PSTAR_OLD,DYN_TIMESTEP,                       GPB3F403.6     
+*CALL ARGSIZE                                                              @DYALLOC.510   
+*CALL ARTD1                                                                @DYALLOC.511   
+*CALL ARTDUMA                                                              @DYALLOC.512   
+*CALL ARTDUMO                                                              @DYALLOC.513   
+*CALL ARTDUMW                                                              GKR1F401.183   
+*CALL ARTSTS                                                               @DYALLOC.514   
+*CALL ARTPTRA                                                              @DYALLOC.515   
+*CALL ARTPTRO                                                              @DYALLOC.516   
+*CALL ARTCONA                                                              @DYALLOC.517   
+*CALL ARGPPX                                                               GKR0F305.899   
+*CALL ARGFLDPT                                                             APB0F401.1     
+     &             ICODE,CMESSAGE,WRITD1_TEST)                             ARB0F400.69    
+                                                                           ATMSTEP1.158   
+                                                                           ARB0F400.71    
+      IF (L_WRIT_ATMSTEP .AND.                                             GSS1F304.1121  
+     &    (A_STEP.LE.T_WRITD1_END .OR. T_WRITD1_END .EQ. 0)) THEN          GSS1F304.1122  
+                                                                           TJ270193.26    
+      IF (A_STEP.EQ.T_WRITD1_START .OR.                                    GSS1F304.1123  
+     &    WRITD1_TEST.GT.WRITD1_TEST_PREV) THEN                            GSS1F304.1124  
+                                                                           GSS1F304.1125  
+           CALL DUMPCTL (                                                  GKR4F403.53    
+*CALL ARGSIZE                                                              GKR4F403.54    
+*CALL ARTD1                                                                GKR4F403.55    
+*CALL ARTDUMA                                                              GKR4F403.56    
+*CALL ARTDUMO                                                              GKR4F403.57    
+*CALL ARTDUMW                                                              GKR4F403.58    
+*CALL ARTCONA                                                              GKR4F403.59    
+*CALL ARTPTRA                                                              GKR4F403.60    
+*CALL ARTSTS                                                               GKR4F403.61    
+*CALL ARGPPX                                                               GKR4F403.62    
+     &          atmos_sm,0,.TRUE.,'af_atm_dyn',a_step,                     GIE1F405.12    
+     &          ICODE,CMESSAGE)                                            GKR4F403.64    
+                                                                           GSS1F304.1127  
+      END IF                                                               GSS1F304.1128  
+                                                                           GSS1F304.1129  
+      END IF                                                               GSS1F304.1130  
+                                                                           GSS1F304.1131  
+      IF(LTIMER) THEN                                                      ATMSTEP1.159   
+        CALL TIMER('ATM_DYN ',4)                                           TS150793.28    
+      CALL TIMER('DYNAMICS',6)                                             GPB1F401.10    
+      END IF                                                               ATMSTEP1.161   
+                                                                           ATMSTEP1.162   
+      IF(ICODE.GT.0) THEN                                                  ATMSTEP1.163   
+       RETURN                                                              ATMSTEP1.164   
+      ENDIF                                                                ATMSTEP1.165   
+                                                                           ATMSTEP1.166   
+*IF -DEF,GLOBAL,OR,DEF,FLOOR                                               ATMSTEP1.167   
+                                                                           ATMSTEP1.168   
+C     IF (.NOT.LGLOBAL .OR. LFLOOR) THEN                                   GSS1F304.1132  
+                                                                           GSS1F304.1133  
+CL Call BOUNDVAL to merge in limited area boundary values                  ATMSTEP1.169   
+                                                                           ATMSTEP1.170   
+      CALL BOUNDVAL(                                                       @DYALLOC.519   
+*CALL ARGSIZE                                                              @DYALLOC.520   
+*CALL ARTD1                                                                @DYALLOC.521   
+*CALL ARTDUMA                                                              @DYALLOC.522   
+*CALL ARTPTRA                                                              @DYALLOC.523   
+*CALL ARTBND                                                               @DYALLOC.524   
+     &           ICODE,CMESSAGE)                                           @DYALLOC.525   
+                                                                           ATMSTEP1.172   
+C     END IF                                                               GSS1F304.1134  
+                                                                           GSS1F304.1135  
+*ENDIF                                                                     ATMSTEP1.173   
+                                                                           ATMSTEP1.176   
+CL Generate lateral boundary values                                        ATMSTEP1.177   
+                                                                           ATMSTEP1.178   
+      IF (LINTERFACE .AND. LLBOUTim(A_IM)) THEN                            GDR3F305.10    
+        IF (LTIMER) CALL TIMER ('GEN_INTF',3)                              DR240293.3     
+        CALL GEN_INTF (                                                    @DYALLOC.526   
+*CALL ARGSIZE                                                              @DYALLOC.527   
+*CALL ARTD1                                                                @DYALLOC.528   
+*CALL ARTDUMA                                                              @DYALLOC.529   
+*CALL ARTSTS                                                               @DYALLOC.530   
+*CALL ARTPTRA                                                              @DYALLOC.531   
+*CALL ARTCONA                                                              @DYALLOC.532   
+*CALL ARTINFA                                                              @DYALLOC.533   
+*CALL ARGPPX                                                               APB4F401.2     
+     &                1,ICODE,CMESSAGE)                                    GDR3F305.11    
+        IF (LTIMER) CALL TIMER ('GEN_INTF',4)                              DR240293.4     
+        IF (ICODE.GT.0)  RETURN                                            ATMSTEP1.181   
+      END IF                                                               ATMSTEP1.182   
+                                                                           ATMSTEP1.183   
+                                                                           GSS1F304.1138  
+CL--------- Sections 1-9----- Physics Routines----------------------       ATMSTEP1.186   
+                                                                           ATMSTEP1.187   
+*IF -DEF,STRAT                                                             ATMSTEP1.192   
+                                                                           ATMSTEP1.193   
+      IF(LTIMER) THEN                                                      ATMSTEP1.194   
+      CALL TIMER('PHYSICS',5)                                              GPB1F401.11    
+        CALL TIMER('ATM_PHYS',3)                                           ATMSTEP1.195   
+      END IF                                                               ATMSTEP1.196   
+                                                                           ATMSTEP1.197   
+CL Space for tiled diagnostics on land points only required for            ARE1F404.4     
+CL boundary layer and hydrology versions 7A                                ARE1F404.5     
+!! and RADHEAT is only needed for Boundary layer 6A so allocate space      ACB2F405.27    
+!! accordingly.                                                            ACB2F405.28    
+                                                                           ARE1F404.6     
+      IF ( (H_SECT(3).EQ."06A") )THEN                                      ACB2F405.29    
+        L_RADHEAT = .TRUE.                                                 ACB2F405.30    
+        RADHEAT_DIM1 = P_FIELDDA                                           ACB2F405.31    
+        TILE_FIELD = 1                                                     ACB2F405.32    
+      ELSEIF ( (H_SECT(3).EQ."03A")                                        ACB2F405.33    
+     & .OR. (H_SECT(3).EQ."05A") )THEN                                     ACB2F405.34    
+        L_RADHEAT = .FALSE.                                                ACB2F405.35    
+        RADHEAT_DIM1 = 1                                                   ACB2F405.36    
+        TILE_FIELD = 1                                                     ACB2F405.37    
+      ELSEIF ( (H_SECT(3).EQ."07A") )THEN                                  ACB2F405.38    
+        L_RADHEAT = .FALSE.                                                ACB2F405.39    
+        RADHEAT_DIM1 = 1                                                   ACB2F405.40    
+        TILE_FIELD = LAND_FIELD                                            ACB2F405.41    
+      ELSE                                                                 ACB2F405.42    
+        WRITE(6,*) 'ATM_PHYS: Unknown version of Section 3 encountered'    ACB2F405.43    
+        CALL ABORT                                                         ACB2F405.44    
+      ENDIF                                                                ACB2F405.45    
+                                                                           ARE1F404.12    
+      CALL ATM_PHYS(P_FIELD,LAND_FIELD,SM_LEVELS,                          AJS1F401.161   
+     &              TILE_FIELD,                                            ARE1F404.13    
+     &              ROW_LENGTH,P_LEVELS,Q_LEVELS,BL_LEVELS,                ARN1F404.77    
+     &              L_RADHEAT,RADHEAT_DIM1,                                ARN1F404.78    
+                                                                           AJS1F401.163   
+*CALL ARGSIZE                                                              @DYALLOC.537   
+*CALL ARTD1                                                                @DYALLOC.538   
+*CALL ARTDUMA                                                              @DYALLOC.539   
+*CALL ARTDUMO                                                              @DYALLOC.540   
+*CALL ARTDUMW                                                              GKR1F401.184   
+*CALL ARTSTS                                                               @DYALLOC.541   
+*CALL ARTPTRA                                                              @DYALLOC.542   
+*CALL ARTPTRO                                                              @DYALLOC.543   
+*CALL ARTCONA                                                              @DYALLOC.544   
+*CALL ARGCNVI                                                              RB300993.11    
+*CALL ARGPPX                                                               GKR0F305.900   
+*CALL ARGFLDPT                                                             APB1F401.1     
+*IF DEF,FRADIO                                                             GGH3F401.11    
+     &              RADINCS,                                               @DYALLOC.546   
+*ENDIF                                                                     @DYALLOC.547   
+     &              ICODE,CMESSAGE,WRITD1_TEST)                            ARB0F400.72    
+                                                                           ATMSTEP1.200   
+      IF (L_WRIT_ATMSTEP .AND.                                             GSS1F304.1141  
+     &    (A_STEP.LE.T_WRITD1_END .OR. T_WRITD1_END .EQ. 0)) THEN          GSS1F304.1142  
+                                                                           TJ270193.30    
+      IF (A_STEP.EQ.T_WRITD1_START .OR.                                    GSS1F304.1143  
+     &    WRITD1_TEST.GT.WRITD1_TEST_PREV) THEN                            GSS1F304.1144  
+                                                                           GSS1F304.1145  
+           CALL DUMPCTL (                                                  GKR4F403.65    
+*CALL ARGSIZE                                                              GKR4F403.66    
+*CALL ARTD1                                                                GKR4F403.67    
+*CALL ARTDUMA                                                              GKR4F403.68    
+*CALL ARTDUMO                                                              GKR4F403.69    
+*CALL ARTDUMW                                                              GKR4F403.70    
+*CALL ARTCONA                                                              GKR4F403.71    
+*CALL ARTPTRA                                                              GKR4F403.72    
+*CALL ARTSTS                                                               GKR4F403.73    
+*CALL ARGPPX                                                               GKR4F403.74    
+     &          atmos_sm,0,.TRUE.,'af_atm_phy',a_step,                     GIE1F405.13    
+     &          ICODE,CMESSAGE)                                            GKR4F403.76    
+                                                                           GSS1F304.1147  
+      END IF                                                               GSS1F304.1148  
+                                                                           GSS1F304.1149  
+      END IF                                                               GSS1F304.1150  
+                                                                           GSS1F304.1151  
+      IF(LTIMER) THEN                                                      ATMSTEP1.201   
+        CALL TIMER('ATM_PHYS',4)                                           ATMSTEP1.202   
+      CALL TIMER('PHYSICS',6)                                              GPB1F401.12    
+      END IF                                                               ATMSTEP1.203   
+                                                                           ATMSTEP1.204   
+*ENDIF                                                                     ATMSTEP1.205   
+                                                                           ATMSTEP1.206   
+      IF(ICODE.GT.0) THEN                                                  ATMSTEP1.207   
+        RETURN                                                             ATMSTEP1.208   
+      ENDIF                                                                ATMSTEP1.209   
+                                                                           ATMSTEP1.210   
+      END IF   ! .NOT.L_3DVAR                                              VSB1F304.50    
+                                                                           VSB1F304.51    
+CL --------- Section 18---- Data Assimilation -----------------------      ATMSTEP1.211   
+      IF(L_AC .AND. LASSIMILATION )THEN                                    VSB1F304.52    
+! Do AC assimilation                                                       VSB1F304.53    
+                                                                           ATMSTEP1.212   
+        IF(LTIMER)  CALL TIMER('AC_CTL',3)                                 VSB1F304.54    
+                                                                           ATMSTEP1.218   
+C Use s/r to get STASH_MAXLEN value for section 18                         @DYALLOC.549   
+      CALL ST_MAXLEN(STASH_LEN,18,18,atmos_im,                             GDR4F305.2     
+*CALL ARGSIZE                                                              @DYALLOC.551   
+*CALL ARTSTS                                                               @DYALLOC.552   
+     &                          ICODE,CMESSAGE)                            @DYALLOC.553   
+                                                                           @DYALLOC.554   
+        CALL AC_CTL(STASH_LEN, TR_VARS, P_FIELD, Q_LEVELS,                 AJS1F401.164   
+*CALL ARGSIZE                                                              @DYALLOC.556   
+*CALL ARTD1                                                                @DYALLOC.557   
+*CALL ARTDUMA                                                              @DYALLOC.558   
+*CALL ARTDUMO                                                              @DYALLOC.559   
+*CALL ARTDUMW                                                              GKR1F401.185   
+*CALL ARTSTS                                                               @DYALLOC.560   
+*CALL ARTPTRA                                                              @DYALLOC.561   
+*CALL ARTPTRO                                                              @DYALLOC.562   
+*CALL ARTCONA                                                              @DYALLOC.563   
+*CALL ARGPPX                                                               GKR0F305.901   
+     &              ICODE,CMESSAGE)                                        @DYALLOC.564   
+                                                                           ATMSTEP1.220   
+      IF (L_WRIT_ATMSTEP .AND.                                             GSS1F304.1152  
+     &    (A_STEP.LE.T_WRITD1_END .OR. T_WRITD1_END .EQ. 0)) THEN          GSS1F304.1153  
+                                                                           GSS1F304.1154  
+      IF (A_STEP.EQ.T_WRITD1_START .OR.                                    GSS1F304.1155  
+     &    WRITD1_TEST.GT.WRITD1_TEST_PREV) THEN                            GSS1F304.1156  
+                                                                           GSS1F304.1157  
+           CALL DUMPCTL (                                                  GKR4F403.77    
+*CALL ARGSIZE                                                              GKR4F403.78    
+*CALL ARTD1                                                                GKR4F403.79    
+*CALL ARTDUMA                                                              GKR4F403.80    
+*CALL ARTDUMO                                                              GKR4F403.81    
+*CALL ARTDUMW                                                              GKR4F403.82    
+*CALL ARTCONA                                                              GKR4F403.83    
+*CALL ARTPTRA                                                              GKR4F403.84    
+*CALL ARTSTS                                                               GKR4F403.85    
+*CALL ARGPPX                                                               GKR4F403.86    
+     &          atmos_sm,0,.TRUE.,'af_ac_ctl_',a_step,                     GIE1F405.14    
+     &          ICODE,CMESSAGE)                                            GKR4F403.88    
+                                                                           GSS1F304.1159  
+      END IF                                                               GSS1F304.1160  
+                                                                           GSS1F304.1161  
+      END IF                                                               GSS1F304.1162  
+                                                                           TJ270193.34    
+        IF(LTIMER) CALL TIMER('AC_CTL',4)                                  VSB1F304.55    
+                                                                           ATMSTEP1.224   
+        IF (ICODE.GT.0)GO TO 9999                                          VSB1F304.56    
+                                                                           ATMSTEP1.228   
+      END IF !LASSIMILATION and L_AC                                       VSB1F304.57    
+                                                                           ATMSTEP1.230   
+      IF(L_3DVAR)THEN                                                      VSB1F304.58    
+! Do processing for 3DVAR                                                  VSB1F304.59    
+                                                                           VSB1F304.60    
+       IF(LTIMER) CALL TIMER('VarCtl',3)                                   VSB1F304.61    
+                                                                           VSB1F304.62    
+        CALL Var_Ctl(                                                      VSB1F304.63    
+*CALL ARGSIZE                                                              VSB1F304.64    
+*CALL ARTD1                                                                VSB1F304.65    
+*CALL ARTDUMA                                                              VSB1F304.66    
+*CALL ARTSTS                                                               VSB1F304.67    
+*CALL ARTPTRA                                                              VSB1F304.68    
+*CALL ARTCONA                                                              VSB1F304.69    
+*CALL ARGPPX                                                               GKR0F305.902   
+     &              ICODE,CMESSAGE)                                        VSB1F304.70    
+                                                                           VSB1F304.71    
+       IF(LTIMER) CALL TIMER('VarCtl',4)                                   VSB1F304.72    
+                                                                           VSB1F304.73    
+       IF (ICODE.GT.0) GOTO 9999                                           VSB1F304.74    
+                                                                           VSB1F304.75    
+      END IF  !L_3DVAR                                                     VSB1F304.76    
+                                                                           VSB1F304.77    
+      IF (L_4DVAR) THEN                                                    VSB1F304.78    
+! Do processing for 4DVAR (likely also do call VarCtl when available)      VSB1F304.79    
+          ICODE =1                                                         VSB1F304.80    
+          CMESSAGE = ' ATMSTEP: 4DVAR not coded'                           VSB1F304.81    
+          GO TO 9999                                                       VSB1F304.82    
+      ENDIF   !L_4DVAR                                                     VSB1F304.83    
+                                                                           VSB1F304.84    
+      IF (L_3DVAR_BG) THEN                                                 VSB1F304.85    
+! When doing forecast background creation for 3DVAR                        VSB1F304.86    
+! save the required fields in prognostic D1 space                          VSB1F304.87    
+                                                                           VSB1F304.88    
+       IF(LTIMER) CALL TIMER('VarCopy',3)                                  VSB1F304.89    
+                                                                           VSB1F304.90    
+        CALL Var_Copy(                                                     VSB1F304.91    
+*CALL ARGSIZE                                                              VSB1F304.92    
+*CALL ARTD1                                                                VSB1F304.93    
+*CALL ARTDUMA                                                              VSB1F304.94    
+*CALL ARTSTS                                                               VSB1F304.95    
+*CALL ARTPTRA                                                              VSB1F304.96    
+*CALL ARTCONA                                                              VSB1F304.97    
+*CALL ARGPPX                                                               GSS2F305.93    
+     &              ICODE,CMESSAGE)                                        VSB1F304.98    
+                                                                           VSB1F304.99    
+       IF(LTIMER) CALL TIMER('VarCopy',4)                                  VSB1F304.100   
+                                                                           VSB1F304.101   
+       IF (ICODE.GT.0) GOTO 9999                                           VSB1F304.102   
+                                                                           VSB1F304.103   
+      ENDIF !L_3DVAR_BG                                                    VSB1F304.104   
+                                                                           VSB1F304.105   
+CL ----------Section 15 ----  Diagnostics -part1 -----------------------   ATMSTEP1.231   
+                                                                           ATMSTEP1.232   
+      IF(LTIMER) THEN                                                      ATMSTEP1.233   
+        CALL TIMER('ST_DIAG1',3)                                           ATMSTEP1.234   
+      END IF                                                               ATMSTEP1.235   
+                                                                           ATMSTEP1.236   
+C Use s/r to get STASH_MAXLEN value for section 15                         @DYALLOC.566   
+      CALL ST_MAXLEN(STASH_LEN,15,15,atmos_im,                             GDR4F305.3     
+*CALL ARGSIZE                                                              @DYALLOC.568   
+*CALL ARTSTS                                                               @DYALLOC.569   
+     &                          ICODE,CMESSAGE)                            @DYALLOC.570   
+                                                                           @DYALLOC.571   
+      CALL ST_DIAG1(NUM_STASH_LEVELS,STASH_LEN,PSTAR_OLD,                  @DYALLOC.572   
+*CALL ARGSIZE                                                              @DYALLOC.573   
+*CALL ARTD1                                                                @DYALLOC.574   
+*CALL ARTDUMA                                                              @DYALLOC.575   
+*CALL ARTDUMO                                                              @DYALLOC.576   
+*CALL ARTDUMW                                                              GKR1F401.186   
+*CALL ARTSTS                                                               @DYALLOC.577   
+*CALL ARTPTRA                                                              @DYALLOC.578   
+*CALL ARTPTRO                                                              @DYALLOC.579   
+*CALL ARTCONA                                                              @DYALLOC.580   
+*CALL ARGPPX                                                               GKR0F305.903   
+*CALL ARGFLDPT                                                             GSM1F405.567   
+     &              ICODE,CMESSAGE)                                        @DYALLOC.581   
+                                                                           ATMSTEP1.239   
+      IF(LTIMER) THEN                                                      ATMSTEP1.240   
+        CALL TIMER('ST_DIAG1',4)                                           ATMSTEP1.241   
+      END IF                                                               ATMSTEP1.242   
+                                                                           ATMSTEP1.243   
+      IF (ICODE.GT.0) THEN                                                 ATMSTEP1.244   
+        RETURN                                                             ATMSTEP1.245   
+      END IF                                                               ATMSTEP1.246   
+                                                                           ATMSTEP1.247   
+CL ----------Section 16 ----  Diagnostics -part2 -----------------------   ATMSTEP1.248   
+                                                                           ATMSTEP1.249   
+      IF(LTIMER) THEN                                                      ATMSTEP1.250   
+        CALL TIMER('ST_DIAG2',3)                                           ATMSTEP1.251   
+      END IF                                                               ATMSTEP1.252   
+                                                                           ATMSTEP1.253   
+C Use s/r to get STASH_MAXLEN value for section 16                         @DYALLOC.582   
+      CALL ST_MAXLEN(STASH_LEN,16,16,atmos_im,                             GDR4F305.4     
+*CALL ARGSIZE                                                              @DYALLOC.584   
+*CALL ARTSTS                                                               @DYALLOC.585   
+     &                          ICODE,CMESSAGE)                            @DYALLOC.586   
+                                                                           @DYALLOC.587   
+      CALL ST_DIAG2(NUM_STASH_LEVELS,STASH_LEN,                            @DYALLOC.588   
+     &              P_FIELD,P_LEVELS,TR_VARS,                              ADP0F401.3     
+*CALL ARGSIZE                                                              @DYALLOC.589   
+*CALL ARTD1                                                                @DYALLOC.590   
+*CALL ARTDUMA                                                              @DYALLOC.591   
+*CALL ARTDUMO                                                              @DYALLOC.592   
+*CALL ARTDUMW                                                              GKR1F401.187   
+*CALL ARTSTS                                                               @DYALLOC.593   
+*CALL ARTPTRA                                                              @DYALLOC.594   
+*CALL ARTPTRO                                                              @DYALLOC.595   
+*CALL ARTCONA                                                              @DYALLOC.596   
+*CALL ARGPPX                                                               GKR0F305.904   
+*CALL ARGFLDPT                                                             GSM1F405.568   
+     &              ICODE,CMESSAGE)                                        @DYALLOC.597   
+                                                                           ATMSTEP1.255   
+      IF(LTIMER) THEN                                                      ATMSTEP1.256   
+        CALL TIMER('ST_DIAG2',4)                                           ATMSTEP1.257   
+      END IF                                                               ATMSTEP1.258   
+                                                                           ATMSTEP1.259   
+      IF (ICODE.GT.0) THEN                                                 ATMSTEP1.260   
+        RETURN                                                             ATMSTEP1.261   
+      ENDIF                                                                ATMSTEP1.262   
+                                                                           ATMSTEP1.263   
+CL   Output diagnostics at end of timestep                                 ATMSTEP1.264   
+                                                                           ATMSTEP1.265   
+      IF(LTIMER) THEN                                                      ATMSTEP1.266   
+        CALL TIMER('STASH   ',3)                                           ATMSTEP1.267   
+      END IF                                                               ATMSTEP1.268   
+                                                                           ATMSTEP1.269   
+      CALL STASH(a_sm,a_im,0,SPD1,                                         GKR0F305.905   
+*CALL ARGSIZE                                                              @DYALLOC.599   
+*CALL ARTD1                                                                @DYALLOC.600   
+*CALL ARTDUMA                                                              @DYALLOC.601   
+*CALL ARTDUMO                                                              @DYALLOC.602   
+*CALL ARTDUMW                                                              GKR1F401.188   
+*CALL ARTSTS                                                               @DYALLOC.603   
+*CALL ARGPPX                                                               GKR0F305.906   
+     &           ICODE,CMESSAGE)                                           @DYALLOC.607   
+                                                                           ATMSTEP1.271   
+      IF(LTIMER) THEN                                                      ATMSTEP1.272   
+        CALL TIMER('STASH   ',4)                                           ATMSTEP1.273   
+      END IF                                                               ATMSTEP1.274   
+                                                                           ATMSTEP1.275   
+      IF (ICODE.GT.0) THEN                                                 ATMSTEP1.276   
+        RETURN                                                             ATMSTEP1.277   
+      ENDIF                                                                ATMSTEP1.278   
+                                                                           ATMSTEP1.279   
+CL  Call max/min and patch prints if requested                             ATMSTEP1.280   
+                                                                           ATMSTEP1.281   
+      CALL MMPP_CTL(                                                       @DYALLOC.608   
+*CALL ARGSIZE                                                              @DYALLOC.609   
+*CALL ARTD1                                                                @DYALLOC.610   
+*CALL ARTDUMA                                                              @DYALLOC.611   
+*CALL ARTPTRA                                                              @DYALLOC.612   
+*CALL ARTCONA                                                              @DYALLOC.613   
+     &              ICODE,CMESSAGE)                                        @DYALLOC.614   
+                                                                           ATMSTEP1.289   
+                                                                           TJ270193.35    
+      IF (L_WRIT_ATMSTEP .AND.                                             GSS1F304.1163  
+     &    (A_STEP.LE.T_WRITD1_END .OR. T_WRITD1_END .EQ. 0)) THEN          GSS1F304.1164  
+                                                                           GSS1F304.1165  
+      IF (A_STEP.EQ.T_WRITD1_START .OR.                                    GSS1F304.1166  
+     &    WRITD1_TEST.GT.WRITD1_TEST_PREV) THEN                            GSS1F304.1167  
+                                                                           GSS1F304.1168  
+           CALL DUMPCTL (                                                  GKR4F403.89    
+*CALL ARGSIZE                                                              GKR4F403.90    
+*CALL ARTD1                                                                GKR4F403.91    
+*CALL ARTDUMA                                                              GKR4F403.92    
+*CALL ARTDUMO                                                              GKR4F403.93    
+*CALL ARTDUMW                                                              GKR4F403.94    
+*CALL ARTCONA                                                              GKR4F403.95    
+*CALL ARTPTRA                                                              GKR4F403.96    
+*CALL ARTSTS                                                               GKR4F403.97    
+*CALL ARGPPX                                                               GKR4F403.98    
+     &          atmos_sm,0,.TRUE.,'endatmstep',a_step,                     GIE1F405.23    
+     &          ICODE,CMESSAGE)                                            GKR4F403.100   
+                                                                           GSS1F304.1170  
+      END IF                                                               GSS1F304.1171  
+                                                                           GSS1F304.1172  
+      END IF                                                               GSS1F304.1173  
+                                                                           GSS1F304.1174  
+      WRITD1_TEST_PREV = WRITD1_TEST                                       GSS1F304.1175  
+                                                                           ATMSTEP1.355   
+9999  CONTINUE                                                             VSB1F304.106   
+      RETURN                                                               ATMSTEP1.356   
+      END                                                                  ATMSTEP1.357   
+                                                                           ATMSTEP1.358   
+*ENDIF                                                                     ATMSTEP1.359   

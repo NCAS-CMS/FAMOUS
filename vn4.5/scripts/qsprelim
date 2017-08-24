@@ -1,0 +1,783 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script:  qsprelim
+#LL---------------------------------------------------------------------
+#LL
+#LL  Purpose: Performs history file preprocessing and dump setup/
+#LL           reconfiguration from initial data, imported data and
+#LL           ancillary fields.
+#LL
+#LL  Author:   T C Johns          Date:           21 February 1990
+#LL  Reviewer: M A Smith          Date of review:
+#LL
+#LL  Tested under OS version: UNICOS 6.1.5A
+#LL
+#LL  Code version no: 3.1         Date: 11 February 1993
+#LL
+#LL  Modification History:
+#LL    20/04/90  Call combine script operationally if $TYPE=CRUN
+#LL          (ie. continuation) is flagged.  A separate if block is
+#LL          provided in step 1 for OPERATIONAL models.  All error exits
+#LL          should now generate an abort condition at the top-level.
+#LL  16/05/90  Environment variable SETUP replaced by TYPE = 'NRUN'.
+#LL  26/06/90  Dump reconfiguration program incorporated.
+#LL  21/08/90  PPXREF attached to fort.2 for reconfiguration program.
+#LL  03/09/90  OROG attached to fort.96 not 94 for configuration
+#LL          program (This error also corrected in vn1.3 prelim script)
+#LL  23/10/90  vn1.8: file SSU added to reconfiguration step on unit 29;
+#LL          GRIBCODE added to reconfiguration step on unit 18.
+#LL          PURGEHIST option added
+#LL  28/10/90  In-line documentation improved.
+#LL  01/11/90  File RECONTMP added ( -su fort.19 work file )
+#LL  08/11/90  Decoding of FTXX filenames altered due to unreliable
+#LL            formatting of IBM NAMELISTs.
+#LL  12/11/90  GRIBCODE variable renamed as AGRIB throughout.
+#LL  13/11/90  PURGEHIST done under $TYPE != "CRUN" not $TYPE = "NRUN"
+#LL  14/11/90  Error return codes changed to E_COND variables
+#LL            SSU attached -su
+#LL  03/12/90  Debug added after reconfiguration failure
+#LL  11/12/90  Export RECONTMP and AINITIAL to be used in reconfig prog
+#LL  10/04/91  Export ASTART to be used in reconfig program. (R.A.S)
+#LL  17/05/91  Rebuild reconfiguration program if required. (R.A.S)
+#LL  12/06/91  Name of reconfiguration program fixed not chosen by user.
+#LL  16/07/91  qserror_pickup renamed as qspickup (TCJ)
+#LL   1/08/91  Altered libutil.a to libutil2.2.a for gribcode object
+#LL            module. (RAS)
+#LL  17/09/91  Removed reference to cft77402 compilier as now default.
+#LL            Alter order for UTIL effects where grib code object
+#LL            modules are taken from. They should come from util2.2
+#LL            NOT met.
+#LL  18/10/91  Altered so that reconfiguration load module name defined
+#LL            in user interface script. (RAS)
+#LL  22/11/91  Altered reconfiguration update to a quick update instead
+#LL            of a full update.(RAS)
+#LL  26/11/91  Added AGRIB SSU OZONE SMCSNOWD DSOILTMP SOILTYPE VEGTYPE
+#LL            SSTIN SICEIN CURNTIN MASK SLABHCON OROG to list of
+#LL            enviroment variables exported
+#LL   7/01/92  Replaced references to TMPDIR by TEMP (RAS)
+#LL  13/01/92  PPXREF moved unit 1 and PPXREFU added to unit 2 (RAS)
+#LL            -su added to PPXREF assign statement.
+#LL  29/01/92  Alter reconfiguration to allow atmosphere and/or ocean
+#LL            reconfiguration. Introduced RECONSEGLIB to control
+#LL            libraries on the load step if reconfig program recompiled
+#LL            Update step for recompile option controlled by
+#LL             and changed to normal update. (RAS)
+#LL  21/02/92  Altered to send information from remaking reconfiguration
+#LL            program to $OUTPUT
+#LL   2/03/92  Added PPXREF to list of variables exported.
+#LL   6/03/92  Further alterations to make the ocean reconfiguration
+#LL            work.
+#LL  29/04/92  Replace ANOMFLUX with FLUXCORR, flux correction file.
+#LL   6/07/92  Added ATRACER unit 48 and OTRACER unit 49.
+#LL   3/08/92  Altered recompilation of reconfiguration to use cf77 not
+#LL            cft77 and segldr separately
+#LL   6/11/92  NUPCOMMD replaces update in script.
+#LL  13/11/92  removed -su assigns from script.
+#LL  05/02/93  Use qsmakeexec to recompile qsxrecon
+#LL            Add new environment variables for FORTRAN i/o units.
+#LL  11/02/93  Added PERTURB and TRANSP to list of environment variables
+#LL  15/07/93  Changed UPDATEOPT to UPDOUTA.
+#LL  01/11/93  Environment variable SOURCES added (unit 110). DLRoberts
+#LL  05/09/94  Environment variables USRANCIL,USRMULTI,OUSRANCL,
+#LL            OUSRMULT,MURKFILE added at units 111-114 & 109 RTHBarnes
+#LL  02/11/94  vn3.4  Used LIBPATH for directory path and added LIBNAME
+#LL                   to specify library names. Similarly changed
+#LL                   RECONSEGLIB RECONSEGLIBNAME and added RECONLIBDIR.
+#LL                   Added RECONOPT and EXECOPT. Changed XREF to
+#LL                   EXECXREF.  K Rogers
+#LL  02/05/95  vn3.5  FTXX.new file introduced for assignment of
+#LL                   filenames to envirionment variables.
+#LL  06/07/95  Remove redundant code for $INTERACTIVE call qsAAC_verify
+#LL  13/03/96  vn4.1  Introduce Wave sub-model.  RTHBarnes.
+#LL  14/06/96  vn4.1  Moved setting of EXECXREF to top level SCRIPT
+#LL  21/05/96  Rename env. variable SOURCES to SULPEMIS. Add new
+#LL  22.05.97  4.3    added error checking of return codes in the
+#LL                   section of code which builds a user version of
+#LL                   qxrecon_dump (S Robertson)
+#LL            env. variables SO2NATEM and CHEMOXID. D. Robinson.
+#LL  28/08/97  vn4.4  *DEF CRAYF90 around assigns.
+#LL                   Setlabel to make recon use highmem pe's   LCW
+#LL  01.09.97  4.4    Provided facility to include compiler overrides
+#LL                   when remaking reconfiguration.  (S Robertson)
+#LL  17/02/97  vn4.3  Namelist edits and assigns added
+#LL  19/01/98  4.4    Add tar of recon compile files. K Rogers
+#LL 4.4  08/12/97  Copy thist_keep to thist file if it exists. K Rogers
+#LL  15/09/97  vn4.4  Add ancillary file environment variables for
+#LL                   sulphate loading patterns, surface type initial
+#LL                   fractions, initial vegetation state and vegetation
+#LL                   disturbance.   R.A.Betts
+#LL  15/03/99  Control use of setlabel on reconfiguration by use of
+#LL            UM_PE_LABEL (T3E only)
+#LL                                                        P.Burton
+#LL  29/10/98  4.5   Send output from reconfiguration script
+#LL                  pre-processing and make to output file.
+#LL                  Improve messages to output file.
+#LL                  K Rogers.
+#LL  17/06/98  vn4.5  Add ancillary file environment variable for
+#LL                   surface anthropogenic CO2 emissions. C.D.Jones
+#LL  12/06/98  vn4.5  *DEF CRAYF90 around assigns. A Van der Wal
+#LL  12/05/98  vn4.5  Export all envvars defined by $FTXX generically
+#LL                   instead of explicit references. R.Rawlins
+#LL
+#LL  Programming standard: UM Doc Paper 3A, version 1 (29/10/90)
+#LL
+#LL  Project task: C0
+#LL
+#LL  Logical components covered: J01
+#LL
+#LL  External documentation:
+#LL    UM Doc Paper C0 - The top-level control system
+#LL
+#L   Interface and arguments: ------------------------------------------
+#L
+#L   qsprelim run_id
+#L
+#L     {run_id} ::= 5 character run identifier
+#L
+#L   -------------------------------------------------------------------
+#L
+#L   Called by: qsmaster
+#L   Calls    : qssetup script
+#L              qscombine script
+#L              qspickup script
+#L              qsAAC_verify script
+#L              qsmakeexec script - if qxrecon_dump remade
+#L              qxrecon_dump program
+#L
+#L   Imports:
+#L     SETOPT        - shell options
+#L     TEMP          - temporary directory name
+#L     TYPE          - run type (NRUN or CRUN)
+#L     OPERATIONAL   - operational flag
+#L     PURGEHIST     - flag to delete old history file if NRUN
+#L     INITHIS          - Initial history filename
+#L     ICTL          - interim control filename
+#L     HKFILE        - operational housekeeping filename
+#L     THIST         - temporary history filename
+#L     PHIST         - permanent history filename
+#L     IHIST         - interim history filename
+#L     FTXX          - FORTRAN unit cross-reference filename
+#L     PPXREFU       - User supplied PP cross-reference file
+#L     RECONA        - flag to enable atmosphere reconfiguration
+#L     RECONO        - flag to enable ocean reconfiguration
+#L     RECONEW       - new reconfiguration excutable
+#L     LOADRECON     - load module for reconfiguration
+#L     RECONCTL      - reconfiguration control filename
+#L     OUTPUT        - printed output filename
+#L     E_NORMAL      - error return code (normal completion)
+#L     E_ABORT       - error return code (abort condition)
+#L     UPDATE_RECON  - user updates for reconfiguration
+#L     UPDATE_RECONC - user c code updates for reconfiguration
+#L     UPDOUTA       - update output options (atmos)
+#L     UPDOUTO       - update output options (ocean)
+#L     RECONSEGLIB   - object library paths for reconfiguration segldr
+#L                     step
+#L     RECONSEGLIBNAME-object library names for reconfiguration segldr
+#L                     step
+#L     RECONOPT      - specify compiler options for reconfiguration
+#L     NUPCOMMD      - update or nupdate
+#L
+#L   Exports:
+#L     FILENV        - FORTRAN file environment
+#L     PPXREF        - PP cross-reference file
+#L     AINITIAL      - atmosphere initial dump
+#L     OINITIAL      - ocean initial dump
+#L     WINITIAL      - wave initial dump
+#L     ASTART        - atmosphere start dump
+#L     OSTART        - ocean start dump
+#L     WSTART        - wave start dump
+#L     AGRIB         - GRIBcode imported data (atmos)
+#L     SSU           - SSU imported data
+#L     RECONTMP      - reconfiguration work file
+#L     OZONE         - ozone
+#L     SMCSNOWD      - soil moisture/snowdepth
+#L     DSOILTMP      - deep soil temperature
+#L     SOILTYPE      - soil-type dependent fields
+#L     VEGTYPE       - veg-type dependent fields
+#L     SSTIN         - sea surface temperature
+#L     SICEIN        - sea ice fields
+#L     CANOPYW       - canopy water
+#L     CURNTIN       - surface currents
+#L     MASK          - land-sea mask
+#L     OROG          - orography
+#L     ATRACER       - Atmosphere tracers
+#L     OTRACER       - Ocean tracers
+#L     PERTURB       - Perturbation input file (reconfiguration)
+#L     TRANSP        - Input dump containing transplant fields for
+#L                     reconfiguration.
+#L     SULPEMIS       - Single level Sulphur Emissions
+#L     USRANCIL      - user ancillaries file
+#L     USRMULTI      - multi-level user ancillaries file
+#L     OUSRANCL      - ocean user ancillaries file
+#L     OUSRMULT      - ocean multi-level user ancillaries file
+#L     MURKFILE      - file for murkiness aerosol and source term
+#L  SO2NATEM
+#L  CHEMOXID
+#L     AEROFCG       - ancillary file for sulphate loading patterns
+#L     FRACINIT      - ancillary file for surface type initial fractions
+#L     VEGINIT       - ancillary file for vegetation initial state
+#L     DISTURB       - ancillary file for vegetation disturbed fraction
+#L     CO2EMITS      - ancillary file for CO2 emissions
+#
+#L     UNIT02
+#L     UNIT18
+#L     LIBPATH       - object library paths for executable segldr step
+#L     LIBNAME       - object library names for executable segldr step
+#L     EXECOPT       - extra compile options for making executable
+#L
+#L   Local variables:
+#L     CC            - script/executable completion code
+#L     WFIN          - windstress, wind-mixing
+#L     HFLUXIN       - solar and remaining heat flux
+#L     PMEIN         - precipitation-evaporation
+#L     ICEFIN        - rad over ice, snow+sublimation
+#L     AIRTMP        - air temperature
+#L     SALINITY      - surface salinity
+#L     FLUXCORR      - heat/salt flux corrections
+#L     SLABHCON      - heat convergence (slab model)
+#L     EXECXREF      - reference file for remaking reconfiguration
+#L     MODULE        - reconfiguration dump name for EXECXREF
+#L     USER_MODS     - location of user fortran mods
+#L     USER_CMODS    - location of user c mods
+#L     USER_UPDATES  - Yes for user mods supplied
+#L     EXECPATH      - location of loadmodule required by qsmakeexec
+#L     var           - for loop variable
+#L
+#L----------------------------------------------------------------------
+ulimit -s unlimited
+
+#L Step 0 - Set up environment variables
+#L
+set -$SETOPT
+
+RECONTMP=$TEMP/$RUNID.recontmp             # work file for reconfig
+>$RECONTMP                                 # precreate with w access
+#
+#L explicit export required for qxrecon_dump in portable applications
+#L  (other exports for file names accessed from $FTXX file performed
+#L   after associating physical file names).
+#
+export RECONTMP
+
+#L
+#L Step 0.1 - purge old history file
+#L
+if test $TYPE != "CRUN"
+then
+  if $PURGEHIST
+  then
+    rm $PHIST 2>/dev/null
+  fi
+fi
+#
+#L----------------------------------------------------------------------
+#L Step 1 - History and control file processing
+#L
+if test -f $THIST -a $TYPE != 'NRUN'          # THIST existing file
+then                                          # (not NRUN operationally)
+  if test -s $THIST                         # THIST non-null
+  then
+    echo -e
+    echo -e "$0: Executing qspickup"
+    echo -e
+    qspickup $THIST $PHIST
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e "$0: Error in qspickup step"
+      if $OPERATIONAL
+      then
+        if test -f $INITHIS                      # INITHIS existing file
+        then
+          echo -e
+          echo -e "$0: Executing setup"
+          echo -e
+          qssetup $INITHIS $IHIST $FTXX
+          CC=$?
+          if test $CC -ne 0
+          then
+            echo -e "$0: Error in setup step"
+            exit $CC
+          fi
+        else                                  # INITHIS non-existent
+          echo -e "$0: Model $1 - Error: no master control file found"
+          exit $E_ABORT
+        fi
+      else
+        exit $CC
+      fi
+    fi
+    rm $THIST
+    echo -e
+    echo -e "$0: Executing combine"
+    echo -e
+    qscombine $PHIST $IHIST $FTXX
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e "$0: Error in combine step"
+      if $OPERATIONAL
+      then
+        if test -f $INITHIS                      # INITHIS existing file
+        then
+          echo -e
+          echo -e "$0: Executing setup"
+          echo -e
+          qssetup $INITHIS $IHIST $FTXX
+          CC=$?
+          if test $CC -ne 0
+          then
+            echo -e "$0: Error in setup step"
+            exit $CC
+          fi
+        else                                  # INITHIS non-existent
+          echo -e "$0: Model $1 - Error: no master control file found"
+          exit $E_ABORT
+        fi
+      else
+        exit $CC
+      fi
+    fi
+  else
+    echo -e "$0: Model $1 - Error: empty temporary history file"
+    exit $E_ABORT
+  fi
+else                                          # THIST non-existent file
+  if test -f $PHIST -a $TYPE != 'NRUN'        # PHIST existing file
+  then                                        # (not NRUN operationally)
+    if test ! -s $PHIST                       # PHIST null
+    then
+      echo -e "$0: Model $1 - Error: perm hist file empty"
+      exit $E_ABORT
+    else                                      # PHIST non-null
+      echo -e
+      echo -e "$0: Executing combine"
+      echo -e
+      qscombine $PHIST $IHIST $FTXX
+      CC=$?
+      if test $CC -ne 0
+      then
+        echo -e "$0: Error in combine step"
+        if $OPERATIONAL
+        then
+          if test -f $INITHIS                    # INITHIS existing file
+          then
+            echo -e
+            echo -e "$0: Executing setup"
+            echo -e
+            qssetup $INITHIS $IHIST $FTXX
+            CC=$?
+            if test $CC -ne 0
+            then
+              echo -e "$0: Error in setup step"
+              exit $CC
+            fi
+          else                                # INITHIS non-existent
+            echo -e "$0: Model $1 - Error: no master control file found"
+            exit $E_ABORT
+          fi
+        else
+          exit $CC
+        fi
+      fi
+    fi
+  else                                        # PHIST non-existent fil
+    if test -f $INITHIS                          # INITHIS existing file
+    then
+      echo -e
+      echo -e "$0: Executing setup"
+      echo -e
+      qssetup $INITHIS $IHIST $FTXX
+      CC=$?
+      if test $CC -ne 0
+      then
+        echo -e "$0: Error in setup step"
+        exit $CC
+      fi
+    else                                      # INITHIS non-existent
+      echo -e "$0: Model $1 - Error: no master control file found"
+      exit $E_ABORT
+    fi
+  fi
+
+  # Copy back backup version of the thist file if one exists
+  # in case the run fails before the next safe restart point
+  # so that it can go back to the last safe restart point
+  # rather than the beginning of this run which is not at a
+  # safe restart point.
+  if test $TYPE != 'NRUN'
+  then
+    if $OPERATIONAL
+    then
+      :
+    else
+      if test -s $THIST1
+      then
+        mv $THIST1 $THIST
+        CC=$?
+        if test $CC -ne 0
+        then
+          echo -e "qsprelim: Unable to move $THIST1 to $THIST. Error: $CC"
+        else
+          echo -e "qsprelim: $THIST1 moved to $THIST"
+        fi
+      fi
+    fi
+  fi
+fi
+#
+#L----------------------------------------------------------------------
+#L Step 2 - Set up start dump(s) at the requested resolution with
+#L         appropriate diagnostic slots reserved, if new run and
+#L         initial dump needs to be reconfigured to new resolution or
+#L         diagnostic fields
+#L *** Reconfiguration currently NOT available for Wave sub-model
+
+if test $TYPE = 'NRUN' -a $RECONW = 'true'
+then
+#L Just copy initial wave dump to start file
+  cp $WINITIAL $WSTART
+fi
+#L
+if test $TYPE = 'NRUN'
+then
+ if test $RECONA = true -o $RECONO = true
+ then
+   if test $RECONEW = true
+   then
+
+     # Rebuild the reconfiguration with any user mods supplied.
+     echo -e 'qsprelim: %RECONEW% output from remaking reconfiguration'\
+     >> $OUTPUT
+
+     # Additional variables
+
+     MODULE=qxrecon_dump                 # module name
+     EXECPATH=$LOADRECON                 # loadmodule path
+     LIBPATH=$RECONSEGLIB                # object library path
+     LIBNAME=$RECONSEGLIBNAME            # object library names
+     EXECOPT=$RECONOPT
+     USER_MODS=$UPDATE_RECON
+     USER_CMODS=$UPDATE_RECONC
+     USER_UPDATES="YES"
+     RECONVARS=${RECONVARS:-$URECONDIR/recon_vars}
+     RECONVARSOLD=${RECONVARSOLD:-$URECONDIR/recon_vars.old}
+
+# Extract source code required to create reconfiguration executable
+
+     mkdir $URECONDIR
+     CC=$?
+     # report an error if the file could not be created and didn't
+     # already exist
+     if test $CC -ne 0 -a ! -d $URECONDIR
+     then
+       echo -e qsprelim: Failed to create $URECONDIR
+       exit $CC
+     fi
+
+# Unpack tar file containing reconfiguration compile directory files
+# if necessary
+
+  if test $SKIP_TAR_COMPDIR != 'true'
+  then    # tar file system in use for compile files
+
+    if test `ls $URECONDIR/exec_build/qxrecon_dump_dir/*.f \
+                                  2>/dev/null|wc -w`       -eq 0
+    then     # there are no .f files (so no manual user editing)
+
+      if test -s $RECON_TAR.gz
+      then     # zipped tar file exists ie. this is not the initial run
+
+        gzip -d $RECON_TAR.gz   # unzip tar file
+
+        if test $? -eq 0
+        then
+
+          if test -s $RECON_TAR
+          then     # tar file exists ie. this is not the initial run
+
+            cd $URECONDIR/exec_build/qxrecon_dump_dir
+            if test $? -eq 0   # successful cd
+            then
+              tar -xf $RECON_TAR  # unpack compile tar file
+              if test $? -eq 0   # successful untar
+              then
+                rm $RECON_TAR  # remove tar file
+              fi
+            fi  # test $? on cd
+
+          fi    # test -s $RECON_TAR
+
+        fi  # test $? -eq 0
+
+      elif test -s $RECON_TAR
+      then     # zip file doesn't exist but tar file does
+
+        cd $URECONDIR/exec_build/qxrecon_dump_dir
+        if test $? -eq 0   # successful cd
+        then
+          tar -xf $RECON_TAR  # unpack compile tar file
+          if test $? -eq 0   # successful untar
+          then
+            rm $RECON_TAR  # remove tar file
+          fi
+        fi  # test $? on cd
+
+      fi    # test -s $RECON_TAR.gz
+
+    fi      # test `ls -l $URECONDIR/.../*.f>/dev/null` -ne 0
+  fi        # test $SKIP_TAR_COMPDIR != 'true'
+
+
+
+     if test -s $JOBDIR/RECON_COMP_OPTS
+     then
+
+       # Compiler overrides have been supplied by the user, create a
+       # recon compile_vars file with these overrides.
+       rm -f $URECONVARS
+       allcompfiles RECON_COMP_OPTS $JOBDIR $RECONVARS
+     else
+
+       # Use central compile_vars file for recompilation of
+       # reconfiguration.
+       cp $UMDIR/vn$VN/source/compile_vars $RECONVARS
+     fi
+
+     if [[ -f $RECONVARSOLD ]]
+     then
+       # a recon compile_vars file exists from a previous run
+       cmp -s $RECONVARS $RECONVARSOLD
+       rel1=$?
+
+       if test $rel1 -ne 0
+       then
+         # Need to relink, remove reconfiguration executable
+         #
+         touch  $URECONDIR/exec_build/qxrecon_dump_dir/*.f
+         rm -rf $URECONDIR/exec_build/qxrecon_dump_dir/$MODULE
+         CC=$?
+         if test $CC -ne 0
+         then
+           echo -e "qsprelim ($SECONDS): ***\tCannot relink, \
+failed to remove $MODULE executable."
+           exit $CC
+         fi
+       fi
+     fi
+
+     # Call qsconf to extract source for reconfiguration with any user
+     # mods and the recon compile_vars file.
+     qsconf \
+              -outdir $URECONDIR \
+              -compvar $RECONVARS \
+              -femod $UPDATE_RECON \
+              -cemod $UPDATE_RECONC \
+	      -execs qxrecon_dump  >> $OUTPUT 2>&1
+     CC=$?
+
+     if test $CC -ne 0
+     then
+       echo -e qsprelim: Failed in qsconf extracting code for user \
+	 reconfiguration program.
+       exit $CC
+     fi
+
+     cd $URECONDIR/exec_build/qxrecon_dump_dir
+     CC=$?
+     if test $CC -ne 0
+     then
+       echo -e qsprelim: Failed to move to $URECONDIR/exec_build/\
+qxrecon_dump_dir/
+       exit $CC
+     fi
+
+     # Remove zero length files from the reconfiguration
+     # compile directory
+
+echo -e "\nqsprelim($SECONDS): ***\tRemoving zero length files"
+find $URECONDIR/exec_build/qxrecon_dump_dir -size 0 -exec rm {} \;
+echo -e "qsprelim($SECONDS): ***\tFinished removing files\n"
+
+
+
+
+
+
+     # run make to build executable
+     echo -e "\nqsprelim: ***\tOutput from reconfiguration make\n" \
+	  >> $OUTPUT
+     make >> $OUTPUT 2>&1
+     CC=$?
+     if test $CC -ne 0
+     then
+       echo -e qsprelim: Failed in make of user reconfiguration program.
+       exit $CC
+     else
+       echo -e qsprelim: User reconfiguration program built successfully.
+     fi
+      if [[ "$UM_PE_LABEL" != "" ]]
+      then
+        setlabel -l $UM_PE_LABEL \
+          $URECONDIR/exec_build/qxrecon_dump_dir/qxrecon_dump
+      fi
+     cp $URECONDIR/exec_build/qxrecon_dump_dir/qxrecon_dump \
+         $LOADRECON
+     CC=$?
+     if test $CC -ne 0
+     then
+       echo -e qsprelim: Failed to copy $URECONDIR/exec_build/\
+qxrecon_dump_dir/qxrecon_dump $LOADRECON
+       exit $CC
+     fi
+     # NEED COMMENT
+     mv $RECONVARS $RECONVARSOLD
+
+# Pack all reconfiguration compile directory files into a tar file
+# and remove compile files
+
+  if test $SKIP_TAR_COMPDIR != 'true'
+  then    # tar file system in use for compile files
+
+    cd $URECONDIR/exec_build/qxrecon_dump_dir
+    if test $? -eq 0  # successful cd to compile directory
+    then
+      tar -cf $RECON_TAR * # pack compile tar file
+      if test $? -eq 0              # successful tar
+      then
+
+        gzip $RECON_TAR
+        if test $? -eq 0              # successful gzip
+        then
+
+          cd $DATAW
+          rm -r $URECONDIR/exec_build/qxrecon_dump_dir
+          mkdir $URECONDIR/exec_build/qxrecon_dump_dir
+
+          echo -e "-----------------------------"    >>$COMP_README
+          echo -e "Reconfiguration compile files"    >>$COMP_README
+          echo -e "-----------------------------"    >>$COMP_README
+          echo -e "To unpack tar file:"              >>$COMP_README
+          echo -e "cd $URECONDIR/exec_build/qxrecon_dump_dir" \
+                          " # compile directory"  >>$COMP_README
+          echo -e "gzip -d $RECON_TAR.gz # unzip tar file" \
+                                                  >>$COMP_README
+          echo -e "tar -xf $RECON_TAR # extract all files" \
+                                                  >>$COMP_README
+          echo -e "or"                               >>$COMP_README
+          echo -e "tar -xf $RECON_TAR reconf1.f" \
+            " # extract individual file(s)"       >>$COMP_README
+          echo -e                                    >>$COMP_README
+          echo -e "To repack tar file:"              >>$COMP_README
+          echo -e "cd $URECONDIR/exec_build/qxrecon_dump_dir" \
+                            " # compile directory">>$COMP_README
+          echo -e "tar -cf $RECON_TAR *" \
+                   " # tar whole directory"       >>$COMP_README
+          echo -e "or"                               >>$COMP_README
+          echo -e "tar -uf $RECON_TAR reconf1.f # update" \
+            " individual file(s) in tar file"     >>$COMP_README
+          echo -e "gzip $RECON_TAR # zip tar file"   >>$COMP_README
+          echo -e "rm * # remove .f, .c files etc"   >>$COMP_README
+          echo -e                                    >>$COMP_README
+        else
+          rm $RECON_TAR # remove tar file
+        fi
+
+      else
+        rm $RECON_TAR  # remove tar file
+      fi
+    fi   # test $? -eq 0  # successful cd to compile directory
+  fi     # test $SKIP_TAR_COMPDIR != 'true'
+   fi
+#L
+#L Step 2A - Associate physical file names with environment variables
+#L          according to the list in FTXX.
+#L
+# set up file containing env vars by changing ':' to '='
+sed "s/ *: */=/" $FTXX >$FTXX.new
+chmod 755 $FTXX.new
+. $FTXX.new
+#L export all variable names implicitly
+echo -e `cat $FTXX|cut -d: -f1` > $FTXX.vars
+for var in `cat $FTXX.vars`
+do
+  export $var
+done
+#L
+#L
+#L Step 2B - Set up environment variables for FORTRAN i/o units.
+#L
+  UNIT02=$PPXREFU
+UNIT22=$STASHMSTR
+  UNIT18=$AGRIB
+
+# explicit export required by qxrecon_dump
+
+  export UNIT02 UNIT18
+export UNIT22
+
+#L
+#L Step 2D - Run the reconfiguration program (logic controlled by file
+#L          $RECONCTLA)
+#L
+    if test $RECONA = true
+  then
+    echo -e
+    echo -e "$0: Executing dump reconfiguration program $LOADRECON"
+    echo -e
+    echo -e "qsprelim:  %RECONA% Atmosphere reconfiguration step" >>$OUTPUT
+    echo -e " " >>$OUTPUT
+
+    UNIT05=$RECONCTLA
+    export UNIT05
+
+    $LOADRECON <$RECONCTLA >>$OUTPUT
+
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e "$0: Error in dump reconfiguration - see OUTPUT"
+#      debug -s $LOADRECON -B
+#      debugview $LOADRECON core
+      exit $CC
+    fi
+  fi
+#L
+#L Step 2E - Run the reconfiguration program (logic controlled by file
+#L          $RECONCTLO)
+#L
+    if test $RECONO = true
+  then
+    echo -e
+    echo -e "$0: Executing dump reconfiguration program $LOADRECON"
+    echo -e
+   echo -e "qsprelim:  %RECONO% Ocean reconfiguration step" >>$OUTPUT
+    echo -e " " >>$OUTPUT
+
+    UNIT05=$RECONCTLO
+    export UNIT05
+
+    $LOADRECON <$RECONCTLO >>$OUTPUT
+
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e "$0: Error in dump reconfiguration - see OUTPUT"
+#      debug -s $LOADRECON -B
+#      debugview $LOADRECON core
+      exit $CC
+    fi
+  fi
+ fi
+fi
+#
+########################################################################

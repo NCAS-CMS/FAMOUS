@@ -1,0 +1,297 @@
+*IF DEF,A13_1C                                                             COFUV1C.2     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    COFUV1C.3     
+C                                                                          COFUV1C.4     
+C Use, duplication or disclosure of this code is subject to the            COFUV1C.5     
+C restrictions as set forth in the contract.                               COFUV1C.6     
+C                                                                          COFUV1C.7     
+C                Meteorological Office                                     COFUV1C.8     
+C                London Road                                               COFUV1C.9     
+C                BRACKNELL                                                 COFUV1C.10    
+C                Berkshire UK                                              COFUV1C.11    
+C                RG12 2SZ                                                  COFUV1C.12    
+C                                                                          COFUV1C.13    
+C If no contract has been raised with this copy of the code, the use,      COFUV1C.14    
+C duplication or disclosure of it is strictly prohibited.  Permission      COFUV1C.15    
+C to do so must first be obtained in writing from the Head of Numerical    COFUV1C.16    
+C Modelling at the above address.                                          COFUV1C.17    
+C ******************************COPYRIGHT******************************    COFUV1C.18    
+C                                                                          COFUV1C.19    
+CLL   SUBROUTINE COEFF_UV -----------------------------------------        COFUV1C.20    
+CLL                                                                        COFUV1C.21    
+CLL   PURPOSE:  CALCULATES EFFECTIVE DIFFUSIVE COEFFICIENTS FOR U AND V    COFUV1C.22    
+CLL             IN NS AND EW DIRECTIONS                                    COFUV1C.23    
+CLL              IF STEEP SLOPE THEN EFFECTIVE DIFFUSION IS ZERO.          COFUV1C.24    
+CLL                                                                        COFUV1C.25    
+CLL              NOTE PRESSURE ARRAY NEEDS TO BE GLOBAL (SHARED)           COFUV1C.26    
+CLL              FOR MULTI-TASKING AT 3.4 UPWARDS.                         COFUV1C.27    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  COFUV1C.28    
+CLL   WAS VERSION FOR CRAY Y-MP                                            COFUV1C.29    
+CLL                                                                        COFUV1C.30    
+CLL  MODEL            MODIFICATION HISTORY                                 COFUV1C.31    
+CLL VERSION  DATE                                                          COFUV1C.32    
+!LL   4.4   11/08/97  New version optimised for T3E.                       COFUV1C.33    
+!LL                   Not bit-reproducible with COFUV1A.                   COFUV1C.34    
+CLL   4.4    25/07/97 Calling sequence changed from once per level         COFUV1C.35    
+CLL                   to once per dynamics sweep, in                       COFUV1C.36    
+CLL                   order to improve MPP scalability.                    COFUV1C.37    
+CLL                   A. Dickinson                                         COFUV1C.38    
+CLL                                                                        COFUV1C.39    
+CLL                                                                        COFUV1C.40    
+CLL   PROGRAMMING STANDARD:                                                COFUV1C.41    
+CLL                                                                        COFUV1C.42    
+CLL   SYSTEM COMPONENTS COVERED: P132                                      COFUV1C.43    
+CLL                                                                        COFUV1C.44    
+CLL   SYSTEM TASK: P1                                                      COFUV1C.45    
+CLL                                                                        COFUV1C.46    
+CLL   DOCUMENTATION:       THE EQUATION USED IS (47)                       COFUV1C.47    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER            COFUV1C.48    
+CLL                        NO. 10 M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON    COFUV1C.49    
+CLL                        VERSION 16 DATED 09/01/91.                      COFUV1C.50    
+CLLEND-------------------------------------------------------------        COFUV1C.51    
+                                                                           COFUV1C.52    
+C*L   ARGUMENTS:---------------------------------------------------        COFUV1C.53    
+      SUBROUTINE COEFF_UV                                                  COFUV1C.54    
+     1                 (DIFFUSION_EW,DIFFUSION_NS,                         COFUV1C.55    
+     2                 PRESSURE,PRESSURE_TEST,AK,BK,                       COFUV1C.56    
+     3                 COS_P_LATITUDE,START_U_UPDATE,                      COFUV1C.57    
+     4                 END_U_UPDATE,ROW_LENGTH,                            COFUV1C.58    
+*CALL ARGFLDPT                                                             COFUV1C.59    
+     &                 LATITUDE_STEP_INVERSE,                              COFUV1C.60    
+     5                 LONGITUDE_STEP_INVERSE,P_FIELD,U_FIELD,P_LEVELS,    COFUV1C.61    
+     6                 KD,DELTA_AK,DELTA_BK,PSTAR,COS_FUNCTION_P)          COFUV1C.62    
+                                                                           COFUV1C.63    
+      IMPLICIT NONE                                                        COFUV1C.64    
+                                                                           COFUV1C.65    
+      INTEGER                                                              COFUV1C.66    
+     *  U_FIELD            !IN DIMENSION OF FIELDS ON VELOCITY GRID        COFUV1C.67    
+     *, P_FIELD            !IN DIMENSION OF FIELDS ON PRESSURE GRID        COFUV1C.68    
+     *, P_LEVELS           !IN NUMBER OF MODEL LEVELS                      COFUV1C.69    
+     *, ROW_LENGTH         !IN NUMBER OF POINTS PER ROW                    COFUV1C.70    
+     *, START_U_UPDATE     !IN FIRST POINT TO BE UPDATED.                  COFUV1C.71    
+     *, END_U_UPDATE       !IN LAST POINT TO BE UPDATED.                   COFUV1C.72    
+                                                                           COFUV1C.73    
+! All TYPFLDPT arguments are intent IN                                     COFUV1C.74    
+*CALL TYPFLDPT                                                             COFUV1C.75    
+                                                                           COFUV1C.76    
+      REAL                                                                 COFUV1C.77    
+     * PRESSURE(P_FIELD,P_LEVELS)      !IN.3-D PRESSURE FIELD U POINTS     COFUV1C.78    
+     *          ! LEVEL_P=1 SURFACE THEN LEVEL_P=K IS LEVEL K-1            COFUV1C.79    
+     *,DIFFUSION_EW(P_FIELD,P_LEVELS)                                      COFUV1C.80    
+            !OUT EFFECTIVE EW DIFFUSION COEFF                              COFUV1C.81    
+     *,DIFFUSION_NS(P_FIELD,P_LEVELS)                                      COFUV1C.82    
+           !OUT EFFECTIVE NS DIFFUSION COEFF                               COFUV1C.83    
+                                                                           COFUV1C.84    
+                                                                           COFUV1C.85    
+      REAL                                                                 COFUV1C.86    
+     * AK(P_LEVELS)                    !IN LAYER AK'S                      COFUV1C.87    
+     *,BK(P_LEVELS)                    !IN LAYER BK'S                      COFUV1C.88    
+     *,DELTA_AK(P_LEVELS)              !IN LAYER DELTA_AK'S                COFUV1C.89    
+     *,DELTA_BK(P_LEVELS)              !IN LAYER DELTA_BK'S                COFUV1C.90    
+     *,KD(P_LEVELS)                    !IN DIFFUSION COEFF SEE EQ. (45)    COFUV1C.91    
+     *,PSTAR(P_FIELD)                  !IN PSTAR                           COFUV1C.92    
+     *,COS_P_LATITUDE(P_FIELD)         !IN COS(LAT) AT P POINTS            COFUV1C.93    
+     *,COS_FUNCTION_P(P_FIELD)         !IN                                 COFUV1C.94    
+     *,LATITUDE_STEP_INVERSE           !IN 1/(DELTA LAMDA)                 COFUV1C.95    
+     *,LONGITUDE_STEP_INVERSE          !IN 1/(DELTA PHI)                   COFUV1C.96    
+     *, PRESSURE_TEST      !IN PRESSURE ALTITUDE LIMIT FOR SLOPE TEST      COFUV1C.97    
+                                                                           COFUV1C.98    
+                                                                           COFUV1C.99    
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    COFUV1C.100   
+! Define local arrays                                                      COFUV1C.101   
+      LOGICAL MASK(P_FIELD) ! Indicates of EW_DIFFUSION to be set to       COFUV1C.102   
+!                           ! zero at a point                              COFUV1C.103   
+      REAL                                                                 COFUV1C.104   
+     * DIFFUSION_COEFFICIENT(P_FIELD)  !IN HOLD ON P GRID. FIRST POINT     COFUV1C.105   
+     *                                 ! OF ARRAY IS FIRST P POINT ON      COFUV1C.106   
+     *                                 ! SECOND P ROW. EAST-WEST           COFUV1C.107   
+     *                                 ! DIFFUSION COEFFICIENT.            COFUV1C.108   
+     *,DIFFUSION_COEFFICIENT2(P_FIELD) !IN HOLD ON P GRID. FIRST POINT     COFUV1C.109   
+     *                                 ! OF ARRAY IS FIRST P POINT ON      COFUV1C.110   
+     *                                 ! SECOND P ROW. NORTH-SOUTH         COFUV1C.111   
+     *                                 ! DIFFUSION COEFFICIENT.            COFUV1C.112   
+                                                                           COFUV1C.113   
+C DEFINE LOCAL VARIABLES                                                   COFUV1C.114   
+                                                                           COFUV1C.115   
+C LOCAL REALS.                                                             COFUV1C.116   
+      REAL                                                                 COFUV1C.117   
+     *  PRESSURE_LEVEL                                                     COFUV1C.118   
+                                                                           COFUV1C.119   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        COFUV1C.120   
+      INTEGER                                                              COFUV1C.121   
+     *  I,IJ,LEVEL,LEVEL_P                                                 COFUV1C.122   
+C   LEVEL_P=LEVEL+1 IS FOR PRESSURE TEST                                   COFUV1C.123   
+C*L   EXTERNAL SUBROUTINE CALLS: NONE---------------------------------     COFUV1C.124   
+                                                                           COFUV1C.125   
+C*---------------------------------------------------------------------    COFUV1C.126   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS END_U_UPDATE-START_U_UPDATE+1+      COFUV1C.127   
+CL                                   ROW_LENGTH                            COFUV1C.128   
+CL---------------------------------------------------------------------    COFUV1C.129   
+CL    INTERNAL STRUCTURE.                                                  COFUV1C.130   
+CL---------------------------------------------------------------------    COFUV1C.131   
+CL                                                                         COFUV1C.132   
+                                                                           COFUV1C.133   
+      DO LEVEL=1,P_LEVELS                                                  COFUV1C.134   
+                                                                           COFUV1C.135   
+C SET DIFFUSION COEFFICIENT                                                COFUV1C.136   
+        DO  I=FIRST_VALID_PT,LAST_P_VALID_PT                               COFUV1C.137   
+          DIFFUSION_COEFFICIENT2(I) = KD(LEVEL)*                           COFUV1C.138   
+     1        (DELTA_AK(LEVEL)+DELTA_BK(LEVEL)*PSTAR(I))                   COFUV1C.139   
+          DIFFUSION_COEFFICIENT(I) = COS_FUNCTION_P(I)*                    COFUV1C.140   
+     2                         DIFFUSION_COEFFICIENT2(I)                   COFUV1C.141   
+        END DO                                                             COFUV1C.142   
+                                                                           COFUV1C.143   
+                                                                           COFUV1C.144   
+                                                                           COFUV1C.145   
+CL---------------------------------------------------------------------    COFUV1C.146   
+CL    SECTION 1.     CALCULATE FIRST TERM IN EQUATION (47)                 COFUV1C.147   
+CL---------------------------------------------------------------------    COFUV1C.148   
+                                                                           COFUV1C.149   
+C   LEVEL_P=LEVEL+1 IS FOR PRESSURE TEST                                   COFUV1C.150   
+      LEVEL_P=LEVEL+1                                                      COFUV1C.151   
+C----------------------------------------------------------------------    COFUV1C.152   
+CL    TOP LEVEL LEVEL_P = P_LEVELS SINCE SLOPE TEST NEED NOT BE            COFUV1C.153   
+CL     DONE FOR TOP MOST (PRESSURE) LEVELS                                 COFUV1C.154   
+C----------------------------------------------------------------------    COFUV1C.155   
+      IF(LEVEL_P.GT.P_LEVELS)LEVEL_P=P_LEVELS                              COFUV1C.156   
+C----------------------------------------------------------------------    COFUV1C.157   
+CL    SECTION 1.1    CALCULATE DELTALAMBDA TERMS                           COFUV1C.158   
+C                  DELTAPHIKLAMBDA*1/(DELTALAMBDA)SQUARED                  COFUV1C.159   
+C----------------------------------------------------------------------    COFUV1C.160   
+                                                                           COFUV1C.161   
+      DO I= START_U_UPDATE,END_U_UPDATE                                    COFUV1C.162   
+       DIFFUSION_EW(I,LEVEL) = 0.5*(DIFFUSION_COEFFICIENT(I+ROW_LENGTH)    COFUV1C.163   
+     &            + DIFFUSION_COEFFICIENT(I))*LONGITUDE_STEP_INVERSE       COFUV1C.164   
+     &             *LONGITUDE_STEP_INVERSE                                 COFUV1C.165   
+       END DO                                                              COFUV1C.166   
+                                                                           COFUV1C.167   
+                                                                           COFUV1C.168   
+                                                                           COFUV1C.169   
+C----------------------------------------------------------------------    COFUV1C.170   
+CL    SECTION 1.2    SET EFFECTIVE DIFFUSION COEFFICIENT TO ZERO           COFUV1C.171   
+C                    IF STEEP SLOPE BELOW PRESSURE ALTITUDE LIMIT          COFUV1C.172   
+C                    APPLY GENERAL TEST AT FIRST POINT ONLY                COFUV1C.173   
+C----------------------------------------------------------------------    COFUV1C.174   
+                                                                           COFUV1C.175   
+C      APPLY GENERAL TEST FOR REFERENCE SURFACE PRESSURE OF 1000HPA        COFUV1C.176   
+       PRESSURE_LEVEL=AK(LEVEL)+100000.0*BK(LEVEL)                         COFUV1C.177   
+       IF(PRESSURE_LEVEL.GT.PRESSURE_TEST)THEN                             COFUV1C.178   
+                                                                           COFUV1C.179   
+      DO I= START_U_UPDATE+1,END_U_UPDATE                                  COFUV1C.180   
+        MASK(I)=((PRESSURE(I-1,LEVEL_P).GT.PRESSURE(I,LEVEL_P-1)).OR.      COFUV1C.181   
+     &           (PRESSURE(I-1,LEVEL_P).LT.PRESSURE(I,LEVEL_P+1)))         COFUV1C.182   
+      ENDDO                                                                COFUV1C.183   
+                                                                           COFUV1C.184   
+*IF -DEF,MPP                                                               COFUV1C.185   
+! Recalculate end-points                                                   COFUV1C.186   
+      DO I=START_U_UPDATE,END_U_UPDATE,ROW_LENGTH                          COFUV1C.187   
+        IJ=I+ROW_LENGTH-1                                                  COFUV1C.188   
+        MASK(I)=((PRESSURE(IJ,LEVEL_P).GT.PRESSURE(I,LEVEL_P-1)).OR.       COFUV1C.189   
+     &           (PRESSURE(IJ,LEVEL_P).LT.PRESSURE(I,LEVEL_P+1)))          COFUV1C.190   
+      ENDDO                                                                COFUV1C.191   
+*ENDIF                                                                     COFUV1C.192   
+                                                                           COFUV1C.193   
+! And zero appropriate points of EW_DIFFUSION                              COFUV1C.194   
+      DO I= START_U_UPDATE,END_U_UPDATE                                    COFUV1C.195   
+        IF (MASK(I)) DIFFUSION_EW(I,LEVEL)=0.0                             COFUV1C.196   
+      ENDDO                                                                COFUV1C.197   
+                                                                           COFUV1C.198   
+       ENDIF                                                               COFUV1C.199   
+                                                                           COFUV1C.200   
+                                                                           COFUV1C.201   
+CL---------------------------------------------------------------------    COFUV1C.202   
+CL    SECTION 2.     CALCULATE SECOND TERM IN EQUATION (47)                COFUV1C.203   
+CL---------------------------------------------------------------------    COFUV1C.204   
+                                                                           COFUV1C.205   
+C----------------------------------------------------------------------    COFUV1C.206   
+CL    SECTION 2.1    CALCULATE DELTAPHI TERMS                              COFUV1C.207   
+CL        CALCULATE DELTALAMBDAK*COSLAT/(DELTAPHI)SQUARED                  COFUV1C.208   
+C----------------------------------------------------------------------    COFUV1C.209   
+                                                                           COFUV1C.210   
+! Loop over field missing Northern row                                     COFUV1C.211   
+      DO I=START_POINT_NO_HALO,LAST_U_FLD_PT-1                             COFUV1C.212   
+      DIFFUSION_NS(I,LEVEL)=0.5*(DIFFUSION_COEFFICIENT2(I)                 COFUV1C.213   
+     &           *COS_P_LATITUDE(I)                                        COFUV1C.214   
+     &           +DIFFUSION_COEFFICIENT2(I+1)*COS_P_LATITUDE(I+1))*        COFUV1C.215   
+     &            LATITUDE_STEP_INVERSE*LATITUDE_STEP_INVERSE              COFUV1C.216   
+      END DO                                                               COFUV1C.217   
+                                                                           COFUV1C.218   
+C  RECALCULATE END POINTS.                                                 COFUV1C.219   
+                                                                           COFUV1C.220   
+*IF -DEF,MPP                                                               COFUV1C.221   
+      DO I=1+ROW_LENGTH,U_FIELD,ROW_LENGTH                                 COFUV1C.222   
+        IJ = I+ROW_LENGTH-1                                                COFUV1C.223   
+        DIFFUSION_NS(IJ,LEVEL)=0.5*                                        COFUV1C.224   
+     &           (DIFFUSION_COEFFICIENT2(I)*COS_P_LATITUDE(I)              COFUV1C.225   
+     &           +DIFFUSION_COEFFICIENT2(IJ)*COS_P_LATITUDE(IJ))*          COFUV1C.226   
+     &            LATITUDE_STEP_INVERSE*LATITUDE_STEP_INVERSE              COFUV1C.227   
+      END DO                                                               COFUV1C.228   
+*ELSE                                                                      COFUV1C.229   
+      DIFFUSION_NS(LAST_U_FLD_PT,LEVEL)                                    COFUV1C.230   
+     &                  =DIFFUSION_NS(LAST_U_FLD_PT-1,LEVEL)               COFUV1C.231   
+*ENDIF                                                                     COFUV1C.232   
+                                                                           COFUV1C.233   
+                                                                           COFUV1C.234   
+*IF DEF,GLOBAL                                                             COFUV1C.235   
+C CALCULATE POLAR TERMS USING ACROSS-POLE DIFFERENCE, REMEMBERING SIGN     COFUV1C.236   
+C CHANGE ACROSS THE POLE                                                   COFUV1C.237   
+C NB: EFFECTIVE COS_P_LATITUDE IS 1/4 THAT AT ADJACENT ROW                 COFUV1C.238   
+                                                                           COFUV1C.239   
+                                                                           COFUV1C.240   
+*IF DEF,MPP                                                                COFUV1C.241   
+      IF (at_top_of_LPG) THEN                                              COFUV1C.242   
+*ENDIF                                                                     COFUV1C.243   
+! North Pole                                                               COFUV1C.244   
+        DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                      COFUV1C.245   
+          DIFFUSION_NS(I,LEVEL)=DIFFUSION_COEFFICIENT2(I)                  COFUV1C.246   
+     &  *COS_P_LATITUDE(I)*LATITUDE_STEP_INVERSE*LATITUDE_STEP_INVERSE     COFUV1C.247   
+        ENDDO                                                              COFUV1C.248   
+*IF DEF,MPP                                                                COFUV1C.249   
+      ENDIF                                                                COFUV1C.250   
+                                                                           COFUV1C.251   
+      IF (at_base_of_LPG) THEN                                             COFUV1C.252   
+*ENDIF                                                                     COFUV1C.253   
+! South Pole                                                               COFUV1C.254   
+        DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                  COFUV1C.255   
+          DIFFUSION_NS(I,LEVEL)=DIFFUSION_COEFFICIENT2(I)                  COFUV1C.256   
+     &  *COS_P_LATITUDE(I)*LATITUDE_STEP_INVERSE*LATITUDE_STEP_INVERSE     COFUV1C.257   
+        ENDDO                                                              COFUV1C.258   
+*IF DEF,MPP                                                                COFUV1C.259   
+      ENDIF                                                                COFUV1C.260   
+*ENDIF                                                                     COFUV1C.261   
+*ENDIF                                                                     COFUV1C.262   
+                                                                           COFUV1C.263   
+                                                                           COFUV1C.264   
+C----------------------------------------------------------------------    COFUV1C.265   
+CL    SECTION 2.2    SET EFFECTIVE DIFFUSION COEFFICIENT TO ZERO           COFUV1C.266   
+C                    IF STEEP SLOPE BELOW PRESSURE ALTITUDE LIMIT          COFUV1C.267   
+C                    APPLY GENERAL TEST AT FIRST POINT ONLY                COFUV1C.268   
+C----------------------------------------------------------------------    COFUV1C.269   
+                                                                           COFUV1C.270   
+C      APPLY GENERAL TEST FOR REFERENCE SURFACE PRESSURE OF 1000HPA        COFUV1C.271   
+       IF(PRESSURE_LEVEL.GT.PRESSURE_TEST)THEN                             COFUV1C.272   
+                                                                           COFUV1C.273   
+! Loop over field, missing Northern row                                    COFUV1C.274   
+      DO I=START_POINT_NO_HALO,LAST_U_FLD_PT                               COFUV1C.275   
+      IF((PRESSURE(I,LEVEL_P).GT.PRESSURE(I-ROW_LENGTH,LEVEL_P-1)).OR.     COFUV1C.276   
+     &   (PRESSURE(I,LEVEL_P).LT.                                          COFUV1C.277   
+     &        PRESSURE(I-ROW_LENGTH,LEVEL_P+1)))THEN                       COFUV1C.278   
+         DIFFUSION_NS(I,LEVEL)=0.0                                         COFUV1C.279   
+       ENDIF                                                               COFUV1C.280   
+                                                                           COFUV1C.281   
+      END DO                                                               COFUV1C.282   
+                                                                           COFUV1C.283   
+      ENDIF                                                                COFUV1C.284   
+      ENDDO                                                                COFUV1C.285   
+                                                                           COFUV1C.286   
+*IF DEF,MPP                                                                COFUV1C.287   
+      CALL SWAPBOUNDS(DIFFUSION_EW,ROW_LENGTH,tot_P_ROWS,                  COFUV1C.288   
+     &                   EW_Halo,NS_Halo,P_LEVELS)                         COFUV1C.289   
+      CALL SWAPBOUNDS(DIFFUSION_NS,ROW_LENGTH,tot_P_ROWS,                  COFUV1C.290   
+     &                   EW_Halo,NS_Halo,P_LEVELS)                         COFUV1C.291   
+*ENDIF                                                                     COFUV1C.292   
+                                                                           COFUV1C.293   
+CL    END OF ROUTINE COEFF_UV                                              COFUV1C.294   
+                                                                           COFUV1C.295   
+      RETURN                                                               COFUV1C.296   
+      END                                                                  COFUV1C.297   
+*ENDIF                                                                     COFUV1C.298   

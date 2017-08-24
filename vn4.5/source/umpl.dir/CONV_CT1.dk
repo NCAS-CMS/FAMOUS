@@ -1,0 +1,1738 @@
+*IF DEF,CONTROL,AND,DEF,ATMOS                                              CONV_CT1.2     
+C ******************************COPYRIGHT******************************    GTS2F400.1351  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.1352  
+C                                                                          GTS2F400.1353  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.1354  
+C restrictions as set forth in the contract.                               GTS2F400.1355  
+C                                                                          GTS2F400.1356  
+C                Meteorological Office                                     GTS2F400.1357  
+C                London Road                                               GTS2F400.1358  
+C                BRACKNELL                                                 GTS2F400.1359  
+C                Berkshire UK                                              GTS2F400.1360  
+C                RG12 2SZ                                                  GTS2F400.1361  
+C                                                                          GTS2F400.1362  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.1363  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.1364  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.1365  
+C Modelling at the above address.                                          GTS2F400.1366  
+C ******************************COPYRIGHT******************************    GTS2F400.1367  
+C                                                                          GTS2F400.1368  
+CLL Subroutine CONV_CTL----------------------------------------------      CONV_CT1.3     
+CLL                                                                        CONV_CT1.4     
+CLL Purpose: Calls CONVECT to calculate and add convection increments.     RB300993.17    
+CLL CONVECT may be called less frequently than every timestep. In this     RB300993.18    
+CLL case, on a 'convection timestep' (L_CONVECT=.TRUE.) increments and     RB300993.19    
+CLL other diagnostics are saved in arrays in COMDECK TYPCNVI, and on       RB300993.20    
+CLL 'non-convection timesteps' the saved values are retrieved and the      RB300993.21    
+CLL increments added in this routine (instead of in CONVECT).              RB300993.22    
+CLL                                                                        CONV_CT1.6     
+CLL Level 2 control routine                                                CONV_CT1.7     
+CLL version for CRAY YMP                                                   CONV_CT1.8     
+CLL                                                                        CONV_CT1.9     
+CLL C.Wilson    <- programmer of some or all of previous code or changes   CONV_CT1.10    
+CLL                                                                        CONV_CT1.11    
+CLL  Model            Modification history from model version 3.0:         CONV_CT1.12    
+CLL version  Date                                                          CONV_CT1.13    
+CLL  3.1  2/02/93 : added comdeck CHSUNITS to define NUNITS for i/o        RS030293.153   
+CLL   3.2    13/07/93 Changed CHARACTER*(*) to CHARACTER*(80) for          TS150793.38    
+CLL                   portability.  Author Tracey Smith.                   TS150793.39    
+CLL  3.2  13/04/93  Dynamic allocation of main arrays. R.T.H.Barnes.       @DYALLOC.792   
+CLL  3.2  8/07/93 : added convective cloud condensed water diagnostic      PI080793.1     
+CLL               : P Inness                                               PI080793.2     
+CLL  3.3 24/11/93 : New code for total rain/snow/PPN rate diags. (TCJ)     TJ241193.7     
+CLL  3.3  30/09/93  Option on frequency of convection scheme calls,        RB300993.23    
+CLL  3.4  22/06/94  DEF EMCORR replaced by LOGICAL LEMCORR                 GSS1F304.750   
+CLL                                                      S.J.Swarbrick     GSS1F304.751   
+CLL                 using COMDECKs ARGCNVI,TYPCNVI.      R.T.H.Barnes.     RB300993.24    
+CLL  3.4 11/03/94  Add lowest conv.cloud diagnostics.  R.T.H.Barnes.       ARN2F304.238   
+CLL                                                                        ARN2F304.239   
+CLL  3.4  26/07/94  Created diagnostic for Total accumulations.            ASW2F304.1     
+CLL                 S.A.Woltering.                                         ASW2F304.2     
+CLL  3.4 03/06/94 : Added fluctuations of T1,Q1 from boundary layer        ARN2F304.240   
+CLL               : C Wilson                                               ARN2F304.241   
+CLL  3.4  06/08/94: Code restructured to improve efficiency on C90 by      AAD1F304.46    
+CLL                 enabling parallel segmentation of calls to CONVECT.    AAD1F304.47    
+CLL                 Authors: A.Dickinson, D.Salmond, Reviewer: R.Barnes    AAD1F304.48    
+CLL  3.5  28/03/95: Sub-model changes : Remove run time constants          ADR1F305.64    
+CLL                 from Atmos Dump headers. D. Robinson                   ADR1F305.65    
+!     3.5    9/5/95   MPP code: Change updateable area  P.Burton           APB1F305.264   
+CLL  3.5  05/06/95  Chgs to SI & STINDEX arrays.  RTHBarnes                GRB4F305.71    
+CLL  4.0  21/04/95: Correction to convective cloud on model layers         API1F400.1     
+CLL                 diagnostic. Pete Inness.                               API1F400.2     
+CLL 4.0  05/05/95  Added atmospheric tracers for tracer transports         API2F400.257   
+CLL                in convection.                                          API2F400.258   
+CLL                Added U and V for momentum transport by convection      API2F400.259   
+CLL                including interpolation onto p-grid for increment       API2F400.260   
+CLL                calculations. Arrays for convective momentum            API2F400.261   
+CLL                transports dimensioned by len_mom to minimise           API2F400.262   
+CLL                memory usage if CMT not required.                       API2F400.263   
+CLL                Convective momentum transports will only function       API2F400.264   
+CLL                if convection is called every timestep.                 API2F400.265   
+CLL                Added CAPE diagnostic                                   API2F400.266   
+CLL                CALL to CONVECT now made through glue routine           API2F400.267   
+CLL                GLUE_CONV                                               API2F400.268   
+CLL                Pete Inness.                                            API2F400.269   
+CLL  4.1 13/05/96  Add creation of total tracer array (free + sulphur      AWO5F401.31    
+CLL                cycle tracers) for passing to tracer transport          AWO5F401.32    
+CLL                routine CONVECT.                                        AWO5F401.33    
+CLL                Call SCONSCV to wet scavenge Sulphur Cycle tracers      AWO5F401.34    
+CLL                                                        M Woodage       AWO5F401.35    
+CLL  4.1   10/6/96 : changed dimensions of momentum arrays and             API4F401.4     
+CLL                  added pointers in call to glue routines in            API4F401.5     
+CLL                  order to allow convection to be split into            API4F401.6     
+CLL                  segments when using momentum transports.              API4F401.7     
+CLL                  Pete Inness                                           API4F401.8     
+CLL 4.1  23/5/96  References to A_REALHD(30) replaced by correct           API3F401.1     
+CLL               variable SECS_PER_STEPim(atmos_im) in momentum           API3F401.2     
+CLL               transport calculations.                                  API3F401.3     
+CLL                                       Pete Inness                      API3F401.4     
+!    4.1  23/05/96  MPP Changes. D. Robinson.                              APBDF401.2     
+CLL  4.2  26/9/96   Addition of four new diagnostics:- (i) Gridbox         AJX1F402.1     
+CLL                 mean conv. cld water, (ii) Gidbox mean conv. cld       AJX1F402.2     
+CLL                 water path, (iii) conv. cld base pressure times        AJX1F402.3     
+CLL                 CCA and (iv) conv. cld top pressure times CCA.         AJX1F402.4     
+CLL                 J.M.Cairns                                             AJX1F402.5     
+!LL   4.3  10/02/97  Added PPX arguments to COPY_DIAG   P.Burton           GPB1F403.555   
+!LL   4.3  12/02/97  Added PPX arguments to EXTDIAG   P.Burton             GPB1F403.556   
+!LL  4.3  22/01/97  MPP Changes for Convective Momentum Transport.         ADR5F403.1     
+!LL                 D. Robinson.                                           ADR5F403.2     
+!LL  4.4  05/07/97  FLUX_DIAG args changed. S.D.Mullerworth                GSM3F404.33    
+!LL  4.4  03/07/97  Zero CAPE array so no NaNs are output to STASH         GPB1F404.174   
+!LL                 P.Burton                                               GPB1F404.175   
+!  4.4   30/09/97   Change calls to SCONSCV for S Cycle vars to pass       AWO1F404.90    
+!                   in logical for below cloud scavenging, and CCA.        AWO1F404.91    
+!                   Prevent unnecessary calls to SCONSCV.                  AWO1F404.92    
+!                                                     (M Woodage)          AWO1F404.93    
+!LL  4.4  26/09/97  Provision for 3D convective cloud amount (on model     AJX0F404.98    
+!LL                 levels). 3D if L_3D_CCA=.T. else 2D.   J.M.Gregory     AJX0F404.99    
+!LL  4.4  Oct 97    Add halo mask to stop redundant calculations           AAD2F404.45    
+!LL                                               Alan Dickinson           AAD2F404.46    
+!LL  4.5  06/01/98  Added code to call load balancing routine for T3E      APB1F405.1     
+!LL                                                          P.Burton      APB1F405.2     
+CLL  4.5    Jul. 98  Kill the IBM specific lines (JCThil)                  AJC1F405.35    
+!LL  4.5  19/05/98  Allow 3A or 3B physics to be chosen with optimised     AJX1F405.6     
+!LL                 version of convection (3C).          Julie Gregory     AJX1F405.7     
+!LL  4.5  19/03/98   Add NH3, 3 soot vars and interactive CO2 to           AJX1F405.8     
+!LL                  TOT_TRACERS array for passing to tracer transport     AJX1F405.9     
+!LL                  routine in CONVECT.                  M Woodage        AJX1F405.10    
+!LL                  Call SCONSCV to wet scavenge NH3 (for S Cycle).       AJX1F405.11    
+!LL                  Add diagnostics for wet scavenging as fluxes per      AJX1F405.12    
+!LL                  sec for S Cycle variables.              M Woodage     AJX1F405.13    
+!LL  4.5  12/03/98   Aged soot declared and passed to SCONSCV for          AJX1F405.14    
+!LL                  scavenging. Units of scavenged soot converted to      AJX1F405.15    
+!LL                  SI before writing to STASH.       Luke Robinson.      AJX1F405.16    
+!LL  4.5  01/05/98  Restrict murk aerosol calculations to aerosol          APC0F405.768   
+!LL                 levels=boundary levels. P.Clark                        APC0F405.769   
+!LL  4.5  05/05/98  Add Fujitsu vectorization directives.                  GRB0F405.164   
+!LL                                           RBarnes@ecmwf.int            GRB0F405.165   
+CLL                                                                        CONV_CT1.14    
+CLL Programming standard:                                                  CONV_CT1.15    
+CLL                                                                        CONV_CT1.16    
+CLL system components covered : P1                                         CONV_CT1.17    
+CLL                                                                        CONV_CT1.18    
+CLL system task : P0                                                       CONV_CT1.19    
+CLL                                                                        CONV_CT1.20    
+CLL Documentation: Unified Model documentation paper No P0                 CONV_CT1.21    
+CLL                version number 11 dated (26/11/90)                      CONV_CT1.22    
+CLLEND -----------------------------------------------------------------   CONV_CT1.23    
+C*L Arguments                                                              CONV_CT1.24    
+                                                                           CONV_CT1.25    
+      SUBROUTINE CONV_CTL(DTHETA_DT,CONV_RAIN,CONV_SNOW,                   CONV_CT1.26    
+     &           LS_RAIN,LS_SNOW,                                          TJ241193.8     
+     &           T1_SD,Q1_SD,P_FIELDDA,P_LEVELSDA,Q_LEVELSDA,len_mom,      API2F400.270   
+     &           TRAY_LEN,                                                 AWO5F401.36    
+     &           MPARWTR,ANVIL_FACTOR,TOWER_FACTOR,UD_FACTOR,              AJX3F405.133   
+     &           INT5,                                                     API2F400.271   
+*CALL ARGSIZE                                                              @DYALLOC.795   
+*CALL ARGD1                                                                @DYALLOC.796   
+*CALL ARGDUMA                                                              @DYALLOC.797   
+*CALL ARGDUMO                                                              @DYALLOC.798   
+*CALL ARGDUMW                                                              GKR1F401.197   
+*CALL ARGSTS                                                               @DYALLOC.799   
+*CALL ARGPTRA                                                              @DYALLOC.800   
+*CALL ARGPTRO                                                              @DYALLOC.801   
+*CALL ARGCONA                                                              @DYALLOC.802   
+*CALL ARGCNVI                                                              RB300993.25    
+*CALL ARGPPX                                                               GKR0F305.919   
+*CALL ARGFLDPT                                                             APBDF401.3     
+     &                    ICODE,CMESSAGE)                                  @DYALLOC.803   
+                                                                           CONV_CT1.28    
+      IMPLICIT NONE                                                        CONV_CT1.29    
+                                                                           CONV_CT1.30    
+*CALL CMAXSIZE                                                             @DYALLOC.804   
+*CALL CSUBMODL                                                             GSS1F305.923   
+*CALL TYPSIZE                                                              @DYALLOC.805   
+*CALL TYPD1                                                                @DYALLOC.806   
+*CALL TYPDUMA                                                              @DYALLOC.807   
+*CALL TYPDUMO                                                              @DYALLOC.808   
+*CALL TYPDUMW                                                              GKR1F401.198   
+*CALL TYPSTS                                                               @DYALLOC.809   
+*CALL TYPPTRA                                                              @DYALLOC.810   
+*CALL TYPPTRO                                                              @DYALLOC.811   
+*CALL TYPCONA                                                              @DYALLOC.812   
+*CALL TYPCNVI                                                              RB300993.26    
+*CALL PPXLOOK                                                              GKR0F305.920   
+*CALL TYPFLDPT                                                             APBDF401.4     
+                                                                           @DYALLOC.813   
+      INTEGER                                                              CONV_CT1.31    
+     &       INT5,        ! Dummy variable replacing STASH_MAXLEN(5)       CONV_CT1.32    
+     &       ICODE,       ! Return code : 0 Normal Exit                    CONV_CT1.33    
+C                         !             : >0 Error                         CONV_CT1.34    
+     &       P_FIELDDA,   ! IN: Extra copy of P_FIELD for dynamic alloc    @DYALLOC.816   
+     &       P_LEVELSDA,  ! and P_LEVELS                                   @DYALLOC.817   
+     &       Q_LEVELSDA   ! and Q_LEVELS                                   @DYALLOC.818   
+     &      ,len_mom      ! dimension for convective momentum              API2F400.272   
+C                         ! transport arrays.                              API2F400.273   
+      INTEGER TRAY_LEN    ! dimension for total tracer array TOT_TRACERS   AWO5F401.37    
+                                                                           CONV_CT1.37    
+      REAL                                                                 CONV_CT1.38    
+     &       DTHETA_DT(P_FIELDDA,Q_LEVELSDA),                              @DYALLOC.819   
+     &       LS_RAIN(P_FIELD),     ! IN - LS rainfall rate from LSPP_CTL   TJ241193.9     
+     &       LS_SNOW(P_FIELD),     ! IN - LS snowfall rate from LSPP_CTL   TJ241193.10    
+     &       CONV_RAIN(P_FIELDDA),                                         @DYALLOC.820   
+     &       CONV_SNOW(P_FIELDDA)                                          @DYALLOC.821   
+     &      ,T1_SD(P_FIELDDA) !fluctuations in T level 1 from b.layer      ARN2F304.243   
+     &      ,Q1_SD(P_FIELDDA) !fluctuations in Q level 1 from B.layer      ARN2F304.244   
+     &      ,MPARWTR     ! IN Reservoir of convective cloud water left     AJX0F404.101   
+!                        !    in a layer after conv. precip.               AJX0F404.102   
+     &      ,ANVIL_FACTOR! IN Needed for calculation of cloud amount on    AJX0F404.103   
+     &      ,TOWER_FACTOR!    model levels if L_3D_CCA = .T.               AJX0F404.104   
+     &      ,UD_FACTOR   ! IN Used in calculation of water path seen by    AJX3F405.134   
+!                        !    radiation of L_CCW is true.                  AJX3F405.135   
+                                                                           CONV_CT1.42    
+      CHARACTER*80                                                         TS150793.40    
+     &       CMESSAGE     ! Error message if return code >0                CONV_CT1.44    
+                                                                           ARN2F304.245   
+C   Local storage                                                          ARN2F304.246   
+      INTEGER                                                              ARN2F304.247   
+     & LCBASE(P_FIELDDA),  ! level of lowest conv.cloud base               ARN2F304.248   
+     & LCTOP(P_FIELDDA)    ! level of lowest conv.cloud top                ARN2F304.249   
+*IF DEF,MPP                                                                AAD2F404.47    
+      LOGICAL l_halo(P_FIELDDA)  ! Mask for halos                          AAD2F404.48    
+*ENDIF                                                                     AAD2F404.49    
+      REAL                                                                 ARN2F304.250   
+     & CCW(P_FIELDDA,Q_LEVELSDA), ! conv.condensed cloud water             ARN2F304.251   
+     & CCA2D(P_FIELDDA),   ! conv cloud amt on single level to             AJX0F404.105   
+!                          ! pass to SCONSCV routine.                      AJX0F404.106   
+     & LCCA(P_FIELDDA),    ! lowest conv.cloud cover fraction              ARN2F304.252   
+     & LCCLWP(P_FIELDDA),  ! lowest conv.cloud liquid water path           AJX1F402.6     
+     & ICCBPxCCA(P_FIELDDA),      ! P-lev. of conv. cld base x CCA         AJX1F402.7     
+     & ICCTPxCCA(P_FIELDDA),      ! P-lev. of conv. cld top x CCA          AJX1F402.8     
+     & GBMCCWP(P_FIELDDA),        ! gridbox mean CCWP                      AJX1F402.9     
+     & GBMCCW(P_FIELDDA,Q_LEVELSDA) ! gridbox mean CCW                     AJX1F402.10    
+     &      ,CAPE(P_FIELDDA),                   ! CONVECTIVE AVAILABLE     API2F400.274   
+C                                               ! POTENTIAL ENERGY         API2F400.275   
+     &       U_P(len_mom,Q_LEVELSDA),           ! U FIELD INTERPOLATED     API2F400.276   
+C                                               ! ONTO P GRID MINUS        API2F400.277   
+C                                               ! THE POLAR ROWS.          API2F400.278   
+     &       V_P(len_mom,Q_LEVELSDA),           ! V FIELD INTERPOLATED     API2F400.279   
+C                                               ! ONTO P GRID MINUS        API2F400.280   
+C                                               ! THE POLAR ROWS.          API2F400.281   
+     &       DU_DT(len_mom,Q_LEVELSDA),         ! INCREMENTS TO U          API2F400.282   
+C                                               ! FIELD INTERPOLATED       API2F400.283   
+C                                               ! ONTO THE P GRID          API2F400.284   
+     &       DV_DT(len_mom,Q_LEVELSDA),         ! INCREMENTS TO V          API2F400.285   
+C                                               ! FIELD INTERPOLATED       API2F400.286   
+C                                               ! ONTO THE P GRID          API2F400.287   
+     &       DUDT_U(len_mom),                   ! INCREMENTS TO U          API2F400.288   
+C                                               ! ON THE UV GRID           API2F400.289   
+     &       DVDT_U(len_mom)                    ! INCREMENTS TO V          API2F400.290   
+C                                               ! ON THE UV GRID           API2F400.291   
+      REAL   TOT_TRACERS(TRAY_LEN)              ! Total tracer array       AWO5F401.38    
+!                                               ! (free + sulphur cycle)   AWO5F401.39    
+      REAL CONSCVGD_TRACER(P_FIELDDA)  ! column total of scvnged tracer    AWO5F401.40    
+!                                                                          AWO5F401.41    
+! Call comdeck containing scavng coeffs KRAIN_,KSNOW_ for Sulphur Cycle    AWO5F401.42    
+*CALL C_SULCON                                                             AWO5F401.43    
+! Call comdeck containing scavenging coeffs KRAIN_ & KSNOW_ for soot       AWO5F405.355   
+*CALL C_ST_CON                                                             AWO5F405.356   
+!                                                                          AWO5F405.357   
+                                                                           CONV_CT1.45    
+*IF DEF,MPP                                                                APB1F305.265   
+! Parameters and Common blocks                                             APB1F305.266   
+*CALL PARVARS                                                              APB1F305.267   
+*ENDIF                                                                     APB1F305.268   
+*CALL CHSUNITS                                                             RS030293.154   
+*CALL CCONTROL                                                             CONV_CT1.47    
+*CALL CHISTORY                                                             GDR3F305.16    
+*CALL C_MDI                                                                CONV_CT1.52    
+*CALL C_R_CP                                                               CONV_CT1.53    
+*CALL C_LHEAT                                                              GSS1F304.752   
+*CALL CTIME                                                                ADR1F305.66    
+                                                                           CONV_CT1.57    
+CL External subroutines called                                             CONV_CT1.58    
+                                                                           CONV_CT1.59    
+      EXTERNAL                                                             CONV_CT1.60    
+     &        GLUE_CONV,COPYDIAG,COPYDIAG_3D,TIMER,STASH                   API2F400.292   
+     &       ,FLUX_DIAG                                                    GSS1F304.753   
+     &      ,SET_LEVELS_LIST,EXTDIAG,ICAO_HT                               CONV_CT1.65    
+     &      ,CON_SCAV                                                      APC3F304.30    
+     &      ,SCONSCV                                                       AWO5F401.44    
+                                                                           CONV_CT1.66    
+CL Dynamically allocated area for stash processing                         CONV_CT1.67    
+                                                                           CONV_CT1.68    
+      REAL                                                                 CONV_CT1.69    
+     &      STASHWORK(INT5)                                                CONV_CT1.70    
+                                                                           CONV_CT1.71    
+C Local variables                                                          CONV_CT1.72    
+                                                                           CONV_CT1.73    
+      INTEGER                                                              CONV_CT1.74    
+     &       I,J,K,                                                        API2F400.293   
+     &       ROWS,                                                         CONV_CT1.76    
+     &       JS,JS_LOCAL(MAX_NO_OF_SEGS),                                  AAD1F304.49    
+     &       FIRST_POINT,FP_LOCAL(MAX_NO_OF_SEGS),                         AAD1F304.50    
+     &       FP_UV_LOCAL(MAX_NO_OF_SEGS),                                  API4F401.9     
+     &       TOTAL_SEGS,                                                   APB1F405.3     
+     &       LAST_POINT,                                                   CONV_CT1.79    
+     &       STEP,                                                         CONV_CT1.80    
+     &       SEG_POINTS,SP_LOCAL(MAX_NO_OF_SEGS),                          AAD1F304.51    
+     &       LEVEL,                                                        CONV_CT1.82    
+     &       POINTS,                                                       API2F400.294   
+     &       NTRA_TMP,                                                     API2F400.295   
+     &       TRLEV_TMP,                                                    API2F400.296   
+     &       NU_FIELD,NP_FIELD                                             API2F400.297   
+     &      ,IM_IDENT   ! internal model identifier                        GRB4F305.72    
+     &      ,IM_INDEX   ! internal model index for STASH arrays            GRB4F305.73    
+*IF DEF,MPP,AND,DEF,T3E                                                    APB1F405.4     
+      INTEGER                                                              APB1F405.5     
+     &  MAX_SIZE(2) ! 1 - maximum size of segment                          APB1F405.6     
+!                   ! 2 - maximum value of P_FIELD                         APB1F405.7     
+     &, info        ! GCOM return code                                     APB1F405.8     
+*ENDIF                                                                     APB1F405.9     
+                                                                           CONV_CT1.84    
+      LOGICAL                                                              CONV_CT1.85    
+     &       LIST(P_LEVELSDA),  ! Levels list for diagnostics              API2F400.298   
+     &       L_TRACER           ! Switch for inclusion of tracers          API2F400.299   
+                                                                           CONV_CT1.87    
+      REAL                                                                 CONV_CT1.88    
+     &    PU,PL                                                            CONV_CT1.89    
+*CALL P_EXNERC                                                             CONV_CT1.90    
+                                                                           CONV_CT1.91    
+CL                                                                         CONV_CT1.92    
+CL --- SECTION 5 --- CONVECTION ------------------------                   CONV_CT1.93    
+CL                                                                         CONV_CT1.94    
+CL 5.0 Initialisation                                                      CONV_CT1.95    
+                                                                           GRB4F305.74    
+C  Set up internal model identifier and STASH index                        GRB4F305.75    
+      im_ident = atmos_im                                                  GRB4F305.76    
+      im_index = internal_model_index(im_ident)                            GRB4F305.77    
+                                                                           CONV_CT1.96    
+!  Set up grid pointers                                                    APBDF401.5     
+      FIRST_POINT = START_POINT_INC_HALO                                   APBDF401.6     
+      LAST_POINT  = END_P_POINT_INC_HALO                                   APBDF401.7     
+      POINTS      = LAST_POINT-FIRST_POINT+1                               APBDF401.8     
+      JS          = FIRST_POINT-1                                          APBDF401.10    
+*IF DEF,MPP                                                                AAD2F404.50    
+      DO i=1,ROW_LENGTH                                                    AAD2F404.51    
+        l_halo(i)=.FALSE.                                                  AAD2F404.52    
+      ENDDO                                                                AAD2F404.53    
+                                                                           AAD2F404.54    
+      DO i=1+LAST_POINT,P_FIELD                                            AAD2F404.55    
+        l_halo(i)=.FALSE.                                                  AAD2F404.56    
+      ENDDO                                                                AAD2F404.57    
+                                                                           AAD2F404.58    
+      DO i=FIRST_POINT,LAST_POINT                                          AAD2F404.59    
+        l_halo(i)=.NOT.                                                    AAD2F404.60    
+     &    (MOD(i,ROW_LENGTH).EQ.1).or.(MOD(i,ROW_LENGTH).EQ.0)             AAD2F404.61    
+      ENDDO                                                                AAD2F404.62    
+                                                                           AAD2F404.63    
+*ENDIF                                                                     AAD2F404.64    
+                                                                           APBDF401.11    
+                                                                           CONV_CT1.102   
+C  If a convection timestep, call convetion scheme.                        RB300993.27    
+C  Save increments, unless called every timestep (A_CONV_STEP=1).          RB300993.28    
+                                                                           RB300993.29    
+      IF (L_CONVECT) THEN                                                  RB300993.30    
+                                                                           RB300993.31    
+C  Initialise output arrays to zero.                                       CONV_CT1.103   
+                                                                           CONV_CT1.104   
+      DO I=1,P_FIELD                                                       CONV_CT1.105   
+        CONV_RAIN(I) = 0.0                                                 CONV_CT1.106   
+        CONV_SNOW(I) = 0.0                                                 CONV_CT1.107   
+        LCBASE(I) = 0                                                      ARN2F304.254   
+        LCTOP(I) = 0                                                       ARN2F304.255   
+        LCCA(I) = 0.0                                                      ARN2F304.256   
+        LCCLWP(I) = 0.0                                                    ARN2F304.257   
+*IF DEF,MPP                                                                GPB1F404.176   
+        CAPE(I)=0.0                                                        GPB1F404.177   
+*ENDIF                                                                     GPB1F404.178   
+      END DO                                                               CONV_CT1.108   
+                                                                           CONV_CT1.109   
+!                                                                          API2F405.1     
+! INITIALIZE STASH ARRAY                                                   API2F405.2     
+!                                                                          API2F405.3     
+      DO I=1,INT5                                                          API2F405.4     
+       STASHWORK(I)=0.0                                                    API2F405.5     
+      END DO                                                               API2F405.6     
+C  Interpolate U and V onto P-grid for convection calculations             API2F400.302   
+C                                                                          API2F400.303   
+      IF(L_MOM)THEN                                                        API2F400.304   
+                                                                           ADR5F403.3     
+        NU_FIELD = LAST_U_VALID_PT-FIRST_VALID_PT+1                        ADR5F403.4     
+        NP_FIELD = NU_FIELD-ROW_LENGTH                                     ADR5F403.5     
+        ROWS     = NU_FIELD/ROW_LENGTH                                     ADR5F403.6     
+                                                                           ADR5F403.7     
+        DO K=1,Q_LEVELS                                                    ADR5F403.8     
+                                                                           ADR5F403.9     
+! Interpolate u/v fields from U/V to P grid.                               ADR5F403.10    
+          CALL UV_TO_P(D1(JU(K)+FIRST_VALID_PT-1),                         ADR5F403.11    
+     &                 U_P(FIRST_VALID_PT+ROW_LENGTH,K),                   ADR5F403.12    
+     &                 NU_FIELD,NP_FIELD,ROW_LENGTH,ROWS)                  ADR5F403.13    
+                                                                           ADR5F403.14    
+          CALL UV_TO_P(D1(JV(K)+FIRST_VALID_PT-1),                         ADR5F403.15    
+     &                 V_P(FIRST_VALID_PT+ROW_LENGTH,K),                   ADR5F403.16    
+     &                 NU_FIELD,NP_FIELD,ROW_LENGTH,ROWS)                  ADR5F403.17    
+                                                                           ADR5F403.18    
+! Initialise rest of U_P/V_P.                                              ADR5F403.19    
+          DO I=1,FIRST_VALID_PT+ROW_LENGTH-1                               ADR5F403.20    
+            U_P(I,K) = 0.0                                                 ADR5F403.21    
+            V_P(I,K) = 0.0                                                 ADR5F403.22    
+          ENDDO                                                            ADR5F403.23    
+          DO I=END_P_POINT_INC_HALO+1,LEN_MOM                              ADR5F403.24    
+            U_P(I,K) = 0.0                                                 ADR5F403.25    
+            V_P(I,K) = 0.0                                                 ADR5F403.26    
+          ENDDO                                                            ADR5F403.27    
+                                                                           ADR5F403.28    
+        ENDDO                                                              ADR5F403.29    
+                                                                           ADR5F403.30    
+      END IF                                                               API2F400.314   
+CL 5.1 CALL CONVECT VIA GLUE ROUTINE FOR REQUIRED VERSION                  API2F400.315   
+C                                                                          API2F400.316   
+C If no tracers are being updated set number of tracers and tracer         API2F400.317   
+C levels to 1 to minimise storage requirements.(Arrays cannot be           API2F400.318   
+C initialised with dimensions of zero.)                                    API2F400.319   
+C                                                                          API2F400.320   
+!                                                                          AWO5F401.45    
+      IF (L_SULPC_SO2 .OR. L_SOOT .OR. L_CO2_INTERACTIVE) THEN             AWO5F405.55    
+!                                                                          AWO5F405.56    
+        L_TRACER = .TRUE.                                                  AWO5F405.57    
+        TRLEV_TMP= P_LEVELS                                                AWO5F405.58    
+!                                                                          AWO5F405.59    
+        NTRA_TMP = 0               !Initialise to zero                     AWO5F405.60    
+!                                                                          AWO5F405.61    
+        IF (L_SULPC_SO2) THEN                                              AWO5F405.62    
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.63    
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.64    
+     &                                           D1(JSO2(1)+I-1)           AWO5F405.65    
+          ENDDO                                                            AWO5F405.66    
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.67    
+!                                                                          AWO5F405.68    
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.69    
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.70    
+     &                                    D1(JSO4_AITKEN(1)+I-1)           AWO5F405.71    
+          ENDDO                                                            AWO5F405.72    
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.73    
+!                                                                          AWO5F405.74    
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.75    
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.76    
+     &                                      D1(JSO4_ACCU(1)+I-1)           AWO5F405.77    
+          ENDDO                                                            AWO5F405.78    
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.79    
+!                                                                          AWO5F405.80    
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.81    
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.82    
+     &                                      D1(JSO4_DISS(1)+I-1)           AWO5F405.83    
+          ENDDO                                                            AWO5F405.84    
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.85    
+!                                                                          AWO5F405.86    
+          IF (L_SULPC_DMS) THEN                                            AWO5F405.87    
+            DO I = 1, P_FIELD*P_LEVELS                                     AWO5F405.88    
+              TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =               AWO5F405.89    
+     &                                           D1(JDMS(1)+I-1)           AWO5F405.90    
+            ENDDO                                                          AWO5F405.91    
+            NTRA_TMP = NTRA_TMP + 1                                        AWO5F405.92    
+          ENDIF  ! L_SULPC_DMS                                             AWO5F405.93    
+!                                                                          AWO5F405.94    
+          IF (L_SULPC_NH3) THEN                                            AWO5F405.95    
+            DO I = 1, P_FIELD*P_LEVELS                                     AWO5F405.96    
+              TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =               AWO5F405.97    
+     &                                           D1(JNH3(1)+I-1)           AWO5F405.98    
+            ENDDO                                                          AWO5F405.99    
+            NTRA_TMP = NTRA_TMP + 1                                        AWO5F405.100   
+          ENDIF              ! L_SULPC_NH3                                 AWO5F405.101   
+                                                                           AWO5F405.102   
+        ENDIF                ! L_SULPC_SO2                                 AWO5F405.103   
+!                                                                          AWO5F405.104   
+        IF (L_SOOT) THEN                                                   AWO5F405.105   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.106   
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.107   
+     &                                      D1(JSOOT_NEW(1)+I-1)           AWO5F405.108   
+          ENDDO                                                            AWO5F405.109   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.110   
+!                                                                          AWO5F405.111   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.112   
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.113   
+     &                                      D1(JSOOT_AGD(1)+I-1)           AWO5F405.114   
+          ENDDO                                                            AWO5F405.115   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.116   
+!                                                                          AWO5F405.117   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.118   
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.119   
+     &                                      D1(JSOOT_CLD(1)+I-1)           AWO5F405.120   
+          ENDDO                                                            AWO5F405.121   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.122   
+!                                                                          AWO5F405.123   
+        ENDIF                ! L_SOOT                                      AWO5F405.124   
+!                                                                          AWO5F405.125   
+        IF (L_CO2_INTERACTIVE) THEN                                        AWO5F405.126   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.127   
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.128   
+     &                                           D1(JCO2(1)+I-1)           AWO5F405.129   
+          ENDDO                                                            AWO5F405.130   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.131   
+!                                                                          AWO5F405.132   
+        ENDIF                ! L_CO2_INTERACTIVE                           AWO5F405.133   
+!                                                                          AWO5F405.134   
+        IF (TR_VARS .GE. 1) THEN                                           AWO5F405.135   
+          DO I = 1, P_FIELD*TR_LEVELS*TR_VARS                              AWO5F405.136   
+            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I ) =                 AWO5F405.137   
+     &                                      D1(JTRACER(1,1)+I-1)           AWO5F405.138   
+          ENDDO                                                            AWO5F405.139   
+          NTRA_TMP = NTRA_TMP + TR_VARS                                    AWO5F405.140   
+        ENDIF               ! TR_VARS                                      AWO5F405.141   
+!                                                                          AWO5F405.142   
+!                                                                          AWO5F401.58    
+      ELSE               ! no S Cycle, soot or CO2 vars                    AWO5F405.143   
+!                                                                          AWO5F401.94    
+       IF (TR_VARS.GE.1)   THEN                                            AWO5F401.95    
+          L_TRACER=.TRUE.                                                  AWO5F405.144   
+          NTRA_TMP=TR_VARS                                                 AWO5F405.145   
+          TRLEV_TMP=TR_LEVELS                                              AWO5F405.146   
+         DO I=1,P_FIELD*TR_LEVELS*TR_VARS                                  AWO5F401.96    
+         TOT_TRACERS(I)=D1(JTRACER(1,1)+I-1)                               AWO5F401.97    
+         END DO                                                            AWO5F401.98    
+       ELSE        ! If no tracers, then set TOT_TRACERS array to zero     AWO5F401.99    
+! Set all these variables to "null" values when sulphur/soot/CO2 cycle     AWO5F405.147   
+! not present:                                                             AWO5F405.148   
+          L_TRACER=.FALSE.                                                 AWO5F405.149   
+          NTRA_TMP=1                                                       AWO5F405.150   
+          TRLEV_TMP=1                                                      AWO5F405.151   
+          DO I=1,P_FIELD                                                   AWO5F401.100   
+          TOT_TRACERS(I) = 0.0                                             AWO5F401.101   
+          END DO                                                           AWO5F401.102   
+       END IF                                                              AWO5F401.103   
+!                                                                          AWO5F401.104   
+      END IF             ! end L_SULPC_SO2, L_SOOT, L_CO2_INTERACTIVE      AWO5F405.152   
+!                                                                          AWO5F401.106   
+C                                                                          API2F400.330   
+                                                                           CONV_CT1.111   
+      TOTAL_SEGS=NCPU*A_CONVECT_SEGMENTS                                   APB1F405.10    
+      STEP=POINTS/TOTAL_SEGS                                               APB1F405.11    
+                                                                           CONV_CT1.118   
+        IF(LTIMER) THEN                                                    CONV_CT1.119   
+          CALL TIMER('CONVECT ',3)                                         CONV_CT1.120   
+        END IF                                                             CONV_CT1.121   
+                                                                           CONV_CT1.122   
+*IF DEF,MPP,AND,DEF,T3E                                                    APB1F405.12    
+      MAX_SIZE(1)=0                                                        APB1F405.13    
+*ENDIF                                                                     APB1F405.14    
+      DO I = 1,TOTAL_SEGS                                                  APB1F405.15    
+        SEG_POINTS = STEP                                                  AAD1F304.54    
+        IF (I.EQ.TOTAL_SEGS) THEN                                          APB1F405.16    
+          SEG_POINTS = POINTS-STEP*(TOTAL_SEGS-1)                          APB1F405.17    
+        END IF                                                             AAD1F304.57    
+*IF DEF,MPP,AND,DEF,T3E                                                    APB1F405.18    
+      MAX_SIZE(1)=MAX(MAX_SIZE(1),SEG_POINTS)                              APB1F405.19    
+*ENDIF                                                                     APB1F405.20    
+        FP_LOCAL(I) = FIRST_POINT                                          AAD1F304.58    
+       IF(L_MOM)THEN                                                       API4F401.12    
+         FP_UV_LOCAL(I) = FIRST_POINT                                      ADR5F403.31    
+       ELSE                                                                API4F401.14    
+         FP_UV_LOCAL(I) = 1                                                API4F401.15    
+       END IF                                                              API4F401.16    
+        JS_LOCAL(I) = JS                                                   AAD1F304.59    
+        SP_LOCAL(I) = SEG_POINTS                                           AAD1F304.60    
+        FIRST_POINT = FIRST_POINT+STEP                                     AAD1F304.61    
+        JS = JS+STEP                                                       AAD1F304.62    
+      ENDDO                                                                AAD1F304.63    
+*IF DEF,MPP,AND,DEF,T3E                                                    APB1F405.21    
+                                                                           APB1F405.22    
+      MAX_SIZE(2)=P_FIELD                                                  APB1F405.23    
+                                                                           APB1F405.24    
+! Find the maximum segment size and P_FIELD over all processors.           APB1F405.25    
+! This will be used to dimension the local arrays we                       APB1F405.26    
+! copy other processor's data into.                                        APB1F405.27    
+                                                                           APB1F405.28    
+      CALL GC_IMAX(2,nproc,info,MAX_SIZE)                                  APB1F405.29    
+                                                                           APB1F405.30    
+! And call the routine that will redistribute the data and call            APB1F405.31    
+! the convection                                                           APB1F405.32    
+                                                                           APB1F405.33    
+      CALL T3E_LOAD_BAL_CONV(                                              APB1F405.34    
+! Segment information                                                      APB1F405.35    
+     &  TOTAL_SEGS,MAX_SIZE(1),MAX_SIZE(2),                                APB1F405.36    
+     &  FP_LOCAL,SP_LOCAL,                                                 APB1F405.37    
+! Size and control parameters                                              APB1F405.38    
+     &  P_FIELD,Q_LEVELS,BL_LEVELS,                                        APB1F405.39    
+! Primary data                                                             APB1F405.40    
+     &  D1(JTHETA(1)),D1(JQ(1)),D1(JPSTAR),D1(JLAND),                      APB1F405.41    
+     &  U_P,V_P,TOT_TRACERS,                                               APB1F405.42    
+! Output data                                                              APB1F405.43    
+     &  DTHETA_DT,STASHWORK(SI(204,5,im_index)),                           APB1F405.44    
+     &  DU_DT,DV_DT,CONV_RAIN,CONV_SNOW,                                   APB1F405.45    
+! JCC? pointers are for convective cloud amount, base, top &               APB1F405.46    
+! liquid water path respectively.                                          APB1F405.47    
+     &  D1(JCCA(1)),ID1(JCCB),ID1(JCCT),D1(JCCLWP),                        APB1F405.48    
+     &  CCW,ICCBPxCCA,ICCTPxCCA,GBMCCWP,GBMCCW,                            APB1F405.49    
+     &  LCBASE,LCTOP,LCCA,LCCLWP,CAPE,                                     APB1F405.50    
+! other data input                                                         APB1F405.51    
+     &  D1(JP_EXNER(1)),                                                   APB1F405.52    
+     &  A_LEVDEPC(JAK),A_LEVDEPC(JBK),AKH,BKH,                             APB1F405.53    
+     &  A_LEVDEPC(JDELTA_AK),A_LEVDEPC(JDELTA_BK),                         APB1F405.54    
+     &  SECS_PER_STEPim(atmos_im),                                         APB1F405.55    
+     &  T1_SD,Q1_SD,                                                       APB1F405.56    
+     &  L_MOM,L_TRACER,L_CAPE,NTRA_TMP,TRLEV_TMP,L_XSCOMP,L_SDXS,          APB1F405.57    
+     &  l_halo,                                                            APB1F405.58    
+     &  N_CCA_LEV,L_3D_CCA,L_CCW,MPARWTR,ANVIL_FACTOR,TOWER_FACTOR,        APB1F405.59    
+     &  UD_FACTOR,                                                         APB1F405.60    
+     &  L_CLOUD_DEEP,L_PHASE_LIM,                                          APB1F405.61    
+     &  STASHWORK(SI(250,5,IM_INDEX)),SF(250,5),                           APB1F405.62    
+     &  STASHWORK(SI(251,5,IM_INDEX)),SF(251,5),                           APB1F405.63    
+     &  STASHWORK(SI(252,5,IM_INDEX)),SF(252,5),                           APB1F405.64    
+     &  STASHWORK(SI(253,5,IM_INDEX)),SF(253,5),                           APB1F405.65    
+     &  STASHWORK(SI(254,5,IM_INDEX)),SF(254,5),                           APB1F405.66    
+     &  STASHWORK(SI(255,5,IM_INDEX)),SF(255,5)                            APB1F405.67    
+     &  )                                                                  APB1F405.68    
+                                                                           APB1F405.69    
+*ELSE                                                                      APB1F405.70    
+*IF DEF,MACRO                                                              AAD1F304.64    
+CFPP$ CNCALL                                                               AAD1F304.65    
+*ENDIF                                                                     AAD1F304.66    
+      DO I = 1,TOTAL_SEGS                                                  APB1F405.71    
+        CALL GLUE_CONV(                                                    API2F400.331   
+C size and control parameters                                              CONV_CT1.125   
+     &       P_FIELD,SP_LOCAL(I),Q_LEVELS,BL_LEVELS,                       API2F400.332   
+C primary data                                                             CONV_CT1.127   
+     &       D1(JTHETA(1)+JS_LOCAL(I)),D1(JQ(1)+JS_LOCAL(I)),              AAD1F304.69    
+     &       D1(JPSTAR+JS_LOCAL(I)),D1(JLAND+JS_LOCAL(I)),                 AAD1F304.70    
+     &       U_P(FP_UV_LOCAL(I),1),V_P(FP_UV_LOCAL(I),1),                  API4F401.17    
+     &       TOT_TRACERS(FP_LOCAL(I)),                                     AWO5F401.107   
+C output data                                                              CONV_CT1.130   
+     &       DTHETA_DT(FP_LOCAL(I),1),                                     AAD1F304.71    
+     &       STASHWORK(SI(204,5,im_index)+JS_LOCAL(I)),                    GRB4F305.78    
+     &       DU_DT(FP_UV_LOCAL(I),1),DV_DT(FP_UV_LOCAL(I),1),              API4F401.18    
+     &       CONV_RAIN(FP_LOCAL(I)),CONV_SNOW(FP_LOCAL(I)),                AAD1F304.73    
+     &       D1(JCCA(1)+JS_LOCAL(I)),ID1(JCCB+JS_LOCAL(I)),                AJX0F404.107   
+     &       ID1(JCCT+JS_LOCAL(I)),D1(JCCLWP+JS_LOCAL(I)),                 AAD1F304.75    
+C JCC. pointers are for conv.cloud amount, base, top & liquid water path   RB300993.34    
+C respectively. N.B. ID1 is same as D1 array but for integer values.       RB300993.35    
+     &       CCW(FP_LOCAL(I),1),                                           AJX1F402.11    
+     &       ICCBPxCCA(FP_LOCAL(I)),ICCTPxCCA(FP_LOCAL(I)),                AJX1F402.12    
+     &       GBMCCWP(FP_LOCAL(I)),GBMCCW(FP_LOCAL(I),1),                   AJX1F402.13    
+     &       LCBASE(FP_LOCAL(I)),LCTOP(FP_LOCAL(I)),                       AJX1F402.14    
+     &       LCCA(FP_LOCAL(I)),LCCLWP(FP_LOCAL(I)),                        ARN2F304.260   
+     &       CAPE(FP_LOCAL(I)),                                            API2F400.336   
+C other data input                                                         CONV_CT1.136   
+     &       D1(JP_EXNER(1)+JS_LOCAL(I)),                                  AAD1F304.76    
+     &       A_LEVDEPC(JAK),A_LEVDEPC(JBK),AKH,BKH,                        CONV_CT1.138   
+     &       A_LEVDEPC(JDELTA_AK),                                         CONV_CT1.139   
+     &       A_LEVDEPC(JDELTA_BK),SECS_PER_STEPim(atmos_im)                ADR1F305.67    
+     &       ,T1_SD(FP_LOCAL(I)),Q1_SD(FP_LOCAL(I))                        ARN2F304.258   
+     &       ,L_MOM,L_TRACER,L_CAPE,NTRA_TMP,TRLEV_TMP,L_XSCOMP            ARN2F403.1     
+     &       ,L_SDXS                                                       ARN2F403.2     
+*IF DEF,MPP                                                                AAD2F404.65    
+     &      ,l_halo(FP_LOCAL(I))                                           AAD2F404.66    
+*ENDIF                                                                     AAD2F404.67    
+     &       ,N_CCA_LEV, L_3D_CCA, L_CCW, MPARWTR                          AJX0F404.108   
+     &       ,ANVIL_FACTOR,TOWER_FACTOR,UD_FACTOR                          AJX3F405.136   
+     &       ,L_CLOUD_DEEP,L_PHASE_LIM                                     AJX3F405.137   
+     &       ,STASHWORK(SI(250,5,IM_INDEX)+JS_LOCAL(I)),SF(250,5)          AJX3F405.138   
+     &       ,STASHWORK(SI(251,5,IM_INDEX)+JS_LOCAL(I)),SF(251,5)          AJX3F405.139   
+     &       ,STASHWORK(SI(252,5,IM_INDEX)+JS_LOCAL(I)),SF(252,5)          AJX3F405.140   
+     &       ,STASHWORK(SI(253,5,IM_INDEX)+JS_LOCAL(I)),SF(253,5)          AJX3F405.141   
+     &       ,STASHWORK(SI(254,5,IM_INDEX)+JS_LOCAL(I)),SF(254,5)          AJX3F405.142   
+     &       ,STASHWORK(SI(255,5,IM_INDEX)+JS_LOCAL(I)),SF(255,5)          AJX3F405.143   
+     &       )                                                             CONV_CT1.148   
+      END DO                                                               AAD1F304.77    
+*ENDIF                                                                     APB1F405.72    
+        IF(LTIMER) THEN                                                    CONV_CT1.151   
+          CALL TIMER('CONVECT ',4)                                         CONV_CT1.152   
+        END IF                                                             CONV_CT1.153   
+                                                                           CONV_CT1.154   
+                                                                           API2F400.338   
+C  Put increments to u and v due to convection back on                     API2F400.339   
+C  the UV grid and add them to the u and v fields.                         API2F400.340   
+C                                                                          API2F400.341   
+      IF(L_MOM)THEN                                                        API2F400.342   
+                                                                           ADR5F403.32    
+!  Reinitialise local variables.                                           ADR5F403.33    
+        FIRST_POINT = START_POINT_NO_HALO                                  ADR5F403.34    
+        LAST_POINT  = END_U_POINT_NO_HALO                                  ADR5F403.35    
+        NU_FIELD    = LAST_POINT-FIRST_POINT+1                             ADR5F403.36    
+        NP_FIELD    = NU_FIELD+ROW_LENGTH                                  ADR5F403.37    
+        ROWS        = NP_FIELD/ROW_LENGTH                                  ADR5F403.38    
+                                                                           ADR5F403.39    
+*IF DEF,MPP                                                                ADR5F403.40    
+                                                                           AAD2F404.68    
+        CALL SWAPBOUNDS(DU_DT,ROW_LENGTH,tot_P_ROWS,                       AAD2F404.69    
+     &                  EW_Halo,NS_Halo,Q_LEVELS)                          AAD2F404.70    
+        CALL SWAPBOUNDS(DV_DT,ROW_LENGTH,tot_P_ROWS,                       AAD2F404.71    
+     &                  EW_Halo,NS_Halo,Q_LEVELS)                          AAD2F404.72    
+*ENDIF                                                                     ADR5F403.46    
+                                                                           ADR5F403.47    
+        DO K=1,Q_LEVELS                                                    ADR5F403.48    
+                                                                           ADR5F403.49    
+! Interpolate u/v increments from P to U/V grid.                           ADR5F403.50    
+          CALL P_TO_UV(DU_DT(FIRST_POINT,K),DUDT_U(FIRST_POINT),           ADR5F403.51    
+     &                 NP_FIELD,NU_FIELD,ROW_LENGTH,ROWS)                  ADR5F403.52    
+                                                                           ADR5F403.53    
+          CALL P_TO_UV(DV_DT(FIRST_POINT,K),DVDT_U(FIRST_POINT),           ADR5F403.54    
+     &                 NP_FIELD,NU_FIELD,ROW_LENGTH,ROWS)                  ADR5F403.55    
+                                                                           ADR5F403.56    
+! Add u/v increments to u/v fields.                                        ADR5F403.57    
+! Fujitsu vectorization directive                                          GRB0F405.166   
+!OCL NOVREC                                                                GRB0F405.167   
+          DO I=FIRST_POINT,LAST_POINT                                      ADR5F403.58    
+            D1(JU(K)+I-1) = D1(JU(K)+I-1)                                  ADR5F403.59    
+     &                    + DUDT_U(I)*SECS_PER_STEPim(atmos_im)            ADR5F403.60    
+            D1(JV(K)+I-1) = D1(JV(K)+I-1)                                  ADR5F403.61    
+     &                    + DVDT_U(I)*SECS_PER_STEPim(atmos_im)            ADR5F403.62    
+          ENDDO                                                            ADR5F403.63    
+                                                                           ADR5F403.64    
+        ENDDO                                                              ADR5F403.65    
+                                                                           ADR5F403.66    
+*IF DEF,MPP                                                                ADR5F403.67    
+! Update haloes for u/v fields.                                            ADR5F403.68    
+        CALL SWAPBOUNDS(D1(JU(1)),ROW_LENGTH,tot_U_ROWS,                   ADR5F403.69    
+     &                  EW_Halo,NS_Halo,Q_LEVELS)                          ADR5F403.70    
+        CALL SWAPBOUNDS(D1(JV(1)),ROW_LENGTH,tot_U_ROWS,                   ADR5F403.71    
+     &                  EW_Halo,NS_Halo,Q_LEVELS)                          ADR5F403.72    
+*ENDIF                                                                     ADR5F403.73    
+                                                                           ADR5F403.74    
+      END IF                                                               API2F400.358   
+!                                                                          AWO5F401.108   
+! If free, CO2, soot  S Cycle tracers present, put TOT_TRACERS values      AWO5F405.153   
+!  back into D1 locations                                                  AWO5F405.154   
+!                                                                          AWO5F405.155   
+      IF (L_TRACER) THEN                                                   AWO5F405.156   
+!                                                                          AWO5F405.157   
+        NTRA_TMP = 0          !Reset to zero                               AWO5F405.158   
+!                                                                          AWO5F405.159   
+        IF (L_SULPC_SO2) THEN                                              AWO5F405.160   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.161   
+            D1(JSO2(1)+I-1) =                                              AWO5F405.162   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.163   
+          ENDDO                                                            AWO5F405.164   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.165   
+!                                                                          AWO5F405.166   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.167   
+            D1(JSO4_AITKEN(1)+I-1) =                                       AWO5F405.168   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.169   
+          ENDDO                                                            AWO5F405.170   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.171   
+!                                                                          AWO5F405.172   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.173   
+            D1(JSO4_ACCU(1)+I-1) =                                         AWO5F405.174   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.175   
+          ENDDO                                                            AWO5F405.176   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.177   
+!                                                                          AWO5F405.178   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.179   
+            D1(JSO4_DISS(1)+I-1) =                                         AWO5F405.180   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.181   
+          ENDDO                                                            AWO5F405.182   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.183   
+!                                                                          AWO5F405.184   
+          IF (L_SULPC_DMS) THEN                                            AWO5F405.185   
+            DO I = 1, P_FIELD*P_LEVELS                                     AWO5F405.186   
+              D1(JDMS(1)+I-1) =                                            AWO5F405.187   
+     &            TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )             AWO5F405.188   
+            ENDDO                                                          AWO5F405.189   
+              NTRA_TMP = NTRA_TMP + 1                                      AWO5F405.190   
+          ENDIF               ! L_SULPC_DMS                                AWO5F405.191   
+!                                                                          AWO5F405.192   
+          IF (L_SULPC_NH3) THEN                                            AWO5F405.193   
+            DO I = 1, P_FIELD*P_LEVELS                                     AWO5F405.194   
+             D1(JNH3(1)+I-1) =                                             AWO5F405.195   
+     &           TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )              AWO5F405.196   
+            ENDDO                                                          AWO5F405.197   
+            NTRA_TMP = NTRA_TMP + 1                                        AWO5F405.198   
+          ENDIF               ! L_SULPC_NH3                                AWO5F405.199   
+!                                                                          AWO5F405.200   
+        ENDIF                 ! L_SULPC_SO2                                AWO5F405.201   
+!                                                                          AWO5F405.202   
+        IF (L_SOOT) THEN                                                   AWO5F405.203   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.204   
+            D1(JSOOT_NEW(1)+I-1) =                                         AWO5F405.205   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.206   
+          ENDDO                                                            AWO5F405.207   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.208   
+!                                                                          AWO5F405.209   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.210   
+            D1(JSOOT_AGD(1)+I-1) =                                         AWO5F405.211   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.212   
+          ENDDO                                                            AWO5F405.213   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.214   
+!                                                                          AWO5F405.215   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.216   
+            D1(JSOOT_CLD(1)+I-1) =                                         AWO5F405.217   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.218   
+          ENDDO                                                            AWO5F405.219   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.220   
+!                                                                          AWO5F405.221   
+        ENDIF  ! L_SOOT                                                    AWO5F405.222   
+!                                                                          AWO5F405.223   
+        IF (L_CO2_INTERACTIVE) THEN                                        AWO5F405.224   
+          DO I = 1, P_FIELD*P_LEVELS                                       AWO5F405.225   
+            D1(JCO2(1)+I-1) =                                              AWO5F405.226   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.227   
+          ENDDO                                                            AWO5F405.228   
+          NTRA_TMP = NTRA_TMP + 1                                          AWO5F405.229   
+        ENDIF  ! L_CO2_INTERACTIVE                                         AWO5F405.230   
+!                                                                          AWO5F405.231   
+        IF (TR_VARS .GE. 1) THEN                                           AWO5F405.232   
+          DO I = 1, P_FIELD*TR_LEVELS*TR_VARS                              AWO5F405.233   
+            D1(JTRACER(1,1)+I-1) =                                         AWO5F405.234   
+     &         TOT_TRACERS( NTRA_TMP*P_FIELD*P_LEVELS + I )                AWO5F405.235   
+          ENDDO                                                            AWO5F405.236   
+          NTRA_TMP = NTRA_TMP + TR_VARS                                    AWO5F405.237   
+        ENDIF  ! TR_VARS                                                   AWO5F405.238   
+                                                                           AWO5F405.239   
+      ENDIF    ! End L_TRACER                                              AWO5F405.240   
+!                                                                          AWO5F405.241   
+C  Reinitialise local variables.                                           RB300993.36    
+                                                                           RB300993.37    
+      FIRST_POINT = START_POINT_INC_HALO                                   APBDF401.12    
+      LAST_POINT  = END_P_POINT_INC_HALO                                   APBDF401.13    
+      POINTS      = LAST_POINT-FIRST_POINT+1                               APBDF401.14    
+      ROWS        = POINTS/ROW_LENGTH                                      APBDF401.15    
+                                                                           RB300993.38    
+      IF (A_CONV_STEP.GT.1) THEN  ! If convection not called every         RB300993.39    
+C  timestep, save increments & other output fields when it is called.      RB300993.40    
+                                                                           RB300993.41    
+        DO  J = 1,Q_LEVELS                                                 RB300993.42    
+          DO  I = 1,P_FIELD                                                RB300993.43    
+C  save convective increments to temperature and mixing ratio              RB300993.44    
+            CNVINCS(I,J,1) = DTHETA_DT(I,J)                                RB300993.45    
+            CNVINCS(I,J,2) =                                               GRB4F305.79    
+     &                  STASHWORK(SI(204,5,im_index)+I-1+(J-1)*P_FIELD)    GRB4F305.80    
+C  save convective cloud water                                             RB300993.47    
+            CNV_CCW(I,J) = CCW(I,J)                                        RB300993.48    
+          END DO                                                           RB300993.49    
+        END DO                                                             RB300993.50    
+        DO  I = 1,P_FIELD                                                  RB300993.51    
+          CNV_RAIN(I) = CONV_RAIN(I)                                       RB300993.52    
+          CNV_SNOW(I) = CONV_SNOW(I)                                       RB300993.53    
+          CNV_LB(I) = LCBASE(I)                                            ARN2F304.262   
+          CNV_LT(I) = LCTOP(I)                                             ARN2F304.263   
+          CNV_LA(I) = LCCA(I)                                              ARN2F304.264   
+          CNV_LP(I) = LCCLWP(I)                                            ARN2F304.265   
+        END DO                                                             RB300993.54    
+      END IF                                                               RB300993.55    
+                                                                           RB300993.56    
+C  If not a convection timestep, copy saved fields into proper arrays      RB300993.57    
+C   and add increments to TH & Q as in subroutine CONVECT                  RB300993.58    
+                                                                           RB300993.59    
+      ELSE ! L_CONVECT                                                     RB300993.60    
+                                                                           RB300993.61    
+C  Copy saved fields into proper arrays.                                   RB300993.62    
+                                                                           RB300993.63    
+      DO  J = 1,Q_LEVELS                                                   RB300993.64    
+        DO  I = 1,P_FIELD                                                  RB300993.65    
+C  convective increments to temperature and mixing ratio                   RB300993.66    
+          DTHETA_DT(I,J) = CNVINCS(I,J,1)                                  RB300993.67    
+          STASHWORK(SI(204,5,im_index)+I-1+(J-1)*P_FIELD) =                GRB4F305.81    
+     &                                                   CNVINCS(I,J,2)    GRB4F305.82    
+C  convective cloud water                                                  RB300993.69    
+          CCW(I,J) = CNV_CCW(I,J)                                          RB300993.70    
+        END DO                                                             RB300993.71    
+      END DO                                                               RB300993.72    
+      DO  I = 1,P_FIELD                                                    RB300993.73    
+        CONV_RAIN(I) = CNV_RAIN(I)                                         RB300993.74    
+        CONV_SNOW(I) = CNV_SNOW(I)                                         RB300993.75    
+        LCBASE(I)    = CNV_LB(I)                                           ARN2F304.266   
+        LCTOP(I)     = CNV_LT(I)                                           ARN2F304.267   
+        LCCA(I)      = CNV_LA(I)                                           ARN2F304.268   
+        LCCLWP(I)    = CNV_LP(I)                                           ARN2F304.269   
+      END DO                                                               RB300993.76    
+                                                                           RB300993.77    
+C  Update model potential temperature and mixing ratio                     RB300993.78    
+C  with saved increments due to convection.                                RB300993.79    
+                                                                           RB300993.80    
+      DO  J = 1,Q_LEVELS                                                   RB300993.81    
+        DO  I = FIRST_POINT,LAST_POINT                                     RB300993.82    
+          D1(JTHETA(J)+I-1) = D1(JTHETA(J)+I-1) +                          ADR1F305.68    
+     &                        CNVINCS(I,J,1)*SECS_PER_STEPim(atmos_im)     ADR1F305.69    
+          D1(JQ(J)+I-1) = D1(JQ(J)+I-1) +                                  ADR1F305.70    
+     &                    CNVINCS(I,J,2)*SECS_PER_STEPim(atmos_im)         ADR1F305.71    
+        END DO                                                             RB300993.86    
+      END DO                                                               RB300993.87    
+                                                                           RB300993.88    
+      END IF ! L_CONVECT                                                   RB300993.89    
+                                                                           CONV_CT1.164   
+C                                                                          APC3F304.31    
+C     Do we need to scavenge aerosol convectively?                         APC3F304.32    
+C                                                                          APC3F304.33    
+      IF (L_MURK_SOURCE) THEN                                              APC3F304.34    
+        CALL CON_SCAV(                                                     APC3F304.35    
+     &  SECS_PER_STEPim(atmos_im),                                         ADR1F305.72    
+     &  P_FIELD,POINTS,A_INTHD(13), ! Boundary layer levels                APC0F405.770   
+     &  ID1(JCCB+FIRST_POINT-1),                                           APC3F304.38    
+     &  ID1(JCCT+FIRST_POINT-1),                                           APC3F304.39    
+     &  CONV_RAIN(FIRST_POINT),CONV_SNOW(FIRST_POINT),                     APC3F304.40    
+     &  D1(JMURK(1)+FIRST_POINT-1))                                        APC3F304.41    
+      ENDIF                                                                APC3F304.42    
+!                                                                          AWO5F401.152   
+      IF ( L_SULPC_SO2 .OR. L_SOOT ) THEN                                  AWO5F405.358   
+! Add loop to cater for cases when conv anvils (3D cloud amount) are       AJX0F404.110   
+! switched ON (L_3D_CCA=.T.) and OFF (L_3D_CCA=.F.)    Julie Gregory       AJX0F404.111   
+      IF (L_3D_CCA) THEN                                                   AJX0F404.112   
+        DO I=1,P_FIELD                                                     AJX0F404.113   
+          LEVEL=ID1(JCCB+I-1)                                              AJX0F404.114   
+          IF (LEVEL .GT. 0) THEN                                           AJX0F404.115   
+            CCA2D(I)=D1(JCCA(LEVEL)+I-1)                                   AJX0F404.116   
+          ELSE                                                             AJX0F404.117   
+            CCA2D(I)=0.0                                                   AJX0F404.118   
+          ENDIF                                                            AJX0F404.119   
+        ENDDO                                                              AJX0F404.120   
+      ELSE                                                                 AJX0F404.121   
+        DO I=1,P_FIELD                                                     AJX0F404.122   
+          CCA2D(I)=D1(JCCA(1)+I-1)                                         AJX0F404.123   
+        ENDDO                                                              AJX0F404.124   
+      ENDIF                                                                AJX0F404.125   
+      ENDIF                                                                AWO5F405.359   
+!                                                                          AWO5F401.154   
+      IF (L_SULPC_SO2) THEN                                                AWO5F405.360   
+! Scavenge SO2                                                             AWO5F401.155   
+        IF (KRAIN_SO2.GT.0.0 .OR. KSNOW_SO2.GT.0.0) THEN                   AWO1F404.94    
+      CALL SCONSCV( D1(JSO2(1)),                                           AWO5F401.156   
+     &        SECS_PER_STEPim(atmos_im),                                   AWO5F401.157   
+     &        TR_LEVELS,                                                   AWO5F401.158   
+     &        P_FIELD,                                                     AWO5F401.159   
+     &        FIRST_POINT,LAST_POINT,                                      AWO5F401.160   
+     &        ID1(JCCB),ID1(JCCT),                                         AWO5F401.161   
+     &        .TRUE.,CCA2D,                                                AWO1F404.95    
+     &        CONV_RAIN,CONV_SNOW,                                         AWO5F401.162   
+     &        KRAIN_SO2,KSNOW_SO2,                                         AWO5F401.163   
+     &        CONSCVGD_TRACER,                                             AWO5F401.164   
+     &        A_LEVDEPC(JDELTA_AK),                                        AWO5F401.165   
+     &        A_LEVDEPC(JDELTA_BK),                                        AWO5F401.166   
+     &        P_LEVELS,D1(JPSTAR)                                          AWO5F401.167   
+     &       )                                                             AWO5F401.168   
+        ELSE                                                               AWO1F404.96    
+          DO I=1,P_FIELD                                                   AWO1F404.97    
+          CONSCVGD_TRACER(I)=0.0                                           AWO1F404.98    
+          END DO                                                           AWO1F404.99    
+        END IF                                                             AWO1F404.100   
+!                                                                          AWO5F401.169   
+! Write scavenged SO2   to STASHWORK array                                 AWO5F401.170   
+! (the whole field is copied including 0'S in N and S polar rows)          AWO5F401.171   
+!                                                                          AWO5F401.172   
+      IF(SF(227,5)) THEN                                                   AWO5F401.173   
+        CALL COPYDIAG(STASHWORK(SI(227,5,im_index)),CONSCVGD_TRACER,       AWO5F401.174   
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           GPB1F403.557   
+     &                im_ident,5,227,                                      GPB1F403.558   
+*CALL ARGPPX                                                               GPB1F403.559   
+     &                ICODE,CMESSAGE)                                      GPB1F403.560   
+                                                                           GPB1F403.561   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.562   
+      END IF                                                               AWO5F401.176   
+! Extra copy of scavenged SO2 for flux diagnostic                          AWO5F405.242   
+      IF (SF(238,5)) THEN                                                  AWO5F405.243   
+       CALL COPYDIAG(STASHWORK(SI(238,5,im_index)),CONSCVGD_TRACER,        AWO5F405.244   
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            AWO5F405.245   
+     &               im_ident,5,238,                                       AWO5F405.246   
+*CALL ARGPPX                                                               AWO5F405.247   
+     &               ICODE,CMESSAGE)                                       AWO5F405.248   
+                                                                           AWO5F405.249   
+       IF (ICODE .GT. 0) GOTO 9999                                         AWO5F405.250   
+!                                                                          AWO5F405.251   
+! Convert amount scavenged per tstep to flux per sec                       AWO5F405.252   
+        DO I=1,P_FIELD                                                     AWO5F405.253   
+        STASHWORK(SI(238,5,im_index)+I-1)=                                 AWO5F405.254   
+     &     STASHWORK(SI(238,5,im_index)+I-1)/SECS_PER_STEPim(atmos_im)     AWO5F405.255   
+        END DO                                                             AWO5F405.256   
+      END IF                                                               AWO5F405.257   
+!                                                                          AWO5F405.258   
+!                                                                          AWO5F401.177   
+! Scavenge NH3 if present                                                  AWO5F405.259   
+       IF (L_SULPC_NH3) THEN                                               AWO5F405.260   
+!                                                                          AWO5F405.261   
+        IF ( (KRAIN_NH3.GT.0.0) .OR. (KSNOW_NH3.GT.0.0) ) THEN             AWO5F405.262   
+      CALL SCONSCV( D1(JNH3(1)),                                           AWO5F405.263   
+     &        SECS_PER_STEPim(atmos_im),                                   AWO5F405.264   
+     &        TR_LEVELS,                                                   AWO5F405.265   
+     &        P_FIELD,                                                     AWO5F405.266   
+     &        FIRST_POINT,LAST_POINT,                                      AWO5F405.267   
+     &        ID1(JCCB),ID1(JCCT),                                         AWO5F405.268   
+     &        .TRUE.,CCA2D,                                                AWO5F405.269   
+     &        CONV_RAIN,CONV_SNOW,                                         AWO5F405.270   
+     &        KRAIN_NH3,KSNOW_NH3,                                         AWO5F405.271   
+     &        CONSCVGD_TRACER,                                             AWO5F405.272   
+     &        A_LEVDEPC(JDELTA_AK),                                        AWO5F405.273   
+     &        A_LEVDEPC(JDELTA_BK),                                        AWO5F405.274   
+     &        P_LEVELS,D1(JPSTAR)                                          AWO5F405.275   
+     &       )                                                             AWO5F405.276   
+        ELSE                                                               AWO5F405.277   
+          DO I=1,P_FIELD                                                   AWO5F405.278   
+            CONSCVGD_TRACER(I)=0.0                                         AWO5F405.279   
+          END DO                                                           AWO5F405.280   
+        END IF                                                             AWO5F405.281   
+!                                                                          AWO5F405.282   
+! Write scavenged NH3 to STASHWORK array                                   AWO5F405.283   
+! (the whole field is copied including 0'S in N and S polar rows)          AWO5F405.284   
+!                                                                          AWO5F405.285   
+       IF(SF(237,5)) THEN                                                  AWO5F405.286   
+        CALL COPYDIAG(STASHWORK(SI(237,5,im_index)),CONSCVGD_TRACER,       AWO5F405.287   
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           AWO5F405.288   
+     &                im_ident,5,237,                                      AWO5F405.289   
+*CALL ARGPPX                                                               AWO5F405.290   
+     &                ICODE,CMESSAGE)                                      AWO5F405.291   
+                                                                           AWO5F405.292   
+        IF (ICODE .GT. 0) GOTO 9999                                        AWO5F405.293   
+!                                                                          AWO5F405.294   
+! Convert amount scavenged per tstep to flux per sec                       AWO5F405.295   
+        DO I=1,P_FIELD                                                     AWO5F405.296   
+        STASHWORK(SI(237,5,im_index)+I-1)=                                 AWO5F405.297   
+     &     STASHWORK(SI(237,5,im_index)+I-1)/SECS_PER_STEPim(atmos_im)     AWO5F405.298   
+        END DO                                                             AWO5F405.299   
+       END IF                                                              AWO5F405.300   
+!                                                                          AWO5F405.301   
+      END IF                ! end L_SULPC_NH3 condition                    AWO5F405.302   
+!                                                                          AWO5F405.303   
+C Scavenge SO4_AITKEN mode                                                 AWO5F401.178   
+        IF (KRAIN_SO4AIT.GT.0.0 .OR. KSNOW_SO4AIT.GT.0.0) THEN             AWO1F404.101   
+      CALL SCONSCV( D1(JSO4_AITKEN(1)),                                    AWO5F401.179   
+     &        SECS_PER_STEPim(atmos_im),                                   AWO5F401.180   
+     &        TR_LEVELS,                                                   AWO5F401.181   
+     &        P_FIELD,                                                     AWO5F401.182   
+     &        FIRST_POINT,LAST_POINT,                                      AWO5F401.183   
+     &        ID1(JCCB),ID1(JCCT),                                         AWO5F401.184   
+     &        .FALSE.,CCA2D,                                               AWO1F404.102   
+     &        CONV_RAIN,CONV_SNOW,                                         AWO5F401.185   
+     &        KRAIN_SO4AIT,KSNOW_SO4AIT,                                   AWO5F401.186   
+     &        CONSCVGD_TRACER,                                             AWO5F401.187   
+     &        A_LEVDEPC(JDELTA_AK),                                        AWO5F401.188   
+     &        A_LEVDEPC(JDELTA_BK),                                        AWO5F401.189   
+     &        P_LEVELS,D1(JPSTAR)                                          AWO5F401.190   
+     &       )                                                             AWO5F401.191   
+        ELSE                                                               AWO1F404.103   
+          DO I=1,P_FIELD                                                   AWO1F404.104   
+          CONSCVGD_TRACER(I)=0.0                                           AWO1F404.105   
+          END DO                                                           AWO1F404.106   
+        END IF                                                             AWO1F404.107   
+!                                                                          AWO5F401.192   
+! Write scavenged SO4AIT to STASHWORK array                                AWO5F401.193   
+!                                                                          AWO5F401.194   
+      IF(SF(228,5)) THEN                               !  SO4AIT           AWO5F401.195   
+        CALL COPYDIAG(STASHWORK(SI(228,5,im_index)),CONSCVGD_TRACER,       AWO5F401.196   
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           GPB1F403.563   
+     &                im_ident,5,228,                                      GPB1F403.564   
+*CALL ARGPPX                                                               GPB1F403.565   
+     &                ICODE,CMESSAGE)                                      GPB1F403.566   
+                                                                           GPB1F403.567   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.568   
+      END IF                                                               AWO5F401.198   
+! Extra copy of scavenged SO4_AIT for flux diagnostic                      AWO5F405.304   
+      IF(SF(239,5)) THEN                                                   AWO5F405.305   
+       CALL COPYDIAG(STASHWORK(SI(239,5,im_index)),CONSCVGD_TRACER,        AWO5F405.306   
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            AWO5F405.307   
+     &               im_ident,5,239,                                       AWO5F405.308   
+*CALL ARGPPX                                                               AWO5F405.309   
+     &               ICODE,CMESSAGE)                                       AWO5F405.310   
+                                                                           AWO5F405.311   
+       IF (ICODE .GT. 0) GOTO 9999                                         AWO5F405.312   
+!                                                                          AWO5F405.313   
+! Convert amount scavenged per tstep to flux per sec                       AWO5F405.314   
+        DO I=1,P_FIELD                                                     AWO5F405.315   
+        STASHWORK(SI(239,5,im_index)+I-1)=                                 AWO5F405.316   
+     &     STASHWORK(SI(239,5,im_index)+I-1)/SECS_PER_STEPim(atmos_im)     AWO5F405.317   
+        END DO                                                             AWO5F405.318   
+      END IF                                                               AWO5F405.319   
+!                                                                          AWO5F405.320   
+!                                                                          AWO5F401.199   
+C Scavenge SO4_ACCU   mode                                                 AWO5F401.200   
+        IF (KRAIN_SO4ACC.GT.0.0 .OR. KSNOW_SO4ACC.GT.0.0) THEN             AWO1F404.108   
+      CALL SCONSCV( D1(JSO4_ACCU(1)),                                      AWO5F401.201   
+     &        SECS_PER_STEPim(atmos_im),                                   AWO5F401.202   
+     &        TR_LEVELS,                                                   AWO5F401.203   
+     &        P_FIELD,                                                     AWO5F401.204   
+     &        FIRST_POINT,LAST_POINT,                                      AWO5F401.205   
+     &        ID1(JCCB),ID1(JCCT),                                         AWO5F401.206   
+     &        .FALSE.,CCA2D,                                               AWO1F404.109   
+     &        CONV_RAIN,CONV_SNOW,                                         AWO5F401.207   
+     &        KRAIN_SO4ACC,KSNOW_SO4ACC,                                   AWO5F401.208   
+     &        CONSCVGD_TRACER,                                             AWO5F401.209   
+     &        A_LEVDEPC(JDELTA_AK),                                        AWO5F401.210   
+     &        A_LEVDEPC(JDELTA_BK),                                        AWO5F401.211   
+     &        P_LEVELS,D1(JPSTAR)                                          AWO5F401.212   
+     &       )                                                             AWO5F401.213   
+        ELSE                                                               AWO1F404.110   
+          DO I=1,P_FIELD                                                   AWO1F404.111   
+          CONSCVGD_TRACER(I)=0.0                                           AWO1F404.112   
+          END DO                                                           AWO1F404.113   
+        END IF                                                             AWO1F404.114   
+!                                                                          AWO5F401.214   
+! Write scavenged SO4ACC to STASHWORK array                                AWO5F401.215   
+!                                                                          AWO5F401.216   
+      IF(SF(229,5)) THEN                               !  SO4ACC           AWO5F401.217   
+        CALL COPYDIAG(STASHWORK(SI(229,5,im_index)),CONSCVGD_TRACER,       AWO5F401.218   
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           GPB1F403.569   
+     &                im_ident,5,229,                                      GPB1F403.570   
+*CALL ARGPPX                                                               GPB1F403.571   
+     &                ICODE,CMESSAGE)                                      GPB1F403.572   
+                                                                           GPB1F403.573   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.574   
+      END IF                                                               AWO5F401.220   
+!                                                                          AWO5F405.321   
+      IF(SF(240,5)) THEN                                                   AWO5F405.322   
+       CALL COPYDIAG(STASHWORK(SI(240,5,im_index)),CONSCVGD_TRACER,        AWO5F405.323   
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            AWO5F405.324   
+     &               im_ident,5,240,                                       AWO5F405.325   
+*CALL ARGPPX                                                               AWO5F405.326   
+     &               ICODE,CMESSAGE)                                       AWO5F405.327   
+                                                                           AWO5F405.328   
+       IF (ICODE .GT. 0) GOTO 9999                                         AWO5F405.329   
+!                                                                          AWO5F405.330   
+! Convert amount scavenged per tstep to flux per sec                       AWO5F405.331   
+        DO I=1,P_FIELD                                                     AWO5F405.332   
+        STASHWORK(SI(240,5,im_index)+I-1)=                                 AWO5F405.333   
+     &     STASHWORK(SI(240,5,im_index)+I-1)/SECS_PER_STEPim(atmos_im)     AWO5F405.334   
+        END DO                                                             AWO5F405.335   
+      END IF                                                               AWO5F405.336   
+!                                                                          AWO5F405.337   
+!                                                                          AWO5F401.221   
+C Scavenge SO4_DISS   mode                                                 AWO5F401.222   
+        IF (KRAIN_SO4DIS.GT.0.0 .OR. KSNOW_SO4DIS.GT.0.0) THEN             AWO1F404.115   
+      CALL SCONSCV( D1(JSO4_DISS(1)),                                      AWO5F401.223   
+     &        SECS_PER_STEPim(atmos_im),                                   AWO5F401.224   
+     &        TR_LEVELS,                                                   AWO5F401.225   
+     &        P_FIELD,                                                     AWO5F401.226   
+     &        FIRST_POINT,LAST_POINT,                                      AWO5F401.227   
+     &        ID1(JCCB),ID1(JCCT),                                         AWO5F401.228   
+     &        .FALSE.,CCA2D,                                               AWO1F404.116   
+     &        CONV_RAIN,CONV_SNOW,                                         AWO5F401.229   
+     &        KRAIN_SO4DIS,KSNOW_SO4DIS,                                   AWO5F401.230   
+     &        CONSCVGD_TRACER,                                             AWO5F401.231   
+     &        A_LEVDEPC(JDELTA_AK),                                        AWO5F401.232   
+     &        A_LEVDEPC(JDELTA_BK),                                        AWO5F401.233   
+     &        P_LEVELS,D1(JPSTAR)                                          AWO5F401.234   
+     &       )                                                             AWO5F401.235   
+        ELSE                                                               AWO1F404.117   
+          DO I=1,P_FIELD                                                   AWO1F404.118   
+          CONSCVGD_TRACER(I)=0.0                                           AWO1F404.119   
+          END DO                                                           AWO1F404.120   
+        END IF                                                             AWO1F404.121   
+!                                                                          AWO5F401.236   
+! Write scavenged SO4DIS to STASHWORK array                                AWO5F401.237   
+!                                                                          AWO5F401.238   
+      IF(SF(230,5)) THEN                               !  SO4DIS           AWO5F401.239   
+        CALL COPYDIAG(STASHWORK(SI(230,5,im_index)),CONSCVGD_TRACER,       AWO5F401.240   
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           GPB1F403.575   
+     &                im_ident,5,230,                                      GPB1F403.576   
+*CALL ARGPPX                                                               GPB1F403.577   
+     &                ICODE,CMESSAGE)                                      GPB1F403.578   
+                                                                           GPB1F403.579   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.580   
+      END IF                                                               AWO5F401.242   
+! Extra copy of scavenged SO4_DIS for flux diagnostic                      AWO5F405.338   
+      IF(SF(241,5)) THEN                                                   AWO5F405.339   
+       CALL COPYDIAG(STASHWORK(SI(241,5,im_index)),CONSCVGD_TRACER,        AWO5F405.340   
+     &               FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,            AWO5F405.341   
+     &               im_ident,5,241,                                       AWO5F405.342   
+*CALL ARGPPX                                                               AWO5F405.343   
+     &               ICODE,CMESSAGE)                                       AWO5F405.344   
+                                                                           AWO5F405.345   
+       IF (ICODE .GT. 0) GOTO 9999                                         AWO5F405.346   
+!                                                                          AWO5F405.347   
+! Convert amount scavenged per tstep to flux per sec                       AWO5F405.348   
+        DO I=1,P_FIELD                                                     AWO5F405.349   
+        STASHWORK(SI(241,5,im_index)+I-1)=                                 AWO5F405.350   
+     &     STASHWORK(SI(241,5,im_index)+I-1)/SECS_PER_STEPim(atmos_im)     AWO5F405.351   
+        END DO                                                             AWO5F405.352   
+      END IF                                                               AWO5F405.353   
+!                                                                          AWO5F405.354   
+!                                                                          AWO5F401.243   
+!                                                                          AWO5F401.244   
+      END IF              ! end L_SULPC_SO2 condition                      AWO5F401.245   
+!                                                                          AWO5F405.361   
+C Scavenge soot                                                            AWO5F405.362   
+       IF (L_SOOT) THEN                                                    AWO5F405.363   
+         IF ( (KRAIN_AGEDSOOT.GT.0.0) .OR. (KSNOW_AGEDSOOT.GT.0.0) )       AWO5F405.364   
+     &   THEN                                                              AWO5F405.365   
+                                                                           AWO5F405.366   
+           CALL SCONSCV( D1(JSOOT_AGD(1)), !INOUT                          AWO5F405.367   
+     &        SECS_PER_STEPim(atmos_im),                                   AWO5F405.368   
+     &        TR_LEVELS,                                                   AWO5F405.369   
+     &        P_FIELD,                                                     AWO5F405.370   
+     &        FIRST_POINT,LAST_POINT,                                      AWO5F405.371   
+     &        ID1(JCCB),ID1(JCCT),                                         AWO5F405.372   
+     &        .FALSE.,CCA2D,                                               AWO5F405.373   
+     &        CONV_RAIN,CONV_SNOW,                                         AWO5F405.374   
+     &        KRAIN_AGEDSOOT,KSNOW_AGEDSOOT,                               AWO5F405.375   
+     &        CONSCVGD_TRACER,                                             AWO5F405.376   
+     &        A_LEVDEPC(JDELTA_AK),                                        AWO5F405.377   
+     &        A_LEVDEPC(JDELTA_BK),                                        AWO5F405.378   
+     &        P_LEVELS,D1(JPSTAR)                                          AWO5F405.379   
+     &       )                                                             AWO5F405.380   
+         ELSE                                                              AWO5F405.381   
+           DO I=1,P_FIELD                                                  AWO5F405.382   
+           CONSCVGD_TRACER(I)=0.0                                          AWO5F405.383   
+           END DO                                                          AWO5F405.384   
+         ENDIF                                                             AWO5F405.385   
+!                                                                          AWO5F405.386   
+! Convert units of flux of convectively scavenged soot                     AWO5F405.387   
+! from kg/m2/ts to kg/m2/s.                                                AWO5F405.388   
+!                                                                          AWO5F405.389   
+         DO I=FIRST_POINT,LAST_POINT                                       AWO5F405.390   
+            CONSCVGD_TRACER(I) = CONSCVGD_TRACER(I)                        AWO5F405.391   
+     &           /SECS_PER_STEPim(atmos_im)                                AWO5F405.392   
+         END DO                                                            AWO5F405.393   
+                                                                           AWO5F405.394   
+! Write scavenged soot to STASHWORK array                                  AWO5F405.395   
+!                                                                          AWO5F405.396   
+         IF(SF(242,5)) THEN        ! Soot convective wet dep flux          AWO5F405.397   
+             CALL COPYDIAG(STASHWORK(SI(242,5,im_index)),                  AWO5F405.398   
+     &                CONSCVGD_TRACER,                                     AWO5F405.399   
+     &                FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,           AWO5F405.400   
+     &          im_ident,5,242,                                            AWO5F405.401   
+*CALL ARGPPX                                                               AWO5F405.402   
+     &          ICODE,CMESSAGE)                                            AWO5F405.403   
+         END IF                                                            AWO5F405.404   
+!                                                                          AWO5F405.405   
+       ENDIF             ! L_SOOT                                          AWO5F405.406   
+!                                                                          AWO5F405.407   
+      IF (LEMCORR) THEN                                                    GSS1F304.754   
+C                                                                          CONV_CT1.166   
+C ADD CONVECTIVE RAIN AND SNOW AT THE SURFACE TO THE                       CONV_CT1.167   
+C DIABATIC HEATING FOR USE IN THE ENERGY CORRECTION                        CONV_CT1.168   
+C PROCEDURE                                                                CONV_CT1.169   
+C                                                                          CONV_CT1.170   
+       IF (LTIMER) THEN                                                    CONV_CT1.171   
+         CALL TIMER('FLX_DIAG',3)                                          CONV_CT1.172   
+       END IF                                                              CONV_CT1.173   
+C                                                                          CONV_CT1.174   
+      CALL FLUX_DIAG(CONV_RAIN,COS_P_LATITUDE,                             APB5F401.138   
+     &               P_FIELD,FIRST_POINT,POINTS,                           APB5F401.139   
+     &               LC,SECS_PER_STEPim(atmos_im),D1(JNET_FLUX))           GSM3F404.34    
+      CALL FLUX_DIAG(CONV_SNOW,COS_P_LATITUDE,                             APB5F401.141   
+     &               P_FIELD,FIRST_POINT,POINTS,                           APB5F401.142   
+     &               (LC+LF),SECS_PER_STEPim(atmos_im),D1(JNET_FLUX))      GSM3F404.35    
+C                                                                          CONV_CT1.181   
+       IF (LTIMER) THEN                                                    CONV_CT1.182   
+         CALL TIMER('FLX_DIAG',4)                                          CONV_CT1.183   
+       END IF                                                              CONV_CT1.184   
+C                                                                          CONV_CT1.185   
+      END IF    !    LEMCORR                                               GSS1F304.755   
+                                                                           CONV_CT1.187   
+CL 5.2 Diagnostic processing                                               CONV_CT1.188   
+                                                                           CONV_CT1.189   
+CL Copy diagnostic information to STASHWORK for STASH processing           CONV_CT1.190   
+                                                                           CONV_CT1.191   
+C Item 201 Convective rainfall,resolve to accumulate over timestep         CONV_CT1.192   
+                                                                           CONV_CT1.193   
+      IF(SF(201,5)) THEN                                                   CONV_CT1.194   
+        CALL COPYDIAG(STASHWORK(SI(201,5,im_index)),CONV_RAIN,             GRB4F305.83    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.581   
+     &       im_ident,5,201,                                               GPB1F403.582   
+*CALL ARGPPX                                                               GPB1F403.583   
+     &       ICODE,CMESSAGE)                                               GPB1F403.584   
+                                                                           GPB1F403.585   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.586   
+                                                                           CONV_CT1.197   
+        DO I=1,P_FIELD                                                     CONV_CT1.198   
+          STASHWORK(SI(201,5,im_index)+I-1)=                               GRB4F305.84    
+     &    STASHWORK(SI(201,5,im_index)+I-1)*SECS_PER_STEPim(a_im)          ADR1F305.75    
+        END DO                                                             CONV_CT1.201   
+      END IF                                                               CONV_CT1.202   
+                                                                           CONV_CT1.203   
+C Item 202 Convective Snowfall, resolve to accumulate overtimestep.        CONV_CT1.204   
+                                                                           CONV_CT1.205   
+      IF(SF(202,5)) THEN                                                   CONV_CT1.206   
+        CALL COPYDIAG(STASHWORK(SI(202,5,im_index)),CONV_SNOW,             GRB4F305.85    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.587   
+     &       im_ident,5,202,                                               GPB1F403.588   
+*CALL ARGPPX                                                               GPB1F403.589   
+     &       ICODE,CMESSAGE)                                               GPB1F403.590   
+                                                                           GPB1F403.591   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.592   
+                                                                           CONV_CT1.209   
+        DO I=1,P_FIELD                                                     CONV_CT1.210   
+          STASHWORK(SI(202,5,im_index)+I-1)=                               GRB4F305.86    
+     &    STASHWORK(SI(202,5,im_index)+I-1)*SECS_PER_STEPim(a_im)          ADR1F305.76    
+        END DO                                                             CONV_CT1.213   
+      END IF                                                               CONV_CT1.214   
+                                                                           CONV_CT1.215   
+C Item 203 THETA increments from convection                                RB300993.90    
+                                                                           CONV_CT1.217   
+                                                                           PI080793.7     
+      IF(SF(203,5)) THEN                                                   CONV_CT1.218   
+        CALL COPYDIAG_3D (STASHWORK(SI(203,5,im_index)),DTHETA_DT,         GRB4F305.87    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,Q_LEVELS,           CONV_CT1.220   
+     &     STLIST(1,STINDEX(1,203,5,im_index)),LEN_STLIST,STASH_LEVELS,    GRB4F305.88    
+     &       NUM_STASH_LEVELS+1,                                           GPB1F403.593   
+     &       im_ident,5,203,                                               GPB1F403.594   
+*CALL ARGPPX                                                               GPB1F403.595   
+     &       ICODE,CMESSAGE)                                               GPB1F403.596   
+        IF(ICODE.GT.0) THEN                                                CONV_CT1.223   
+          RETURN                                                           CONV_CT1.224   
+        END IF                                                             CONV_CT1.225   
+      END IF                                                               CONV_CT1.226   
+                                                                           CONV_CT1.227   
+      IF(L_MOM) THEN                                                       API2F405.7     
+! Item 256 U increments from convection (ON P GRID)                        API2F405.8     
+      IF(SF(256,5)) THEN                                                   API2F405.9     
+        CALL COPYDIAG_3D (STASHWORK(SI(256,5,im_index)),DU_DT,             API2F405.10    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,Q_LEVELS,           API2F405.11    
+     &     STLIST(1,STINDEX(1,256,5,im_index)),LEN_STLIST,STASH_LEVELS,    API2F405.12    
+     &       NUM_STASH_LEVELS+1,                                           API2F405.13    
+     &       im_ident,5,256,                                               API2F405.14    
+*CALL ARGPPX                                                               API2F405.15    
+     &       ICODE,CMESSAGE)                                               API2F405.16    
+        IF(ICODE.GT.0) THEN                                                API2F405.17    
+          RETURN                                                           API2F405.18    
+        END IF                                                             API2F405.19    
+      END IF                                                               API2F405.20    
+! Item 257 V increments from convection  (ON P GRID)                       API2F405.21    
+                                                                           API2F405.22    
+                                                                           API2F405.23    
+      IF(SF(257,5)) THEN                                                   API2F405.24    
+        CALL COPYDIAG_3D (STASHWORK(SI(257,5,im_index)),DV_DT,             API2F405.25    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,Q_LEVELS,           API2F405.26    
+     &     STLIST(1,STINDEX(1,257,5,im_index)),LEN_STLIST,STASH_LEVELS,    API2F405.27    
+     &       NUM_STASH_LEVELS+1,                                           API2F405.28    
+     &       im_ident,5,257,                                               API2F405.29    
+*CALL ARGPPX                                                               API2F405.30    
+     &       ICODE,CMESSAGE)                                               API2F405.31    
+        IF(ICODE.GT.0) THEN                                                API2F405.32    
+          RETURN                                                           API2F405.33    
+        END IF                                                             API2F405.34    
+      END IF                                                               API2F405.35    
+      END IF ! if(l_mom)                                                   API2F405.36    
+C Item 205 Convective rainfall rates                                       CONV_CT1.228   
+                                                                           CONV_CT1.229   
+      IF(SF(205,5)) THEN                                                   CONV_CT1.230   
+        CALL COPYDIAG(STASHWORK(SI(205,5,im_index)),CONV_RAIN,             GRB4F305.89    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.597   
+     &       im_ident,5,205,                                               GPB1F403.598   
+*CALL ARGPPX                                                               GPB1F403.599   
+     &       ICODE,CMESSAGE)                                               GPB1F403.600   
+                                                                           GPB1F403.601   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.602   
+      END IF                                                               CONV_CT1.233   
+                                                                           CONV_CT1.234   
+C Item 206 Convective snowfall rates                                       CONV_CT1.235   
+                                                                           CONV_CT1.236   
+      IF(SF(206,5)) THEN                                                   CONV_CT1.237   
+        CALL COPYDIAG(STASHWORK(SI(206,5,im_index)),CONV_SNOW,             GRB4F305.90    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.603   
+     &       im_ident,5,206,                                               GPB1F403.604   
+*CALL ARGPPX                                                               GPB1F403.605   
+     &       ICODE,CMESSAGE)                                               GPB1F403.606   
+                                                                           GPB1F403.607   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.608   
+      END IF                                                               CONV_CT1.240   
+                                                                           CONV_CT1.241   
+C Item 207 Convective cloud  base as pressure                              CONV_CT1.242   
+C or item 210 Convective cloud  base as height                             CONV_CT1.243   
+                                                                           CONV_CT1.244   
+      IF(SF(207,5).OR.SF(210,5)) THEN                                      CONV_CT1.245   
+        DO I=1,P_FIELD                                                     CONV_CT1.246   
+          LEVEL=ID1(JCCB+I-1)  ! integer value of conv.cloud base in D1    RB300993.91    
+         IF(LEVEL.EQ.0) THEN                                               CONV_CT1.248   
+          STASHWORK(SI(207,5,im_index)+I-1)=RMDI                           GRB4F305.91    
+         ELSE                                                              CONV_CT1.250   
+          STASHWORK(SI(207,5,im_index)+I-1)                                GRB4F305.92    
+     &    =AKH(LEVEL)+BKH(LEVEL)*D1(JPSTAR+I-1)                            CONV_CT1.252   
+         END IF                                                            CONV_CT1.253   
+        END DO                                                             CONV_CT1.254   
+      END IF                                                               CONV_CT1.255   
+                                                                           CONV_CT1.256   
+C Item 208 Convective cloud  top as pressure                               CONV_CT1.257   
+C or item 211 Convective cloud  top as height                              CONV_CT1.258   
+                                                                           CONV_CT1.259   
+      IF(SF(208,5).OR.SF(211,5)) THEN                                      CONV_CT1.260   
+        DO I=1,P_FIELD                                                     CONV_CT1.261   
+          LEVEL=ID1(JCCT+I-1)  ! integer value of conv.cloud top in D1     RB300993.92    
+         IF(LEVEL.EQ.0) THEN                                               CONV_CT1.263   
+          STASHWORK(SI(208,5,im_index)+I-1)=RMDI                           GRB4F305.93    
+         ELSE                                                              CONV_CT1.265   
+          STASHWORK(SI(208,5,im_index)+I-1)                                GRB4F305.94    
+     &    =AKH(LEVEL)+BKH(LEVEL)*D1(JPSTAR+I-1)                            CONV_CT1.267   
+         END IF                                                            CONV_CT1.268   
+        END DO                                                             CONV_CT1.269   
+      END IF                                                               CONV_CT1.270   
+                                                                           CONV_CT1.271   
+C Item 209 Temperature                                                     CONV_CT1.272   
+                                                                           CONV_CT1.273   
+      IF(SF(209,5)) THEN                                                   CONV_CT1.274   
+        CALL SET_LEVELS_LIST(P_LEVELS,25,                                  GRB4F305.95    
+     &                       STLIST(1,STINDEX(1,209,5,im_index)),          GRB4F305.96    
+     &      LIST,STASH_LEVELS,NUM_STASH_LEVELS+1,ICODE,CMESSAGE)           CONV_CT1.276   
+        IF (ICODE.GT.0) RETURN                                             CONV_CT1.277   
+                                                                           CONV_CT1.278   
+        LEVEL=0                                                            CONV_CT1.279   
+        DO J=1,P_LEVELS                                                    CONV_CT1.280   
+          IF(LIST(J)) THEN                                                 CONV_CT1.281   
+            LEVEL=LEVEL+1                                                  CONV_CT1.282   
+            DO I=1,P_FIELD                                                 CONV_CT1.283   
+              PU=D1(JPSTAR+I-1)*BKH(J+1) + AKH(J+1)                        CONV_CT1.284   
+              PL=D1(JPSTAR+I-1)*BKH(J)   + AKH(J)                          CONV_CT1.285   
+              STASHWORK(SI(209,5,im_index)+(LEVEL-1)*P_FIELD+I-1) =        GRB4F305.97    
+     &         D1(JTHETA(J)+I-1)*                                          CONV_CT1.287   
+     &         P_EXNER_C( D1(JP_EXNER(J+1)+I-1),D1(JP_EXNER(J)+I-1),       CONV_CT1.288   
+     &         PU,PL,KAPPA )                                               CONV_CT1.289   
+            END DO                                                         CONV_CT1.290   
+          END IF                                                           CONV_CT1.291   
+        END DO                                                             CONV_CT1.292   
+      END IF                                                               CONV_CT1.293   
+                                                                           CONV_CT1.294   
+C Item 210 ICAO height of convective cloud base                            CONV_CT1.295   
+                                                                           CONV_CT1.296   
+      IF(SF(210,5))THEN                                                    CONV_CT1.297   
+        CALL ICAO_HT(STASHWORK(SI(207,5,im_index)),P_FIELD,                GRB4F305.98    
+     &               STASHWORK(SI(210,5,im_index)))                        GRB4F305.99    
+      ENDIF                                                                CONV_CT1.299   
+                                                                           CONV_CT1.300   
+C Item 211 ICAO height of convective cloud top                             CONV_CT1.301   
+      IF(SF(211,5))THEN                                                    CONV_CT1.302   
+        CALL ICAO_HT(STASHWORK(SI(208,5,im_index)),P_FIELD,                GRB4F305.100   
+     &               STASHWORK(SI(211,5,im_index)))                        GRB4F305.101   
+      ENDIF                                                                CONV_CT1.304   
+                                                                           CONV_CT1.305   
+C                                                                          CONV_CT1.306   
+C  CALCULATE CONVECTIVE CLOUD AMOUNT OF EVERY LEVEL                        CONV_CT1.307   
+C                                                                          CONV_CT1.308   
+      IF (SF(212,5)) THEN                                                  CONV_CT1.309   
+      DO J=1,Q_LEVELS                                                      CONV_CT1.310   
+       DO I=1,P_FIELD                                                      CONV_CT1.311   
+C conv.cloud base and top are integer values in D1 array, hence use ID1    RB300993.93    
+        IF ( J.GE.ID1(JCCB+I-1) .AND. J.LT.ID1(JCCT+I-1) ) THEN            API1F400.3     
+          IF (L_3D_CCA) THEN                                               AJX0F404.126   
+            STASHWORK(SI(212,5,im_index)+I-1+(J-1)*P_FIELD)=               AJX0F404.127   
+     &      D1(JCCA(J)+I-1)                                                AJX0F404.128   
+          ELSE                                                             AJX0F404.129   
+            STASHWORK(SI(212,5,im_index)+I-1+(J-1)*P_FIELD)=               AJX0F404.130   
+     &      D1(JCCA(1)+I-1)                                                AJX0F404.131   
+          ENDIF                                                            AJX0F404.132   
+        ELSE                                                               CONV_CT1.314   
+          STASHWORK(SI(212,5,im_index)+I-1+(J-1)*P_FIELD) = 0.0            GRB4F305.103   
+        END IF                                                             CONV_CT1.316   
+       END DO                                                              CONV_CT1.317   
+      END DO                                                               CONV_CT1.318   
+      END IF                                                               PI080793.8     
+                                                                           PI080793.9     
+C Item 213 CONVECTIVE CLOUD LIQUID WATER                                   PI080793.10    
+                                                                           PI080793.11    
+                                                                           PI080793.12    
+      IF(SF(213,5)) THEN                                                   PI080793.13    
+        CALL COPYDIAG_3D (STASHWORK(SI(213,5,im_index)),CCW,               GRB4F305.104   
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,Q_LEVELS,           PI080793.15    
+     &     STLIST(1,STINDEX(1,213,5,im_index)),LEN_STLIST,STASH_LEVELS,    GRB4F305.105   
+     &       NUM_STASH_LEVELS+1,                                           GPB1F403.609   
+     &       im_ident,5,213,                                               GPB1F403.610   
+*CALL ARGPPX                                                               GPB1F403.611   
+     &       ICODE,CMESSAGE)                                               GPB1F403.612   
+        IF(ICODE.GT.0) THEN                                                PI080793.18    
+          RETURN                                                           PI080793.19    
+        END IF                                                             PI080793.20    
+      END IF                                                               CONV_CT1.319   
+                                                                           TJ241193.11    
+C Item 214 Total rainfall rate (LS plus CONV)                              TJ241193.12    
+                                                                           TJ241193.13    
+      IF(SF(214,5))THEN                                                    TJ241193.14    
+        DO I=1,P_FIELD                                                     TJ241193.15    
+          STASHWORK(SI(214,5,im_index)+I-1)=LS_RAIN(I)+CONV_RAIN(I)        GRB4F305.106   
+        ENDDO                                                              TJ241193.17    
+      ENDIF                                                                TJ241193.18    
+                                                                           TJ241193.19    
+C Item 215 Total snowfall rate (LS plus CONV)                              TJ241193.20    
+                                                                           TJ241193.21    
+      IF(SF(215,5))THEN                                                    TJ241193.22    
+        DO I=1,P_FIELD                                                     TJ241193.23    
+          STASHWORK(SI(215,5,im_index)+I-1)=LS_SNOW(I)+CONV_SNOW(I)        GRB4F305.107   
+        ENDDO                                                              TJ241193.25    
+      ENDIF                                                                TJ241193.26    
+                                                                           TJ241193.27    
+C Item 216 Total precipitation rate (LS plus CONV, rain plus snow)         TJ241193.28    
+                                                                           TJ241193.29    
+      IF(SF(216,5))THEN                                                    TJ241193.30    
+        DO I=1,P_FIELD                                                     TJ241193.31    
+          STASHWORK(SI(216,5,im_index)+I-1)=                               GRB4F305.108   
+     &        LS_RAIN(I)+LS_SNOW(I)+CONV_RAIN(I)+CONV_SNOW(I)              TJ241193.33    
+        ENDDO                                                              TJ241193.34    
+      ENDIF                                                                TJ241193.35    
+                                                                           API2F400.359   
+C Item 217 Convective Available Potential Energy                           API2F400.360   
+                                                                           API2F400.361   
+      IF(SF(217,5))THEN                                                    API2F400.362   
+        DO I=1,P_FIELD                                                     API2F400.363   
+          STASHWORK(SI(217,5,im_index)+I-1)=CAPE(I)                        API2F400.364   
+        ENDDO                                                              API2F400.365   
+      ENDIF                                                                API2F400.366   
+C Item 226 Total rainfall,resolve to accumulate over timestep              ASW2F304.3     
+                                                                           ASW2F304.4     
+      IF(SF(226,5)) THEN                                                   ASW2F304.5     
+                                                                           ASW2F304.6     
+        DO I=1,P_FIELD                                                     ASW2F304.7     
+          STASHWORK(SI(226,5,im_index)+I-1)=                               GRB4F305.109   
+     &       (LS_RAIN(I)+LS_SNOW(I)+CONV_RAIN(I)+CONV_SNOW(I))             ASW2F304.9     
+     &    *SECS_PER_STEPim(atmos_im)  ! * by t/s                           ADR1F305.77    
+        END DO                                                             ASW2F304.11    
+      END IF                                                               ASW2F304.12    
+                                                                           CONV_CT1.320   
+CL Extend remaining diagnostic information to full field                   CONV_CT1.321   
+CL for STASH processing                                                    CONV_CT1.322   
+                                                                           CONV_CT1.323   
+      CALL EXTDIAG(STASHWORK,SI(1,5,im_index),SF(1,5),204,204,             GRB4F305.110   
+     &     INT5,ROW_LENGTH,                                                CONV_CT1.325   
+     &     STLIST,LEN_STLIST,STINDEX(1,1,5,im_index),2,STASH_LEVELS,       GRB4F305.111   
+     &     NUM_STASH_LEVELS+1, STASH_PSEUDO_LEVELS,                        CONV_CT1.327   
+     &     NUM_STASH_PSEUDO,                                               GPB1F403.1306  
+     &     im_ident,5,                                                     GPB1F403.1307  
+*CALL ARGPPX                                                               GPB1F403.1308  
+     &     ICODE,CMESSAGE)                                                 GPB1F403.1309  
+                                                                           CONV_CT1.329   
+      IF(ICODE.GT.0) THEN                                                  CONV_CT1.330   
+        RETURN                                                             CONV_CT1.331   
+      END IF                                                               ARN2F304.270   
+                                                                           ARN2F304.271   
+!                                                                          API2F405.37    
+! item 250 updraught mass flux                                             API2F405.38    
+!                                                                          API2F405.39    
+      CALL EXTDIAG(STASHWORK,SI(1,5,im_index),SF(1,5),250,250,             API2F405.40    
+     &     INT5,ROW_LENGTH,                                                API2F405.41    
+     &     STLIST,LEN_STLIST,STINDEX(1,1,5,im_index),2,STASH_LEVELS,       API2F405.42    
+     &     NUM_STASH_LEVELS+1, STASH_PSEUDO_LEVELS,                        API2F405.43    
+     &     NUM_STASH_PSEUDO,                                               API2F405.44    
+     &     im_ident,5,                                                     API2F405.45    
+*CALL ARGPPX                                                               API2F405.46    
+     &     ICODE, CMESSAGE)                                                API2F405.47    
+                                                                           API2F405.48    
+      IF(ICODE.GT.0) THEN                                                  API2F405.49    
+        RETURN                                                             API2F405.50    
+      END IF                                                               API2F405.51    
+!                                                                          API2F405.52    
+! item 251 downdraught mass flux                                           API2F405.53    
+!                                                                          API2F405.54    
+      CALL EXTDIAG(STASHWORK,SI(1,5,im_index),SF(1,5),251,251,             API2F405.55    
+     &     INT5,ROW_LENGTH,                                                API2F405.56    
+     &     STLIST,LEN_STLIST,STINDEX(1,1,5,im_index),2,STASH_LEVELS,       API2F405.57    
+     &     NUM_STASH_LEVELS+1, STASH_PSEUDO_LEVELS,                        API2F405.58    
+     &     NUM_STASH_PSEUDO,                                               API2F405.59    
+     &     im_ident,5,                                                     API2F405.60    
+*CALL ARGPPX                                                               API2F405.61    
+     &     ICODE, CMESSAGE)                                                API2F405.62    
+                                                                           API2F405.63    
+      IF(ICODE.GT.0) THEN                                                  API2F405.64    
+        RETURN                                                             API2F405.65    
+      END IF                                                               API2F405.66    
+!                                                                          API2F405.67    
+! item 252 updraught entrainment rate per level                            API2F405.68    
+!                                                                          API2F405.69    
+      CALL EXTDIAG(STASHWORK,SI(1,5,im_index),SF(1,5),252,252,             API2F405.70    
+     &     INT5,ROW_LENGTH,                                                API2F405.71    
+     &     STLIST,LEN_STLIST,STINDEX(1,1,5,im_index),2,STASH_LEVELS,       API2F405.72    
+     &     NUM_STASH_LEVELS+1, STASH_PSEUDO_LEVELS,                        API2F405.73    
+     &     NUM_STASH_PSEUDO,                                               API2F405.74    
+     &     im_ident,5,                                                     API2F405.75    
+*CALL ARGPPX                                                               API2F405.76    
+     &     ICODE, CMESSAGE)                                                API2F405.77    
+                                                                           API2F405.78    
+      IF(ICODE.GT.0) THEN                                                  API2F405.79    
+        RETURN                                                             API2F405.80    
+      END IF                                                               API2F405.81    
+!                                                                          API2F405.82    
+! item 253 updraught detrainment per level                                 API2F405.83    
+!                                                                          API2F405.84    
+      CALL EXTDIAG(STASHWORK,SI(1,5,im_index),SF(1,5),253,253,             API2F405.85    
+     &     INT5,ROW_LENGTH,                                                API2F405.86    
+     &     STLIST,LEN_STLIST,STINDEX(1,1,5,im_index),2,STASH_LEVELS,       API2F405.87    
+     &     NUM_STASH_LEVELS+1, STASH_PSEUDO_LEVELS,                        API2F405.88    
+     &     NUM_STASH_PSEUDO,                                               API2F405.89    
+     &     im_ident,5,                                                     API2F405.90    
+*CALL ARGPPX                                                               API2F405.91    
+     &     ICODE, CMESSAGE)                                                API2F405.92    
+                                                                           API2F405.93    
+      IF(ICODE.GT.0) THEN                                                  API2F405.94    
+        RETURN                                                             API2F405.95    
+      END IF                                                               API2F405.96    
+!                                                                          API2F405.97    
+! item 254 downdraught entrainment rate per level                          API2F405.98    
+!                                                                          API2F405.99    
+      CALL EXTDIAG(STASHWORK,SI(1,5,im_index),SF(1,5),254,254,             API2F405.100   
+     &     INT5,ROW_LENGTH,                                                API2F405.101   
+     &     STLIST,LEN_STLIST,STINDEX(1,1,5,im_index),2,STASH_LEVELS,       API2F405.102   
+     &     NUM_STASH_LEVELS+1, STASH_PSEUDO_LEVELS,                        API2F405.103   
+     &     NUM_STASH_PSEUDO,                                               API2F405.104   
+     &     im_ident,5,                                                     API2F405.105   
+*CALL ARGPPX                                                               API2F405.106   
+     &     ICODE, CMESSAGE)                                                API2F405.107   
+                                                                           API2F405.108   
+      IF(ICODE.GT.0) THEN                                                  API2F405.109   
+        RETURN                                                             API2F405.110   
+      END IF                                                               API2F405.111   
+!                                                                          API2F405.112   
+! item 255 downdraught detrainment rate per level                          API2F405.113   
+!                                                                          API2F405.114   
+      CALL EXTDIAG(STASHWORK,SI(1,5,im_index),SF(1,5),255,255,             API2F405.115   
+     &     INT5,ROW_LENGTH,                                                API2F405.116   
+     &     STLIST,LEN_STLIST,STINDEX(1,1,5,im_index),2,STASH_LEVELS,       API2F405.117   
+     &     NUM_STASH_LEVELS+1, STASH_PSEUDO_LEVELS,                        API2F405.118   
+     &     NUM_STASH_PSEUDO,                                               API2F405.119   
+     &     im_ident,5,                                                     API2F405.120   
+*CALL ARGPPX                                                               API2F405.121   
+     &     ICODE, CMESSAGE)                                                API2F405.122   
+                                                                           API2F405.123   
+      IF(ICODE.GT.0) THEN                                                  API2F405.124   
+        RETURN                                                             API2F405.125   
+      END IF                                                               API2F405.126   
+                                                                           API2F405.127   
+C Item 218 lowest convective cloud base level                              ARN2F304.272   
+                                                                           ARN2F304.273   
+      IF(SF(218,5)) THEN                                                   ARN2F304.274   
+        DO I=1,P_FIELD                                                     ARN2F304.275   
+          STASHWORK(SI(218,5,im_index)+I-1) = LCBASE(I)                    GRB4F305.112   
+        END DO                                                             ARN2F304.277   
+      END IF                                                               ARN2F304.278   
+                                                                           ARN2F304.279   
+C Item 219 lowest convective cloud top level                               ARN2F304.280   
+                                                                           ARN2F304.281   
+      IF(SF(219,5)) THEN                                                   ARN2F304.282   
+        DO I=1,P_FIELD                                                     ARN2F304.283   
+          STASHWORK(SI(219,5,im_index)+I-1) = LCTOP(I)                     GRB4F305.113   
+        END DO                                                             ARN2F304.285   
+      END IF                                                               ARN2F304.286   
+                                                                           ARN2F304.287   
+C Item 222 lowest convective cloud base as pressure                        ARN2F304.288   
+C or item 224 lowest convective cloud base as height                       ARN2F304.289   
+                                                                           ARN2F304.290   
+      IF(SF(222,5).OR.SF(224,5)) THEN                                      ARN2F304.291   
+        DO I=1,P_FIELD                                                     ARN2F304.292   
+          LEVEL=LCBASE(I)                                                  ARN2F304.293   
+         IF(LEVEL.EQ.0) THEN                                               ARN2F304.294   
+          STASHWORK(SI(222,5,im_index)+I-1)=RMDI                           GRB4F305.114   
+         ELSE                                                              ARN2F304.296   
+          STASHWORK(SI(222,5,im_index)+I-1)                                GRB4F305.115   
+     &    =AKH(LEVEL)+BKH(LEVEL)*D1(JPSTAR+I-1)                            ARN2F304.298   
+         END IF                                                            ARN2F304.299   
+        END DO                                                             ARN2F304.300   
+      END IF                                                               ARN2F304.301   
+                                                                           ARN2F304.302   
+C Item 223 lowest convective cloud top as pressure                         ARN2F304.303   
+C or item 225 lowest convective cloud top as height                        ARN2F304.304   
+                                                                           ARN2F304.305   
+      IF(SF(223,5).OR.SF(225,5)) THEN                                      ARN2F304.306   
+        DO I=1,P_FIELD                                                     ARN2F304.307   
+          LEVEL=LCTOP(I)                                                   ARN2F304.308   
+         IF(LEVEL.EQ.0) THEN                                               ARN2F304.309   
+          STASHWORK(SI(223,5,im_index)+I-1)=RMDI                           GRB4F305.116   
+         ELSE                                                              ARN2F304.311   
+          STASHWORK(SI(223,5,im_index)+I-1)                                GRB4F305.117   
+     &    =AKH(LEVEL)+BKH(LEVEL)*D1(JPSTAR+I-1)                            ARN2F304.313   
+         END IF                                                            ARN2F304.314   
+        END DO                                                             ARN2F304.315   
+      END IF                                                               ARN2F304.316   
+                                                                           ARN2F304.317   
+C Item 224 ICAO height of convective cloud base                            ARN2F304.318   
+                                                                           ARN2F304.319   
+      IF(SF(224,5))THEN                                                    ARN2F304.320   
+        CALL ICAO_HT(STASHWORK(SI(222,5,im_index)),P_FIELD,                GRB4F305.118   
+     &               STASHWORK(SI(224,5,im_index)))                        GRB4F305.119   
+      ENDIF                                                                ARN2F304.322   
+                                                                           ARN2F304.323   
+C Item 225 ICAO height of convective cloud top                             ARN2F304.324   
+      IF(SF(225,5))THEN                                                    ARN2F304.325   
+        CALL ICAO_HT(STASHWORK(SI(223,5,im_index)),P_FIELD,                GRB4F305.120   
+     &               STASHWORK(SI(225,5,im_index)))                        GRB4F305.121   
+      ENDIF                                                                ARN2F304.327   
+                                                                           ARN2F304.328   
+C Item 220 Convective fraction of lowest cloud                             ARN2F304.329   
+                                                                           ARN2F304.330   
+      IF(SF(220,5)) THEN                                                   ARN2F304.331   
+        CALL COPYDIAG(STASHWORK(SI(220,5,im_index)),LCCA,                  GRB4F305.122   
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.613   
+     &       im_ident,5,220,                                               GPB1F403.614   
+*CALL ARGPPX                                                               GPB1F403.615   
+     &       ICODE,CMESSAGE)                                               GPB1F403.616   
+                                                                           GPB1F403.617   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.618   
+      END IF                                                               ARN2F304.334   
+                                                                           ARN2F304.335   
+C Item 221 Convective liquid water path of lowest cloud                    ARN2F304.336   
+                                                                           ARN2F304.337   
+      IF(SF(221,5)) THEN                                                   ARN2F304.338   
+        CALL COPYDIAG(STASHWORK(SI(221,5,im_index)),LCCLWP,                GRB4F305.123   
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.619   
+     &       im_ident,5,221,                                               GPB1F403.620   
+*CALL ARGPPX                                                               GPB1F403.621   
+     &       ICODE,CMESSAGE)                                               GPB1F403.622   
+                                                                           GPB1F403.623   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.624   
+      END IF                                                               CONV_CT1.332   
+C                                                                          AJX1F402.15    
+C Item 231 CCA times conv. cld base pressure                               AJX1F402.16    
+C                                                                          AJX1F402.17    
+      IF(SF(231,5)) THEN                                                   AJX1F402.18    
+        CALL COPYDIAG(STASHWORK(SI(231,5,im_index)),ICCBPxCCA,             AJX1F402.19    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.625   
+     &       im_ident,5,231,                                               GPB1F403.626   
+*CALL ARGPPX                                                               GPB1F403.627   
+     &       ICODE,CMESSAGE)                                               GPB1F403.628   
+                                                                           GPB1F403.629   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.630   
+      ENDIF                                                                AJX1F402.21    
+C                                                                          AJX1F402.22    
+C Item 232 CCA times conv. cld top pressure                                AJX1F402.23    
+C                                                                          AJX1F402.24    
+      IF(SF(232,5)) THEN                                                   AJX1F402.25    
+        CALL COPYDIAG(STASHWORK(SI(232,5,im_index)),ICCTPxCCA,             AJX1F402.26    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.631   
+     &       im_ident,5,232,                                               GPB1F403.632   
+*CALL ARGPPX                                                               GPB1F403.633   
+     &       ICODE,CMESSAGE)                                               GPB1F403.634   
+                                                                           GPB1F403.635   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.636   
+      ENDIF                                                                AJX1F402.28    
+C                                                                          AJX1F402.29    
+C Item 233 Gridbox mean conv. cld water                                    AJX1F402.30    
+C                                                                          AJX1F402.31    
+      IF(SF(233,5)) THEN                                                   AJX1F402.32    
+        CALL COPYDIAG_3D(STASHWORK(SI(233,5,im_index)),GBMCCW,             AJX1F402.33    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,Q_LEVELS,           AJX1F402.34    
+     &     STLIST(1,STINDEX(1,233,5,im_index)),LEN_STLIST,STASH_LEVELS,    AJX1F402.35    
+     &       NUM_STASH_LEVELS+1,                                           GPB1F403.637   
+     &       im_ident,5,233,                                               GPB1F403.638   
+*CALL ARGPPX                                                               GPB1F403.639   
+     &       ICODE,CMESSAGE)                                               GPB1F403.640   
+        IF(ICODE.GT.0) THEN                                                AJX1F402.37    
+          RETURN                                                           AJX1F402.38    
+        ENDIF                                                              AJX1F402.39    
+      ENDIF                                                                AJX1F402.40    
+C                                                                          AJX1F402.41    
+C Item 234 Gridbox mean conv. cld water path                               AJX1F402.42    
+C                                                                          AJX1F402.43    
+      IF(SF(234,5)) THEN                                                   AJX1F402.44    
+        CALL COPYDIAG(STASHWORK(SI(234,5,im_index)),GBMCCWP,               AJX1F402.45    
+     &       FIRST_POINT,LAST_POINT,P_FIELD,ROW_LENGTH,                    GPB1F403.641   
+     &       im_ident,5,234,                                               GPB1F403.642   
+*CALL ARGPPX                                                               GPB1F403.643   
+     &       ICODE,CMESSAGE)                                               GPB1F403.644   
+                                                                           GPB1F403.645   
+        IF (ICODE .GT. 0) GOTO 9999                                        GPB1F403.646   
+      ENDIF                                                                AJX1F402.47    
+                                                                           CONV_CT1.333   
+CL Call STASH to process output                                            CONV_CT1.334   
+                                                                           CONV_CT1.335   
+      IF(LTIMER) THEN                                                      CONV_CT1.336   
+        CALL TIMER('STASH   ',3)                                           CONV_CT1.337   
+      END IF                                                               CONV_CT1.338   
+                                                                           CONV_CT1.339   
+      CALL STASH(a_sm,a_im,5,STASHWORK,                                    GKR0F305.921   
+*CALL ARGSIZE                                                              @DYALLOC.829   
+*CALL ARGD1                                                                @DYALLOC.830   
+*CALL ARGDUMA                                                              @DYALLOC.831   
+*CALL ARGDUMO                                                              @DYALLOC.832   
+*CALL ARGDUMW                                                              GKR1F401.199   
+*CALL ARGSTS                                                               @DYALLOC.833   
+*CALL ARGPPX                                                               GKR0F305.922   
+     &           ICODE,CMESSAGE)                                           @DYALLOC.837   
+                                                                           CONV_CT1.341   
+      IF(LTIMER) THEN                                                      CONV_CT1.342   
+        CALL TIMER('STASH   ',4)                                           CONV_CT1.343   
+      END IF                                                               CONV_CT1.344   
+                                                                           CONV_CT1.345   
+ 9999 CONTINUE                                                             GPB1F403.647   
+      RETURN                                                               CONV_CT1.346   
+      END                                                                  CONV_CT1.347   
+*ENDIF                                                                     CONV_CT1.348   

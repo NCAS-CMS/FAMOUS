@@ -1,0 +1,143 @@
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script:  submitchk
+#LL---------------------------------------------------------------------
+#LL
+#LL  Purpose: Checks whether to resubmit run.  If stoprun has been
+#LL           called write information for startrun to a file.
+#LL           If neither resubmitting or stoprunned, deletes $JOBDIR.
+#LL
+#LL  Author:   K M Rogers         Date:           09 Oct 1995
+#LL  Reviewer: G Henderson        Date of review:
+#LL
+#LL  Tested under OS version: UNICOS 7.C
+#LL
+#LL  Code version no: 4.0         Date:  9        1992
+#LL
+#LL  Modification History:
+#LL    09/10/95 - Original version.
+#LL 19/05/96  vn4.1 If reconfiguration only run, informs user and
+#LL                 returns control to the top level. G Henderson
+#LL 02/08/96  vn4.1 Changes for restartability        L Wiles
+#LL 30/04/97  vn4.3 Corrections to resubmission       L Wiles
+#LL 18/09/97  vn4.4 Keep JOBDIR on model or archive failure  L Wiles
+#LL 25/11/98  vn4.5 Remove umui_runs directories after successful runs
+#LL                 except with stopruns/resubmitting runs. W Roseblade
+#LL
+#LL  Programming standard: UM Doc Paper 3A, version 1 (29/10/90)
+#LL
+#LL  Project task: C0
+#LL
+#LL  Logical components covered: J00
+#LL
+#LL  External documentation:
+#LL    UM Doc Paper C0 - The top-level control system
+#LL
+#L   Interface and arguments: ------------------------------------------
+#L
+#L   . submitchk
+#L
+#L   -------------------------------------------------------------------
+#L
+#L   Called by: jobscript
+#L   Calls    :
+#L
+#L   Imports (used in same shell):
+#L     RESUB_FILE   - Script executed to resubmit run
+#L     ERRFLAG      - File containing info on whether run stopped
+#L     TEMP         - Temporary directory
+#L     RUNID        - Run id (expt id + job id)
+#L     SUBMITID     - Dir containing job files under $HOME/umui_runs
+#L     HOME         - User home directory
+#L     OPSTARTDIR   - Dir with info for operators for restarting runs
+#L                    in the event of a crash.
+#L     OPSTOPRUN    - Dir with info for restarting if operator stops
+#L                    the runs.
+#L     JOBDIR       - Dir containing job files to submit
+#L
+#L   Exports:
+#L
+#L   Local variables:
+#L
+#L----------------------------------------------------------------------
+DELJOBDIR=true
+ARCHERR=false
+
+if test $STEP -eq 1 || test $STEP -eq 4
+then
+
+  RCSERVER=`cat $ERRFLAG|cut -c 1`     # return code from server
+  RMSERVER=`cat $ERRFLAG|cut -c 3-80`  # message from server
+
+  if test $RCSERVER = 'T'  # stoprun or archive error
+  then
+
+    if [[ "$RMSERVER" = *"stoprun:"* ]]
+    then
+      # keep restart files after stopruns
+
+      if [[ "$RMSERVER" = *"User"* ]]
+      then        # user stoprun
+        mkdir $HOME/umui_runs/startinfo
+        mv $OPSTARTDIR/"$RUNID"-"$SUBMITID" \
+          $HOME/umui_runs/startinfo/"$RUNID"-"$SUBMITID"
+        DELJOBDIR=false
+      else        # operator stoprun
+        mv $OPSTARTDIR/"$RUNID"-"$SUBMITID" \
+          $OPSTOPRUN/"$RUNID"-"$SUBMITID"
+        DELJOBDIR=false
+      fi
+
+    else          # archiving error
+      ARCHERR=true
+      DELJOBDIR=false
+    fi
+  fi
+if [ -f $OPSTARTDIR/$RUNID-$SUBMITID ]
+then
+   rm -f $OPSTARTDIR/$RUNID-$SUBMITID
+fi
+fi
+
+if test $STEP -eq 1 || test $STEP -eq 2 || test $STEP -eq 4
+then
+   echo -e "RESUB_FILE = x"$RESUB_FILE"x"
+   if [ "$RESUB_FILE" != "" ]
+   then
+      if [ -f $RESUB_FILE ]
+  then
+    # Resubmit automatically-resubmitting runs if requested
+    DELJOBDIR=false
+    $RESUB_FILE
+    rm $RESUB_FILE
+      fi
+  fi
+fi
+
+if [ "$DELJOBDIR" = true ]
+then
+  if [ "$ARCHERR" = false ] && [ "$RCMASTER" -eq 0 ]
+  then
+    # remove job directory if there are no model or archive errors
+    if [ "$RUNNING_SCRIPT" != "yes" ]
+    then
+       rm -r $HOME/umui_runs/$RUNID*
+    fi
+#*I GWRAU405.57
+## remove $TEMP directory and all its files
+#echo -e "TEMP directory = $TEMP"
+#if [ -d $TEMP ]
+#then
+##   rm -rf $TEMP
+#fi
+
+  fi
+fi

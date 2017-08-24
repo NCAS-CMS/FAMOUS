@@ -1,0 +1,356 @@
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script: copy2dest
+#LL---------------------------------------------------------------------
+#LL  Purpose: Copy data from the machine that model runs on
+#LL           to a secondary system
+#LL
+#LL  Author: Chris Perks                  Date: September 1994
+#LL
+#LL  Code version no: 3.4
+#LL  Modification History:
+#LL  Date     Vn   Name      Change
+#LL  13/03/95 3.4  C D Perks Original version
+#LL  31/03/95 4.0  C D Perks Print out TF contents upon transfer failure
+#LL  05/04/95 4.0  C D Perks Added TIC code to trigger files
+#LL  05/04/95 4.0  C D Perks Removed variable LINKFAIL_LIMIT as
+#LL                          putibm command now incorporates 5 retries.
+#LL  10/04/95 4.0  C D Perks Changed CURRENT_RQST_NAME to PPFILE for
+#LL                          pp and mean pp fieldcos output files.
+#LL  06/06/95 4.0  C D Perks Added USERID to trigger files. This
+#LL                          is used for identifying archive jobs.
+#LL  07/06/95 4.0  C D Perks Changed expiry date format for post year
+#LL                          2000 dates from YYDDD to YYYY/DDD
+#LL  14/06/95 4.0  C D Perks Updated error messages.
+#LL  14/08/95 4.0  K Rogers  Added # for comment line at end.
+#LL  14/08/95 4.0  K Rogers  Added ARCHTAPE variable.
+#LL  02/04/96 4.1  L Wiles   Made code portable.
+#LL  15/04/96 4.1  L Wiles   Amendments to data in trigger files
+#LL                          for CRACER
+#LL  07/05/96 4.1  L Wiles   Fieldcos errors corrected by NOFIELDS check
+#LL  18/04/97 4.3  L Wiles  Copy trigger file to cracercheck.
+#LL                         Add new flag to files in trigger file.
+#LL  17/08/98 4.5  I Edmond  Optimisation changes.
+#LL
+#LL  Programming Standard: UM Tech Doc Paper
+#LL                        Automated Post Processing System
+#LL---------------------------------------------------------------------
+#LL  Called by: qscasedisp
+#LL  Calls    : hdstransfer, ppcray2hds, archfail
+#LL---------------------------------------------------------------------
+#LL  Variables:
+#LL  Imports:
+#LL
+#LL  UMMACHINE               # Machine used for running Unified Model
+#LL  F_END_TF                # Trigger file name
+#LL  MODEL_FILE              # Model data file pathname on model machine
+#LL  DEST_DATA               # Destination of model file
+#LL  TEXT_DATA               # Text required for data transfer
+#LL  CURRENT_RQST_TYPE       # File :dump,pp,mean pp,bndy
+#LL  FILECOUNT               # Number of entries in TF
+#LL  LINKFAIL_LIMIT          # Number of attempts to copy file
+#LL  F_END_TF_COPY           # Flag for TF or data file copy
+#LL  DEST_TF                 # Destination device for TF
+#LL  LAST_TF                 # Last TF for particular stream
+#LL  DSNIBM                  # Met. Office HDS f/e data file
+#LL  DM_DATE                 # Absolute date for archived files
+#LL  AC                      # Accounting code
+#LL  NOFIELDS                # True if pp file has no fields,
+#LL                          # otherwise false.
+#LL  ARCHTAPE                # True if archiving to tape
+#LL                          # False if just copying data to disk
+#LL  SCRATCH                 # Delete from IBM disk after tape archive
+#LL                          # S is default N otherwise.
+#LL  MAIL                    # Mail errors in archiving to user
+#LL                          # M = mail, N = do not mail errors
+#LL  BACKUP                  # D = duplex (second) copy archived to
+#LL                          # remote store, N otherwise.
+#LL  BKUP_DUMP               # Y if dumps are to have duplex backup
+#LL  BKUP_PP                 # Y if pp files are to have duplex backup
+#LL  BKUP_MEANPP             # Y if meanpp files are to have duplex
+#LL                          # backup
+#LL  BKUP_BNDY               # Y if boundary files are to have duplex
+#LL                          # backup
+#LL
+#LL  Local variables:
+#LL  DEST_SYS_DIR            # Destination system name and directory
+#LL                          # in which to place files (non Met. Office
+#LL                          # systems only)
+#LL  LINECOUNT               # No of lines in a trigger file.
+#LL
+#LL
+#LL  NB: Other variables in argument list pass through copy2dest for
+#LL      use in hds_transfer_text and ppcrayformat (Met. Office only).
+
+
+#L----------------------------------------------------------------------
+#L Step 1: Set up environment variables for file transfers depending
+#L         on whether data or trigger file being transferred.
+#L         Reformat PP files (Met. Office only).
+#L----------------------------------------------------------------------
+
+if [[ $F_END_TF_COPY = off ]]   # File to be copied is a data file
+then
+
+  case $CURRENT_RQST_TYPE in
+    MPP|PP) if [[ $UMMACHINE = METOCRAY ]]
+            then
+              # Reformat pp fields using FIELDCOS executable before
+              # transferring to frontend (Met. Office only)
+              . ppcray2hds
+              MODEL_FILE=$PPFILE  # PPFILE is output file from fieldcos
+            else
+              MODEL_FILE=$DATAM/$CURRENT_RQST_NAME
+              NOFIELDS='false'
+            fi
+            ;;
+    DMP|BF) MODEL_FILE=$DATAM/$CURRENT_RQST_NAME
+            NOFIELDS='false'
+            ;;
+    *)      NOFIELDS='false'
+            ;;
+  esac
+
+else
+  MODEL_FILE=$MODEL_F_END_TF    # File to be copied is a trigger file
+  NOFIELDS='false'
+fi
+
+if [[ $UMMACHINE = METOCRAY && $IBM_ARCHNAME != OTHER ]]
+then
+  # Met. Office specific environment variables and calculations
+  . hdstransfer
+
+else
+
+  # Set following line to include destination system name and
+  # directory name. The same filename is used as on the production
+  # system ie. $CURRENT_RQST_NAME or F_END_TF.  The directory
+  # needs to exist before it can be written to.  The following will
+  # just move the files from $DATAM to $HOME.
+
+  DEST_SYS_DIR=$ARCHIVE_DIR
+  mkdir -p $DEST_SYS_DIR
+  if [[ $F_END_TF_COPY = off ]]   # File to be copied is a data file
+  then
+    DEST_DATA=$DEST_SYS_DIR/$CURRENT_RQST_NAME
+  else
+    DEST_DATA=$DEST_SYS_DIR/$F_END_TF
+  fi
+fi
+
+#L----------------------------------------------------------------------
+#L Step 2:Transfer to secondary system
+#L----------------------------------------------------------------------
+
+#test for empty trigger file
+if [[ $F_END_TF_COPY = on ]]
+then
+   LINECOUNT=`wc -l $MODEL_FILE | $UM_AWK '{print $1}'`
+else
+   LINECOUNT=2
+fi
+
+if [[ $NOFIELDS = false ]]           # pp file has fields
+then
+
+  # Do not transfer trigger file if not archiving to tape.
+  # Just transfer data files so available on secondary system
+  # In correct format.
+
+  if [[ $F_END_TF_COPY = on && $ARCHTAPE = false ]]
+  then
+    :
+  elif [[ $UMMACHINE = METOCRAY && $IBM_ARCHNAME != OTHER ]]
+  then
+    if (( $LINECOUNT > 1 ))   # Trigger file is not empty
+    then
+      putibm $MODEL_FILE $DEST_DATA df=$DF $TEXT
+    fi
+    CC=$?
+
+  else
+    # Replace with a suitable command to copy to an
+    # archive system.
+
+  # If saving old data, find the timestamp suffix for it
+  # The global environment variable OVERWRITE_DATA is set in the
+  # SCRIPT jobfile.
+  # N means do not overwrite data i.e. save exixting output files with a
+  # Y means overwrite any existing output files
+  if [[ $OVERWRITE_DATA = N ]]
+  then
+    timestamp=d$(date +"%y%j").t$(date +"%H%M%S")
+  fi
+
+  if [[ $CURRENT_RQST_TYPE = DMP ]]
+  then
+
+    if [[ $OVERWRITE_DATA = N ]]
+    then
+      mv ${DEST_DATA} ${DEST_DATA}.${timestamp}
+    fi
+
+    cp $MODEL_FILE $DEST_DATA
+  else
+
+        if [[ $OVERWRITE_DATA = N ]]
+        then
+	  mv ${DEST_DATA}.pp ${DEST_DATA}.${timestamp}.pp
+        else
+          rm -f ${DEST_DATA}.pp
+        fi
+
+        $UMDIR/bin/ff2pp $MODEL_FILE ${DEST_DATA}.tmp.pp > /dev/null
+	$UMDIR/bin/bigend -32 ${DEST_DATA}.tmp.pp ${DEST_DATA}.pp
+        /bin/rm -f ${DEST_DATA}.tmp.pp
+  fi
+    CC=$?
+
+  fi
+
+  if (( $CC == 0 ))
+  then
+
+    echo -e "File $MODEL_FILE successfully transferred to file $DEST_DATA"
+    if [[ $UMMACHINE = METOCRAY && $IBM_ARCHNAME != OTHER ]]
+    then
+      LAST_FILE=$DSNIBM
+    else
+      # Specifies last file archived on this stream - not needed for
+      # non Met Office sites but included for completeness.
+      LAST_FILE=$CURRENT_RQST_NAME
+    fi
+
+    if [[ $F_END_TF_COPY = on ]]
+    then
+      # successfully transferred trigger file
+        if [[ $ARCHTAPE = true ]]
+        then
+          cp $MODEL_FILE $CRACERCHECK
+          CC=$?
+          if (( $CC != 0 ))
+          then
+            echo -e "copy2dest: Trigger file not copied to \
+            $CRACERCHECK "
+          fi
+        fi
+      echo -e "Trigger file contents:"
+      cat $MODEL_FILE
+      rm $MODEL_F_END_TF
+      LAST_TF='false'
+      FILECOUNT=0
+      F_END_TF_COPY='off'
+
+    else
+
+      # successfully transferred data file
+      if (( $DATE_FORMAT == 2 ))
+      then
+      # Retention period used. Convert relative retention period
+      # to an absolute date
+
+         . getarchdate
+      fi
+
+#L----------------------------------------------------------------------
+#L Step 3:Duplex backup request sets flag in trigger file
+#L        Other flags set in qsserver.
+#L----------------------------------------------------------------------
+      if [[ $UMMACHINE = METOCRAY && $IBM_ARCHNAME != OTHER ]]
+      then
+
+        BACKUP='N'                #set to default - no duplex backup
+
+        case $CURRENT_RQST_TYPE in
+         MPP) if [[ $BKUP_MEANPP = Y ]]
+              then
+                BACKUP='D'
+              fi
+              ;;
+          PP) if [[ $BKUP_PP = Y ]]
+              then
+                BACKUP='D'
+              fi
+              ;;
+         DMP) if [[ $BKUP_DUMP = Y ]]
+              then
+                BACKUP='D'
+              fi
+              ;;
+          BF) if [[ $BKUP_BNDY = Y ]]
+              then
+                BACKUP='D'
+              fi
+              ;;
+         esac
+
+#L----------------------------------------------------------------------
+#L Step 4:Update trigger file with the following information:
+#L        Secondary system filename, review+expiry dates, archive flags
+#L        accounting code and mailid
+#L----------------------------------------------------------------------
+
+        if [[ $DM_METHOD = REVIEW ]]
+        then
+          # data will go the CRACER archive (C)
+          echo -e $DSNIBM 'FOREVER' $DM_DATE \
+               $SCRATCH$MAIL$BACKUP'C'$TAPE \
+               $AC $MAIL_ID >> $MODEL_F_END_TF
+
+        elif [[ $DM_METHOD = MGMTCLASS ]]
+        then
+          # data will go to UABRF archive (U)
+          echo -e $DSNIBM $DM_DATE 'NONE' \
+               $SCRATCH$MAIL$BACKUP'U'$TAPE $AC \
+               $MAIL_ID >> $MODEL_F_END_TF
+        fi
+
+        # This is effectively the portable option.
+        # copy any variables needed to be passed with trigger file
+        # to be used in archiving program on secondary system.  The
+        # filename used here must be the same as in $DEST_DATA above.
+        # DM_METHOD should be set to EXPIRY
+
+      fi
+
+      FILECOUNT=$(( $FILECOUNT + 1 ))
+    fi
+
+  else
+
+    if [[ $F_END_TF_COPY = off ]]
+    then
+      echo -e "Unable to copy data file $MODEL_FILE to front-end"
+      echo -e "This file will now be written to :"
+      echo -e "$DATAM/$RUNID.failure."
+    else
+      echo -e "Unable to copy file $MODEL_FILE to front-end"
+      echo -e "This trigger file contains a record of files"
+      echo -e "that have been successfully transferred to the front-end."
+      echo -e "For these files to archived, the trigger file must be"
+      echo -e "transferred to the front-end. The destination text "
+      echo -e "is $DEST_DATA."
+      echo -e "Trigger file contents:"
+      cat $MODEL_FILE
+    fi
+
+#L---------------------------------------------------------------------
+#L Step 5:There is an error copying to the secondary system. Call
+#L        routine to wrap up process
+#L---------------------------------------------------------------------
+
+    . archfail
+
+# IN: $CURRENT_RQST_NAME $CURRENT_RQST_TYPE $CURRENT_RQST_ACTION
+# IN: $ERRFLAG $FAILPROC
+  fi
+fi

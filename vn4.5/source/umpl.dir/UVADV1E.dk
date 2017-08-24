@@ -1,0 +1,805 @@
+*IF DEF,A12_1E                                                             UVADV1E.2     
+*IF DEF,MPP                                                                UVADV1E.3     
+C *****************************COPYRIGHT******************************     UVADV1E.4     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    UVADV1E.5     
+C                                                                          UVADV1E.6     
+C Use, duplication or disclosure of this code is subject to the            UVADV1E.7     
+C restrictions as set forth in the contract.                               UVADV1E.8     
+C                                                                          UVADV1E.9     
+C                Meteorological Office                                     UVADV1E.10    
+C                London Road                                               UVADV1E.11    
+C                BRACKNELL                                                 UVADV1E.12    
+C                Berkshire UK                                              UVADV1E.13    
+C                RG12 2SZ                                                  UVADV1E.14    
+C                                                                          UVADV1E.15    
+C If no contract has been raised with this copy of the code, the use,      UVADV1E.16    
+C duplication or disclosure of it is strictly prohibited.  Permission      UVADV1E.17    
+C to do so must first be obtained in writing from the Head of Numerical    UVADV1E.18    
+C Modelling at the above address.                                          UVADV1E.19    
+C ******************************COPYRIGHT******************************    UVADV1E.20    
+CLL   SUBROUTINE UV_ADV -------------------------------------------        UVADV1E.21    
+CLL                                                                        UVADV1E.22    
+CLL                   PURPOSE:                                             UVADV1E.23    
+CLL  CALCULATES MASS-WEIGHTED INCREMENTS TO U AND V DUE TO                 UVADV1E.24    
+CLL  ADVECTION  BY USING EQUATIONS (37) AND (38) TO CALCULATE              UVADV1E.25    
+CLL  PROVISIONAL VALUES OF U AND V AT THE NEW TIME-LEVEL, AND THEN         UVADV1E.26    
+CLL  RECALCULATING THE ADVECTION TERMS ON THE RIGHT-HAND SIDE OF (41)      UVADV1E.27    
+CLL  AND (42) USING THESE PROVISIONAL VALUES.  THE CORIOLIS TERMS          UVADV1E.28    
+CLL  ASSOCIATED WITH THE VERTICAL VELOCITY ARE CALCULATED AND INCLUDED     UVADV1E.29    
+CLL  IN THE INCREMENTS.  THE FINAL INCREMENTS ARE CALCULATED AS IN         UVADV1E.30    
+CLL  EQUATIONS (41) AND (42). IF RUNNING A GLOBAL MODEL POLAR_UV IS        UVADV1E.31    
+CLL  CALLED TO UPDATE POLAR VALUES.                                        UVADV1E.32    
+CLL                                                                        UVADV1E.33    
+CLL                          CHANGES INCLUDE:-                             UVADV1E.34    
+CLL U_MEAN AND V_MEAN FIELDS NOT OVER-WRITTEN WHEN INTERPOLATION TO        UVADV1E.35    
+CLL U_GRID PERFORMED. ETADOT AND RS FIELDS INTERPOLATED TO U_GRID INSIDE   UVADV1E.36    
+CLL THIS ROUTINE INSTEAD OF INSIDE ADV_CTL. THIS COSTS 8 EXTRA             UVADV1E.37    
+CLL HORIZONTAL FIELDS BUT ALLOWS ROUTINE TO BE CALLED BEFORE TH_ADV SO     UVADV1E.38    
+CLL THAT OMEGA CALCULATED HERE CAN BE USED INSIDE TH_ADV TO CALCULATE      UVADV1E.39    
+CLL EXTRA THERMODYNAMIC TERM.                                              UVADV1E.40    
+CLL                                                                        UVADV1E.41    
+CLL INCLUSION OF L_SECOND TO CHOOSE CHEAPER SECOND ORDER ADVECTION         UVADV1E.42    
+CLL SCHEME ALONG WITH REMOVAL OF CODE PREVIOUSLY UNDER *DEF FORECAST.      UVADV1E.43    
+CLL CODE INCLUDED TO ALLOW HALF-TIMESTEP TO BE USED AT TOP LEVEL.          UVADV1E.44    
+CLL                                                                        UVADV1E.45    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  UVADV1E.46    
+CLL   WAS VERSION FOR CRAY Y-MP                                            UVADV1E.47    
+CLL                                                                        UVADV1E.48    
+CLL   WRITTEN  M.H MAWSON.                                                 UVADV1E.49    
+CLL   MPP CODE ADDED BY P.BURTON                                           UVADV1E.50    
+CLL                                                                        UVADV1E.51    
+CLL  MODEL            MODIFICATION HISTORY:                                UVADV1E.52    
+CLL VERSION  DATE                                                          UVADV1E.53    
+!LL   4.4   11/08/97  New version optimised for T3E.                       UVADV1E.54    
+!LL                   Not bit-reproducible with UVADV1C.                   UVADV1E.55    
+!LL 4.4      07/08/97 Removed GCG_RMIN call from loop over levels          UVADV1E.56    
+!LL                                                      P.Burton          UVADV1E.57    
+CLL  4.4     04/08/97 Optimisation for T3E   D.Salmond                     UVADV1E.58    
+!LL   4.5    21/08/98  Comment out cdir$ cache_bypass directives due       GSM4F405.7     
+!LL                    to t3e hardware error with new compiler.            GSM4F405.8     
+!LL                    S.D.Mullerworth                                     GSM4F405.9     
+CLL  4.5  19/12/97  Move calculation of 1/RS*RS*P outside 4th order IF     ARB0F405.26    
+CLL                 test for section 2.1, so that it can be used later     ARB0F405.27    
+CCL                 in 2nd order code too.                  RTHBarnes.     ARB0F405.28    
+CLL                                                                        UVADV1E.59    
+CLL   PROGRAMMING STANDARD:                                                UVADV1E.60    
+CLL                                                                        UVADV1E.61    
+CLL   SYSTEM COMPONENTS COVERED: P122                                      UVADV1E.62    
+CLL                                                                        UVADV1E.63    
+CLL   SYSTEM TASK: P1                                                      UVADV1E.64    
+CLL                                                                        UVADV1E.65    
+CLL   DOCUMENTATION:       THE EQUATIONS USED ARE (37-38) AND (41-42)      UVADV1E.66    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER NO. 10     UVADV1E.67    
+CLL                        M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON           UVADV1E.68    
+CLL                                                                        UVADV1E.69    
+CLLEND-------------------------------------------------------------        UVADV1E.70    
+                                                                           UVADV1E.71    
+C*L   ARGUMENTS:---------------------------------------------------        UVADV1E.72    
+      SUBROUTINE UV_ADV                                                    UVADV1E.73    
+     &              (U,V,PSTAR_OLD,PSTAR,U_MEAN,V_MEAN,SEC_U_LATITUDE,     UVADV1E.74    
+     &              ETADOT_MEAN,RS,DELTA_AK,DELTA_BK,AK,BK,F1,F2,          UVADV1E.75    
+     &              LATITUDE_STEP_INVERSE,ADVECTION_TIMESTEP,NU_BASIC,     UVADV1E.76    
+     &              LONGITUDE_STEP_INVERSE,U_FIELD,P_FIELD,                UVADV1E.77    
+     &              ROW_LENGTH,P_LEVELS,                                   UVADV1E.78    
+*CALL ARGFLDPT                                                             UVADV1E.79    
+     &              COS_U_LONGITUDE,SIN_U_LONGITUDE,SEC_P_LATITUDE,        UVADV1E.80    
+     &              AKH,BKH,OMEGA,L_SECOND,LLINTS,                         UVADV1E.81    
+     &              extended_address,                                      UVADV1E.82    
+     &              LWHITBROM,X_FIELD)                                     UVADV1E.83    
+                                                                           UVADV1E.84    
+      IMPLICIT NONE                                                        UVADV1E.85    
+                                                                           UVADV1E.86    
+      INTEGER                                                              UVADV1E.87    
+     &  P_FIELD            !IN DIMENSION OF FIELDS ON PRESSSURE GRID.      UVADV1E.88    
+     &, U_FIELD            !IN DIMENSION OF FIELDS ON VELOCITY GRID        UVADV1E.89    
+     &, X_FIELD            !IN 1 IF 2ND ORDER ELSE U_FIELD                 UVADV1E.90    
+     &, P_LEVELS           !IN NUMBER OF PRESSURE LEVELS.                  UVADV1E.91    
+     &, ROW_LENGTH         !IN NUMBER OF POINTS PER ROW                    UVADV1E.92    
+                                                                           UVADV1E.93    
+! All TYPFLDPT arguments are intent IN                                     UVADV1E.94    
+*CALL TYPFLDPT                                                             UVADV1E.95    
+                                                                           UVADV1E.96    
+C LOGICAL VARIABLE                                                         UVADV1E.97    
+      LOGICAL                                                              UVADV1E.98    
+     &  L_SECOND     ! SET TO TRUE IF NU_BASIC IS ZERO.                    UVADV1E.99    
+     & ,LLINTS              ! Switch for linear TS calc in CALC_TS         UVADV1E.100   
+     & ,LWHITBROM           ! Switch for White & Bromley terms             UVADV1E.101   
+      INTEGER extended_address(P_FIELD)                                    UVADV1E.102   
+                                                                           UVADV1E.103   
+      REAL                                                                 UVADV1E.104   
+     & U_MEAN(U_FIELD,P_LEVELS) !IN AVERAGED MASS-WEIGHTED U VELOCITY      UVADV1E.105   
+     &                          !   FROM ADJUSTMENT STEP HELD AT U         UVADV1E.106   
+     &                          !   POINTS.                                UVADV1E.107   
+     &,V_MEAN(U_FIELD,P_LEVELS) !IN AVERAGED MASS-WEIGHTED V VELOCITY      UVADV1E.108   
+     &                          !   * COS(LAT) FROM ADJUSTMENT STEP        UVADV1E.109   
+     &,ETADOT_MEAN(P_FIELD,P_LEVELS)  !IN AVERAGED MASS-WEIGHTED           UVADV1E.110   
+     &                          !VERTICAL VELOCITY FROM ADJUSTMENT STEP    UVADV1E.111   
+                                                                           UVADV1E.112   
+      REAL                                                                 UVADV1E.113   
+     & U(U_FIELD,P_LEVELS)      !INOUT IN U FIELD,                         UVADV1E.114   
+     &                          !  OUT MASS-WEIGHTED U FIELD.              UVADV1E.115   
+     &,V(U_FIELD,P_LEVELS)      !INOUT IN V FIELD,                         UVADV1E.116   
+     &                          !  OUT MASS-WEIGHTED V FIELD.              UVADV1E.117   
+                                                                           UVADV1E.118   
+      REAL                                                                 UVADV1E.119   
+     & PSTAR(U_FIELD)           !IN PSTAR FIELD AT NEW TIME-LEVEL ON       UVADV1E.120   
+     &                          ! U GRID.                                  UVADV1E.121   
+     &,PSTAR_OLD(U_FIELD)       !IN PSTAR AT PREVIOUS TIME-LEVEL ON        UVADV1E.122   
+     &                          ! U GRID.                                  UVADV1E.123   
+     &,RS(P_FIELD,P_LEVELS)     !IN RS FIELD.                              UVADV1E.124   
+     &,AK(P_LEVELS)             !IN FIRST TERM IN HYBRID CO-ORDS.          UVADV1E.125   
+     &,BK(P_LEVELS)             !IN SECOND TERM IN HYBRID CO-ORDS.         UVADV1E.126   
+     &,DELTA_AK(P_LEVELS)       !IN LAYER THICKNESS                        UVADV1E.127   
+     &,DELTA_BK(P_LEVELS)       !IN LAYER THICKNESS                        UVADV1E.128   
+     &,AKH(P_LEVELS+1)          !IN HYBRID CO-ORDINATE AT HALF LEVELS      UVADV1E.129   
+     &,BKH(P_LEVELS+1)          !IN HYBRID CO-ORDINATE AT HALF LEVELS      UVADV1E.130   
+     &,SEC_U_LATITUDE(U_FIELD)  !IN 1/COS(LAT) AT U POINTS (2-D ARRAY)     UVADV1E.131   
+     &,SEC_P_LATITUDE(U_FIELD)  !IN 1/COS(LAT) AT P POINTS (2-D ARRAY)     UVADV1E.132   
+     &,SIN_U_LONGITUDE(ROW_LENGTH)  !IN SIN(LONGITUDE) AT U POINTS.        UVADV1E.133   
+     &,COS_U_LONGITUDE(ROW_LENGTH)  !IN COS(LONGITUDE) AT U POINTS.        UVADV1E.134   
+                                                                           UVADV1E.135   
+      REAL                                                                 UVADV1E.136   
+     & LONGITUDE_STEP_INVERSE   !IN 1/(DELTA LAMDA)                        UVADV1E.137   
+     &,LATITUDE_STEP_INVERSE    !IN 1/(DELTA PHI)                          UVADV1E.138   
+     &,ADVECTION_TIMESTEP       !IN                                        UVADV1E.139   
+     &,NU_BASIC                 !IN STANDARD NU TERM FOR MODEL RUN.        UVADV1E.140   
+     &,F1(U_FIELD)              !IN A CORIOLIS TERM (SEE DOCUMENTATION)    UVADV1E.141   
+     &,F2(U_FIELD)              !IN A CORIOLIS TERM (SEE DOCUMENTATION)    UVADV1E.142   
+                                                                           UVADV1E.143   
+      REAL                                                                 UVADV1E.144   
+     & OMEGA(U_FIELD,P_LEVELS) !OUT TRUE VERTICAL VELOCITY                 UVADV1E.145   
+                                                                           UVADV1E.146   
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    UVADV1E.147   
+C DEFINE LOCAL ARRAYS: 35 ARE REQUIRED                                     UVADV1E.148   
+      REAL                                                                 UVADV1E.149   
+     & RS_U(U_FIELD,P_LEVELS)          ! RS AT U POINTS FOR CURRENT LEVE   UVADV1E.150   
+     &,ETADOT_U(U_FIELD,P_LEVELS+1)  ! ETADOT AT U POINTS FOR CURRENT LE   UVADV1E.151   
+     &,U_MEAN_P(U_FIELD,P_LEVELS) ! U MEAN AT P POINTS FOR CURRENT LEVEL   UVADV1E.152   
+     &                   !   WITH FIRST POINT OF FIELD NOW                 UVADV1E.153   
+     &                   !   BEING FIRST P POINT ON SECOND ROW             UVADV1E.154   
+     &                   !   OF P-GRID.                                    UVADV1E.155   
+     &,V_MEAN_P(U_FIELD,P_LEVELS) ! V MEAN AT P POINTS FOR CURRENT LEVEL   UVADV1E.156   
+     &                   !   WITH FIRST POINT OF FIELD NOW                 UVADV1E.157   
+     &                   !   BEING FIRST P POINT ON SECOND ROW             UVADV1E.158   
+     &                   !   OF P-GRID.                                    UVADV1E.159   
+                                                                           UVADV1E.160   
+      REAL                                                                 UVADV1E.161   
+     & U_SECOND_INC(U_FIELD,P_LEVELS)      ! HOLDS U INCREMENT             UVADV1E.162   
+     &                            !RETURNED BY SECOND CALL TO ADV_U_GD     UVADV1E.163   
+     &,U_PROV(U_FIELD,P_LEVELS)            ! HOLDS PROVISIONAL VALUE OF    UVADV1E.164   
+                                                                           UVADV1E.165   
+      REAL                                                                 UVADV1E.166   
+     & V_SECOND_INC(U_FIELD,P_LEVELS)      ! HOLDS V INCREMENT             UVADV1E.167   
+     &                            !RETURNED BY SECOND CALL TO ADV_U_GD     UVADV1E.168   
+     &,V_PROV(U_FIELD,P_LEVELS)            ! HOLDS PROVISIONAL VALUE OF    UVADV1E.169   
+                                                                           UVADV1E.170   
+C NP DENOTES NORTH POLE, SP DENOTES SOUTH POLE.                            UVADV1E.171   
+C POLAR INCREMENT ARRAYS ARE NOT USED IN LIMITED AREA MODEL BUT TO         UVADV1E.172   
+C REMOVE THEM WOULD LEAD TO MODIFYING THE NUMBER OF VARIABLES              UVADV1E.173   
+C PASSED TO ADV_U_GD. THE RETENTION OF THESE ARRAYS ADDS ONLY              UVADV1E.174   
+C 12*ROW_LENGTH TO THE SPACE USED AND NOTHING TO THE CALCULATION           UVADV1E.175   
+C TIME AS ALL USES OF THEM IN CALCULATION ARE CONTROLLED BY *IF'S.         UVADV1E.176   
+                                                                           UVADV1E.177   
+      REAL                                                                 UVADV1E.178   
+     & NUX(X_FIELD,P_LEVELS)      ! COURANT NUMBER DEPENDENT NU AT U POI   UVADV1E.179   
+     &                    ! USED IN EAST-WEST ADVECTION.                   UVADV1E.180   
+     &,NUY(X_FIELD,P_LEVELS)      ! COURANT NUMBER DEPENDENT NU AT U POI   UVADV1E.181   
+     &                    ! USED IN NORTH-SOUTH ADVECTION.                 UVADV1E.182   
+                                                                           UVADV1E.183   
+      REAL NUX_MIN(upd_U_ROWS,P_LEVELS),                                   UVADV1E.184   
+!          minimum value of NUX along a row                                UVADV1E.185   
+     &     NUY_MIN(ROW_LENGTH-2*EW_Halo,P_LEVELS)                          UVADV1E.186   
+!          minimum value of NUY along a column                             UVADV1E.187   
+                                                                           UVADV1E.188   
+      REAL                                                                 UVADV1E.189   
+     & DELTA_AKH(P_LEVELS+1)     ! LAYER THICKNESS  AK(K) - AK(K-1)        UVADV1E.190   
+     &,DELTA_BKH(P_LEVELS+1)     ! LAYER THICKNESS  BK(K) - BK(K-1)        UVADV1E.191   
+     &,WK(U_FIELD)               ! WK AS IN EQUATION (46).                 UVADV1E.192   
+                                                                           UVADV1E.193   
+! Work space required to allow the use of Fourth Order Advection           UVADV1E.194   
+! U/V_MEAN_P_COPY and U/V_COPY arrays are defined with an extra halo       UVADV1E.195   
+! this is required for the bigger stencil of the 4th order operator.       UVADV1E.196   
+                                                                           UVADV1E.197   
+      REAL U_MEAN_P_COPY((ROW_LENGTH+2*extra_EW_Halo)*                     UVADV1E.198   
+     &                   (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS),           UVADV1E.199   
+     &  !    Copy of U_MEAN with extra halo space for 4th order            UVADV1E.200   
+     &     V_MEAN_P_COPY((ROW_LENGTH+2*extra_EW_Halo)*                     UVADV1E.201   
+     &                   (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS),           UVADV1E.202   
+     &  !    Copy of V_MEAN with extra halo space for 4th order            UVADV1E.203   
+     &     U_COPY((ROW_LENGTH+2*extra_EW_Halo)*                            UVADV1E.204   
+     &            (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS),                  UVADV1E.205   
+     &  !    Copy of U with extra halo space for 4th order                 UVADV1E.206   
+     &     V_COPY((ROW_LENGTH+2*extra_EW_Halo)*                            UVADV1E.207   
+     &            (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS)                   UVADV1E.208   
+     &  !    Copy of V with extra halo space for 4th order                 UVADV1E.209   
+                                                                           UVADV1E.210   
+      INTEGER  extended_P_FIELD,                                           UVADV1E.211   
+     &         extended_U_FIELD                                            UVADV1E.212   
+!  These are the sizes of the arrays with the extra halos                  UVADV1E.213   
+                                                                           UVADV1E.214   
+C*---------------------------------------------------------------------    UVADV1E.215   
+C DEFINE LOCAL VARIABLES                                                   UVADV1E.216   
+      INTEGER                                                              UVADV1E.217   
+     &  U_POINTS_UPDATE    ! NUMBER OF U POINTS TO BE UPDATED.             UVADV1E.218   
+     &                     !  = (ROWS-1)*ROWLENGTH                         UVADV1E.219   
+                                                                           UVADV1E.220   
+C REAL SCALARS                                                             UVADV1E.221   
+      REAL                                                                 UVADV1E.222   
+     & SCALAR1,SCALAR2,SCALAR3,SCALAR4,TIMESTEP                            UVADV1E.223   
+                                                                           UVADV1E.224   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        UVADV1E.225   
+      INTEGER                                                              UVADV1E.226   
+     &  I,J,KP,KM,IK,K,IL                                                  UVADV1E.227   
+      INTEGER I_start,I_end                                                UVADV1E.228   
+      INTEGER info  ! return code from comms                               UVADV1E.229   
+                                                                           UVADV1E.230   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    UVADV1E.231   
+      EXTERNAL ADV_U_GD,POLAR_UV,V_CORIOL,UV_TO_P,P_TO_UV                  UVADV1E.232   
+*IF DEF,CRAY                                                               UVADV1E.233   
+      INTEGER ISMIN                                                        UVADV1E.234   
+      EXTERNAL ISMIN                                                       UVADV1E.235   
+*ENDIF                                                                     UVADV1E.236   
+C*---------------------------------------------------------------------    UVADV1E.237   
+                                                                           UVADV1E.238   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS (ROWS+1) * ROWLENGTH                UVADV1E.239   
+CL---------------------------------------------------------------------    UVADV1E.240   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       UVADV1E.241   
+CL---------------------------------------------------------------------    UVADV1E.242   
+CL                                                                         UVADV1E.243   
+CL---------------------------------------------------------------------    UVADV1E.244   
+CL    SECTION 1.     INITIALISATION                                        UVADV1E.245   
+CL---------------------------------------------------------------------    UVADV1E.246   
+C INCLUDE LOCAL CONSTANTS FROM GENERAL CONSTANTS BLOCK                     UVADV1E.247   
+                                                                           UVADV1E.248   
+      U_POINTS_UPDATE = upd_U_ROWS*ROW_LENGTH                              UVADV1E.249   
+                                                                           UVADV1E.250   
+! Initialise RS_U prior to P_TO_UV call                                    UVADV1E.251   
+      DO K=1,P_LEVELS                                                      UVADV1E.252   
+! cdir$ cache_bypass rs_u                                                  GSM4F405.10    
+        DO I=1,FIRST_VALID_PT-1                                            UVADV1E.254   
+          RS_U(I,K)=0.0                                                    UVADV1E.255   
+        ENDDO                                                              UVADV1E.256   
+! cdir$ cache_bypass rs_u                                                  GSM4F405.11    
+        DO I=LAST_U_VALID_PT-ROW_LENGTH,U_FIELD                            UVADV1E.258   
+          RS_U(I,K)=0.0                                                    UVADV1E.259   
+      ENDDO                                                                UVADV1E.260   
+      ENDDO                                                                UVADV1E.261   
+                                                                           UVADV1E.262   
+      DO K=1,P_LEVELS                                                      UVADV1E.263   
+CL    INTERPOLATE RS ONTO U GRID.                                          UVADV1E.264   
+                                                                           UVADV1E.265   
+        CALL P_TO_UV(RS(FIRST_VALID_PT,K),RS_U(FIRST_VALID_PT,K),          UVADV1E.266   
+     &               P_FIELD-FIRST_VALID_PT+1,U_FIELD-FIRST_VALID_PT+1,    UVADV1E.267   
+     &               ROW_LENGTH,VALID_P_ROWS)                              UVADV1E.268   
+      ENDDO                                                                UVADV1E.269   
+                                                                           UVADV1E.270   
+CL    INTERPOLATE ETADOT ONTO U GRID AND INCLUDE BOTTOM AND TOP            UVADV1E.271   
+CL    BOUNDARY CONDITION                                                   UVADV1E.272   
+                                                                           UVADV1E.273   
+      DO K =2, P_LEVELS                                                    UVADV1E.274   
+                                                                           UVADV1E.275   
+        CALL P_TO_UV(ETADOT_MEAN(FIRST_VALID_PT,K),                        UVADV1E.276   
+     &               ETADOT_U(FIRST_VALID_PT,K),                           UVADV1E.277   
+     &               P_FIELD-FIRST_VALID_PT+1,U_FIELD-FIRST_VALID_PT+1,    UVADV1E.278   
+     &               ROW_LENGTH,VALID_P_ROWS)                              UVADV1E.279   
+      END DO                                                               UVADV1E.280   
+      DO I = FIRST_VALID_PT,LAST_U_VALID_PT                                UVADV1E.281   
+        ETADOT_U(I,1) = 0.0                                                UVADV1E.282   
+        ETADOT_U(I,P_LEVELS+1) = 0.0                                       UVADV1E.283   
+      END DO                                                               UVADV1E.284   
+                                                                           UVADV1E.285   
+      IF (LWHITBROM) THEN                                                  UVADV1E.286   
+                                                                           UVADV1E.287   
+                                                                           UVADV1E.288   
+CL    CALCULATE BRSP TERM AT LEVEL K                                       UVADV1E.289   
+C STORE IN OMEGA TO SAVE WORKSPACE                                         UVADV1E.290   
+                                                                           UVADV1E.291   
+        K=1                                                                UVADV1E.292   
+        DO I=FIRST_VALID_PT,LAST_U_VALID_PT                                UVADV1E.293   
+          OMEGA(I,K)=(3.*RS_U(I,K)+RS_U(I,K+1))*(RS_U(I,K)-RS_U(I,K+1))    UVADV1E.294   
+     &                  *BKH(K+1)*.25*(PSTAR(I)-PSTAR_OLD(I))              UVADV1E.295   
+        ENDDO                                                              UVADV1E.296   
+        K=P_LEVELS                                                         UVADV1E.297   
+        DO I=FIRST_VALID_PT,LAST_U_VALID_PT                                UVADV1E.298   
+          OMEGA(I,K)=-(3.*RS_U(I,K)+RS_U(I,K-1))*(RS_U(I,K)-RS_U(I,K-1))   UVADV1E.299   
+     &                   *BKH(K)*.25*(PSTAR(I)-PSTAR_OLD(I))               UVADV1E.300   
+        ENDDO                                                              UVADV1E.301   
+                                                                           UVADV1E.302   
+        DO K=2,P_LEVELS -1                                                 UVADV1E.303   
+          DO I=FIRST_VALID_PT,LAST_U_VALID_PT                              UVADV1E.304   
+            OMEGA(I,K)=((3.*RS_U(I,K)+RS_U(I,K+1))                         UVADV1E.305   
+     &                *(RS_U(I,K)-RS_U(I,K+1))*BKH(K+1)                    UVADV1E.306   
+     &                *.25*(PSTAR(I)-PSTAR_OLD(I)))                        UVADV1E.307   
+     &                -((3.*RS_U(I,K)+RS_U(I,K-1))                         UVADV1E.308   
+     &                *(RS_U(I,K)-RS_U(I,K-1))*BKH(K)                      UVADV1E.309   
+     &                *.25*(PSTAR(I)-PSTAR_OLD(I)))                        UVADV1E.310   
+          ENDDO                                                            UVADV1E.311   
+                                                                           UVADV1E.312   
+        ENDDO                                                              UVADV1E.313   
+      ENDIF                                                                UVADV1E.314   
+                                                                           UVADV1E.315   
+! Precalculate U_MEAN and V_MEAN interpolated onto P grid - since it       UVADV1E.316   
+! requires a call to SWAPBOUNDS, if we do it outside the main loop         UVADV1E.317   
+! over levels, we can do just one call rather than a seperate call         UVADV1E.318   
+! for each level (inefficient)                                             UVADV1E.319   
+                                                                           UVADV1E.320   
+      DO K=1,P_LEVELS                                                      UVADV1E.321   
+! Initialise U_MEAN_P and V_MEAN_P prior to UV_P call                      UVADV1E.322   
+! cdir$ cache_bypass u_mean_p                                              GSM4F405.12    
+        DO I=1,FIRST_VALID_PT-1                                            UVADV1E.324   
+        U_MEAN_P(I,K)=0.0                                                  UVADV1E.325   
+        ENDDO                                                              UVADV1E.326   
+! cdir$ cache_bypass u_mean_p                                              GSM4F405.13    
+        DO I=LAST_U_VALID_PT+1,U_FIELD                                     UVADV1E.328   
+          U_MEAN_P(I,K)=0.0                                                UVADV1E.329   
+        ENDDO                                                              UVADV1E.330   
+! cdir$ cache_bypass v_mean_p                                              GSM4F405.14    
+        DO I=1,FIRST_VALID_PT-1                                            UVADV1E.332   
+        V_MEAN_P(I,K)=0.0                                                  UVADV1E.333   
+      ENDDO                                                                UVADV1E.334   
+! cdir$ cache_bypass v_mean_p                                              GSM4F405.15    
+        DO I=LAST_U_VALID_PT+1,U_FIELD                                     UVADV1E.336   
+          V_MEAN_P(I,K)=0.0                                                UVADV1E.337   
+        ENDDO                                                              UVADV1E.338   
+                                                                           UVADV1E.339   
+        CALL UV_TO_P(U_MEAN(FIRST_VALID_PT,K),                             UVADV1E.340   
+     &               U_MEAN_P(FIRST_VALID_PT,K),                           UVADV1E.341   
+     &               U_FIELD-FIRST_VALID_PT+1,                             UVADV1E.342   
+     &               U_FIELD-FIRST_VALID_PT+1,                             UVADV1E.343   
+     &               ROW_LENGTH,upd_U_ROWS+2)                              UVADV1E.344   
+                                                                           UVADV1E.345   
+                                                                           UVADV1E.346   
+        CALL UV_TO_P(V_MEAN(FIRST_VALID_PT,K),                             UVADV1E.347   
+     &               V_MEAN_P(FIRST_VALID_PT,K),                           UVADV1E.348   
+     &               U_FIELD-FIRST_VALID_PT+1,                             UVADV1E.349   
+     &               U_FIELD-FIRST_VALID_PT+1,                             UVADV1E.350   
+     &               ROW_LENGTH,upd_U_ROWS+2)                              UVADV1E.351   
+                                                                           UVADV1E.352   
+      ENDDO                                                                UVADV1E.353   
+                                                                           UVADV1E.354   
+CFPP$ NOCONCUR                                                             UVADV1E.355   
+      DO I=2,P_LEVELS                                                      UVADV1E.356   
+        DELTA_AKH(I) = AK(I) - AK(I-1)                                     UVADV1E.357   
+        DELTA_BKH(I) = BK(I) - BK(I-1)                                     UVADV1E.358   
+      ENDDO                                                                UVADV1E.359   
+C THESE ZERO VALUES SAVE HAVING TO PASS THE ZERO VERTICAL VELOCITIES       UVADV1E.360   
+C ON LOWER AND UPPER BOUNDARIES TO V_CORIOL AS THE ZERO VELOCITIES ARE     UVADV1E.361   
+C NOT HELD. (SEE CALL TO V_CORIOL IN SECTION 3.3)                          UVADV1E.362   
+      DELTA_AKH(1) = 0.0                                                   UVADV1E.363   
+      DELTA_BKH(1) = 0.0                                                   UVADV1E.364   
+      DELTA_AKH(P_LEVELS+1) = 0.0                                          UVADV1E.365   
+      DELTA_BKH(P_LEVELS+1) = 0.0                                          UVADV1E.366   
+                                                                           UVADV1E.367   
+! In order to use the same call to adv_u_gd for both the second and        UVADV1E.368   
+! fourth order advection, U/V_MEAN_P are copied into _COPY arrays.         UVADV1E.369   
+! In the case of second order advection some of the work space is          UVADV1E.370   
+! wasted as there is more halo than we need.                               UVADV1E.371   
+                                                                           UVADV1E.372   
+! Calculate the size of the extended arrays which contain an               UVADV1E.373   
+! extra halo:                                                              UVADV1E.374   
+      extended_U_FIELD=(ROW_LENGTH+2*extra_EW_Halo)*                       UVADV1E.375   
+     &                 (tot_U_ROWS+2*extra_NS_Halo)                        UVADV1E.376   
+      extended_P_FIELD=(ROW_LENGTH+2*extra_EW_Halo)*                       UVADV1E.377   
+     &                 (tot_P_ROWS+2*extra_NS_Halo)                        UVADV1E.378   
+                                                                           UVADV1E.379   
+      IF (L_SECOND) THEN                                                   UVADV1E.380   
+                                                                           UVADV1E.381   
+! Copy U/V_MEAN to U/V_MEAN_COPY with the same sized halos                 UVADV1E.382   
+        CALL COPY_FIELD(U_MEAN_P,U_MEAN_P_COPY,                            UVADV1E.383   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.384   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.385   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.386   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.387   
+     &                  .FALSE.)                                           UVADV1E.388   
+        CALL COPY_FIELD(V_MEAN_P,V_MEAN_P_COPY,                            UVADV1E.389   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.390   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.391   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.392   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.393   
+     &                  .FALSE.)                                           UVADV1E.394   
+                                                                           UVADV1E.395   
+      ELSE  ! if its fourth order:                                         UVADV1E.396   
+                                                                           UVADV1E.397   
+        CALL COPY_FIELD(U_MEAN_P,U_MEAN_P_COPY,                            UVADV1E.398   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.399   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.400   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.401   
+     &                  halo_4th,halo_4th,                                 UVADV1E.402   
+     &                  .TRUE.)                                            UVADV1E.403   
+        CALL COPY_FIELD(V_MEAN_P,V_MEAN_P_COPY,                            UVADV1E.404   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.405   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.406   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.407   
+     &                  halo_4th,halo_4th,                                 UVADV1E.408   
+     &                  .TRUE.)                                            UVADV1E.409   
+        CALL COPY_FIELD(U,U_COPY,                                          UVADV1E.410   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.411   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.412   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.413   
+     &                  halo_4th,halo_4th,                                 UVADV1E.414   
+     &                  .TRUE.)                                            UVADV1E.415   
+        CALL COPY_FIELD(V,V_COPY,                                          UVADV1E.416   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.417   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.418   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.419   
+     &                  halo_4th,halo_4th,                                 UVADV1E.420   
+     &                  .TRUE.)                                            UVADV1E.421   
+                                                                           UVADV1E.422   
+       ENDIF ! IF (L_SECOND)                                               UVADV1E.423   
+                                                                           UVADV1E.424   
+CL---------------------------------------------------------------------    UVADV1E.425   
+CL    SECTION 2.     ADVECTION OF U AND V.                                 UVADV1E.426   
+CL                   SECTION 2 WILL CALCULATE PROVISIONAL VALUES OF        UVADV1E.427   
+CL                   U AND V. SECTION 3 WILL CALCULATE FINAL VALUES.       UVADV1E.428   
+CL---------------------------------------------------------------------    UVADV1E.429   
+                                                                           UVADV1E.430   
+CL LOOP OVER P_LEVELS.                                                     UVADV1E.431   
+C-----------------------------------------------------------------         ARB0F405.29    
+C                                                                          ARB0F405.30    
+C U_SECOND_INC is used for                                                 ARB0F405.31    
+C                          1./(RS_U(I,K)*RS_U(I,K)                         ARB0F405.32    
+C    &                    *(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))         ARB0F405.33    
+C-----------------------------------------------------------------         ARB0F405.34    
+      DO K=1,P_LEVELS                                                      ARB0F405.35    
+        DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                       ARB0F405.36    
+           U_SECOND_INC(I,K) = 1.0/(RS_U(I,K)*RS_U(I,K)*                   ARB0F405.37    
+     &              (DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))                ARB0F405.38    
+        END DO                                                             ARB0F405.39    
+      END DO                                                               ARB0F405.40    
+                                                                           UVADV1E.432   
+!L If NU_BASIC not equal to zero (ie. 4th order)                           UVADV1E.433   
+      IF (.NOT. L_SECOND) THEN                                             UVADV1E.434   
+                                                                           UVADV1E.435   
+      TIMESTEP=ADVECTION_TIMESTEP                                          UVADV1E.436   
+                                                                           UVADV1E.437   
+      DO K=1,P_LEVELS                                                      UVADV1E.438   
+                                                                           UVADV1E.439   
+C ---------------------------------------------------------------------    UVADV1E.440   
+CL    SECTION 2.1    SET NU DEPENDENT ON NU_BASIC AND MAX COURANT          UVADV1E.441   
+CL                   NUMBER.                                               UVADV1E.442   
+C ---------------------------------------------------------------------    UVADV1E.443   
+CL    THEN SET NU DEPENDENT ON NU_BASIC AND MAX                            UVADV1E.444   
+CL    COURANT NUMBER.                                                      UVADV1E.445   
+CL CALCULATE COURANT NUMBER SQUARED.                                       UVADV1E.446   
+C-----------------------------------------------------------------         ARB0F405.41    
+          DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                     UVADV1E.453   
+            SCALAR1 = U_MEAN_P(I,K)*LONGITUDE_STEP_INVERSE                 UVADV1E.457   
+            SCALAR2 = V_MEAN_P(I,K)*LATITUDE_STEP_INVERSE                  UVADV1E.458   
+            SCALAR3 = TIMESTEP*U_SECOND_INC(I,K)                           UVADV1E.459   
+            SCALAR4 = SEC_U_LATITUDE(I)*SCALAR3                            UVADV1E.460   
+            SCALAR1 = SCALAR1*SCALAR1                                      UVADV1E.461   
+            SCALAR2 = SCALAR2*SCALAR2                                      UVADV1E.462   
+            SCALAR3 = SCALAR3*SCALAR3                                      UVADV1E.463   
+            SCALAR4 = SCALAR4*SCALAR4                                      UVADV1E.464   
+CL    CALCULATE NU PARAMETER.                                              UVADV1E.465   
+                                                                           UVADV1E.466   
+            NUX(I,K) = (1.- SCALAR4*SCALAR1)*NU_BASIC                      UVADV1E.467   
+            NUY(I,K) = (1.- SCALAR3*SCALAR2)*NU_BASIC                      UVADV1E.468   
+          ENDDO                                                            UVADV1E.469   
+                                                                           UVADV1E.470   
+! Set NUX equal to minimum value along each row                            UVADV1E.471   
+                                                                           UVADV1E.472   
+                                                                           UVADV1E.473   
+          DO J=FIRST_ROW,FIRST_ROW+upd_U_ROWS-1                            UVADV1E.474   
+            I_start=(J-1)*ROW_LENGTH+FIRST_ROW_PT ! start and end of row   UVADV1E.475   
+            I_end=(J-1)*ROW_LENGTH+LAST_ROW_PT    ! missing out halos      UVADV1E.476   
+! Calculate minimum along this row                                         UVADV1E.477   
+                                                                           UVADV1E.478   
+                                                                           UVADV1E.479   
+*IF DEF,CRAY                                                               UVADV1E.480   
+            IK=ISMIN(I_end-I_start+1,NUX(I_start,K),1)                     UVADV1E.481   
+            SCALAR1=NUX(IK+I_start-1,K)                                    UVADV1E.482   
+*ELSE                                                                      UVADV1E.483   
+            SCALAR1=NUX(I_start,K)                                         UVADV1E.484   
+            DO I=I_start+1,I_end                                           UVADV1E.485   
+              IF (NUX(I,K) .LT. SCALAR1) SCALAR1=NUX(I,K)                  UVADV1E.486   
+            ENDDO                                                          UVADV1E.487   
+*ENDIF                                                                     UVADV1E.488   
+            NUX_MIN(J-FIRST_ROW+1,K)=MAX(SCALAR1,0.0)                      UVADV1E.489   
+! The indexing of NUX_MIN goes from 1..ROWS                                UVADV1E.490   
+          ENDDO ! J : loop over rows                                       UVADV1E.491   
+                                                                           UVADV1E.492   
+! Set NUY equal to minimum value along each column                         UVADV1E.493   
+                                                                           UVADV1E.494   
+          DO J=FIRST_ROW_PT,LAST_ROW_PT                                    UVADV1E.495   
+            I_start=(FIRST_ROW-1)*ROW_LENGTH+J                             UVADV1E.496   
+! I_start points to the beginning of column J                              UVADV1E.497   
+                                                                           UVADV1E.498   
+! Calculate the minimum along this column                                  UVADV1E.499   
+*IF DEF,CRAY                                                               UVADV1E.500   
+            IK=ISMIN(upd_U_ROWS,NUY(I_start,K),ROW_LENGTH)                 UVADV1E.501   
+            SCALAR1=NUY((IK-1)*ROW_LENGTH+I_start,K)                       UVADV1E.502   
+*ELSE                                                                      UVADV1E.503   
+            I_end=I_start+(upd_U_ROWS-1)*ROW_LENGTH                        UVADV1E.504   
+! I_end points to the end of column J                                      UVADV1E.505   
+            SCALAR1=NUY(I_start,K)                                         UVADV1E.506   
+            DO I=I_start+ROW_LENGTH,I_end,ROW_LENGTH                       UVADV1E.507   
+              IF (NUY(I,K) .LT. SCALAR1) SCALAR1=NUY(I,K)                  UVADV1E.508   
+            ENDDO                                                          UVADV1E.509   
+*ENDIF                                                                     UVADV1E.510   
+            NUY_MIN(J-FIRST_ROW_PT+1,K)=MAX(SCALAR1,0.0)                   UVADV1E.511   
+                                                                           UVADV1E.512   
+          ENDDO ! J : loop over columns                                    UVADV1E.513   
+                                                                           UVADV1E.514   
+      ENDDO ! K: loop over levels                                          UVADV1E.515   
+                                                                           UVADV1E.516   
+! We have so far only calculated local NUX_MIN and NUY_MINs. We must       UVADV1E.517   
+! now calculate the minimum values across all processors in the row/       UVADV1E.518   
+! column respectively.                                                     UVADV1E.519   
+                                                                           UVADV1E.520   
+      CALL GCG_RMIN(upd_U_ROWS*P_LEVELS,GC_ROW_GROUP,info,NUX_MIN)         UVADV1E.521   
+                                                                           UVADV1E.522   
+      CALL GCG_RMIN((ROW_LENGTH-2*EW_Halo)*P_LEVELS,GC_COL_GROUP,          UVADV1E.523   
+     &              info,NUY_MIN)                                          UVADV1E.524   
+                                                                           UVADV1E.525   
+! And now copy these values back to NUX and NUY arrays                     UVADV1E.526   
+                                                                           UVADV1E.527   
+      DO K=1,P_LEVELS                                                      UVADV1E.528   
+                                                                           UVADV1E.529   
+        DO J=FIRST_ROW,FIRST_ROW+upd_U_ROWS-1                              UVADV1E.530   
+                                                                           UVADV1E.531   
+          DO I=FIRST_ROW_PT,LAST_ROW_PT                                    UVADV1E.532   
+                                                                           UVADV1E.533   
+            NUX(I+(J-1)*ROW_LENGTH,K)=NUX_MIN(J-FIRST_ROW+1,K)             UVADV1E.534   
+                                                                           UVADV1E.535   
+            NUY(I+(J-1)*ROW_LENGTH,K)=NUY_MIN(I-FIRST_ROW_PT+1,K)          UVADV1E.536   
+                                                                           UVADV1E.537   
+            ENDDO                                                          UVADV1E.538   
+                                                                           UVADV1E.539   
+        ENDDO                                                              UVADV1E.540   
+                                                                           UVADV1E.541   
+      ENDDO                                                                UVADV1E.542   
+                                                                           UVADV1E.543   
+      ENDIF ! End of 4th order calculations                                UVADV1E.544   
+                                                                           UVADV1E.545   
+                                                                           UVADV1E.546   
+C ---------------------------------------------------------------------    UVADV1E.547   
+CL    SECTION 2.3    CALL ADV_U_GD TO OBTAIN FIRST INCREMENT DUE TO        UVADV1E.548   
+CL                   ADVECTION.                                            UVADV1E.549   
+C ---------------------------------------------------------------------    UVADV1E.550   
+                                                                           UVADV1E.551   
+        TIMESTEP=ADVECTION_TIMESTEP                                        UVADV1E.552   
+                                                                           UVADV1E.553   
+C BRSP IS CURRENTLY HELD IN OMEGA                                          UVADV1E.554   
+                                                                           UVADV1E.555   
+                                                                           UVADV1E.556   
+          CALL ADV_U_GD(P_LEVELS,U,                                        UVADV1E.557   
+     &                    U_MEAN_P_COPY,V_MEAN_P_COPY,                     UVADV1E.558   
+     &                    ETADOT_U,                                        UVADV1E.559   
+     &                    SEC_U_LATITUDE,U_PROV,                           UVADV1E.560   
+     &                    NUX,NUY,U_FIELD,                                 UVADV1E.561   
+     &                    ROW_LENGTH,                                      UVADV1E.562   
+*CALL ARGFLDPT                                                             UVADV1E.563   
+     &                    TIMESTEP,LATITUDE_STEP_INVERSE,                  UVADV1E.564   
+     &                    LONGITUDE_STEP_INVERSE,SEC_P_LATITUDE,           UVADV1E.565   
+     &                    OMEGA,L_SECOND,LWHITBROM,                        UVADV1E.566   
+     &                    U_COPY,extended_U_FIELD,                         UVADV1E.567   
+     &                    extended_address)                                UVADV1E.568   
+                                                                           UVADV1E.569   
+CL    CALL ADV_U_GD FOR V.                                                 UVADV1E.570   
+          CALL ADV_U_GD(P_LEVELS,V,                                        UVADV1E.571   
+     &                    U_MEAN_P_COPY,V_MEAN_P_COPY,                     UVADV1E.572   
+     &                    ETADOT_U,                                        UVADV1E.573   
+     &                    SEC_U_LATITUDE,V_PROV,                           UVADV1E.574   
+     &                    NUX,NUY,U_FIELD,                                 UVADV1E.575   
+     &                    ROW_LENGTH,                                      UVADV1E.576   
+*CALL ARGFLDPT                                                             UVADV1E.577   
+     &                    TIMESTEP,LATITUDE_STEP_INVERSE,                  UVADV1E.578   
+     &                    LONGITUDE_STEP_INVERSE,SEC_P_LATITUDE,           UVADV1E.579   
+     &                    OMEGA,L_SECOND,LWHITBROM,                        UVADV1E.580   
+     &                    V_COPY,extended_U_FIELD,                         UVADV1E.581   
+     &                    extended_address)                                UVADV1E.582   
+                                                                           UVADV1E.583   
+                                                                           UVADV1E.584   
+C ---------------------------------------------------------------------    UVADV1E.585   
+CL    SECTION 2.4    REMOVE MASS-WEIGHTING FROM INCREMENT AND ADD ONTO     UVADV1E.586   
+CL                   FIELD TO OBTAIN INTERMEDIATE VALUE.                   UVADV1E.587   
+C ---------------------------------------------------------------------    UVADV1E.588   
+                                                                           UVADV1E.589   
+       DO K=1,P_LEVELS                                                     UVADV1E.590   
+                                                                           UVADV1E.591   
+                                                                           UVADV1E.592   
+c-----------------------------------------------------------------         UVADV1E.593   
+c                                                                          UVADV1E.594   
+c U_SECOND_INC is used for                                                 UVADV1E.595   
+c                          1./(RS_U(I,K)*RS_U(I,K)                         UVADV1E.596   
+c    &                    *(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I))          UVADV1E.597   
+c-----------------------------------------------------------------         UVADV1E.598   
+          DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO-1                   UVADV1E.599   
+                                                                           UVADV1E.600   
+            SCALAR1=U_SECOND_INC(I,K)                                      UVADV1E.601   
+            U_PROV(I,K) = U(I,K)- U_PROV(I,K)*SCALAR1                      UVADV1E.602   
+            V_PROV(I,K) = V(I,K)-V_PROV(I,K)*SCALAR1                       UVADV1E.603   
+          ENDDO                                                            UVADV1E.604   
+                                                                           UVADV1E.605   
+                                                                           UVADV1E.606   
+                                                                           UVADV1E.607   
+*IF -DEF,GLOBAL                                                            UVADV1E.608   
+CL    LIMITED AREA MODEL THEN FORM PROVISIONAL VALUES ON BOUNDARIES        UVADV1E.609   
+CL    EQUAL TO FIELD VALUES AT OLD TIME LEVEL.                             UVADV1E.610   
+      IF (at_top_of_LPG) THEN                                              UVADV1E.611   
+        DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                      UVADV1E.612   
+          U_PROV(I,K)= U(I,K)                                              UVADV1E.613   
+          V_PROV(I,K)= V(I,K)                                              UVADV1E.614   
+        ENDDO                                                              UVADV1E.615   
+      ENDIF                                                                UVADV1E.616   
+      IF (at_base_of_LPG) THEN                                             UVADV1E.617   
+        DO I=U_BOT_ROW_START,U_BOT_ROW_START+ROW_LENGTH-1                  UVADV1E.618   
+          U_PROV(I,K)=U(I,K)                                               UVADV1E.619   
+          V_PROV(I,K)=V(I,K)                                               UVADV1E.620   
+        ENDDO                                                              UVADV1E.621   
+      ENDIF                                                                UVADV1E.622   
+*ENDIF                                                                     UVADV1E.623   
+                                                                           UVADV1E.624   
+      ENDDO                                                                UVADV1E.625   
+                                                                           UVADV1E.626   
+*IF DEF,GLOBAL                                                             UVADV1E.627   
+!    IF GLOBAL MODEL CALCULATE PROVISIONAL POLAR VALUES.                   UVADV1E.628   
+!    CALL POLAR_UV TO FORM PROVISIONAL VALUES.                             UVADV1E.629   
+                                                                           UVADV1E.630   
+      CALL POLAR_UV(U_PROV,V_PROV,ROW_LENGTH,                              UVADV1E.631   
+     &              U_FIELD,P_LEVELS,                                      UVADV1E.632   
+*CALL ARGFLDPT                                                             UVADV1E.633   
+     &              COS_U_LONGITUDE,SIN_U_LONGITUDE)                       UVADV1E.634   
+*ENDIF                                                                     UVADV1E.635   
+                                                                           UVADV1E.636   
+                                                                           UVADV1E.637   
+      IF (L_SECOND) THEN                                                   UVADV1E.638   
+                                                                           UVADV1E.639   
+! Swap boundaries of U_PROV and V_PROV                                     UVADV1E.640   
+        CALL SWAPBOUNDS(U_PROV,ROW_LENGTH,tot_U_ROWS,                      UVADV1E.641   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          UVADV1E.642   
+        CALL SWAPBOUNDS(V_PROV,ROW_LENGTH,tot_U_ROWS,                      UVADV1E.643   
+     &                  EW_Halo,NS_Halo,P_LEVELS)                          UVADV1E.644   
+                                                                           UVADV1E.645   
+                                                                           UVADV1E.646   
+      ELSE ! fourth order advection                                        UVADV1E.647   
+                                                                           UVADV1E.648   
+! Copy U/V_PROV into U/V_COPY which have double halos for fourth           UVADV1E.649   
+! order advection, and do swap to fill these halos                         UVADV1E.650   
+        CALL COPY_FIELD(U_PROV,U_COPY,                                     UVADV1E.651   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.652   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.653   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.654   
+     &                  halo_4th,halo_4th,                                 UVADV1E.655   
+     &                  .TRUE.)                                            UVADV1E.656   
+                                                                           UVADV1E.657   
+        CALL COPY_FIELD(V_PROV,V_COPY,                                     UVADV1E.658   
+     &                  U_FIELD,extended_U_FIELD,                          UVADV1E.659   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    UVADV1E.660   
+     &                  EW_Halo,NS_Halo,                                   UVADV1E.661   
+     &                  halo_4th,halo_4th,                                 UVADV1E.662   
+     &                  .TRUE.)                                            UVADV1E.663   
+                                                                           UVADV1E.664   
+      ENDIF                                                                UVADV1E.665   
+                                                                           UVADV1E.666   
+CL---------------------------------------------------------------------    UVADV1E.667   
+CL    SECTION 3.     Second advection step.                                UVADV1E.668   
+CL---------------------------------------------------------------------    UVADV1E.669   
+                                                                           UVADV1E.670   
+          TIMESTEP = ADVECTION_TIMESTEP                                    UVADV1E.671   
+C ---------------------------------------------------------------------    UVADV1E.672   
+CL    SECTION 3.1    CALL ADV_U_GD TO OBTAIN SECOND INCREMENT DUE TO       UVADV1E.673   
+CL                   ADVECTION.                                            UVADV1E.674   
+C ---------------------------------------------------------------------    UVADV1E.675   
+                                                                           UVADV1E.676   
+                                                                           UVADV1E.677   
+CL    CALL ADV_U_GD FOR U.                                                 UVADV1E.678   
+                                                                           UVADV1E.679   
+C BRSP IS CURRENTLY HELD IN OMEGA                                          UVADV1E.680   
+                                                                           UVADV1E.681   
+          CALL ADV_U_GD(P_LEVELS,U_PROV,                                   UVADV1E.682   
+     &                  U_MEAN_P_COPY,V_MEAN_P_COPY,                       UVADV1E.683   
+     &                  ETADOT_U,SEC_U_LATITUDE,                           UVADV1E.684   
+     &                  U_SECOND_INC,NUX,NUY,U_FIELD,                      UVADV1E.685   
+     &                  ROW_LENGTH,                                        UVADV1E.686   
+*CALL ARGFLDPT                                                             UVADV1E.687   
+     &                  TIMESTEP,LATITUDE_STEP_INVERSE,                    UVADV1E.688   
+     &                  LONGITUDE_STEP_INVERSE,SEC_P_LATITUDE,             UVADV1E.689   
+     &                  OMEGA,L_SECOND,LWHITBROM,                          UVADV1E.690   
+     &                  U_COPY,extended_U_FIELD,                           UVADV1E.691   
+     &                  extended_address)                                  UVADV1E.692   
+                                                                           UVADV1E.693   
+CL    CALL ADV_U_GD FOR V.                                                 UVADV1E.694   
+          CALL ADV_U_GD(P_LEVELS,V_PROV,                                   UVADV1E.695   
+     &                  U_MEAN_P_COPY,V_MEAN_P_COPY,                       UVADV1E.696   
+     &                  ETADOT_U,SEC_U_LATITUDE,                           UVADV1E.697   
+     &                  V_SECOND_INC,NUX,NUY,U_FIELD,                      UVADV1E.698   
+     &                  ROW_LENGTH,                                        UVADV1E.699   
+*CALL ARGFLDPT                                                             UVADV1E.700   
+     &                  TIMESTEP,LATITUDE_STEP_INVERSE,                    UVADV1E.701   
+     &                  LONGITUDE_STEP_INVERSE,SEC_P_LATITUDE,             UVADV1E.702   
+     &                  OMEGA,L_SECOND,LWHITBROM,                          UVADV1E.703   
+     &                  V_COPY,extended_U_FIELD,                           UVADV1E.704   
+     &                  extended_address)                                  UVADV1E.705   
+                                                                           UVADV1E.706   
+C ---------------------------------------------------------------------    UVADV1E.707   
+CL    SECTION 3.2    CALL V_CORIOL TO OBTAIN WK AS IN EQUATION (46).       UVADV1E.708   
+C ---------------------------------------------------------------------    UVADV1E.709   
+                                                                           UVADV1E.710   
+                                                                           UVADV1E.711   
+      DO K=1,P_LEVELS                                                      UVADV1E.712   
+                                                                           UVADV1E.713   
+          CALL V_CORIOL(ETADOT_U(1,K),ETADOT_U(1,K+1),PSTAR,               UVADV1E.714   
+     &              PSTAR_OLD,U_MEAN_P(1,K),V_MEAN_P(1,K),RS_U(1,K),       UVADV1E.715   
+     &              SEC_U_LATITUDE,TIMESTEP,AK(K),BK(K),                   UVADV1E.716   
+     &              DELTA_AK(K),DELTA_BK(K),DELTA_AKH(K),                  UVADV1E.717   
+     &              DELTA_BKH(K),DELTA_AKH(K+1),DELTA_BKH(K+1),            UVADV1E.718   
+     &              ROW_LENGTH,                                            UVADV1E.719   
+*CALL ARGFLDPT                                                             UVADV1E.720   
+     &              LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,          UVADV1E.721   
+     &              WK,U_FIELD,OMEGA(1,K),LLINTS)                          UVADV1E.722   
+                                                                           UVADV1E.723   
+C ---------------------------------------------------------------------    UVADV1E.724   
+CL    SECTION 3.3    CALCULATE TOTAL MASS-WEIGHTED INCREMENT TO FIELD      UVADV1E.725   
+CL                   INCLUDING CORIOLIS TERM AND ADD ONTO MASS-WEIGHTED    UVADV1E.726   
+CL                   FIELD.                                                UVADV1E.727   
+CL                   IF GLOBAL CALL POLAR_UV TO UPDATE POLAR VALUES.       UVADV1E.728   
+CL                   IF LIMITED AREA MASS-WEIGHT BOUNDARY VALUES.          UVADV1E.729   
+C ---------------------------------------------------------------------    UVADV1E.730   
+                                                                           UVADV1E.731   
+      DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                         UVADV1E.732   
+        SCALAR1=RS_U(I,K)*RS_U(I,K)*                                       UVADV1E.733   
+     &                           (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))        UVADV1E.734   
+        U_SECOND_INC(I,K)=U_SECOND_INC(I,K)/SCALAR1                        UVADV1E.735   
+        V_SECOND_INC(I,K)=V_SECOND_INC(I,K)/SCALAR1                        UVADV1E.736   
+        WK(I)=WK(I)/SCALAR1                                                UVADV1E.737   
+      END DO                                                               UVADV1E.738   
+CL    TOTAL MASS-WEIGHTED INCREMENT IS CALCULATED INCLUDING VERTICAL       UVADV1E.739   
+CL    CORIOIS TERM AND ADDED ONTO MASS-WEIGHTED FIELD.                     UVADV1E.740   
+                                                                           UVADV1E.741   
+                                                                           UVADV1E.742   
+        DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                       UVADV1E.743   
+          SCALAR3 = 1./RS_U(I,K)                                           UVADV1E.744   
+          U(I,K)=0.5 * (U(I,K)-U_SECOND_INC(I,K)+U_PROV(I,K))              UVADV1E.745   
+          V(I,K)=0.5 * (V(I,K)-V_SECOND_INC(I,K)+V_PROV(I,K))              UVADV1E.746   
+        ENDDO                                                              UVADV1E.747   
+        IF (LWHITBROM) THEN                                                UVADV1E.748   
+          DO I=START_POINT_NO_HALO,END_U_POINT_NO_HALO                     UVADV1E.749   
+            SCALAR3 = 1.0/RS_U(I,K)                                        UVADV1E.750   
+            U(I,K) = U(I,K) -(F2(I) + U(I,K)*SCALAR3)*WK(I)*TIMESTEP       UVADV1E.751   
+            V(I,K) = V(I,K) +(F1(I) - V(I,K)*SCALAR3)*WK(I)*TIMESTEP       UVADV1E.752   
+          ENDDO                                                            UVADV1E.753   
+        ENDIF                                                              UVADV1E.754   
+                                                                           UVADV1E.755   
+CL    SET POLAR VALUES FOR OMEGA                                           UVADV1E.756   
+      IF (at_top_of_LPG) THEN                                              UVADV1E.757   
+        DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                      UVADV1E.758   
+          OMEGA(I,K)=OMEGA(I+ROW_LENGTH,K)                                 UVADV1E.759   
+        ENDDO                                                              UVADV1E.760   
+      ENDIF                                                                UVADV1E.761   
+      IF (at_base_of_LPG) THEN                                             UVADV1E.762   
+        DO I=U_BOT_ROW_START,U_BOT_ROW_START+ROW_LENGTH-1                  UVADV1E.763   
+          OMEGA(I,K)=OMEGA(I-ROW_LENGTH,K)                                 UVADV1E.764   
+        ENDDO                                                              UVADV1E.765   
+      ENDIF                                                                UVADV1E.766   
+                                                                           UVADV1E.767   
+CL END LOOP OVER P_LEVELS                                                  UVADV1E.768   
+      ENDDO                                                                UVADV1E.769   
+                                                                           UVADV1E.770   
+*IF DEF,GLOBAL                                                             UVADV1E.771   
+!    UPDATE POLAR VALUES BY CALLING POLAR_UV.                              UVADV1E.772   
+                                                                           UVADV1E.773   
+      CALL POLAR_UV(U,V,ROW_LENGTH,                                        UVADV1E.774   
+     &              U_FIELD,P_LEVELS,                                      UVADV1E.775   
+*CALL ARGFLDPT                                                             UVADV1E.776   
+     &              COS_U_LONGITUDE,SIN_U_LONGITUDE)                       UVADV1E.777   
+*ENDIF                                                                     UVADV1E.778   
+                                                                           UVADV1E.779   
+CL MASS WEIGHT THE OUTPUT FIELDS                                           UVADV1E.780   
+                                                                           UVADV1E.781   
+      DO K=1,P_LEVELS                                                      UVADV1E.782   
+        DO I=FIRST_FLD_PT,LAST_U_FLD_PT                                    UVADV1E.783   
+          U(I,K)=U(I,K)*RS_U(I,K)*RS_U(I,K)*(DELTA_AK(K)+                  UVADV1E.784   
+     &           DELTA_BK(K)*PSTAR(I))                                     UVADV1E.785   
+          V(I,K)=V(I,K)*RS_U(I,K)*RS_U(I,K)*(DELTA_AK(K)+                  UVADV1E.786   
+     &           DELTA_BK(K)*PSTAR(I))                                     UVADV1E.787   
+        ENDDO                                                              UVADV1E.788   
+      ENDDO                                                                UVADV1E.789   
+                                                                           UVADV1E.790   
+CL    END OF ROUTINE UV_ADV                                                UVADV1E.791   
+                                                                           UVADV1E.792   
+      RETURN                                                               UVADV1E.793   
+      END                                                                  UVADV1E.794   
+*ENDIF                                                                     UVADV1E.795   
+*ENDIF                                                                     UVADV1E.796   

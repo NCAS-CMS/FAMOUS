@@ -1,0 +1,1091 @@
+*IF DEF,A11_1A                                                             TRACAD1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.10477 
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.10478 
+C                                                                          GTS2F400.10479 
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.10480 
+C restrictions as set forth in the contract.                               GTS2F400.10481 
+C                                                                          GTS2F400.10482 
+C                Meteorological Office                                     GTS2F400.10483 
+C                London Road                                               GTS2F400.10484 
+C                BRACKNELL                                                 GTS2F400.10485 
+C                Berkshire UK                                              GTS2F400.10486 
+C                RG12 2SZ                                                  GTS2F400.10487 
+C                                                                          GTS2F400.10488 
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.10489 
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.10490 
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.10491 
+C Modelling at the above address.                                          GTS2F400.10492 
+C ******************************COPYRIGHT******************************    GTS2F400.10493 
+C                                                                          GTS2F400.10494 
+CLL   SUBROUTINE TRAC_ADV ---------------------------------------------    TRACAD1A.3     
+CLL                                                                        TRACAD1A.4     
+CLL   PURPOSE:   CALCULATES ADVECTION INCREMENTS TO A FIELD AT A           TRACAD1A.5     
+CLL              SINGLE MODEL LEVEL USING A POSITIVE DEFINITE SCHEME.      TRACAD1A.6     
+CLL              IN CALCULATING THE INCREMENTS THE TEST FOR THE            TRACAD1A.7     
+CLL              DIRECTION OF THE WIND HAS BEEN REVERSED TO TAKE INTO      TRACAD1A.8     
+CLL              ACCOUNT THE CHANGE IN SIGN INTRODUCED BY MASS             TRACAD1A.9     
+CLL              WEIGHTING.                                                TRACAD1A.10    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  TRACAD1A.11    
+CLL                                                                        TRACAD1A.12    
+CLL   VERSION FOR CRAY Y-MP                                                TRACAD1A.13    
+CLL                                                                        TRACAD1A.14    
+CLL M.MAWSON    <- PROGRAMMER OF SOME OR ALL OF PREVIOUS CODE OR CHANGES   TRACAD1A.15    
+CLL                                                                        TRACAD1A.16    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 3.0:         TRACAD1A.17    
+CLL VERSION  DATE                                                          TRACAD1A.18    
+CLL  4.2  20/08/96  MPP code added.  RTHBarnes.                            ARB1F402.377   
+CLL  4.3  17/03/97  Corrections to MPP code.  RTHBarnes.                   ARB1F403.8     
+CLL       WARNING   Owing to compiler optimisation differences,            ARB1F403.9     
+CLL       non-MPP & MPP runs will only bit compare if this deck            ARB1F403.10    
+CLL       is compiled with minimum optimisation (-Oscalar0).               ARB1F403.11    
+!LL  4.4  05/09/97  Ensure halos OK both at start and end of routine.      GSM6F404.1     
+!LL                 S.D.Mullerworth                                        GSM6F404.2     
+!LL  4.5  23/06/98  Single PE optimisations                                GPB7F405.242   
+!LL                 D.Salmond, B.Carruthers and P.Burton                   GPB7F405.243   
+CLL                                                                        TRACAD1A.19    
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       TRACAD1A.20    
+CLL                         STANDARD B.                                    TRACAD1A.21    
+CLL                                                                        TRACAD1A.22    
+CLL   SYSTEM COMPONENTS COVERED: P123                                      TRACAD1A.23    
+CLL                                                                        TRACAD1A.24    
+CLL   SYSTEM TASK: P1                                                      TRACAD1A.25    
+CLL                                                                        TRACAD1A.26    
+CLL   DOCUMENTATION: U.M. Doc. Paper 11, by M.J.P. Cullen                  TRACAD1A.27    
+CLL                                                                        TRACAD1A.28    
+CLLEND-----------------------------------------------------------------    TRACAD1A.29    
+                                                                           TRACAD1A.30    
+C                                                                          TRACAD1A.31    
+C*L   ARGUMENTS:-------------------------------------------------------    TRACAD1A.32    
+      SUBROUTINE TRAC_ADV                                                  TRACAD1A.33    
+     &                   (FIELD,N_SWEEP,U_MEAN,V_MEAN,U_FIELD,P_FIELD,     ARB1F402.378   
+     &                    ADVECTION_TIMESTEP,ROW_LENGTH,                   ARB1F402.379   
+*CALL ARGFLDPT                                                             ARB1F402.380   
+     &                    SEC_P_LATITUDE,COS_P_LATITUDE,RS,PSTAR,          ARB1F402.381   
+     &                    DELTA_AK,DELTA_BK,LATITUDE_STEP_INVERSE,         ARB1F402.382   
+     &                    LONGITUDE_STEP_INVERSE,L_SUPERBEE)               TRACAD1A.39    
+                                                                           TRACAD1A.40    
+      IMPLICIT NONE                                                        TRACAD1A.41    
+                                                                           TRACAD1A.42    
+*CALL TYPFLDPT                                                             ARB1F402.383   
+*CALL PARVARS                                                              ARB1F402.384   
+      LOGICAL                                                              TRACAD1A.43    
+     & L_SUPERBEE          !IN True then use SUPERBEE limiter,             TRACAD1A.44    
+     &                     !   False then use VAN LEER limiter.            TRACAD1A.45    
+                                                                           TRACAD1A.46    
+      INTEGER                                                              TRACAD1A.47    
+     & P_FIELD             !IN DIMENSION OF FIELDS ON PRESSURE GRID.       TRACAD1A.48    
+     &,U_FIELD             !IN DIMENSION OF FIELDS ON VELOCITY GRID.       TRACAD1A.49    
+     &,ROW_LENGTH          !IN NUMBER OF POINTS PER ROW.                   TRACAD1A.50    
+*IF DEF,MPP                                                                ARB1F402.385   
+     &,N_SWEEP(glsize(2))  ! Number of sweeps to be done East-West         ARB1F402.386   
+!             ! for each row in full domain (needed for MAX_SWEEPS)        ARB1F402.387   
+*ELSE                                                                      ARB1F402.388   
+     &,N_SWEEP(P_FIELD/ROW_LENGTH) ! Number of sweeps to be done in        TRACAD1A.52    
+     &                     ! East West calculation for each row.           TRACAD1A.53    
+*ENDIF                                                                     ARB1F402.389   
+                                                                           TRACAD1A.54    
+      REAL                                                                 TRACAD1A.55    
+     & U_MEAN(U_FIELD)        !IN ADVECTING U FIELD, MASS-WEIGHTED.        TRACAD1A.56    
+     &,V_MEAN(U_FIELD)        !IN ADVECTING V FIELD, MASS-WEIGHTED.        TRACAD1A.57    
+     &,FIELD(P_FIELD)         !IN FIELD TO BE ADVECTED.                    TRACAD1A.58    
+     &,ADVECTION_TIMESTEP     !IN                                          TRACAD1A.59    
+                                                                           TRACAD1A.60    
+      REAL                                                                 TRACAD1A.61    
+     & LONGITUDE_STEP_INVERSE     !IN 1/(DELTA LAMDA)                      TRACAD1A.62    
+     &,LATITUDE_STEP_INVERSE      !IN 1/(DELTA PHI)                        TRACAD1A.63    
+     &,SEC_P_LATITUDE(P_FIELD)    !IN 1/COS(LAT) AT P POINTS               TRACAD1A.64    
+     &,COS_P_LATITUDE(P_FIELD)    !IN COS(LAT) AT P POINTS                 TRACAD1A.65    
+     &,RS(P_FIELD)                !IN RS_FIELD                             TRACAD1A.66    
+     &,PSTAR(P_FIELD)             !IN                                      TRACAD1A.67    
+     &,DELTA_AK                   !IN                                      TRACAD1A.68    
+     &,DELTA_BK                   !IN                                      TRACAD1A.69    
+                                                                           TRACAD1A.70    
+C*---------------------------------------------------------------------    TRACAD1A.71    
+                                                                           TRACAD1A.72    
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    TRACAD1A.73    
+C DEFINE LOCAL ARRAYS: 15 ARE REQUIRED                                     TRACAD1A.74    
+                                                                           TRACAD1A.75    
+      REAL                                                                 TRACAD1A.76    
+*IF DEF,T3E                                                                GPB7F405.244   
+     & FLUX_DELTA_T(0:P_FIELD)                                             GPB7F405.245   
+                             ! FLUX * ADVECTION TIMESTEP                   GPB7F405.246   
+*ELSE                                                                      GPB7F405.247   
+     & FLUX_DELTA_T(P_FIELD) ! FLUX * ADVECTION TIMESTEP                   TRACAD1A.77    
+*ENDIF                                                                     GPB7F405.248   
+     &,B1(P_FIELD)           ! ARGUMENT OF B_TERM                          TRACAD1A.78    
+     &,B2(P_FIELD)           ! ARGUMENT OF B_TERM                          TRACAD1A.79    
+*IF DEF,T3E                                                                GPB7F405.249   
+     &,B_TERM(0:P_FIELD)     !                                             GPB7F405.250   
+*ELSE                                                                      GPB7F405.251   
+     &,B_TERM(P_FIELD)       !                                             TRACAD1A.80    
+*ENDIF                                                                     GPB7F405.252   
+     &,COURANT(P_FIELD)      ! COURANT NUMBER                              TRACAD1A.81    
+     &,ABS_COURANT(P_FIELD)  ! ABSOLUTE VALUE OF COURANT NUMBER            TRACAD1A.82    
+     &,COURANT_MW(P_FIELD)   ! MASS WEIGHTED COURANT NUMBER                TRACAD1A.83    
+     &,RS_SQUARED_DELTAP(P_FIELD) ! MASS * RADIUS OF EARTH                 TRACAD1A.84    
+     &,MW(P_FIELD)           ! MASS WEIGHTING ASSOCIATED WITH              TRACAD1A.85    
+     &                       ! GRID BOX BOUNDARY FLUXES                    TRACAD1A.86    
+     &,MW_RECIP(P_FIELD)     ! 1./MW                                       TRACAD1A.87    
+     &,RS_SQUARED_DELTAP_RECIP(P_FIELD) ! HOLDS 1./RS_SQUARED_DELTAP       TRACAD1A.88    
+     &,FIELD_INC(P_FIELD)    ! HOLDS INCREMENT TO FIELD.                   TRACAD1A.89    
+*IF DEF,GLOBAL,AND,-DEF,MPP                                                GPB7F405.253   
+     &,WORK(P_FIELD)         ! General work-space.                         TRACAD1A.90    
+*ENDIF                                                                     GPB7F405.254   
+     &,B_SWITCH(P_FIELD)     ! Entropy condition switch.                   TRACAD1A.91    
+*IF DEF,MPP                                                                ARB1F402.390   
+     &,SHIFT_N(ROW_LENGTH,2)   ! Local copy of polar rows for 180 deg      ARB1F402.391   
+     &,B2_SHIFT_N(ROW_LENGTH)  ! rotational shift by GCG_RVECSHIFT         ARB1F402.392   
+     &,SHIFT_S(ROW_LENGTH,2)   ! Local copy of polar rows for 180 deg      ARB1F402.393   
+     &,B2_SHIFT_S(ROW_LENGTH)  ! rotational shift by GCG_RVECSHIFT         ARB1F402.394   
+*ENDIF                                                                     ARB1F402.395   
+                                                                           TRACAD1A.92    
+C*---------------------------------------------------------------------    TRACAD1A.93    
+C DEFINE LOCAL VARIABLES                                                   TRACAD1A.94    
+      INTEGER                                                              TRACAD1A.95    
+     &  P_POINTS_UPDATE ! NUMBER OF P POINTS TO BE UPDATED                 TRACAD1A.96    
+     & ,START_P_UPDATE  ! FIRST P POINT TO BE UPDATED                      TRACAD1A.97    
+     & ,END_P_UPDATE    ! LAST P POINT TO BE UPDATED                       TRACAD1A.98    
+     & ,ROWS            ! NUMBER OF ROWS TO BE UPDATED                     TRACAD1A.99    
+     & ,I,J,L           ! Do loop counters.                                TRACAD1A.100   
+     & ,I_SWEEP         ! holds east-west sweep number                     TRACAD1A.101   
+     & ,MAX_SWEEPS      ! holds maximum number of east-west sweeps         TRACAD1A.102   
+     & ,I_CNTL          ! Control variable for do loop inside do while.    TRACAD1A.103   
+     & ,START_P(2)      ! Start point for loop with I_CNTL =1 or 2         TRACAD1A.104   
+     & ,END_P(2)        ! End point for loop with I_CNTL=1 or 2            TRACAD1A.105   
+     & ,U_ROWS          ! Number of u rows                                 TRACAD1A.106   
+     & ,N_HEMI          ! Number of hemispheres east-west advection        TRACAD1A.107   
+     &                  ! being performed in.                              TRACAD1A.108   
+     & ,J1,J2,J3        ! for deciding which rows still need E-W sweeps    ARB1F402.396   
+*IF DEF,MPP                                                                ARB1F402.397   
+     & ,info            ! return code for GCom routines                    ARB1F402.398   
+     & ,HALF_RL         ! ROW_LENGTH/2 for GCG_RVECSHIFT function.         ARB1F402.399   
+*ENDIF                                                                     ARB1F402.400   
+                                                                           TRACAD1A.109   
+      REAL                                                                 TRACAD1A.110   
+     & NORTH_POLE_INC                                                      TRACAD1A.111   
+     &,SOUTH_POLE_INC                                                      TRACAD1A.112   
+     &,ROW_LENGTH_RECIP     ! 1/ROW_LENGTH                                 TRACAD1A.113   
+     &,R_SWEEP              ! 1/N_SWEEP(J-1)                               ARB1F402.401   
+                                                                           TRACAD1A.114   
+      INTEGER II                                                           GPB7F405.255   
+      REAL real_ROW_LENGTH                                                 GPB7F405.256   
+C*L   NO EXTERNAL SUBROUTINE CALLS:------------------------------------    TRACAD1A.115   
+C*---------------------------------------------------------------------    TRACAD1A.116   
+                                                                           TRACAD1A.117   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD                             TRACAD1A.121   
+CL---------------------------------------------------------------------    TRACAD1A.122   
+CL    INTERNAL STRUCTURE.                                                  TRACAD1A.123   
+CL---------------------------------------------------------------------    TRACAD1A.124   
+CL                                                                         TRACAD1A.125   
+CL---------------------------------------------------------------------    TRACAD1A.126   
+CL    SECTION 0.     INITIALISATION                                        TRACAD1A.127   
+CL---------------------------------------------------------------------    TRACAD1A.128   
+                                                                           TRACAD1A.129   
+      ROWS             = P_FIELD/ROW_LENGTH                                TRACAD1A.130   
+      P_POINTS_UPDATE  = (ROWS-2) * ROW_LENGTH                             TRACAD1A.132   
+*IF DEF,MPP                                                                ARB1F402.402   
+      IF (at_top_of_LPG) P_POINTS_UPDATE = P_POINTS_UPDATE-ROW_LENGTH      ARB1F402.403   
+      IF (at_base_of_LPG) P_POINTS_UPDATE = P_POINTS_UPDATE-ROW_LENGTH     ARB1F402.404   
+*ENDIF                                                                     ARB1F402.405   
+      START_P_UPDATE   = (FIRST_ROW-1) * ROW_LENGTH + 1                    TRACAD1A.133   
+      END_P_UPDATE     = START_P_UPDATE + P_POINTS_UPDATE - 1              TRACAD1A.134   
+      I_SWEEP          = 1                                                 TRACAD1A.136   
+*IF DEF,MPP                                                                ARB1F402.406   
+      MAX_SWEEPS       = MAX(N_SWEEP(2),N_SWEEP(glsize(2)-1))              ARB1F402.407   
+      ROW_LENGTH_RECIP = 1./GLOBAL_ROW_LENGTH                              ARB1F402.408   
+*IF DEF,MPP                                                                GSM6F404.3     
+! Ensure halos are OK before starting                                      GSM6F404.4     
+*ENDIF                                                                     GSM6F404.6     
+*ELSE                                                                      ARB1F402.409   
+      MAX_SWEEPS       = MAX(N_SWEEP(2),N_SWEEP(U_FIELD/ROW_LENGTH))       TRACAD1A.137   
+      ROW_LENGTH_RECIP = 1./ROW_LENGTH                                     ARB1F402.410   
+*ENDIF                                                                     ARB1F402.411   
+      real_ROW_LENGTH=ROW_LENGTH                                           GPB7F405.257   
+                                                                           TRACAD1A.138   
+CL                                                                         TRACAD1A.139   
+CL---------------------------------------------------------------------    TRACAD1A.140   
+CL    SECTION 1.     CALCULATE FIELD INCREMENTS FOR U ADVECTION            TRACAD1A.141   
+CL---------------------------------------------------------------------    TRACAD1A.142   
+                                                                           TRACAD1A.143   
+C----------------------------------------------------------------------    TRACAD1A.144   
+CL    SECTION 1.1    CALCULATE COURANT NUMBER                              TRACAD1A.145   
+C----------------------------------------------------------------------    TRACAD1A.146   
+                                                                           TRACAD1A.147   
+C DIVIDE BY N_SWEEP TO ENSURE COURANT NUMBER LESS THAN 1.                  TRACAD1A.148   
+                                                                           TRACAD1A.149   
+*IF DEF,MPP                                                                ARB1F402.412   
+      DO  J = datastart(2)+FIRST_ROW-1,datastart(2)+P_LAST_ROW-1           ARB1F402.413   
+        J1 = (J-datastart(2))*ROW_LENGTH                                   ARB1F402.414   
+! Because of unused 1st row of global fields.                              ARB1F402.415   
+          R_SWEEP = 1.0/N_SWEEP(J-1)                                       ARB1F402.416   
+        DO I = 1,ROW_LENGTH                                                ARB1F402.417   
+          COURANT_MW(J1+I) = 0.5*(U_MEAN(J1+I-ROW_LENGTH)+U_MEAN(J1+I))    ARB1F402.418   
+     &                * ADVECTION_TIMESTEP * LONGITUDE_STEP_INVERSE        ARB1F402.419   
+     &                * SEC_P_LATITUDE(J1+I) * R_SWEEP                     ARB1F402.420   
+        END DO                                                             ARB1F402.421   
+      END DO                                                               ARB1F402.422   
+*ELSE                                                                      ARB1F402.423   
+      DO I=START_P_UPDATE,END_P_UPDATE                                     TRACAD1A.150   
+        J = (I+ROW_LENGTH-1) / ROW_LENGTH                                  TRACAD1A.151   
+        R_SWEEP = 1.0/N_SWEEP(J)                                           ARB1F403.12    
+        COURANT_MW(I) = 0.5*(U_MEAN(I-ROW_LENGTH)+U_MEAN(I)) *             TRACAD1A.152   
+     &                  ADVECTION_TIMESTEP * LONGITUDE_STEP_INVERSE *      TRACAD1A.153   
+     &                  SEC_P_LATITUDE(I) * R_SWEEP                        ARB1F403.13    
+      END DO                                                               TRACAD1A.155   
+*ENDIF                                                                     ARB1F402.424   
+                                                                           TRACAD1A.156   
+      DO I=START_P_UPDATE-ROW_LENGTH,END_P_UPDATE+ROW_LENGTH               ARB1F402.425   
+!      DO I=1,P_FIELD                                                      ARB1F402.426   
+        RS_SQUARED_DELTAP(I) = RS(I)*RS(I)*(DELTA_AK+DELTA_BK*PSTAR(I))    TRACAD1A.158   
+        RS_SQUARED_DELTAP_RECIP(I) = 1./RS_SQUARED_DELTAP(I)               TRACAD1A.159   
+      END DO                                                               TRACAD1A.160   
+                                                                           TRACAD1A.161   
+      DO I = START_P_UPDATE,END_P_UPDATE                                   TRACAD1A.162   
+        MW(I)=0.5*(RS_SQUARED_DELTAP(I)+RS_SQUARED_DELTAP(I+1))            TRACAD1A.163   
+        II=MIN(0.0,SIGN(1.0,COURANT_MW(I)))                                GPB7F405.258   
+        COURANT(I) = COURANT_MW(I)*RS_SQUARED_DELTAP_RECIP(I-II)           GPB7F405.259   
+      END DO                                                               TRACAD1A.167   
+                                                                           TRACAD1A.168   
+*IF DEF,MPP                                                                ARB1F402.427   
+! Do EW Swapbounds to fill in right halo points.                           ARB1F402.428   
+      CALL SWAPBOUNDS(MW,ROW_LENGTH,ROWS,EW_Halo,0,1) !single level        ARB1F402.429   
+      CALL SWAPBOUNDS(COURANT,ROW_LENGTH,ROWS,EW_Halo,0,1)                 ARB1F402.430   
+*ELSE                                                                      ARB1F402.431   
+*IF DEF,GLOBAL                                                             TRACAD1A.169   
+C END POINTS                                                               TRACAD1A.170   
+      DO I=START_P_UPDATE+ROW_LENGTH-1,END_P_UPDATE,ROW_LENGTH             TRACAD1A.171   
+        MW(I)=.5*(RS_SQUARED_DELTAP(I)+                                    TRACAD1A.172   
+     &            RS_SQUARED_DELTAP(I+1-ROW_LENGTH))                       TRACAD1A.173   
+        IF (COURANT_MW(I).LT.0.) COURANT(I) = COURANT_MW(I)                TRACAD1A.174   
+     &                         *RS_SQUARED_DELTAP_RECIP(I+1-ROW_LENGTH)    TRACAD1A.175   
+      END DO                                                               TRACAD1A.176   
+*ELSE                                                                      TRACAD1A.177   
+      MW(END_P_UPDATE) = 1.                                                TRACAD1A.178   
+      COURANT(END_P_UPDATE)=1.                                             TRACAD1A.179   
+*ENDIF                                                                     TRACAD1A.180   
+*ENDIF                                                                     ARB1F402.432   
+      MW(START_P_UPDATE-1)=1.                                              TRACAD1A.181   
+      MW(END_P_UPDATE+1)=1.                                                TRACAD1A.182   
+      MW_RECIP(START_P_UPDATE-1) = 1.                                      TRACAD1A.183   
+      MW_RECIP(END_P_UPDATE+1) = 1.                                        TRACAD1A.184   
+      COURANT(START_P_UPDATE-1)=0.                                         TRACAD1A.185   
+      COURANT(END_P_UPDATE+1)=0.                                           TRACAD1A.186   
+                                                                           TRACAD1A.187   
+C SET ABSOLUTE VALUE OF COURANT NUMBER. THIS LOOP IS SEPARATE              ARB1F402.433   
+C TO LOOPS CALCULATING COURANT NUMBER SINCE INCLUDING IT THERE             TRACAD1A.189   
+C PREVENTS TOTAL OPTIMISATION.                                             TRACAD1A.190   
+                                                                           TRACAD1A.191   
+      DO I= START_P_UPDATE,END_P_UPDATE                                    TRACAD1A.192   
+        ABS_COURANT(I) = ABS(COURANT(I))                                   TRACAD1A.193   
+        MW_RECIP(I) = 1./MW(I)                                             TRACAD1A.194   
+      END DO                                                               TRACAD1A.195   
+                                                                           TRACAD1A.196   
+      ABS_COURANT(START_P_UPDATE-1) = COURANT(START_P_UPDATE-1)            TRACAD1A.197   
+      ABS_COURANT(END_P_UPDATE+1) = COURANT(END_P_UPDATE+1)                TRACAD1A.198   
+                                                                           TRACAD1A.199   
+CL    PERFORM N_SWEEPS OF ADVECTION ON EACH ROW.                           TRACAD1A.200   
+CL    LOOP OVER NUMBER OF SWEEPS REQUIRED.                                 TRACAD1A.201   
+                                                                           TRACAD1A.202   
+      DO I_SWEEP = 1,MAX_SWEEPS                                            TRACAD1A.203   
+        N_HEMI = 1                                                         TRACAD1A.204   
+                                                                           TRACAD1A.205   
+! Loop over non-halo rows to decide which points need computed this        ARB1F402.434   
+!  sweep.                                                                  ARB1F402.435   
+C IF FIRST SWEEP THEN PERFORM ADVECTION OVER ALL POINTS.                   TRACAD1A.206   
+        IF(I_SWEEP.EQ.1) THEN                                              TRACAD1A.207   
+          START_P(1) = START_P_UPDATE                                      TRACAD1A.208   
+          END_P(1) = END_P_UPDATE                                          TRACAD1A.209   
+        ELSE                                                               ARB1F402.436   
+! Initialise                                                               ARB1F402.437   
+          J1 = 0                                                           ARB1F402.438   
+          J2 = P_LAST_ROW                                                  ARB1F402.439   
+          J3 = 0                                                           ARB1F402.440   
+          START_P(1) = 0                                                   ARB1F402.441   
+                                                                           TRACAD1A.210   
+          DO  J = FIRST_ROW,P_LAST_ROW                                     ARB1F402.442   
+*IF DEF,MPP                                                                ARB1F402.443   
+            I = J+datastart(2)-Offy-1                                      ARB1F402.444   
+!  above line because N_SWEEP is global array of values for all rows       ARB1F402.445   
+*ELSE                                                                      ARB1F402.446   
+            I = J                                                          ARB1F402.447   
+*ENDIF                                                                     ARB1F402.448   
+            IF (J1 .eq. 0 .and. N_SWEEP(I) .ge. I_SWEEP)  J1 = J           ARB1F402.449   
+            IF (J1 .ne. 0 .and. N_SWEEP(I) .lt. I_SWEEP .and.              ARB1F402.450   
+     &          J2 .eq. P_LAST_ROW)  J2 = J-1                              ARB1F402.451   
+            IF (J3 .eq. 0 .and. N_SWEEP(I) .ge. I_SWEEP .and.              ARB1F402.452   
+     &          J2 .ne. P_LAST_ROW)  J3 = J                                ARB1F402.453   
+          END DO                                                           TRACAD1A.218   
+          IF (J1 .gt. 0) THEN                                              ARB1F402.454   
+            START_P(1) = START_POINT_NO_HALO+(J1-FIRST_ROW)*ROW_LENGTH     ARB1F402.455   
+            END_P(1) = END_P_POINT_NO_HALO-(P_LAST_ROW-J2)*ROW_LENGTH      ARB1F402.456   
+          END IF                                                           ARB1F402.457   
+          IF (J3 .gt. 0) THEN                                              ARB1F402.458   
+            START_P(2) = START_POINT_NO_HALO+(J3-FIRST_ROW)*ROW_LENGTH     ARB1F402.459   
+            END_P(2) = END_P_POINT_NO_HALO                                 ARB1F402.460   
+            N_HEMI = 2                                                     TRACAD1A.227   
+          END IF                                                           TRACAD1A.234   
+        END IF ! I_SWEEP                                                   ARB1F402.461   
+                                                                           TRACAD1A.235   
+CL    LOOP OVER NUMBER OF HEMISPHERES.                                     TRACAD1A.248   
+                                                                           TRACAD1A.249   
+*IF DEF,MPP                                                                ARB1F402.466   
+! There may be no work for some processors to do,                          ARB1F402.467   
+        IF (START_P(1) .gt. 0) THEN                                        ARB1F402.468   
+*ENDIF                                                                     ARB1F402.469   
+        DO I_CNTL = 1,N_HEMI                                               TRACAD1A.250   
+          START_P_UPDATE = START_P(I_CNTL)                                 TRACAD1A.251   
+          END_P_UPDATE = END_P(I_CNTL)                                     TRACAD1A.252   
+                                                                           TRACAD1A.253   
+C----------------------------------------------------------------------    TRACAD1A.254   
+CL    SECTION 1.2    CALCULATE FLUX_DELTA_T AND B1                         TRACAD1A.255   
+C----------------------------------------------------------------------    TRACAD1A.256   
+                                                                           TRACAD1A.257   
+C CALCULATE TERM AT ALL POINTS                                             TRACAD1A.258   
+                                                                           TRACAD1A.259   
+          DO I=START_P_UPDATE,END_P_UPDATE                                 TRACAD1A.260   
+            FLUX_DELTA_T(I) = (FIELD(I+1) - FIELD(I)) *                    TRACAD1A.261   
+     &                         COURANT_MW(I)                               TRACAD1A.262   
+            FIELD_INC(I) = 0.0                                             TRACAD1A.263   
+            B1(I)=FLUX_DELTA_T(I)*0.5*(1.0-ABS_COURANT(I))                 TRACAD1A.264   
+          END DO                                                           TRACAD1A.265   
+                                                                           TRACAD1A.266   
+*IF DEF,MPP                                                                ARB1F402.470   
+! but all processors must call SWAPBOUNDS together,                        ARB1F402.471   
+! so also end possible loop over hemispheres.                              ARB1F402.472   
+        END DO                                                             ARB1F402.473   
+        END IF                                                             ARB1F402.474   
+! Do EW Swapbounds to fill in right halo points.                           ARB1F402.475   
+      CALL SWAPBOUNDS(FLUX_DELTA_T(1),ROW_LENGTH,ROWS,EW_Halo,0,1)         GPB7F405.260   
+        IF (START_P(1) .gt. 0) THEN                                        ARB1F402.477   
+        DO I_CNTL = 1,N_HEMI                                               ARB1F402.478   
+          START_P_UPDATE = START_P(I_CNTL)                                 ARB1F402.479   
+          END_P_UPDATE = END_P(I_CNTL)                                     ARB1F402.480   
+*ELSE                                                                      ARB1F402.481   
+*IF DEF,GLOBAL                                                             TRACAD1A.267   
+C RECALCULATE LAST VALUES ON EACH ROW                                      TRACAD1A.268   
+                                                                           TRACAD1A.269   
+          DO I=START_P_UPDATE+ROW_LENGTH-1,END_P_UPDATE,ROW_LENGTH         TRACAD1A.270   
+            FLUX_DELTA_T(I)= (FIELD(I+1-ROW_LENGTH)-                       TRACAD1A.271   
+     &                        FIELD(I)) * COURANT_MW(I)                    TRACAD1A.272   
+            B1(I)=FLUX_DELTA_T(I)*0.5*(1.0-ABS_COURANT(I))                 TRACAD1A.273   
+          END DO                                                           TRACAD1A.274   
+*ENDIF                                                                     TRACAD1A.275   
+*ENDIF                                                                     ARB1F402.482   
+                                                                           TRACAD1A.276   
+C----------------------------------------------------------------------    TRACAD1A.277   
+CL    SECTION 1.3    CALCULATE B1 AND B2                                   TRACAD1A.278   
+C----------------------------------------------------------------------    TRACAD1A.279   
+                                                                           TRACAD1A.280   
+*IF DEF,GLOBAL                                                             TRACAD1A.281   
+                                                                           TRACAD1A.282   
+C GLOBAL MODEL.                                                            TRACAD1A.283   
+C LOOP OVER ALL POINTS                                                     TRACAD1A.284   
+                                                                           TRACAD1A.285   
+          FLUX_DELTA_T(START_P_UPDATE-1)=0.                                TRACAD1A.286   
+          FLUX_DELTA_T(END_P_UPDATE+1)=0.                                  TRACAD1A.287   
+          DO I=START_P_UPDATE,END_P_UPDATE                                 TRACAD1A.288   
+            II=SIGN(1.0,COURANT_MW(I))                                     GPB7F405.262   
+            B2(I) = FLUX_DELTA_T(I+II)*0.5*(MW(I)*MW_RECIP(I+II)-          GPB7F405.263   
+     &              ABS_COURANT(I+II))                                     GPB7F405.264   
+            B_SWITCH(I) = SIGN(1.,COURANT(I)*COURANT(I+II))                GPB7F405.265   
+          END DO                                                           TRACAD1A.297   
+*IF -DEF,MPP                                                               ARB1F402.483   
+C RECALCULATE  VALUES AT FIRST POINTS ON EACH ROW                          TRACAD1A.299   
+C WHERE FIRST LOOP CALCULATED THEM INCORRECTLY.                            TRACAD1A.300   
+                                                                           TRACAD1A.301   
+CDIR$ IVDEP                                                                TRACAD1A.302   
+          DO I=START_P_UPDATE,END_P_UPDATE,ROW_LENGTH                      TRACAD1A.303   
+            IF (COURANT_MW(I).LT.0.0) THEN                                 TRACAD1A.304   
+              B2(I) = FLUX_DELTA_T(I-1+ROW_LENGTH)*0.5*(MW(I)              TRACAD1A.305   
+     &                         *MW_RECIP(I-1+ROW_LENGTH)                   TRACAD1A.306   
+     &                         -ABS_COURANT(I-1+ROW_LENGTH))               TRACAD1A.307   
+              B_SWITCH(I)= SIGN(1.,COURANT(I)*COURANT(I-1+ROW_LENGTH))     TRACAD1A.308   
+            END IF                                                         TRACAD1A.309   
+C RECALCULATE  VALUES AT LAST POINTS ON EACH ROW                           TRACAD1A.310   
+C WHERE FIRST LOOP CALCULATED THEM INCORRECTLY.                            TRACAD1A.311   
+                                                                           TRACAD1A.312   
+            IF (COURANT_MW(I+ROW_LENGTH-1).GE.0.0) THEN                    TRACAD1A.313   
+              B2(I+ROW_LENGTH-1) = FLUX_DELTA_T(I)*.5*                     TRACAD1A.314   
+     &                 (MW(I+ROW_LENGTH-1)*MW_RECIP(I)-ABS_COURANT(I))     TRACAD1A.315   
+              B_SWITCH(I+ROW_LENGTH-1) =                                   TRACAD1A.316   
+     &                     SIGN(1.,COURANT(I+ROW_LENGTH-1)*COURANT(I))     TRACAD1A.317   
+            END IF                                                         TRACAD1A.318   
+          END DO                                                           TRACAD1A.319   
+*ENDIF                                                                     ARB1F402.484   
+                                                                           TRACAD1A.320   
+*ELSE                                                                      TRACAD1A.321   
+                                                                           TRACAD1A.322   
+C LIMITED AREA MODEL                                                       TRACAD1A.323   
+C LOOP OVER ALL POINTS.                                                    TRACAD1A.324   
+                                                                           TRACAD1A.325   
+          DO I=START_P_UPDATE+1,END_P_UPDATE-1                             TRACAD1A.326   
+            II=SIGN(1.0,COURANT_MW(I))                                     GPB7F405.266   
+            B2(I) = FLUX_DELTA_T(I+II)*0.5*(MW(I)*MW_RECIP(I+II)-          GPB7F405.267   
+     &              ABS_COURANT(I+II))                                     GPB7F405.268   
+            B_SWITCH(I) = SIGN(1.,COURANT(I)*COURANT(I+II))                GPB7F405.269   
+          END DO                                                           TRACAD1A.335   
+          B2(START_P_UPDATE)=0.                                            TRACAD1A.336   
+          B2(END_P_UPDATE)=0.                                              TRACAD1A.337   
+          B_SWITCH(START_P_UPDATE) = 0.                                    TRACAD1A.338   
+          B_SWITCH(END_P_UPDATE) = 0.                                      TRACAD1A.339   
+C For Limited Area Model, set W & E edge values of B2 to zero              ARB1F403.14    
+C since these may involve wraparound values of flux_delta_t etc.           ARB1F403.15    
+C Because B2 is on u_grid, also need to zero first interior E points.      ARB1F403.16    
+*IF DEF,MPP                                                                ARB1F403.17    
+      if (atleft) then                                                     ARB1F403.18    
+      do i = START_P_UPDATE,END_P_UPDATE,row_length                        ARB1F403.19    
+        B2(i+EW_Halo) = 0.0                                                ARB1F403.20    
+      end do                                                               ARB1F403.21    
+      end if                                                               ARB1F403.22    
+      if (atright) then                                                    ARB1F403.23    
+      do i = START_P_UPDATE,END_P_UPDATE,row_length                        ARB1F403.24    
+        B2(i+row_length-EW_Halo-1) = 0.0                                   ARB1F403.25    
+        B2(i+row_length-EW_Halo-2) = 0.0                                   ARB1F403.26    
+      end do                                                               ARB1F403.27    
+      end if                                                               ARB1F403.28    
+*ELSE                                                                      ARB1F403.29    
+      do i = START_P_UPDATE,END_P_UPDATE,row_length                        ARB1F403.30    
+        B2(i) = 0.0                                                        ARB1F403.31    
+      end do                                                               ARB1F403.32    
+      do i = START_P_UPDATE,END_P_UPDATE,row_length                        ARB1F403.33    
+        B2(i+row_length-1) = 0.0                                           ARB1F403.34    
+        B2(i+row_length-2) = 0.0                                           ARB1F403.35    
+      end do                                                               ARB1F403.36    
+*ENDIF                                                                     ARB1F403.37    
+                                                                           TRACAD1A.340   
+*ENDIF                                                                     TRACAD1A.341   
+                                                                           TRACAD1A.342   
+C----------------------------------------------------------------------    TRACAD1A.343   
+CL    SECTION 1.4    CALCULATE B_TERM                                      TRACAD1A.344   
+C----------------------------------------------------------------------    TRACAD1A.345   
+                                                                           TRACAD1A.346   
+          IF (L_SUPERBEE) THEN                                             TRACAD1A.347   
+                                                                           TRACAD1A.348   
+CL    SUPERBEE LIMITER.                                                    TRACAD1A.349   
+                                                                           TRACAD1A.350   
+            DO I=START_P_UPDATE,END_P_UPDATE                               TRACAD1A.351   
+              IF(ABS(B2(I)).GT.1.0E-8) THEN                                TRACAD1A.352   
+                B_SWITCH(I) = B_SWITCH(I)*B1(I)/B2(I)                      TRACAD1A.353   
+              IF (B_SWITCH(I).GT.0.5.AND.                                  TRACAD1A.361   
+     &                 B_SWITCH(I).LT.2.0) THEN                            TRACAD1A.362   
+                B_TERM(I) = B2(I) * MAX(B_SWITCH(I),1.0)                   TRACAD1A.363   
+              ELSE IF (B_SWITCH(I).LE.0.0) THEN                            TRACAD1A.364   
+                B_TERM(I) = 0.0                                            TRACAD1A.365   
+              ELSE                                                         TRACAD1A.366   
+                B_TERM(I) = 2.0 * B2(I) * MIN(B_SWITCH(I),1.0)             TRACAD1A.367   
+              END IF                                                       TRACAD1A.368   
+              ELSE                                                         GPB7F405.270   
+                B_SWITCH(I) = 0.                                           GPB7F405.271   
+                  B_TERM(I) = 0.0                                          GPB7F405.272   
+              END IF                                                       GPB7F405.273   
+            END DO                                                         TRACAD1A.369   
+                                                                           TRACAD1A.370   
+                                                                           GPB7F405.274   
+          ELSE                                                             TRACAD1A.371   
+                                                                           TRACAD1A.372   
+CL    VAN LEER LIMITER.                                                    TRACAD1A.373   
+                                                                           TRACAD1A.374   
+C LOOP OVER ALL POINTS                                                     TRACAD1A.375   
+            DO I=START_P_UPDATE,END_P_UPDATE                               TRACAD1A.376   
+              B_TERM(I) = 0.0                                              TRACAD1A.377   
+              IF (B1(I)*B2(I)*B_SWITCH(I).GT.0.0)                          TRACAD1A.378   
+     &           B_TERM(I) = 2.0*B1(I)*B2(I)*B_SWITCH(I)/                  TRACAD1A.379   
+     &                       (B1(I)+B2(I)*B_SWITCH(I))                     TRACAD1A.380   
+            END DO                                                         TRACAD1A.381   
+                                                                           TRACAD1A.382   
+          END IF                                                           TRACAD1A.383   
+                                                                           TRACAD1A.384   
+*IF DEF,MPP                                                                ARB1F402.485   
+! All processors must call SWAPBOUNDS together,                            ARB1F402.486   
+! so also end possible loop over hemispheres.                              ARB1F402.487   
+        END DO                                                             ARB1F402.488   
+        END IF                                                             ARB1F402.489   
+! Do EW Swapbounds to fill in left halo points.                            ARB1F402.490   
+      CALL SWAPBOUNDS(B_TERM(1),ROW_LENGTH,ROWS,EW_Halo,0,1)               GPB7F405.261   
+        IF (START_P(1) .gt. 0) THEN                                        ARB1F402.492   
+        DO I_CNTL = 1,N_HEMI                                               ARB1F402.493   
+          START_P_UPDATE = START_P(I_CNTL)                                 ARB1F402.494   
+          END_P_UPDATE = END_P(I_CNTL)                                     ARB1F402.495   
+*ENDIF                                                                     ARB1F402.496   
+                                                                           ARB1F402.497   
+C----------------------------------------------------------------------    TRACAD1A.385   
+CL    SECTION 1.5    CALCULATE INCREMENTS TO FIELD                         TRACAD1A.386   
+C----------------------------------------------------------------------    TRACAD1A.387   
+                                                                           TRACAD1A.388   
+*IF DEF,T3E                                                                GPB7F405.275   
+          b_term(0)=0.                                                     GPB7F405.276   
+          flux_delta_t(0)=0.                                               GPB7F405.277   
+*ENDIF                                                                     GPB7F405.278   
+          DO I=START_P_UPDATE,END_P_UPDATE                                 TRACAD1A.389   
+*IF DEF,T3E                                                                GPB7F405.279   
+            ii=max(0, nint(sign(real(i), courant_mw(i))))                  GPB7F405.280   
+            FIELD_INC(I) = (FIELD_INC(I) - B_TERM(I)) +                    GPB7F405.281   
+     &       (2.*B_TERM(II)- FLUX_DELTA_T(II))                             GPB7F405.282   
+*ELSE                                                                      GPB7F405.283   
+            FIELD_INC(I) = FIELD_INC(I) - B_TERM(I)                        TRACAD1A.390   
+            IF (COURANT_MW(I).GE.0.0)                                      TRACAD1A.391   
+     &        FIELD_INC(I)= FIELD_INC(I)+ 2.*B_TERM(I)- FLUX_DELTA_T(I)    TRACAD1A.392   
+*ENDIF                                                                     GPB7F405.284   
+          END DO                                                           TRACAD1A.393   
+                                                                           TRACAD1A.394   
+          DO I=START_P_UPDATE,END_P_UPDATE-1                               TRACAD1A.395   
+*IF DEF,T3E                                                                GPB7F405.285   
+            ii=max(0,-nint(sign(real(i), courant_mw(i))))                  GPB7F405.286   
+            FIELD_INC(I+1) = (FIELD_INC(I+1)-B_TERM(I)) +                  GPB7F405.287   
+     &       (2.*B_TERM(II)- FLUX_DELTA_T(II))                             GPB7F405.288   
+*ELSE                                                                      GPB7F405.289   
+            FIELD_INC(I+1) = FIELD_INC(I+1)-B_TERM(I)                      TRACAD1A.396   
+            IF (COURANT_MW(I).LT.0.0)                                      TRACAD1A.397   
+     &         FIELD_INC(I+1) = FIELD_INC(I+1) + 2.*B_TERM(I)-             TRACAD1A.398   
+     &                                          FLUX_DELTA_T(I)            TRACAD1A.399   
+*ENDIF                                                                     GPB7F405.290   
+          END DO                                                           TRACAD1A.400   
+                                                                           TRACAD1A.401   
+*IF DEF,GLOBAL,AND,-DEF,MPP                                                ARB1F402.498   
+C RECALCULATE FIRST POINT ON ROW                                           TRACAD1A.403   
+C Reorder code to be similar to loops over whole field.                    ARB1F403.38    
+CDIR$ IVDEP                                                                TRACAD1A.404   
+          DO I=START_P_UPDATE,END_P_UPDATE,ROW_LENGTH                      TRACAD1A.405   
+            J=I-1+ROW_LENGTH                                               TRACAD1A.406   
+            FIELD_INC(I) =  -B_TERM(I)                                     ARB1F403.39    
+      IF (COURANT_MW(I).GE.0.0)                                            ARB1F403.40    
+     & FIELD_INC(I) = FIELD_INC(I)+2.*B_TERM(I)-FLUX_DELTA_T(I)            ARB1F403.41    
+            FIELD_INC(I) =  FIELD_INC(I) - B_TERM(J)                       ARB1F403.42    
+      IF (COURANT_MW(J).LT.0.0)                                            ARB1F403.43    
+     & FIELD_INC(I) = FIELD_INC(I)+2.*B_TERM(J)-FLUX_DELTA_T(J)            ARB1F403.44    
+          END DO                                                           TRACAD1A.414   
+                                                                           TRACAD1A.415   
+*ENDIF                                                                     TRACAD1A.416   
+                                                                           TRACAD1A.417   
+C----------------------------------------------------------------------    TRACAD1A.418   
+CL    SECTION 1.6    UPDATE FIELD                                          TRACAD1A.419   
+C----------------------------------------------------------------------    TRACAD1A.420   
+                                                                           TRACAD1A.421   
+C UPDATE MASS WEIGHTING FIELDS                                             TRACAD1A.423   
+          COURANT_MW(START_P_UPDATE-1) = 0.                                TRACAD1A.424   
+*IF DEF,GLOBAL,AND,-DEF,MPP                                                GPB7F405.291   
+          DO I=START_P_UPDATE,END_P_UPDATE                                 TRACAD1A.425   
+            WORK(I) = COURANT_MW(I-1)  - COURANT_MW(I)                     TRACAD1A.426   
+          END DO                                                           TRACAD1A.427   
+                                                                           TRACAD1A.428   
+C     RECALCULATE END POINT VALUES                                         TRACAD1A.429   
+          DO I=START_P_UPDATE,END_P_UPDATE,ROW_LENGTH                      TRACAD1A.430   
+            WORK(I)= COURANT_MW(I-1+ROW_LENGTH) - COURANT_MW(I)            TRACAD1A.431   
+          END DO                                                           TRACAD1A.432   
+                                                                           TRACAD1A.433   
+          DO I=START_P_UPDATE,END_P_UPDATE                                 TRACAD1A.434   
+            RS_SQUARED_DELTAP(I) = RS_SQUARED_DELTAP(I) + WORK(I)          TRACAD1A.435   
+            RS_SQUARED_DELTAP_RECIP(I) = 1./RS_SQUARED_DELTAP(I)           TRACAD1A.436   
+          END DO                                                           TRACAD1A.437   
+*ELSE                                                                      GPB7F405.292   
+          DO I=START_P_UPDATE,END_P_UPDATE                                 GPB7F405.293   
+            RS_SQUARED_DELTAP(I) = RS_SQUARED_DELTAP(I) +                  GPB7F405.294   
+     &        (COURANT_MW(I-1)  - COURANT_MW(I))                           GPB7F405.295   
+            RS_SQUARED_DELTAP_RECIP(I) = 1./RS_SQUARED_DELTAP(I)           GPB7F405.296   
+          END DO                                                           GPB7F405.297   
+*ENDIF                                                                     GPB7F405.298   
+                                                                           TRACAD1A.439   
+C ADD INCREMENTS TO FIELD                                                  TRACAD1A.440   
+*IF DEF,GLOBAL                                                             TRACAD1A.441   
+          DO I=START_P_UPDATE,END_P_UPDATE                                 TRACAD1A.442   
+            FIELD(I) = FIELD(I)+FIELD_INC(I)*RS_SQUARED_DELTAP_RECIP(I)    TRACAD1A.443   
+          END DO                                                           TRACAD1A.444   
+*ELSE                                                                      TRACAD1A.445   
+        J1 = 1                                                             ARB1F402.501   
+        J2 = ROW_LENGTH-2                                                  ARB1F402.502   
+*IF DEF,MPP                                                                ARB1F403.45    
+          if (atleft) J1 = J1+EW_Halo                                      ARB1F403.46    
+          if (atright) J2 = J2-EW_Halo                                     ARB1F403.47    
+*ENDIF                                                                     ARB1F403.48    
+CFPP$ NODEPCHK                                                             TRACAD1A.446   
+          DO 150 J=START_P_UPDATE,END_P_UPDATE,ROW_LENGTH                  TRACAD1A.447   
+            DO I = J1,J2                                                   ARB1F402.507   
+              FIELD(J+I) = FIELD(J+I)+FIELD_INC(J+I)*                      TRACAD1A.449   
+     &                     RS_SQUARED_DELTAP_RECIP(J+I)                    TRACAD1A.450   
+            END DO                                                         TRACAD1A.451   
+ 150      CONTINUE                                                         TRACAD1A.452   
+*ENDIF                                                                     TRACAD1A.453   
+                                                                           TRACAD1A.454   
+CL    END INNER LOOP OVER NUMBER OF HEMISPHERES.                           TRACAD1A.455   
+        END DO                                                             TRACAD1A.456   
+*IF DEF,MPP                                                                ARB1F402.508   
+        END IF ! START_P(1) > 0                                            ARB1F402.509   
+! Do EW Swapbounds to fill in left & right halo points.                    ARB1F402.510   
+      IF (I_SWEEP .lt. MAX_SWEEPS) THEN                                    ARB1F402.511   
+        CALL SWAPBOUNDS(FIELD,ROW_LENGTH,ROWS,EW_Halo,0,1)                 ARB1F402.512   
+      END IF                                                               ARB1F402.513   
+*ENDIF                                                                     ARB1F402.514   
+                                                                           TRACAD1A.457   
+CL    END LOOP OVER NUMBER OF SWEEPS                                       TRACAD1A.458   
+      END DO                                                               TRACAD1A.459   
+                                                                           TRACAD1A.460   
+*IF DEF,MPP                                                                ARB1F402.515   
+! Swap all halo points to ensure updated arrays are fully up-to-date       ARB1F402.516   
+!  for North-South sweep.                                                  ARB1F402.517   
+      CALL SWAPBOUNDS(FIELD,ROW_LENGTH,ROWS,EW_Halo,NS_Halo,1)             ARB1F402.518   
+      CALL SWAPBOUNDS(RS_SQUARED_DELTAP,ROW_LENGTH,ROWS,                   ARB1F402.519   
+     &                EW_Halo,NS_Halo,1)                                   ARB1F402.520   
+      CALL SWAPBOUNDS(RS_SQUARED_DELTAP_RECIP,ROW_LENGTH,ROWS,             ARB1F402.521   
+     &                EW_Halo,NS_Halo,1)                                   ARB1F402.522   
+!!! Might be better to recompute RS_SQUARED_DELTAP_RECIP haloes.           ARB1F402.523   
+*ENDIF                                                                     ARB1F402.524   
+CL                                                                         TRACAD1A.461   
+CL---------------------------------------------------------------------    TRACAD1A.462   
+CL    SECTION 2.     CALCULATE FIELD INCREMENTS FOR V ADVECTION            TRACAD1A.463   
+CL---------------------------------------------------------------------    TRACAD1A.464   
+                                                                           TRACAD1A.465   
+      DO I=1,P_FIELD                                                       TRACAD1A.466   
+        FIELD_INC(I)=0.0                                                   TRACAD1A.467   
+      END DO                                                               TRACAD1A.468   
+                                                                           TRACAD1A.469   
+C----------------------------------------------------------------------    TRACAD1A.470   
+CL    SECTION 2.1    CALCULATE COURANT NUMBER                              TRACAD1A.471   
+C----------------------------------------------------------------------    TRACAD1A.472   
+                                                                           TRACAD1A.473   
+      DO  I = FIRST_VALID_PT+1,LAST_U_VALID_PT                             ARB1F402.525   
+!      DO I=2,U_FIELD                                                      ARB1F402.526   
+        COURANT_MW(I) = 0.5*(V_MEAN(I)+V_MEAN(I-1))*ADVECTION_TIMESTEP*    TRACAD1A.475   
+     &                    LATITUDE_STEP_INVERSE                            TRACAD1A.476   
+      END DO                                                               TRACAD1A.477   
+                                                                           TRACAD1A.478   
+*IF DEF,GLOBAL                                                             TRACAD1A.479   
+*IF DEF,MPP                                                                ARB1F402.527   
+! Do EW Swapbounds to fill in west halo points.                            ARB1F402.528   
+      CALL SWAPBOUNDS(COURANT_MW,ROW_LENGTH,ROWS,EW_Halo,0,1)              ARB1F402.529   
+*ELSE                                                                      ARB1F402.530   
+C  REPEAT FOR END POINTS                                                   TRACAD1A.480   
+                                                                           TRACAD1A.481   
+      DO I=1,U_FIELD,ROW_LENGTH                                            TRACAD1A.482   
+        COURANT_MW(I) = 0.5*(V_MEAN(I)+V_MEAN(I+ROW_LENGTH-1))*            TRACAD1A.483   
+     &                   ADVECTION_TIMESTEP * LATITUDE_STEP_INVERSE        TRACAD1A.484   
+      END DO                                                               TRACAD1A.485   
+*ENDIF                                                                     ARB1F402.531   
+*ELSE                                                                      TRACAD1A.486   
+! For limited area or MPP just make sure have sensible value               ARB1F402.532   
+      COURANT_MW(FIRST_VALID_PT) = V_MEAN(FIRST_VALID_PT)*                 ARB1F403.49    
+     &            ADVECTION_TIMESTEP*LATITUDE_STEP_INVERSE                 ARB1F403.50    
+*ENDIF                                                                     TRACAD1A.489   
+                                                                           TRACAD1A.490   
+      DO  I = FIRST_VALID_PT,LAST_U_FLD_PT                                 ARB1F402.533   
+!      DO I=1,U_FIELD                                                      ARB1F402.534   
+*IF DEF,MPP                                                                ARB1F402.535   
+        MW(I)=0.5*(RS_SQUARED_DELTAP(I)*COS_P_LATITUDE(I)+                 ARB1F402.536   
+     &     RS_SQUARED_DELTAP(I+ROW_LENGTH)*COS_P_LATITUDE(I+ROW_LENGTH))   ARB1F402.537   
+*ENDIF                                                                     ARB1F402.538   
+! Split this loop to try and retain MPP & nonMPP bit comparison            ARB1F403.51    
+        COURANT(I) = COURANT_MW(I)*RS_SQUARED_DELTAP_RECIP(I)              ARB1F403.52    
+        COURANT(I) = COURANT(I)*SEC_P_LATITUDE(I)                          ARB1F403.53    
+        IF (COURANT_MW(I).GT.0.) THEN                                      TRACAD1A.494   
+          COURANT(I) = COURANT_MW(I)*SEC_P_LATITUDE(I+ROW_LENGTH)          TRACAD1A.495   
+     &                 *RS_SQUARED_DELTAP_RECIP(I+ROW_LENGTH)              TRACAD1A.496   
+        ENDIF                                                              TRACAD1A.497   
+      END DO                                                               TRACAD1A.498   
+                                                                           TRACAD1A.499   
+C ABSOLUTE VALUE OF COURANT NUMBER CALCULATED IN THIS LOOP AS PUTTING      TRACAD1A.500   
+C IT IN PREVIOUS LOOP PREVENTS FULL OPTIMISATION.                          TRACAD1A.501   
+                                                                           TRACAD1A.502   
+*IF DEF,MPP                                                                ARB1F402.539   
+! Do NS Swapbounds to fill in south halo points.                           ARB1F402.540   
+      CALL SWAPBOUNDS(MW,ROW_LENGTH,ROWS,0,NS_Halo,1) !single level        ARB1F402.541   
+      CALL SWAPBOUNDS(COURANT,ROW_LENGTH,ROWS,0,NS_Halo,1)                 ARB1F402.542   
+*ENDIF                                                                     ARB1F403.54    
+                                                                           ARB1F402.543   
+      DO  I = FIRST_VALID_PT,LAST_U_VALID_PT                               ARB1F402.544   
+*IF -DEF,MPP                                                               ARB1F402.547   
+        MW(I)=0.5*(RS_SQUARED_DELTAP(I)*COS_P_LATITUDE(I)+                 TRACAD1A.504   
+     &     RS_SQUARED_DELTAP(I+ROW_LENGTH)*COS_P_LATITUDE(I+ROW_LENGTH))   TRACAD1A.505   
+*ENDIF                                                                     ARB1F402.548   
+        ABS_COURANT(I) = ABS(COURANT(I))                                   TRACAD1A.506   
+        MW_RECIP(I) = 1./MW(I)                                             TRACAD1A.507   
+      END DO                                                               TRACAD1A.508   
+                                                                           TRACAD1A.509   
+C----------------------------------------------------------------------    TRACAD1A.510   
+CL    SECTION 2.2    CALCULATE FLUX_DELTA_T AND B1                         TRACAD1A.511   
+C----------------------------------------------------------------------    TRACAD1A.512   
+                                                                           TRACAD1A.513   
+      DO  I = FIRST_VALID_PT,LAST_U_FLD_PT                                 ARB1F402.549   
+!      DO I=1,U_FIELD                                                      ARB1F402.550   
+        FLUX_DELTA_T(I) = COURANT_MW(I) * (FIELD(I)-FIELD(I+ROW_LENGTH))   TRACAD1A.515   
+*IF -DEF,MPP                                                               ARB1F402.551   
+        B1(I) = FLUX_DELTA_T(I)*0.5*(1.0-ABS_COURANT(I))                   TRACAD1A.516   
+*ENDIF                                                                     ARB1F402.552   
+      END DO                                                               TRACAD1A.517   
+                                                                           TRACAD1A.518   
+*IF DEF,MPP                                                                ARB1F402.553   
+! Do NS Swapbounds to fill in south halo points.                           ARB1F402.554   
+      CALL SWAPBOUNDS(FLUX_DELTA_T(1),ROW_LENGTH,ROWS,0,NS_Halo,1)         GPB7F405.299   
+      DO  I = FIRST_VALID_PT,LAST_U_FLD_PT                                 ARB1F402.556   
+        B1(I) = FLUX_DELTA_T(I)*0.5*(1.0-ABS_COURANT(I))                   ARB1F402.557   
+      END DO                                                               ARB1F402.558   
+*ENDIF                                                                     ARB1F402.559   
+                                                                           ARB1F402.560   
+C----------------------------------------------------------------------    TRACAD1A.519   
+CL    SECTION 2.3    CALCULATE B1 AND B2                                   TRACAD1A.520   
+C----------------------------------------------------------------------    TRACAD1A.521   
+                                                                           TRACAD1A.522   
+C CALCULATE FLUXES AT VELOCITY POINTS.                                     TRACAD1A.523   
+C FIRST LOOP OVER ALL POINTS NOT AT NORTHERN OR SOUTHERN BOUNDARY.         TRACAD1A.524   
+                                                                           TRACAD1A.525   
+      real_row_length=row_length                                           GPB7F405.300   
+cdir$ unroll                                                               GPB7F405.301   
+      DO  I = START_POINT_NO_HALO,END_U_POINT_NO_HALO                      ARB1F402.561   
+        ii=nint(sign(real_row_length, courant_mw(i)))                      GPB7F405.302   
+        B2(I) = FLUX_DELTA_T(I-II)*0.5*(MW(I)                              GPB7F405.303   
+     &           *MW_RECIP(I-II) - ABS_COURANT(I-II))                      GPB7F405.304   
+      END DO                                                               GPB7F405.305   
+c                                                                          GPB7F405.306   
+      DO  I = START_POINT_NO_HALO,END_U_POINT_NO_HALO                      GPB7F405.307   
+        ii=nint(sign(real_row_length, courant_mw(i)))                      GPB7F405.308   
+        B_SWITCH(I) = SIGN(1.,COURANT(I)*COURANT(I-II))                    GPB7F405.309   
+      END DO                                                               TRACAD1A.535   
+                                                                           TRACAD1A.536   
+*IF DEF,MPP                                                                ARB1F402.563   
+      IF (at_top_of_LPG) THEN                                              ARB1F402.564   
+*IF DEF,GLOBAL                                                             ARB1F402.565   
+! Needs values over top of pole on another processor                       ARB1F402.566   
+      HALF_RL = GLOBAL_ROW_LENGTH/2                                        ARB1F402.567   
+! Copy North polar row into copy arrays                                    ARB1F402.568   
+      DO  I = 1,ROW_LENGTH                                                 ARB1F402.569   
+        SHIFT_N(I,1) = MW(TOP_ROW_START+I-1)                               ARB1F402.570   
+        SHIFT_N(I,2) = COURANT(TOP_ROW_START+I-1)                          ARB1F402.571   
+      END DO                                                               ARB1F402.572   
+! Rotate these arrays by half the global row length to get values on       ARB1F402.573   
+!  opposite side of the pole.                                              ARB1F402.574   
+      CALL GCG_RVECSHIFT(ROW_LENGTH,ROW_LENGTH-2*Offx,1+Offx,2,            ARB1F402.575   
+     &                   HALF_RL,.TRUE.,SHIFT_N,GC_ROW_GROUP,info)         ARB1F402.576   
+      DO  I = 1,ROW_LENGTH                                                 ARB1F402.577   
+        B2_SHIFT_N(I) =                                                    ARB1F402.578   
+     &    FLUX_DELTA_T(TOP_ROW_START+I-1)*0.5*(SHIFT_N(I,1)                ARB1F402.579   
+     &   *MW_RECIP(TOP_ROW_START+I-1)-ABS_COURANT(TOP_ROW_START+I-1))      ARB1F402.580   
+        B_SWITCH(TOP_ROW_START+I-1) =                                      ARB1F403.55    
+     & SIGN(1.0,COURANT(TOP_ROW_START+I-1)*SHIFT_N(I,2))                   ARB1F403.56    
+      END DO                                                               ARB1F402.582   
+      CALL GCG_RVECSHIFT(ROW_LENGTH,ROW_LENGTH-2*Offx,1+Offx,1,            ARB1F402.583   
+     &                   HALF_RL,.TRUE.,B2_SHIFT_N,GC_ROW_GROUP,info)      ARB1F402.584   
+      DO  I = 1,ROW_LENGTH                                                 ARB1F402.585   
+        B2(TOP_ROW_START+I-1) = B2_SHIFT_N(I)                              ARB1F402.586   
+      END DO                                                               ARB1F402.587   
+*ELSE                                                                      ARB1F402.588   
+      DO  I = TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                     ARB1F402.589   
+        B2(I) = 0.0                                                        ARB1F402.590   
+        B_SWITCH(I) = 0.0                                                  ARB1F402.591   
+      END DO                                                               ARB1F402.592   
+*ENDIF                                                                     ARB1F402.593   
+      DO  I = TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                     ARB1F402.594   
+        IF (COURANT_MW(I) .lt. 0.0) THEN                                   ARB1F402.595   
+          B2(I) = FLUX_DELTA_T(I+ROW_LENGTH)*0.5*(MW(I)                    ARB1F402.596   
+     &          *MW_RECIP(I+ROW_LENGTH) - ABS_COURANT(I+ROW_LENGTH))       ARB1F402.597   
+          B_SWITCH(I) = SIGN(1.,COURANT(I)*COURANT(I+ROW_LENGTH))          ARB1F402.598   
+        END IF                                                             ARB1F402.599   
+      END DO                                                               ARB1F402.600   
+      END IF ! at_top_of_LPG                                               ARB1F402.601   
+                                                                           ARB1F402.602   
+      IF (at_base_of_LPG) THEN                                             ARB1F402.603   
+      DO  I = U_BOT_ROW_START,LAST_U_VALID_PT                              ARB1F402.604   
+        B2(I) = FLUX_DELTA_T(I-ROW_LENGTH)*0.5*(MW(I)                      ARB1F402.605   
+     &          *MW_RECIP(I-ROW_LENGTH)-ABS_COURANT(I-ROW_LENGTH))         ARB1F402.606   
+        B_SWITCH(I) = SIGN(1.0,COURANT(I)*COURANT(I-ROW_LENGTH))           ARB1F402.607   
+      END DO                                                               ARB1F402.608   
+*IF DEF,GLOBAL                                                             ARB1F402.609   
+      HALF_RL = GLOBAL_ROW_LENGTH/2                                        ARB1F402.610   
+      DO  I = 1,ROW_LENGTH                                                 ARB1F402.611   
+        SHIFT_S(I,1) = MW(U_BOT_ROW_START+I-1)                             ARB1F402.612   
+        SHIFT_S(I,2) = COURANT(U_BOT_ROW_START+I-1)                        ARB1F402.613   
+      END DO                                                               ARB1F402.614   
+      CALL GCG_RVECSHIFT(ROW_LENGTH,ROW_LENGTH-2*Offx,1+Offx,2,            ARB1F402.615   
+     &                   HALF_RL,.TRUE.,SHIFT_S,GC_ROW_GROUP,info)         ARB1F402.616   
+      DO  I = 1,ROW_LENGTH                                                 ARB1F402.617   
+        B2_SHIFT_S(I) =                                                    ARB1F402.619   
+     &    FLUX_DELTA_T(U_BOT_ROW_START+I-1)*0.5*(SHIFT_S(I,1)              ARB1F402.620   
+     & *MW_RECIP(U_BOT_ROW_START+I-1)-ABS_COURANT(U_BOT_ROW_START+I-1))    ARB1F402.621   
+        IF (COURANT_MW(U_BOT_ROW_START+I-1) .lt. 0.0) THEN                 ARB1F403.57    
+        B_SWITCH(U_BOT_ROW_START+I-1) = SIGN(1.0,                          ARB1F402.622   
+     &   COURANT(U_BOT_ROW_START+I-1)*SHIFT_S(I,2))                        ARB1F402.623   
+        END IF                                                             ARB1F402.624   
+      END DO                                                               ARB1F402.625   
+      CALL GCG_RVECSHIFT(ROW_LENGTH,ROW_LENGTH-2*Offx,1+Offx,1,            ARB1F402.626   
+     &                   HALF_RL,.TRUE.,B2_SHIFT_S,GC_ROW_GROUP,info)      ARB1F402.627   
+      DO  I = 1,ROW_LENGTH                                                 ARB1F402.628   
+        IF (COURANT_MW(U_BOT_ROW_START+I-1) .lt. 0.0) THEN                 ARB1F403.58    
+        B2(U_BOT_ROW_START+I-1) = B2_SHIFT_S(I)                            ARB1F402.629   
+        END IF                                                             ARB1F403.59    
+      END DO                                                               ARB1F402.630   
+*ELSE                                                                      ARB1F402.631   
+      DO  I = U_BOT_ROW_START,LAST_U_VALID_PT                              ARB1F402.632   
+        IF (COURANT_MW(I) .lt. 0.0) THEN                                   ARB1F402.633   
+          B2(I) = 0.0                                                      ARB1F402.634   
+          B_SWITCH(I) = 0.0                                                ARB1F402.635   
+        END IF                                                             ARB1F402.636   
+      END DO                                                               ARB1F402.637   
+*ENDIF                                                                     ARB1F402.638   
+      END IF ! at_base_of LPG                                              ARB1F402.639   
+                                                                           ARB1F402.640   
+*ELSE                                                                      ARB1F402.641   
+CFPP$ NODEPCHK                                                             TRACAD1A.537   
+      DO L=1,ROW_LENGTH                                                    TRACAD1A.538   
+C NORTHERN BOUNDARY.                                                       TRACAD1A.539   
+                                                                           TRACAD1A.540   
+*IF DEF,GLOBAL                                                             TRACAD1A.541   
+        J = MOD(L-1+ROW_LENGTH/2,ROW_LENGTH)+1                             TRACAD1A.542   
+        B2(L) = FLUX_DELTA_T(J)*0.5*(MW(L)*MW_RECIP(J)-ABS_COURANT(J))     TRACAD1A.543   
+        B_SWITCH(L) = SIGN(1.,COURANT(L)*COURANT(J))                       TRACAD1A.544   
+*ELSE                                                                      TRACAD1A.545   
+        B2(L) = 0.0                                                        TRACAD1A.546   
+        B_SWITCH(L) = 0.                                                   TRACAD1A.547   
+*ENDIF                                                                     TRACAD1A.548   
+                                                                           TRACAD1A.549   
+        IF(COURANT_MW(L).LT. 0.0) THEN                                     TRACAD1A.550   
+          B2(L) = FLUX_DELTA_T(L+ROW_LENGTH)*0.5*(MW(L)                    TRACAD1A.551   
+     &          *MW_RECIP(L+ROW_LENGTH) - ABS_COURANT(L+ROW_LENGTH))       TRACAD1A.552   
+          B_SWITCH(L) = SIGN(1.,COURANT(L)*COURANT(L+ROW_LENGTH))          TRACAD1A.553   
+        END IF                                                             TRACAD1A.554   
+                                                                           TRACAD1A.555   
+C SOUTHERN BOUNDARY.                                                       TRACAD1A.556   
+        I= U_FIELD - ROW_LENGTH + L                                        TRACAD1A.557   
+        B2(I) = FLUX_DELTA_T(I-ROW_LENGTH)*0.5*(MW(I)                      TRACAD1A.558   
+     &             *MW_RECIP(I-ROW_LENGTH) - ABS_COURANT(I-ROW_LENGTH))    TRACAD1A.559   
+        B_SWITCH(I) = SIGN(1.,COURANT(I)*COURANT(I-ROW_LENGTH))            TRACAD1A.560   
+                                                                           TRACAD1A.561   
+        IF(COURANT_MW(I).LT. 0.0) THEN                                     TRACAD1A.562   
+*IF DEF,GLOBAL                                                             TRACAD1A.563   
+         J = MOD(I-1+ROW_LENGTH/2,ROW_LENGTH)+U_FIELD-ROW_LENGTH+1         TRACAD1A.564   
+         B2(I) = FLUX_DELTA_T(J)*0.5*(MW(I)*MW_RECIP(J)-ABS_COURANT(J))    TRACAD1A.565   
+         B_SWITCH(I) = SIGN(1.,COURANT(I)*COURANT(J))                      TRACAD1A.566   
+*ELSE                                                                      TRACAD1A.567   
+         B2(I) = 0.0                                                       TRACAD1A.568   
+         B_SWITCH(I) = 0.                                                  TRACAD1A.569   
+*ENDIF                                                                     TRACAD1A.570   
+        ENDIF                                                              TRACAD1A.571   
+                                                                           TRACAD1A.572   
+      END DO                                                               TRACAD1A.573   
+*ENDIF                                                                     ARB1F402.642   
+                                                                           TRACAD1A.574   
+C----------------------------------------------------------------------    TRACAD1A.575   
+CL    SECTION 2.4    CALCULATE B_TERM                                      TRACAD1A.576   
+C----------------------------------------------------------------------    TRACAD1A.577   
+                                                                           TRACAD1A.578   
+      IF (L_SUPERBEE) THEN                                                 TRACAD1A.579   
+                                                                           TRACAD1A.580   
+CL    SUPERBEE LIMITER.                                                    TRACAD1A.581   
+                                                                           TRACAD1A.582   
+        DO  I = FIRST_FLD_PT,LAST_U_FLD_PT                                 ARB1F402.643   
+!        DO I=1,U_FIELD                                                    ARB1F402.644   
+          IF(ABS(B2(I)).GT.1.0E-8) THEN                                    TRACAD1A.584   
+            B_SWITCH(I) = B_SWITCH(I)*B1(I)/B2(I)                          TRACAD1A.585   
+            IF (B_SWITCH(I).GT.0.5.AND.B_SWITCH(I).LT.2.0) THEN            GPB7F405.310   
+              B_TERM(I) = B2(I) * MAX(B_SWITCH(I),1.0)                     GPB7F405.311   
+            ELSE IF (B_SWITCH(I).LE.0.0) THEN                              GPB7F405.312   
+              B_TERM(I) = 0.0                                              GPB7F405.313   
+            ELSE                                                           GPB7F405.314   
+              B_TERM(I) = 2.0 * B2(I) * MIN(B_SWITCH(I),1.0)               GPB7F405.315   
+            END IF                                                         GPB7F405.316   
+          ELSE                                                             TRACAD1A.586   
+            B_SWITCH(I) = 0.                                               TRACAD1A.587   
+            B_TERM(I) = 0.0                                                GPB7F405.317   
+          END IF                                                           TRACAD1A.588   
+        END DO                                                             TRACAD1A.589   
+                                                                           TRACAD1A.601   
+      ELSE                                                                 TRACAD1A.602   
+                                                                           TRACAD1A.603   
+CL    VAN LEER LIMITER.                                                    TRACAD1A.604   
+                                                                           TRACAD1A.605   
+C LOOP OVER ALL POINTS                                                     TRACAD1A.606   
+        DO  I = FIRST_FLD_PT,LAST_U_FLD_PT                                 ARB1F402.647   
+!        DO I=1,U_FIELD                                                    ARB1F402.648   
+          B_TERM(I) = 0.0                                                  TRACAD1A.608   
+          IF (B1(I)*B2(I)*B_SWITCH(I).GT.0.0)                              TRACAD1A.609   
+     &           B_TERM(I) = 2.0*B1(I)*B2(I)*B_SWITCH(I)/                  TRACAD1A.610   
+     &                       (B1(I)+B2(I)*B_SWITCH(I))                     TRACAD1A.611   
+        END DO                                                             TRACAD1A.612   
+                                                                           TRACAD1A.613   
+      END IF                                                               TRACAD1A.614   
+                                                                           TRACAD1A.615   
+*IF DEF,MPP                                                                ARB1F402.649   
+! Do NS Swapbounds to fill in halo points.                                 ARB1F402.650   
+      CALL SWAPBOUNDS(B_TERM(1),ROW_LENGTH,ROWS,0,NS_Halo,1)               GPB7F405.318   
+*ENDIF                                                                     ARB1F402.652   
+                                                                           ARB1F402.653   
+C----------------------------------------------------------------------    TRACAD1A.616   
+CL    SECTION 2.5    CALCULATE INCREMENTS TO FIELD                         TRACAD1A.617   
+CL---------------------------------------------------------------------    TRACAD1A.618   
+                                                                           TRACAD1A.619   
+CDIR$ IVDEP                                                                TRACAD1A.620   
+*IF DEF,T3E                                                                GPB7F405.319   
+      b_term(0)=0.                                                         GPB7F405.320   
+      flux_delta_t(0)=0.                                                   GPB7F405.321   
+cdir$ unroll                                                               GPB7F405.322   
+*ENDIF                                                                     GPB7F405.323   
+      DO  I = FIRST_FLD_PT,LAST_U_FLD_PT                                   ARB1F402.654   
+!      DO I=1,U_FIELD                                                      ARB1F402.655   
+*IF DEF,T3E                                                                GPB7F405.324   
+        ii=max(0, -nint(sign(real(i), courant_mw(i))))                     GPB7F405.325   
+        FIELD_INC(I) = (FIELD_INC(I) -                                     GPB7F405.326   
+     &                  B_TERM(I)) +                                       GPB7F405.327   
+     &                 (2.*B_TERM(II) - FLUX_DELTA_T(II))                  GPB7F405.328   
+*ELSE                                                                      GPB7F405.329   
+        FIELD_INC(I) = FIELD_INC(I) - B_TERM(I)                            TRACAD1A.622   
+        IF (COURANT_MW(I).LT.0.0)                                          TRACAD1A.623   
+     &    FIELD_INC(I) = FIELD_INC(I) - FLUX_DELTA_T(I) +2.*B_TERM(I)      TRACAD1A.624   
+*ENDIF                                                                     GPB7F405.330   
+      END DO                                                               TRACAD1A.625   
+CDIR$ IVDEP                                                                TRACAD1A.626   
+      DO  I = FIRST_VALID_PT,LAST_U_FLD_PT                                 ARB1F402.656   
+!      DO I=1,U_FIELD                                                      ARB1F402.657   
+*IF DEF,T3E                                                                GPB7F405.331   
+        ii=max(0, nint(sign(real(i), courant_mw(i))))                      GPB7F405.332   
+        FIELD_INC(I+ROW_LENGTH) = (FIELD_INC(I+ROW_LENGTH) -               GPB7F405.333   
+     &                             B_TERM(I)) +                            GPB7F405.334   
+     &                            (2.*B_TERM(II) - FLUX_DELTA_T(II))       GPB7F405.335   
+*ELSE                                                                      GPB7F405.336   
+        FIELD_INC(I+ROW_LENGTH) = FIELD_INC(I+ROW_LENGTH) -                TRACAD1A.628   
+     &                              B_TERM(I)                              TRACAD1A.629   
+        IF (COURANT_MW(I).GE.0.0)                                          TRACAD1A.630   
+     &    FIELD_INC(I+ROW_LENGTH) = FIELD_INC(I+ROW_LENGTH) -              TRACAD1A.631   
+     &                              FLUX_DELTA_T(I) + 2.*B_TERM(I)         TRACAD1A.632   
+*ENDIF                                                                     GPB7F405.337   
+      END DO                                                               TRACAD1A.633   
+                                                                           TRACAD1A.634   
+*IF DEF,GLOBAL                                                             TRACAD1A.635   
+                                                                           TRACAD1A.636   
+C----------------------------------------------------------------------    TRACAD1A.637   
+CL    SECTION 2.6    CALCULATE POLAR INCREMENTS                            TRACAD1A.638   
+CL---------------------------------------------------------------------    TRACAD1A.639   
+                                                                           TRACAD1A.640   
+C CALCULATE AVERAGE POLAR INCREMENT                                        TRACAD1A.641   
+      NORTH_POLE_INC = 0.0                                                 TRACAD1A.642   
+      SOUTH_POLE_INC = 0.0                                                 TRACAD1A.643   
+                                                                           TRACAD1A.644   
+*IF DEF,MPP                                                                ARB1F402.658   
+! Use reproducible vector sum of points on polar rows.                     ARB1F402.659   
+      IF (at_top_of_LPG) THEN                                              ARB1F402.660   
+        CALL GCG_RVECSUMR(P_FIELD,ROW_LENGTH-2*EW_Halo,                    ARB1F402.661   
+     &                    TOP_ROW_START+EW_Halo,1,                         ARB1F402.662   
+     &                    FIELD_INC,GC_ROW_GROUP,info,NORTH_POLE_INC)      ARB1F402.663   
+      END IF                                                               ARB1F402.664   
+! Because values are summed in reverse order in non-MPP loop               ARB1F402.665   
+! SOUTH_POLE_INC will probably not bit-compare                             ARB1F402.666   
+      IF (at_base_of_LPG) THEN                                             ARB1F402.667   
+        CALL GCG_RVECSUMR(P_FIELD,ROW_LENGTH-2*EW_Halo,                    ARB1F402.668   
+     &                    P_BOT_ROW_START+EW_Halo,1,                       ARB1F402.669   
+     &                    FIELD_INC,GC_ROW_GROUP,info,SOUTH_POLE_INC)      ARB1F402.670   
+      END IF                                                               ARB1F402.671   
+*ELSE                                                                      ARB1F402.672   
+      DO I=1,ROW_LENGTH                                                    TRACAD1A.645   
+        NORTH_POLE_INC = NORTH_POLE_INC + FIELD_INC(I)                     TRACAD1A.646   
+        SOUTH_POLE_INC = SOUTH_POLE_INC + FIELD_INC(P_FIELD+1-I)           TRACAD1A.647   
+      END DO                                                               TRACAD1A.648   
+*ENDIF                                                                     ARB1F402.673   
+                                                                           TRACAD1A.649   
+      NORTH_POLE_INC = NORTH_POLE_INC * ROW_LENGTH_RECIP * 2.0             TRACAD1A.650   
+      SOUTH_POLE_INC = SOUTH_POLE_INC * ROW_LENGTH_RECIP * 2.0             TRACAD1A.651   
+                                                                           TRACAD1A.652   
+*IF DEF,MPP                                                                ARB1F402.674   
+      IF (at_top_of_LPG) THEN                                              ARB1F402.675   
+        DO  I = TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                   ARB1F402.676   
+          FIELD_INC(I) =  NORTH_POLE_INC                                   ARB1F402.677   
+        END DO                                                             ARB1F402.678   
+      END IF                                                               ARB1F402.679   
+      IF (at_base_of_LPG) THEN                                             ARB1F402.680   
+        DO  J = P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1               ARB1F402.681   
+          FIELD_INC(J) = SOUTH_POLE_INC                                    ARB1F402.682   
+        END DO                                                             ARB1F402.683   
+      END IF                                                               ARB1F402.684   
+*ELSE                                                                      ARB1F402.685   
+CDIR$ IVDEP                                                                TRACAD1A.653   
+      DO I=1,ROW_LENGTH                                                    TRACAD1A.654   
+        FIELD_INC(I) = NORTH_POLE_INC                                      TRACAD1A.655   
+        FIELD_INC(P_FIELD+1-I) = SOUTH_POLE_INC                            TRACAD1A.656   
+      END DO                                                               TRACAD1A.657   
+*ENDIF                                                                     TRACAD1A.658   
+*ENDIF                                                                     ARB1F402.686   
+                                                                           TRACAD1A.659   
+C----------------------------------------------------------------------    TRACAD1A.660   
+CL    SECTION 2.7    UPDATE FIELD                                          TRACAD1A.661   
+CL---------------------------------------------------------------------    TRACAD1A.662   
+                                                                           TRACAD1A.663   
+C UPDATE MASS WEIGHTING                                                    TRACAD1A.664   
+      DO  I = START_POINT_NO_HALO,END_P_POINT_NO_HALO                      ARB1F402.687   
+!      DO I=ROW_LENGTH+1,P_FIELD-ROW_LENGTH                                ARB1F402.688   
+        RS_SQUARED_DELTAP(I) = RS_SQUARED_DELTAP(I) +                      TRACAD1A.666   
+     &        (COURANT_MW(I)-COURANT_MW(I-ROW_LENGTH))*SEC_P_LATITUDE(I)   TRACAD1A.667   
+      END DO                                                               TRACAD1A.668   
+                                                                           TRACAD1A.669   
+*IF DEF,GLOBAL                                                             TRACAD1A.670   
+C     POLAR VALUES                                                         TRACAD1A.671   
+      NORTH_POLE_INC = 0.                                                  TRACAD1A.672   
+      SOUTH_POLE_INC = 0.                                                  TRACAD1A.673   
+*IF DEF,MPP                                                                ARB1F402.689   
+! Use reproducible vector sum of points on polar rows.                     ARB1F402.690   
+      IF (at_top_of_LPG) THEN                                              ARB1F402.691   
+        CALL GCG_RVECSUMR(P_FIELD,ROW_LENGTH-2*EW_Halo,                    ARB1F402.692   
+     &                    TOP_ROW_START+EW_Halo,1,                         ARB1F402.693   
+     &                    COURANT_MW,GC_ROW_GROUP,info,NORTH_POLE_INC)     ARB1F402.694   
+      END IF                                                               ARB1F402.695   
+      IF (at_base_of_LPG) THEN                                             ARB1F402.696   
+        CALL GCG_RVECSUMR(P_FIELD,ROW_LENGTH-2*EW_Halo,                    ARB1F402.697   
+     &                    U_BOT_ROW_START+EW_Halo,1,                       ARB1F402.698   
+     &                    COURANT_MW,GC_ROW_GROUP,info,SOUTH_POLE_INC)     ARB1F402.699   
+      SOUTH_POLE_INC = -SOUTH_POLE_INC                                     ARB1F402.700   
+      END IF                                                               ARB1F402.701   
+*ELSE                                                                      ARB1F402.702   
+      DO I=1,ROW_LENGTH                                                    TRACAD1A.674   
+        NORTH_POLE_INC = NORTH_POLE_INC + COURANT_MW(I)                    TRACAD1A.675   
+         J=P_FIELD-2*ROW_LENGTH+I                                          TRACAD1A.676   
+        SOUTH_POLE_INC = SOUTH_POLE_INC - COURANT_MW(J)                    TRACAD1A.677   
+      END DO                                                               TRACAD1A.678   
+*ENDIF                                                                     ARB1F402.703   
+                                                                           TRACAD1A.679   
+      NORTH_POLE_INC = NORTH_POLE_INC*ROW_LENGTH_RECIP*                    TRACAD1A.680   
+     &                   SEC_P_LATITUDE(TOP_ROW_START)*2                   ARB1F403.60    
+      SOUTH_POLE_INC = SOUTH_POLE_INC*ROW_LENGTH_RECIP*                    TRACAD1A.682   
+     &                   SEC_P_LATITUDE(P_BOT_ROW_START)*2                 ARB1F403.61    
+*IF DEF,MPP                                                                ARB1F402.704   
+      IF (at_top_of_LPG) THEN                                              ARB1F402.705   
+        DO  I = TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                   ARB1F402.706   
+          RS_SQUARED_DELTAP(I) = RS_SQUARED_DELTAP(I) + NORTH_POLE_INC     ARB1F402.707   
+        END DO                                                             ARB1F402.708   
+      END IF                                                               ARB1F402.709   
+      IF (at_base_of_LPG) THEN                                             ARB1F402.710   
+        DO  J = P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1               ARB1F402.711   
+          RS_SQUARED_DELTAP(J) = RS_SQUARED_DELTAP(J) + SOUTH_POLE_INC     ARB1F402.712   
+        END DO                                                             ARB1F402.713   
+      END IF                                                               ARB1F402.714   
+*ELSE                                                                      ARB1F402.715   
+      DO I=1,ROW_LENGTH                                                    TRACAD1A.684   
+        RS_SQUARED_DELTAP(I) = RS_SQUARED_DELTAP(I) + NORTH_POLE_INC       TRACAD1A.685   
+         J=P_FIELD-ROW_LENGTH+I                                            TRACAD1A.686   
+        RS_SQUARED_DELTAP(J) = RS_SQUARED_DELTAP(J) + SOUTH_POLE_INC       TRACAD1A.687   
+      END DO                                                               TRACAD1A.688   
+*ENDIF                                                                     ARB1F402.716   
+                                                                           TRACAD1A.689   
+C ADD INCREMENTS TO FIELD                                                  TRACAD1A.690   
+      DO  I = FIRST_FLD_PT,LAST_P_FLD_PT                                   ARB1F402.717   
+!      DO I=1,P_FIELD                                                      ARB1F402.718   
+        FIELD(I) = FIELD(I)+                                               TRACAD1A.692   
+     &     FIELD_INC(I)*SEC_P_LATITUDE(I) / RS_SQUARED_DELTAP(I)           TRACAD1A.693   
+      END DO                                                               TRACAD1A.694   
+                                                                           TRACAD1A.695   
+*ELSE                                                                      TRACAD1A.696   
+                                                                           TRACAD1A.697   
+C ADD INCREMENTS TO FIELD                                                  TRACAD1A.698   
+      J1 = 1                                                               ARB1F402.719   
+      J2 = ROW_LENGTH-2                                                    ARB1F402.720   
+*IF DEF,MPP                                                                ARB1F403.62    
+          if (atleft) J1 = J1+EW_Halo                                      ARB1F403.63    
+          if (atright) J2 = J2-EW_Halo                                     ARB1F403.64    
+*ENDIF                                                                     ARB1F403.65    
+CFPP$ NODEPCHK                                                             TRACAD1A.699   
+      DO 270 J = START_POINT_NO_HALO,END_P_POINT_NO_HALO,ROW_LENGTH        ARB1F402.721   
+        DO I = J1,J2                                                       ARB1F402.726   
+          FIELD(J+I) = FIELD(J+I)+FIELD_INC(J+I)*SEC_P_LATITUDE(J+I)/      TRACAD1A.702   
+     &                 RS_SQUARED_DELTAP(J+I)                              TRACAD1A.703   
+        END DO                                                             TRACAD1A.704   
+ 270  CONTINUE                                                             TRACAD1A.705   
+*ENDIF                                                                     TRACAD1A.706   
+*IF DEF,MPP                                                                GSM6F404.7     
+*ENDIF                                                                     GSM6F404.9     
+CL    END OF ROUTINE TRAC_ADV                                              TRACAD1A.708   
+                                                                           TRACAD1A.709   
+      RETURN                                                               TRACAD1A.710   
+      END                                                                  TRACAD1A.711   
+*ENDIF                                                                     TRACAD1A.712   

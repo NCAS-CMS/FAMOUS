@@ -1,0 +1,448 @@
+*IF DEF,A03_7A                                                             IMCLTQ7A.2     
+C *****************************COPYRIGHT******************************     IMCLTQ7A.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    IMCLTQ7A.4     
+C                                                                          IMCLTQ7A.5     
+C Use, duplication or disclosure of this code is subject to the            IMCLTQ7A.6     
+C restrictions as set forth in the contract.                               IMCLTQ7A.7     
+C                                                                          IMCLTQ7A.8     
+C                Meteorological Office                                     IMCLTQ7A.9     
+C                London Road                                               IMCLTQ7A.10    
+C                BRACKNELL                                                 IMCLTQ7A.11    
+C                Berkshire UK                                              IMCLTQ7A.12    
+C                RG12 2SZ                                                  IMCLTQ7A.13    
+C                                                                          IMCLTQ7A.14    
+C If no contract has been raised with this copy of the code, the use,      IMCLTQ7A.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      IMCLTQ7A.16    
+C to do so must first be obtained in writing from the Head of Numerical    IMCLTQ7A.17    
+C Modelling at the above address.                                          IMCLTQ7A.18    
+C ******************************COPYRIGHT******************************    IMCLTQ7A.19    
+!!!  SUBROUTINE IM_CAL_TQ ----------------------------------------------   IMCLTQ7A.20    
+!!!                                                                        IMCLTQ7A.21    
+!!!  Purpose: Calculate increments for T and Q in the boundary layer,      IMCLTQ7A.22    
+!!!           using an implicit numerical scheme. The tridiagonal          IMCLTQ7A.23    
+!!!           matrices are inverted using simple Gaussian elimination.     IMCLTQ7A.24    
+!!!                                                                        IMCLTQ7A.25    
+!!!  Suitable for single column use; activate *IF definition IBM.          IMCLTQ7A.26    
+!!!                                                                        IMCLTQ7A.27    
+!!!  Model           Modification history from model version 4.1           IMCLTQ7A.28    
+!!! version  Date                                                          IMCLTQ7A.29    
+!!!                                                                        IMCLTQ7A.30    
+!!!  SJ, RE  <- Programmers of some or all of previous code or changes     IMCLTQ7A.31    
+!!!                                                                        IMCLTQ7A.32    
+!!!  Version for MOSES II land surface tile model (RE 21/3/97)             IMCLTQ7A.33    
+!!!                                                                        IMCLTQ7A.34    
+!!!  Programming standard: UM Documentation Paper No 4, Version 2,         IMCLTQ7A.35    
+!!!                        dated 18/1/90                                   IMCLTQ7A.36    
+!!!                                                                        IMCLTQ7A.37    
+!!!  System component covered: P244                                        IMCLTQ7A.38    
+!!!                                                                        IMCLTQ7A.39    
+!!!  Project task: P24                                                     IMCLTQ7A.40    
+!!!                                                                        IMCLTQ7A.41    
+!!!  Documentation: UM Documentation Paper No 24.                          IMCLTQ7A.42    
+!!!                                                                        IMCLTQ7A.43    
+!!!---------------------------------------------------------------------   IMCLTQ7A.44    
+                                                                           IMCLTQ7A.45    
+      SUBROUTINE IM_CAL_TQ (P_FIELD,P1,P_POINTS,BL_LEVELS,LAND_FIELD,      IMCLTQ7A.46    
+     &                      LAND_INDEX,NTYPE,TILE_INDEX,TILE_PTS,          IMCLTQ7A.47    
+     &                      LAND_MASK,LTIMER,                              IMCLTQ7A.48    
+     &                      ALPHA1,ALPHA1_SICE,ASHTF,ASHTF_SNOW,           IMCLTQ7A.49    
+     &                      DTL_NT,DQW_NT,DTRDZ,ICE_FRACT,                 IMCLTQ7A.50    
+     &                      RDZ,RESFT,RHOKH,                               IMCLTQ7A.51    
+     &                      RHOKH_1,RHOKH1_SICE,RHOKPM,RHOKPM_SICE,        IMCLTQ7A.52    
+     &                      TILE_FRAC,                                     IMCLTQ7A.53    
+     &                      FQW,FQW_ICE,FQW_TILE,E_SEA,                    IMCLTQ7A.54    
+     &                      FTL,FTL_ICE,FTL_TILE,H_SEA,QW,TL)              IMCLTQ7A.55    
+                                                                           IMCLTQ7A.56    
+      IMPLICIT NONE                                                        IMCLTQ7A.57    
+                                                                           IMCLTQ7A.58    
+      INTEGER                                                              IMCLTQ7A.59    
+     & P_FIELD                     ! IN No. of points in P-grid.           IMCLTQ7A.60    
+     &,P1                          ! IN First point to be processed in     IMCLTQ7A.61    
+!                                  !    P-grid.                            IMCLTQ7A.62    
+     &,P_POINTS                    ! IN Number of P-grid points to be      IMCLTQ7A.63    
+!                                  !    processed.                         IMCLTQ7A.64    
+     &,BL_LEVELS                   ! IN No. of atmospheric levels for      IMCLTQ7A.65    
+!                                  !    which boundary layer fluxes are    IMCLTQ7A.66    
+!                                  !    calculated.                        IMCLTQ7A.67    
+     &,LAND_FIELD                  ! IN Total number of land points.       IMCLTQ7A.68    
+     &,LAND_INDEX(P_FIELD)         ! IN Index of land points.              IMCLTQ7A.69    
+     &,NTYPE                       ! IN Number of land surface tiles.      IMCLTQ7A.70    
+     &,TILE_PTS(NTYPE)             ! IN Number of tiles.                   IMCLTQ7A.71    
+     &,TILE_INDEX(LAND_FIELD,NTYPE)! IN Index of tile points.              IMCLTQ7A.72    
+                                                                           IMCLTQ7A.73    
+      REAL                                                                 IMCLTQ7A.74    
+     & ALPHA1(LAND_FIELD,NTYPE)    ! IN Gradient of saturated specific     IMCLTQ7A.75    
+!                                  !    humidity with respect to           IMCLTQ7A.76    
+!                                  !    temperature between the bottom     IMCLTQ7A.77    
+!                                  !    model layer and tile surfaces.     IMCLTQ7A.78    
+     &,ALPHA1_SICE(P_FIELD)        ! IN ALPHA1 for sea-ice                 IMCLTQ7A.79    
+     &,ASHTF(P_FIELD)              ! IN Coefficient to calculate surface   IMCLTQ7A.80    
+!                                  !    heat flux into soil or sea-ice     IMCLTQ7A.81    
+!                                  !    (W/m2/K).                          IMCLTQ7A.82    
+     &,ASHTF_SNOW(P_FIELD)         ! IN Coefficient to calculate surface   IMCLTQ7A.83    
+!                                  !    heat flux into snow (W/m2/K).      IMCLTQ7A.84    
+     &,DTL_NT(P_FIELD,BL_LEVELS)   ! IN Non-turbulent increment for TL.    IMCLTQ7A.85    
+     &,DQW_NT(P_FIELD,BL_LEVELS)   ! IN Non-turbulent increment for QW.    IMCLTQ7A.86    
+     &,DTRDZ(P_FIELD,BL_LEVELS)    ! IN -g.dt/dp for model layers.         IMCLTQ7A.87    
+     &,ICE_FRACT(P_FIELD)          ! IN Fraction of grid-box which is      IMCLTQ7A.88    
+!                                  !    sea-ice (decimal fraction).        IMCLTQ7A.89    
+     &,RDZ(P_FIELD,BL_LEVELS)      ! IN 1./dz for model layers.            IMCLTQ7A.90    
+     &,RESFT(LAND_FIELD,NTYPE)     ! IN Total resistance factor            IMCLTQ7A.91    
+     &,RHOKH(P_FIELD,2:BL_LEVELS)  ! IN Exchange coeff for FTL above       IMCLTQ7A.92    
+!                                  !    surface.                           IMCLTQ7A.93    
+     &,RHOKH_1(LAND_FIELD,NTYPE)   ! IN Land surface exchange coeff.       IMCLTQ7A.94    
+     &,RHOKH1_SICE(P_FIELD)        ! IN Sea and sea-ice surface exchange   IMCLTQ7A.95    
+!                                  !    coeff.                             IMCLTQ7A.96    
+     &,RHOKPM(LAND_FIELD,NTYPE)    ! IN Land surface exchange coeff.       IMCLTQ7A.97    
+     &,RHOKPM_SICE(P_FIELD)        ! IN Sea-ice surface exchange coeff.    IMCLTQ7A.98    
+     &,TILE_FRAC(LAND_FIELD,NTYPE)                                         IMCLTQ7A.99    
+!                                  ! IN Tile fractions.                    IMCLTQ7A.100   
+                                                                           IMCLTQ7A.101   
+       LOGICAL                                                             IMCLTQ7A.102   
+     & LAND_MASK(P_FIELD)          ! IN T for land, F elsewhere.           IMCLTQ7A.103   
+     &,LTIMER                      ! IN Logical for TIMER.                 IMCLTQ7A.104   
+                                                                           IMCLTQ7A.105   
+      REAL                                                                 IMCLTQ7A.106   
+     & FQW(P_FIELD,BL_LEVELS)      ! INOUT Flux of QW (ie., for surface,   IMCLTQ7A.107   
+!                                  !       total evaporation). Kg/sq m/s   IMCLTQ7A.108   
+     &,FQW_ICE(P_FIELD)            ! INOUT Surface flux of QW for          IMCLTQ7A.109   
+!                                  !       sea-ice.                        IMCLTQ7A.110   
+     &,FQW_TILE(LAND_FIELD,NTYPE)  ! INOUT Surface flux of QW for land     IMCLTQ7A.111   
+!                                  !       tiles.                          IMCLTQ7A.112   
+     &,FTL(P_FIELD,BL_LEVELS)      ! INOUT Flux of TL (ie., for surface,   IMCLTQ7A.113   
+!                                  !       H/Cp where H is sensible heat   IMCLTQ7A.114   
+!                                  !       in W per sq m).                 IMCLTQ7A.115   
+     &,FTL_ICE(P_FIELD)            ! INOUT H/Cp for sea-ice.               IMCLTQ7A.116   
+     &,FTL_TILE(LAND_FIELD,NTYPE)  ! INOUT H/Cp for land tiles.            IMCLTQ7A.117   
+     &,E_SEA(P_FIELD)              ! INOUT Evaporation from sea times      IMCLTQ7A.118   
+!                                  !       leads fraction (kg/m2/s).       IMCLTQ7A.119   
+!                                  !       Zero over land.                 IMCLTQ7A.120   
+     &,H_SEA(P_FIELD)              ! INOUT Surface sensible heat flux      IMCLTQ7A.121   
+!                                  !       over sea times leads fraction   IMCLTQ7A.122   
+!                                  !       Zero over land.                 IMCLTQ7A.123   
+     &,QW(P_FIELD,BL_LEVELS)       ! INOUT Total water content (kg per     IMCLTQ7A.124   
+!                                  !       kg air).  From P243.            IMCLTQ7A.125   
+     &,TL(P_FIELD,BL_LEVELS)       ! INOUT Liquid/frozen water             IMCLTQ7A.126   
+!                                          temperature (K).  From P243.    IMCLTQ7A.127   
+                                                                           IMCLTQ7A.128   
+!  External references :-                                                  IMCLTQ7A.129   
+      EXTERNAL TIMER                                                       IMCLTQ7A.130   
+                                                                           IMCLTQ7A.131   
+!  Local and other symbolic constants :-                                   IMCLTQ7A.132   
+*CALL C_LHEAT                                                              IMCLTQ7A.133   
+*CALL C_R_CP                                                               IMCLTQ7A.134   
+*CALL C_GAMMA                                                              IMCLTQ7A.135   
+      REAL LS                                                              IMCLTQ7A.136   
+      PARAMETER (                                                          IMCLTQ7A.137   
+     & LS=LC+LF     ! Latent heat of sublimation (J per kg).               IMCLTQ7A.138   
+     &)                                                                    IMCLTQ7A.139   
+! Workspace :-                                                             IMCLTQ7A.140   
+      REAL                                                                 IMCLTQ7A.141   
+     & AQ(P_FIELD,BL_LEVELS)   ! Matrix elements.                          IMCLTQ7A.142   
+     &,AT(P_FIELD,BL_LEVELS)   ! Matrix elements.                          IMCLTQ7A.143   
+     &,BQ1(P_FIELD)            ! Matrix element.                           IMCLTQ7A.144   
+     &,BT1(P_FIELD)            ! Matrix element.                           IMCLTQ7A.145   
+     &,CQ1(P_FIELD)            ! Matrix element.                           IMCLTQ7A.146   
+     &,CT1(P_FIELD)            ! Matrix element.                           IMCLTQ7A.147   
+     &,DQW(P_FIELD,BL_LEVELS)  ! Delta QW.                                 IMCLTQ7A.148   
+     &,DTL(P_FIELD,BL_LEVELS)  ! Delta TL.                                 IMCLTQ7A.149   
+                                                                           IMCLTQ7A.150   
+!  Local scalars :-                                                        IMCLTQ7A.151   
+                                                                           IMCLTQ7A.152   
+      REAL                                                                 IMCLTQ7A.153   
+     & CQ       ! Matrix element.                                          IMCLTQ7A.154   
+     &,CT       ! Matrix element.                                          IMCLTQ7A.155   
+     &,RBQ      ! Reciprocal of BQ'.                                       IMCLTQ7A.156   
+     &,RBT      ! Reciprocal of BT'.                                       IMCLTQ7A.157   
+                                                                           IMCLTQ7A.158   
+      INTEGER                                                              IMCLTQ7A.159   
+     & BLM1     ! BL_LEVELS minus 1.                                       IMCLTQ7A.160   
+     &,I        ! Loop counter (horizontal field index).                   IMCLTQ7A.161   
+     &,J        ! Loop counter (tile field index).                         IMCLTQ7A.162   
+     &,K        ! Loop counter (vertical index).                           IMCLTQ7A.163   
+     &,L        ! Loop counter (horizontal field index).                   IMCLTQ7A.164   
+     &,N        ! Loop counter (tile index).                               IMCLTQ7A.165   
+                                                                           IMCLTQ7A.166   
+      IF (LTIMER) THEN                                                     IMCLTQ7A.167   
+        CALL TIMER('IMCALTQ ',3)                                           IMCLTQ7A.168   
+      ENDIF                                                                IMCLTQ7A.169   
+                                                                           IMCLTQ7A.170   
+      BLM1 = BL_LEVELS-1                                                   IMCLTQ7A.171   
+                                                                           IMCLTQ7A.172   
+!-----------------------------------------------------------------------   IMCLTQ7A.173   
+!! 1.  Calculate those matrix and vector elements on the LHS of eqn        IMCLTQ7A.174   
+!!     P244.79 which are to do with implicit solution of the moisture      IMCLTQ7A.175   
+!!     transport problem - upward sweep through lower half of matrix.      IMCLTQ7A.176   
+!-----------------------------------------------------------------------   IMCLTQ7A.177   
+!! 1.1 Row of matrix for QW on top boundary layer level.                   IMCLTQ7A.178   
+!-----------------------------------------------------------------------   IMCLTQ7A.179   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.180   
+        DQW(I,BL_LEVELS) = DTRDZ(I,BL_LEVELS) * FQW(I,BL_LEVELS)           IMCLTQ7A.181   
+     &                     +DQW_NT(I,BL_LEVELS)               ! P244.58    IMCLTQ7A.182   
+        AQ(I,BL_LEVELS) = - DTRDZ(I,BL_LEVELS)                ! P244.56    IMCLTQ7A.183   
+     &       * GAMMA(BL_LEVELS)*RHOKH(I,BL_LEVELS)*RDZ(I,BL_LEVELS)        IMCLTQ7A.184   
+        RBQ = 1.0 / ( 1.0 - AQ(I,BL_LEVELS) )   ! Reciprocal of P244.98    IMCLTQ7A.185   
+        DQW(I,BL_LEVELS) = RBQ * DQW(I,BL_LEVELS)             ! P244.99    IMCLTQ7A.186   
+        AQ(I,BL_LEVELS) = RBQ * AQ(I,BL_LEVELS)               ! P244.100   IMCLTQ7A.187   
+      ENDDO                                                                IMCLTQ7A.188   
+                                                                           IMCLTQ7A.189   
+!-----------------------------------------------------------------------   IMCLTQ7A.190   
+!! 1.2 Rows of matrix for QW on intermediate levels.                       IMCLTQ7A.191   
+!-----------------------------------------------------------------------   IMCLTQ7A.192   
+      DO K=BLM1,2,-1                                                       IMCLTQ7A.193   
+        DO I=P1,P1+P_POINTS-1                                              IMCLTQ7A.194   
+          DQW(I,K) = - DTRDZ(I,K) * ( FQW(I,K+1) - FQW(I,K) )              IMCLTQ7A.195   
+     &               + DQW_NT(I,K)                            ! P244.54    IMCLTQ7A.196   
+          CQ = - DTRDZ(I,K)*GAMMA(K+1)*RHOKH(I,K+1)*RDZ(I,K+1)! P244.52    IMCLTQ7A.197   
+          AQ(I,K) = - DTRDZ(I,K)*GAMMA(K)*RHOKH(I,K)*RDZ(I,K) ! P244.51    IMCLTQ7A.198   
+          RBQ = 1.0 / ( 1.0 - AQ(I,K) - CQ*(1.0 + AQ(I,K+1)) )             IMCLTQ7A.199   
+!                                             ... reciprocal of P244.101   IMCLTQ7A.200   
+          DQW(I,K) = RBQ * ( DQW(I,K) - CQ*DQW(I,K+1) )       ! P244.102   IMCLTQ7A.201   
+          AQ(I,K) = RBQ * AQ(I,K)                             ! P244.103   IMCLTQ7A.202   
+        ENDDO                                                              IMCLTQ7A.203   
+      ENDDO                                                                IMCLTQ7A.204   
+                                                                           IMCLTQ7A.205   
+!-----------------------------------------------------------------------   IMCLTQ7A.206   
+!! 1.3 Row of matrix for QW on lowest level.                               IMCLTQ7A.207   
+!-----------------------------------------------------------------------   IMCLTQ7A.208   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.209   
+        DQW(I,1) = - DTRDZ(I,1)*(FQW(I,2) - FQW(I,1)) + DQW_NT(I,1)        IMCLTQ7A.210   
+        AQ(I,1) = 0.                                                       IMCLTQ7A.211   
+        CQ1(I) = - GAMMA(2)*DTRDZ(I,1)*RHOKH(I,2)*RDZ(I,2)                 IMCLTQ7A.212   
+        BQ1(I) = 1. - (1. + AQ(I,2))*CQ1(I)                                IMCLTQ7A.213   
+        IF ( .NOT. LAND_MASK(I) ) THEN                                     IMCLTQ7A.214   
+! Sea or sea-ice                                                           IMCLTQ7A.215   
+          AQ(I,1) = - CP*GAMMA(1)*DTRDZ(I,1)*ICE_FRACT(I) *                IMCLTQ7A.216   
+     &                      ALPHA1_SICE(I)*RHOKH1_SICE(I)*RHOKPM_SICE(I)   IMCLTQ7A.217   
+          BQ1(I) = BQ1(I) + GAMMA(1)*DTRDZ(I,1) *                          IMCLTQ7A.218   
+     &                      ( (1. - ICE_FRACT(I))*RHOKH1_SICE(I) +         IMCLTQ7A.219   
+     &        ICE_FRACT(I)*(ASHTF(I)+CP*RHOKH1_SICE(I))*RHOKPM_SICE(I) )   IMCLTQ7A.220   
+        ENDIF                                                              IMCLTQ7A.221   
+      ENDDO                                                                IMCLTQ7A.222   
+                                                                           IMCLTQ7A.223   
+! Snow-free land tiles                                                     IMCLTQ7A.224   
+      DO N=1,NTYPE-1                                                       IMCLTQ7A.225   
+        DO J=1,TILE_PTS(N)                                                 IMCLTQ7A.226   
+          L = TILE_INDEX(J,N)                                              IMCLTQ7A.227   
+          I = LAND_INDEX(L)                                                IMCLTQ7A.228   
+          AQ(I,1) = AQ(I,1) - CP*GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *      IMCLTQ7A.229   
+     &                   RESFT(L,N)*ALPHA1(L,N)*RHOKH_1(L,N)*RHOKPM(L,N)   IMCLTQ7A.230   
+          BQ1(I) = BQ1(I) + GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *           IMCLTQ7A.231   
+     &               RESFT(L,N)*RHOKPM(L,N)*(CP*RHOKH_1(L,N) + ASHTF(I))   IMCLTQ7A.232   
+        ENDDO                                                              IMCLTQ7A.233   
+      ENDDO                                                                IMCLTQ7A.234   
+                                                                           IMCLTQ7A.235   
+! Snow and land-ice tile                                                   IMCLTQ7A.236   
+      N = NTYPE                                                            IMCLTQ7A.237   
+      DO J=1,TILE_PTS(N)                                                   IMCLTQ7A.238   
+        L = TILE_INDEX(J,N)                                                IMCLTQ7A.239   
+        I = LAND_INDEX(L)                                                  IMCLTQ7A.240   
+        AQ(I,1) = AQ(I,1) - CP*GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *        IMCLTQ7A.241   
+     &                              ALPHA1(L,N)*RHOKH_1(L,N)*RHOKPM(L,N)   IMCLTQ7A.242   
+        BQ1(I) = BQ1(I) + GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *             IMCLTQ7A.243   
+     &                     RHOKPM(L,N)*(CP*RHOKH_1(L,N) + ASHTF_SNOW(I))   IMCLTQ7A.244   
+      ENDDO                                                                IMCLTQ7A.245   
+                                                                           IMCLTQ7A.246   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.247   
+        DQW(I,1) = (DQW(I,1)  - CQ1(I)*DQW(I,2)) / BQ1(I)                  IMCLTQ7A.248   
+        AQ(I,1) = AQ(I,1) / BQ1(I)                                         IMCLTQ7A.249   
+      ENDDO                                                                IMCLTQ7A.250   
+                                                                           IMCLTQ7A.251   
+!-----------------------------------------------------------------------   IMCLTQ7A.252   
+!! 2.  Calculate those matrix and vector elements on the LHS of eqn        IMCLTQ7A.253   
+!!     P244.79 which are to do with implicit solution of the heat          IMCLTQ7A.254   
+!!     transport problem - upward sweep through upper half of matrix.      IMCLTQ7A.255   
+!-----------------------------------------------------------------------   IMCLTQ7A.256   
+!! 2.1 Row of matrix for TL on lowest level.                               IMCLTQ7A.257   
+!-----------------------------------------------------------------------   IMCLTQ7A.258   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.259   
+        DTL(I,1) = - DTRDZ(I,1)*(FTL(I,2) - FTL(I,1)) + DTL_NT(I,1)        IMCLTQ7A.260   
+        AT(I,1) = - DTRDZ(I,1)*GAMMA(2)*RHOKH(I,2)*RDZ(I,2)                IMCLTQ7A.261   
+        BT1(I) = 1. - AT(I,1)                                              IMCLTQ7A.262   
+        CT1(I) = 0.                                                        IMCLTQ7A.263   
+        IF ( .NOT.LAND_MASK(I) ) THEN                                      IMCLTQ7A.264   
+! Sea or sea-ice                                                           IMCLTQ7A.265   
+          CT1(I) = - LS*GAMMA(1)*DTRDZ(I,1)*ICE_FRACT(I) *                 IMCLTQ7A.266   
+     &                                     RHOKH1_SICE(I)*RHOKPM_SICE(I)   IMCLTQ7A.267   
+          BT1(I) = BT1(I) - ALPHA1_SICE(I)*CT1(I) + GAMMA(1)*DTRDZ(I,1)    IMCLTQ7A.268   
+     &                        * ( ICE_FRACT(I)*ASHTF(I)*RHOKPM_SICE(I)     IMCLTQ7A.269   
+     &                            + (1. - ICE_FRACT(I))*RHOKH1_SICE(I) )   IMCLTQ7A.270   
+        ENDIF                                                              IMCLTQ7A.271   
+      ENDDO                                                                IMCLTQ7A.272   
+                                                                           IMCLTQ7A.273   
+! Snow-free land tiles                                                     IMCLTQ7A.274   
+      DO N=1,NTYPE-1                                                       IMCLTQ7A.275   
+        DO J=1,TILE_PTS(N)                                                 IMCLTQ7A.276   
+          L = TILE_INDEX(J,N)                                              IMCLTQ7A.277   
+          I = LAND_INDEX(L)                                                IMCLTQ7A.278   
+          CT1(I) = CT1(I) - LC*GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *        IMCLTQ7A.279   
+     &                               RESFT(L,N)*RHOKH_1(L,N)*RHOKPM(L,N)   IMCLTQ7A.280   
+          BT1(I) = BT1(I) + GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *           IMCLTQ7A.281   
+     &             RHOKPM(L,N)*( LC*ALPHA1(L,N)*RESFT(L,N)*RHOKH_1(L,N)    IMCLTQ7A.282   
+     &                                                      + ASHTF(I) )   IMCLTQ7A.283   
+        ENDDO                                                              IMCLTQ7A.284   
+      ENDDO                                                                IMCLTQ7A.285   
+                                                                           IMCLTQ7A.286   
+! Snow and land-ice tile                                                   IMCLTQ7A.287   
+      N = NTYPE                                                            IMCLTQ7A.288   
+      DO J=1,TILE_PTS(N)                                                   IMCLTQ7A.289   
+        L = TILE_INDEX(J,N)                                                IMCLTQ7A.290   
+        I = LAND_INDEX(L)                                                  IMCLTQ7A.291   
+        CT1(I) = CT1(I) - LS*GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *          IMCLTQ7A.292   
+     &                                          RHOKH_1(L,N)*RHOKPM(L,N)   IMCLTQ7A.293   
+        BT1(I) = BT1(I) + GAMMA(1)*DTRDZ(I,1)*TILE_FRAC(L,N) *             IMCLTQ7A.294   
+     &                        RHOKPM(L,N)*( LS*ALPHA1(L,N)*RHOKH_1(L,N)    IMCLTQ7A.295   
+     &                                                 + ASHTF_SNOW(I) )   IMCLTQ7A.296   
+      ENDDO                                                                IMCLTQ7A.297   
+                                                                           IMCLTQ7A.298   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.299   
+        BT1(I) = BT1(I) - CT1(I)*AQ(I,1)                                   IMCLTQ7A.300   
+        DTL(I,1) = (DTL(I,1) - CT1(I)*DQW(I,1)) / BT1(I)                   IMCLTQ7A.301   
+        AT(I,1) = AT(I,1) / BT1(I)                                         IMCLTQ7A.302   
+      ENDDO                                                                IMCLTQ7A.303   
+                                                                           IMCLTQ7A.304   
+!-----------------------------------------------------------------------   IMCLTQ7A.305   
+!! 2.2 Rows of matrix for TL on intermediate levels.                       IMCLTQ7A.306   
+!-----------------------------------------------------------------------   IMCLTQ7A.307   
+      DO K=2,BLM1                                                          IMCLTQ7A.308   
+        DO I=P1,P1+P_POINTS-1                                              IMCLTQ7A.309   
+          DTL(I,K) = - DTRDZ(I,K) * ( FTL(I,K+1) - FTL(I,K) )              IMCLTQ7A.310   
+     &               + DTL_NT(I,K)                            ! P244.38    IMCLTQ7A.311   
+          AT(I,K) = - DTRDZ(I,K)*GAMMA(K+1)*RHOKH(I,K+1)*RDZ(I,K+1)        IMCLTQ7A.312   
+!                                                             ! P244.35    IMCLTQ7A.313   
+          CT = - DTRDZ(I,K)*GAMMA(K)*RHOKH(I,K)*RDZ(I,K)      ! P244.36    IMCLTQ7A.314   
+          RBT = 1.0 / ( 1.0 - AT(I,K) - CT*(1.0 + AT(I,K-1)) )             IMCLTQ7A.315   
+!                                             ... Reciprocal of P244.113   IMCLTQ7A.316   
+          DTL(I,K) = RBT * ( DTL(I,K) - CT*DTL(I,K-1) )       ! P244.114   IMCLTQ7A.317   
+          AT(I,K) = RBT * AT(I,K)                             ! P244.115   IMCLTQ7A.318   
+        ENDDO                                                              IMCLTQ7A.319   
+      ENDDO                                                                IMCLTQ7A.320   
+                                                                           IMCLTQ7A.321   
+!-----------------------------------------------------------------------   IMCLTQ7A.322   
+!! 2.3 Row of matrix for TL on top boundary layer level.                   IMCLTQ7A.323   
+!-----------------------------------------------------------------------   IMCLTQ7A.324   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.325   
+        DTL(I,BL_LEVELS) = DTRDZ(I,BL_LEVELS) * FTL(I,BL_LEVELS)           IMCLTQ7A.326   
+     &                   + DTL_NT(I,BL_LEVELS)                ! P244.42    IMCLTQ7A.327   
+        CT = - DTRDZ(I,BL_LEVELS)*GAMMA(BL_LEVELS)*                        IMCLTQ7A.328   
+     &         RHOKH(I,BL_LEVELS)*RDZ(I,BL_LEVELS)                         IMCLTQ7A.329   
+        RBT = 1.0 / ( 1.0 - CT*(1.0 + AT(I,BLM1)) )                        IMCLTQ7A.330   
+!                                             ... Reciprocal of P244.116   IMCLTQ7A.331   
+        DTL(I,BL_LEVELS) = RBT * ( DTL(I,BL_LEVELS) - CT*DTL(I,BLM1) )     IMCLTQ7A.332   
+!                                                             ! P244.117   IMCLTQ7A.333   
+      ENDDO                                                                IMCLTQ7A.334   
+                                                                           IMCLTQ7A.335   
+!-----------------------------------------------------------------------   IMCLTQ7A.336   
+!! 3.  Downward sweep through whole matrix.                                IMCLTQ7A.337   
+!-----------------------------------------------------------------------   IMCLTQ7A.338   
+!! 3.1 Increment TL.                                                       IMCLTQ7A.339   
+!-----------------------------------------------------------------------   IMCLTQ7A.340   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.341   
+        TL(I,BL_LEVELS) = TL(I,BL_LEVELS) + DTL(I,BL_LEVELS)  ! P244.127   IMCLTQ7A.342   
+      ENDDO                                                                IMCLTQ7A.343   
+      DO K=BLM1,1,-1                                                       IMCLTQ7A.344   
+        DO I=P1,P1+P_POINTS-1                                              IMCLTQ7A.345   
+          DTL(I,K) = DTL(I,K) - AT(I,K)*DTL(I,K+1)            ! P244.118   IMCLTQ7A.346   
+          TL(I,K) = TL(I,K) + DTL(I,K)                        ! P244.127   IMCLTQ7A.347   
+        ENDDO                                                              IMCLTQ7A.348   
+      ENDDO                                                                IMCLTQ7A.349   
+                                                                           IMCLTQ7A.350   
+!-----------------------------------------------------------------------   IMCLTQ7A.351   
+!! 3.2 Increment QW.                                                       IMCLTQ7A.352   
+!-----------------------------------------------------------------------   IMCLTQ7A.353   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.354   
+        DQW(I,1) = DQW(I,1) - AQ(I,1)*DTL(I,1)                             IMCLTQ7A.355   
+        QW(I,1) = QW(I,1) + DQW(I,1)                                       IMCLTQ7A.356   
+      ENDDO                                                                IMCLTQ7A.357   
+      DO K=2,BL_LEVELS                                                     IMCLTQ7A.358   
+        DO I=P1,P1+P_POINTS-1                                              IMCLTQ7A.359   
+          DQW(I,K) = DQW(I,K) - AQ(I,K)*DQW(I,K-1)            ! P244.121   IMCLTQ7A.360   
+          QW(I,K) = QW(I,K) + DQW(I,K)                        ! P244.128   IMCLTQ7A.361   
+        ENDDO                                                              IMCLTQ7A.362   
+      ENDDO                                                                IMCLTQ7A.363   
+                                                                           IMCLTQ7A.364   
+!-----------------------------------------------------------------------   IMCLTQ7A.365   
+!! 4.  Calculate final implicit fluxes of heat and moisture.               IMCLTQ7A.366   
+!-----------------------------------------------------------------------   IMCLTQ7A.367   
+!! 4.1 Surface fluxes.                                                     IMCLTQ7A.368   
+!-----------------------------------------------------------------------   IMCLTQ7A.369   
+      DO I=P1,P1+P_POINTS-1                                                IMCLTQ7A.370   
+        FTL(I,1) = 0.                                                      IMCLTQ7A.371   
+        FQW(I,1) = 0.                                                      IMCLTQ7A.372   
+        IF ( .NOT.LAND_MASK(I) ) THEN                                      IMCLTQ7A.373   
+          IF ( ICE_FRACT(I) .GT. 0. ) THEN                                 IMCLTQ7A.374   
+! Sea-ice and leads                                                        IMCLTQ7A.375   
+            FTL_ICE(I) = FTL_ICE(I) +                                      IMCLTQ7A.376   
+     &                           GAMMA(1)*ICE_FRACT(I)*RHOKPM_SICE(I) *    IMCLTQ7A.377   
+     &        ( LS*RHOKH1_SICE(I)*(DQW(I,1) - ALPHA1_SICE(I)*DTL(I,1))     IMCLTQ7A.378   
+     &                                             - ASHTF(I)*DTL(I,1) )   IMCLTQ7A.379   
+            FQW_ICE(I) = FQW_ICE(I) -                                      IMCLTQ7A.380   
+     &                           GAMMA(1)*ICE_FRACT(I)*RHOKPM_SICE(I) *    IMCLTQ7A.381   
+     &        ( CP*RHOKH1_SICE(I)*(DQW(I,1) - ALPHA1_SICE(I)*DTL(I,1))     IMCLTQ7A.382   
+     &                                             + ASHTF(I)*DQW(I,1) )   IMCLTQ7A.383   
+            H_SEA(I) = H_SEA(I) - (1.0 - ICE_FRACT(I)) * CP *              IMCLTQ7A.384   
+     &                                  GAMMA(1)*RHOKH1_SICE(I)*DTL(I,1)   IMCLTQ7A.385   
+            E_SEA(I) = E_SEA(I) - (1.0 - ICE_FRACT(I)) *                   IMCLTQ7A.386   
+     &                                  GAMMA(1)*RHOKH1_SICE(I)*DQW(I,1)   IMCLTQ7A.387   
+            FTL(I,1) = FTL_ICE(I) + H_SEA(I)/CP                            IMCLTQ7A.388   
+            FQW(I,1) = FQW_ICE(I) + E_SEA(I)                               IMCLTQ7A.389   
+          ELSE                                                             IMCLTQ7A.390   
+! Unfrozen sea                                                             IMCLTQ7A.391   
+            H_SEA(I) = H_SEA(I) - CP*GAMMA(1)*RHOKH1_SICE(I)*DTL(I,1)      IMCLTQ7A.392   
+            E_SEA(I) = E_SEA(I) - GAMMA(1)*RHOKH1_SICE(I)*DQW(I,1)         IMCLTQ7A.393   
+            FTL(I,1) = H_SEA(I)/CP                                         IMCLTQ7A.394   
+            FQW(I,1) = E_SEA(I)                                            IMCLTQ7A.395   
+          ENDIF                                                            IMCLTQ7A.396   
+        ENDIF                                                              IMCLTQ7A.397   
+      ENDDO                                                                IMCLTQ7A.398   
+                                                                           IMCLTQ7A.399   
+! Snow-free land tiles                                                     IMCLTQ7A.400   
+      DO N=1,NTYPE-1                                                       IMCLTQ7A.401   
+        DO J=1,TILE_PTS(N)                                                 IMCLTQ7A.402   
+          L = TILE_INDEX(J,N)                                              IMCLTQ7A.403   
+          I = LAND_INDEX(L)                                                IMCLTQ7A.404   
+          FTL_TILE(L,N) = FTL_TILE(L,N) + GAMMA(1)*RHOKPM(L,N) *           IMCLTQ7A.405   
+     &     ( LC*RESFT(L,N)*RHOKH_1(L,N)*(DQW(I,1)-ALPHA1(L,N)*DTL(I,1))    IMCLTQ7A.406   
+     &                                             - ASHTF(I)*DTL(I,1) )   IMCLTQ7A.407   
+          FQW_TILE(L,N) = FQW_TILE(L,N) - GAMMA(1)*RESFT(L,N) *            IMCLTQ7A.408   
+     &    RHOKPM(L,N)*( CP*RHOKH_1(L,N)*(DQW(I,1)-ALPHA1(L,N)*DTL(I,1))    IMCLTQ7A.409   
+     &                                             + ASHTF(I)*DQW(I,1) )   IMCLTQ7A.410   
+          FTL(I,1) = FTL(I,1) + TILE_FRAC(L,N)*FTL_TILE(L,N)               IMCLTQ7A.411   
+          FQW(I,1) = FQW(I,1) + TILE_FRAC(L,N)*FQW_TILE(L,N)               IMCLTQ7A.412   
+        ENDDO                                                              IMCLTQ7A.413   
+      ENDDO                                                                IMCLTQ7A.414   
+                                                                           IMCLTQ7A.415   
+! Snow and land-ice tile                                                   IMCLTQ7A.416   
+      N = NTYPE                                                            IMCLTQ7A.417   
+      DO J=1,TILE_PTS(N)                                                   IMCLTQ7A.418   
+        L = TILE_INDEX(J,N)                                                IMCLTQ7A.419   
+        I = LAND_INDEX(L)                                                  IMCLTQ7A.420   
+        FTL_TILE(L,N) = FTL_TILE(L,N) + GAMMA(1)*RHOKPM(L,N) *             IMCLTQ7A.421   
+     &              ( LS*RHOKH_1(L,N)*(DQW(I,1) - ALPHA1(L,N)*DTL(I,1))    IMCLTQ7A.422   
+     &                                        - ASHTF_SNOW(I)*DTL(I,1) )   IMCLTQ7A.423   
+        FQW_TILE(L,N) = FQW_TILE(L,N) - GAMMA(1)*RHOKPM(L,N) *             IMCLTQ7A.424   
+     &              ( CP*RHOKH_1(L,N)*(DQW(I,1) - ALPHA1(L,N)*DTL(I,1))    IMCLTQ7A.425   
+     &                                        + ASHTF_SNOW(I)*DQW(I,1) )   IMCLTQ7A.426   
+        FTL(I,1) = FTL(I,1) + TILE_FRAC(L,N)*FTL_TILE(L,N)                 IMCLTQ7A.427   
+        FQW(I,1) = FQW(I,1) + TILE_FRAC(L,N)*FQW_TILE(L,N)                 IMCLTQ7A.428   
+      ENDDO                                                                IMCLTQ7A.429   
+                                                                           IMCLTQ7A.430   
+!-----------------------------------------------------------------------   IMCLTQ7A.431   
+!! 4.2 Fluxes at layer interfaces above the surface.                       IMCLTQ7A.432   
+!-----------------------------------------------------------------------   IMCLTQ7A.433   
+      DO K=2,BL_LEVELS                                                     IMCLTQ7A.434   
+        DO I=P1,P1+P_POINTS-1                                              IMCLTQ7A.435   
+          FTL(I,K)  = FTL(I,K) - GAMMA(K)*RHOKH(I,K)*RDZ(I,K) ! P244.33    IMCLTQ7A.436   
+     &                              * ( DTL(I,K) - DTL(I,K-1) )            IMCLTQ7A.437   
+          FQW(I,K)  = FQW(I,K) - GAMMA(K)*RHOKH(I,K)*RDZ(I,K) ! P244.44    IMCLTQ7A.438   
+     &                              * ( DQW(I,K) - DQW(I,K-1) )            IMCLTQ7A.439   
+        ENDDO                                                              IMCLTQ7A.440   
+      ENDDO                                                                IMCLTQ7A.441   
+                                                                           IMCLTQ7A.442   
+      IF (LTIMER) THEN                                                     IMCLTQ7A.443   
+        CALL TIMER('IMCALTQ ',4)                                           IMCLTQ7A.444   
+      ENDIF                                                                IMCLTQ7A.445   
+                                                                           IMCLTQ7A.446   
+      RETURN                                                               IMCLTQ7A.447   
+      END                                                                  IMCLTQ7A.448   
+*ENDIF                                                                     IMCLTQ7A.449   

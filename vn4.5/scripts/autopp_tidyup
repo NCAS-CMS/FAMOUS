@@ -1,0 +1,407 @@
+# ----------------------------- COPYRIGHT ---------------------------- #
+#
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#LL---------------------------------------------------------------------
+#LL  Script: autopp_tidyup
+#LL---------------------------------------------------------------------
+#LL  Purpose: Tidy up archiving after system or archive server failure
+#LL           for previous run.
+#LL           Transfer remaining trigger files on Cray in user's
+#LL           experiment directory to front-end in order to archive
+#LL           data files on disk from previous crashed run.
+#LL           Input contents of .failure file (archive requests from
+#LL           failed run) into qsserver in order to process unarchived
+#LL           data files.
+#LL           Warning: If any old trigger files for this runid remain
+#LL           for any reason, then they will be copied to front-end.
+#LL           Note: The storage class on the HDS and a number of other
+#LL           HDS file attributes are hardwired in this script since
+#LL           they are set in the PPCNTL file or hdstransfer for the
+#LL           main server process.
+#LL
+#LL  Author: Chris Perks                  Date: March 1995
+#LL
+#LL  Code version no: 4.0
+#LL
+#LL  Modification History:
+#LL  Date     Vn   Name      Change
+#LL  22/03/95 4.0  C D Perks Original version
+#LL  01/04/96 4.1  L C Wiles Remove old trigger files and .failure
+#LL                          files on an NRUN.  Add in portable
+#LL                          alternative to putibm to copy data.
+#LL  09/04/96 4.1  L Wiles   Remove *IF DEF METOCRAY and *ENDIF
+#LL  06/06/96 4.1  L Wiles   Change block/record length for possible
+#LL                          wide trigger files in CRACER system.
+#LL  01/08/96 4.1  L.Wiles   Changes for restartability.
+#LL  17/02/97 4.2  L.Wiles   Various corrections to code for no
+#LL                          archiving and crash recovery.
+#LL  27/10/97 4.4  L.Wiles   Correction to CRACERCHECK test
+#LL  4/03/98 4.5   I Edmond  If partial archiving omit the copy of the
+#LL                            trigger file to /u/m20/cprod/cracercheck.
+#LL
+#LL  Programming Standard: UM Tech Doc Paper
+#LL                        Automated Post Processing System
+#LL---------------------------------------------------------------------
+#LL  Called by: top level script
+#LL  Calls    : qsserver, getarchdate, ppcntl
+#LL---------------------------------------------------------------------
+#LL  Return code:  AUTOPPCODE used as return code in top level script
+#LL---------------------------------------------------------------------
+#LL  Variables:
+#LL
+#LL  Imports:
+#LL  DATAM                   # Experiment directory on Cray
+#LL  TEMP                    # Run-time experiment directory on Cray
+#LL  JOBID                   # Experiment job name
+#LL  RUNID                   # Experiment name (4 characters)
+#LL  FAILPROC                # .failure file on Cray containing
+#LL                          # archive requests to be processed
+#LL  ERRFLAG                 # Error file written to if server failure
+#LL  PPCNTL
+#LL  DATE_FORMAT             # Type of date required for archiving.
+#LL                            1=absolute, 2=relative,3=mgmtcls
+#LL  AC                      # Job accounting code
+#LL  F_END_DSN_PREFIX        # IBM dataset high level qualifier
+#LL  F_END_JOB_PROGID        # IBM user id letters
+#LL  BKUP_DUMP               # Duplex backup requested for dump files
+#LL  BKUP_PP                 # Duplex backup requested for PP files
+#LL  BKUP_MPP                # Duplex backup requested for MPP files
+#LL  BKUP_BNDY               # Duplex backup requested for boundary
+#LL                             files
+#LL  STREAM_OPTION           # Archive tape indicator
+#LL  IBM_ARCHNAME            # IBM archive name:CRACER:UABRF:OTHER
+#LL  SCRATCH                 # Flag for
+#LL  MAIL                    # Flag for automatic mailing of archive
+#LL                            errors (M/N)
+#LL  MAIL_ID                 # Mail address for archiving error messages
+#LL
+#LL
+#LL  Local variables:
+#LL
+#LL  CC                      # Completion code
+#LL  LOCKFILE                # The existence of this file indicates
+#LL                            whether the model is still executing
+#LL  AUTOPPCODE              # Trap for failed trigger file transfer
+#LL                            =0 - all TF's transferred successfully
+#LL                            =1 - one or more TF's failed to transfer.
+#LL                            =2 - qsserver failed itself or it failed
+#LL                                 to archive any remaining files.
+#LL  RCSERVER                # Error return code in $ERRFLAG
+#LL  TRIGGER_FILES           # List of TF's in $DATAM
+#LL  JOBTF                   # JOBID in TF
+#LL  LINECOUNT               # Number of lines in a trigger file
+#LL  req_type                # Type of request:DELETE,ARCHIVE,REL
+#LL  last_request            # Last request sent down pipe in the
+#LL                            $RUNID.requests file
+#LL  last_file               # File name contained in last request
+#LL  last_file_name          # last_file in upper case
+#LL  runid_up             # $RUNID in upper case
+#LL  DATASET                 # IBM dataset name for last file
+#LL  intrigger               # Flag to indicate if last file already
+#LL                            written to a trigger file
+#LL  format                  # Flag for long or short date format
+#LL  file_type1              # File type indicator letter
+#LL                            d=DUMP,p=PP,(u-x)=BNDY
+#LL  file_type2              # PP type indicator letter
+#LL                            (a-j)=PP,MPP otherwise
+#LL  TRIGGER_FILE            # Trigger file name for last data file
+#LL  BACKUP                  # Backup request indicator
+#LL
+#LL
+set -$SETOPT
+echo -e "*****************************************************************"
+echo -e "     Autopp_tidyup in operation"
+echo -e "     Job started at : `date`"
+echo -e "*****************************************************************"
+
+cat > $ERRFLAG << EOF
+F No request to stop model
+EOF
+RCSERVER='F'                 # Initialise server process error code
+AUTOPPCODE=0                 # Initialise trap for trigger file transfer
+ERRCODE=0
+runid_up=`echo -e "$RUNID"|tr "[a-z]~" "[A-Z]~"`
+if test $UMMACHINE = 'METOCRAY'
+then
+#L----------------------------------------------------------------------
+#L Step 1: Set jcl transfer text for remaining trigger files
+#L   Use SCDATPRK to avoid having to pass in a storage class variable
+#L----------------------------------------------------------------------
+
+  TEXT1='text="STORCLAS=SCDATPRK,mgmtclas=mcsnc4,'
+  TEXT2='space=(trk,(1,1))'
+  TEXT3='dcb=(recfm=FB,blksize=27984'
+  TEXT4='lrecl=132,dsorg=ps)"'
+  TEXT="$TEXT1,$TEXT2,$TEXT3,$TEXT4"
+fi
+#L----------------------------------------------------------------------
+#L Step 2a: Check for inconsistancies between files and trigger files
+#L          for restarting after a crash.
+#L----------------------------------------------------------------------
+cd $DATAM
+. $PPCNTL
+if test -s "$RUNID.thist"
+then
+  echo -e "autopp_tidyup: re-starting from a crash"
+
+  if test -s "$RUNID.requests"
+  then
+    if test $ARCHSYS = 'false'
+    then
+      echo -e "************************************************"
+      echo -e "No archiving requested"
+      echo -e "************************************************"
+      return
+    fi
+    AC=$F_END_JOB_TIC
+    # get last non-blank line in .requests file
+    last_request=`$UM_GREP %%% "$RUNID.requests" | tail -n -1`
+
+    req_type=`echo -e "$last_request" |$UM_AWK '{print $3}'`
+
+    if test "$req_type" = 'ARCHIVE'   # Archive request
+    then
+      last_file=`echo -e "$last_request" | $UM_AWK '{print $2}'`
+      last_file_name=`echo -e "$last_file"|tr "[a-z]~" "[A-Z]~"`
+      DATASET=$F_END_DSN_PREFIX.$F_END_JOB_PROGID.$last_file_name
+      ibmls $DATASET
+      CC=$?
+
+      if test $CC -eq 0  # Data file is catalogued on IBM
+      then
+        intrigger=`$UM_GREP $last_file "$TFPREFIX.$runid_up*"`
+        if test -n "$intrigger"
+        then
+          echo -e "autopp_tidyup: Last file already in trigger file"
+        else
+          # last file must included in existing trigger file
+          # set up trigger file entry
+          if test $DATE_FORMAT -eq 2
+          then
+            . getarchdate
+          fi
+
+          # test for Filename with long date format
+          format=`echo -e "$last_file"|cut -c7`
+          if test $last_file = "@"
+          then
+            #   Filename has long date format
+            file_type1=`echo -e "$last_file" | cut -c 9-9`
+            file_type2=`echo -e "$last_file" | cut -c 10-10`
+          else
+            #   Filename has standard date format
+            file_type1=`echo -e "$last_file" | cut -c 8-8`
+            file_type2=`echo -e "$last_file" | cut -c 9-9`
+          fi
+
+          # Find which trigger file type
+            BACKUP='N'
+            case $file_type1 in
+              d) if $BKUP_DUMP = 'Y'
+                 then
+                   BACKUP='D'
+                 fi
+                case $STREAM_OPTION in
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP X00`
+                    ;;
+               1|4) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP D00`
+                    ;;
+               3|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP C00`
+                    ;;
+                esac
+                 ;;
+
+              p) case $file_type2 in
+                 [a-j])
+                  if $BKUP_PP = 'Y'
+                  then
+                    BACKUP='D'
+                  fi
+                   case $STREAM_OPTION in
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP X00`
+                       ;;
+               1|3) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP P00`
+                      ;;
+               4|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP C00`
+                      ;;
+                   esac
+                     ;;
+               *)
+                  if $BKUP_MEANPP = 'Y'
+                  then
+                    BACKUP='D'
+                  fi
+                 case $STREAM_OPTION in
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP X00`
+                     ;;
+               1|3) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP M00`
+                    ;;
+               4|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP C00`
+                    ;;
+                 esac
+                  ;;
+               esac
+                ;;
+
+          [u-x]) if $BKUP_BNDY = 'Y'
+                  then
+                    BACKUP='D'
+                  fi
+                  case $STREAM_OPTION in
+                 2) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP X00`
+                     ;;
+               1|4) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP B00`
+                    ;;
+               3|5) TRIGGER_FILE=`ls "$TFPREFIX.$runid_up*" | \
+                                 $UM_GREP C00`
+                    ;;
+                 esac
+                  ;;
+           *) echo -e "autopp_tidyup: unknown file type"
+              ERRCODE=1
+          esac
+
+          # Check which archiving system to send to
+          # and write entry for file in trigger file
+          if test $ERRCODE -eq 0
+          then
+            if test $IBM_ARCHNAME = 'CRACER'
+            then
+              echo -e $DATASET 'FOREVER' $DM_DATE \
+                   $SCRATCH$MAIL$BACKUP'C'$TAPE \
+                   $AC $MAIL_ID >> $TRIGGER_FILE
+            elif test $IBM_ARCHNAME = 'UABRF'
+            then
+              echo -e $DATASET $DM_DATE 'NONE' \
+               $SCRATCH$MAIL$BACKUP'U'$TAPE \
+               $AC $MAIL_ID >> $TRIGGER_FILE
+            fi
+          fi
+        fi
+      fi
+    else  # Delete or release request - add to .failure file
+      echo -e $last_request >> $FAILPROC
+    fi
+  fi
+fi
+#L----------------------------------------------------------------------
+#L Step 2b: Scan experiment directory for remaining trigger files
+#L          and transfer to front end
+#L----------------------------------------------------------------------
+
+cd $DATAM
+TRIGGER_FILES=`ls|$UM_GREP $TFPREFIX`         # List trigger files
+
+for file in $TRIGGER_FILES
+do
+  JOBTF=`echo -e "$file"|cut -f2 -d. |cut -c5|tr "[A-Z]" "[a-z]"`
+  if test $JOBID = "$JOBTF" # Test that the TF belongs to current job
+  then
+    if test $TYPE = 'CRUN'
+    then
+      if test $ARCHTAPE = 'true'
+      then
+        if test $UMMACHINE = 'METOCRAY'
+        then
+          #test for empty trigger file
+          LINECOUNT=`wc -l $file | $UM_AWK '{print $1}'`
+          if test $LINECOUNT -gt 1
+          then
+            putibm $file $file df=ud $TEXT    # Transfer TF
+          fi
+        else
+          # Set DEST_SYS_DIR to hold name of destination system
+          # and directory on that system
+          DEST_SYS_DIR=$HOME
+          cp $file $DEST_SYS_DIR/$file
+        fi
+      CC=$?
+      if test $CC -eq 0
+      then
+        if test $LINECOUNT -gt 1
+        then
+          echo -e "Transferred file $file to front-end"
+        else
+          echo -e "Empty trigger files have been deleted"
+        fi
+        cp $file $CRACERCHECK
+        if test $? -ne 0
+        then
+           echo -e "Autopp_tidyup: Trigger file not copied to \
+           $CRACERCHECK "
+        fi
+        echo -e "Trigger file contents:"
+        cat $file
+        rm $file
+      else
+        echo -e "Unable to transfer $file to front-end"
+        echo -e "Trigger file contents:"
+        cat $file
+        AUTOPPCODE=1
+        RCSERVER='T'
+      fi
+      else  # Partial archiving
+        echo -e "Trigger file contents:"
+        cat $file
+        echo -e "Partial archiving: Trigger file removed"
+        echo -e "                   and is not transferred to front-end"
+        rm $file
+      fi
+    else                        # Remove old trigger files on NRUN
+      echo -e "Trigger file $file left from previous run deleted"
+      echo -e "This is a NRUN, no further tidy up necessary"
+      rm $file
+    fi
+  fi
+done
+
+#L----------------------------------------------------------------------
+#L Step 3: If remaining trigger files successfully transferred then
+#L         test for a failure file from previous run. If one exists
+#L         then pipe contents into server. The return code from the
+#L         server is required to indicate whether the model can then
+#L         be run after failure file read.
+#L         If the server fails for any reason it writes a message
+#L         starting with 'T' to the ERRFLAG file. Otherwise ERRFLAG
+#L         starts with 'F'. This letter is picked up and used as a
+#L         return code.
+#L----------------------------------------------------------------------
+if test $AUTOPPCODE -eq 0
+then
+  if test -f $FAILPROC
+  then
+    if test $TYPE = 'CRUN'
+    then
+      LOCKFILE=$TEMP/$RUNID.lock        # Required by server
+      cat $FAILPROC|qsserver
+      CC=$?
+      RCSERVER=`cat $ERRFLAG|cut -c 1`  # Return code from server
+      if test $CC -eq 0 -a $RCSERVER = 'F'
+      then
+        rm $FAILPROC
+      else
+        AUTOPPCODE=2
+      fi
+    else
+      rm $FAILPROC
+    fi
+  fi
+fi

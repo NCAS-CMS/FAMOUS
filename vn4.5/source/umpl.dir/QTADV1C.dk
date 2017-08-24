@@ -1,0 +1,782 @@
+*IF DEF,A12_1C,OR,DEF,A12_1D                                               ATJ0F402.11    
+*IF DEF,MPP                                                                ATJ0F402.12    
+C *****************************COPYRIGHT******************************     QTADV1C.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    QTADV1C.4     
+C                                                                          QTADV1C.5     
+C Use, duplication or disclosure of this code is subject to the            QTADV1C.6     
+C restrictions as set forth in the contract.                               QTADV1C.7     
+C                                                                          QTADV1C.8     
+C                Meteorological Office                                     QTADV1C.9     
+C                London Road                                               QTADV1C.10    
+C                BRACKNELL                                                 QTADV1C.11    
+C                Berkshire UK                                              QTADV1C.12    
+C                RG12 2SZ                                                  QTADV1C.13    
+C                                                                          QTADV1C.14    
+C If no contract has been raised with this copy of the code, the use,      QTADV1C.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      QTADV1C.16    
+C to do so must first be obtained in writing from the Head of Numerical    QTADV1C.17    
+C Modelling at the above address.                                          QTADV1C.18    
+C ******************************COPYRIGHT******************************    QTADV1C.19    
+CLL   SUBROUTINE QT_ADV -------------------------------------------        QTADV1C.20    
+CLL                                                                        QTADV1C.21    
+CLL   PURPOSE:  CALCULATES MASS-WEIGHTED INCREMENTS TO QT                  QTADV1C.22    
+CLL             DUE TO ADVECTION  BY USING EQUATION (36)                   QTADV1C.23    
+CLL             TO CALCULATE PROVISIONAL VALUES OF QT AT                   QTADV1C.24    
+CLL             THE NEW TIME-LEVEL, AND THEN RECALCULATING THE             QTADV1C.25    
+CLL             ADVECTION TERMS ON THE RIGHT-HAND SIDE OF  (36)            QTADV1C.26    
+CLL             USING THESE PROVISIONAL VALUES. THE FINAL INCREMENTS ARE   QTADV1C.27    
+CLL             CALCULATED AS IN EQUATION (40). THOSE REQUIRING            QTADV1C.28    
+CLL             FILTERING ARE FILTERED, THE INCREMENTS                     QTADV1C.29    
+CLL             ARE ADDED ONTO THE FIELDS USING (40).                      QTADV1C.30    
+CLL             IF RUNNING A GLOBAL MODEL POLAR IS CALLED                  QTADV1C.31    
+CLL             TO UPDATE POLAR VALUES.                                    QTADV1C.32    
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  QTADV1C.33    
+CLL   VERSION FOR CRAY Y-MP                                                QTADV1C.34    
+CLL                                                                        QTADV1C.35    
+CLL   WRITTEN BY M.H MAWSON.                                               QTADV1C.36    
+CLL   MPP CODE ADDED BY P.BURTON                                           QTADV1C.37    
+CLL                                                                        QTADV1C.38    
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 4.1:         QTADV1C.39    
+CLL VERSION  DATE                                                          QTADV1C.40    
+CLL 4.1      29/11/95 New version of routine specifically for MPP          QTADV1C.41    
+CLL                   Fourth order MPP code by Roar Skalin                 QTADV1C.42    
+CLL                                                      P.Burton          QTADV1C.43    
+!LL   4.2    16/08/96  Add TYPFLDPT arguments to FILTER subroutine         APB0F402.24    
+!LL                    and make the FILTER_WAVE_NUMBER arrays              APB0F402.25    
+!LL                    globally sized.                   P.Burton          APB0F402.26    
+!LL   4.2    10/01/97  Initialise unprocessed points in QT_PROV.           ADR2F402.11    
+!LL                    D. Robinson.                                        ADR2F402.12    
+!LL 4.3      24/04/97 Fixes to 4th order calculations   P.Burton           GPB5F403.6     
+C     vn4.3    Mar. 97   T3E migration : optimisation changes              GSS1F403.688   
+C                                       D.Salmond                          GSS1F403.689   
+CLL                                                                        QTADV1C.44    
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       QTADV1C.45    
+CLL                         STANDARD B.                                    QTADV1C.46    
+CLL                                                                        QTADV1C.47    
+CLL   SYSTEM COMPONENTS COVERED: P121                                      QTADV1C.48    
+CLL                                                                        QTADV1C.49    
+CLL   SYSTEM TASK: P1                                                      QTADV1C.50    
+CLL                                                                        QTADV1C.51    
+CLL   DOCUMENTATION:       THE EQUATIONS USED ARE (36) AND (40)            QTADV1C.52    
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER NO. 10     QTADV1C.53    
+CLL                        M.J.P. CULLEN,T.DAVIES AND M.H.MAWSON           QTADV1C.54    
+CLLEND-------------------------------------------------------------        QTADV1C.55    
+                                                                           QTADV1C.56    
+C*L   ARGUMENTS:---------------------------------------------------        QTADV1C.57    
+      SUBROUTINE QT_ADV                                                    QTADV1C.58    
+     1              (QT,PSTAR_OLD,PSTAR,U_MEAN,V_MEAN,                     QTADV1C.59    
+     2              SEC_P_LATITUDE,ETADOT_MEAN,RS,DELTA_AK,DELTA_BK,       QTADV1C.60    
+     3              LATITUDE_STEP_INVERSE,ADVECTION_TIMESTEP,NU_BASIC,     QTADV1C.61    
+     4              LONGITUDE_STEP_INVERSE,NORTHERN_FILTERED_P_ROW,        QTADV1C.62    
+     5              SOUTHERN_FILTERED_P_ROW,Q_LEVELS,P_LEVELS,             QTADV1C.63    
+     6              U_FIELD,P_FIELD,ROW_LENGTH,                            QTADV1C.64    
+*CALL ARGFLDPT                                                             QTADV1C.65    
+     7              TRIGS,IFAX,FILTER_WAVE_NUMBER_P_ROWS,SEC_U_LATITUDE,   QTADV1C.66    
+     8              AKH,BKH,L_SECOND,                                      GSS1F403.690   
+     9              extended_address,                                      GSS1F403.691   
+     &              LWHITBROM)                                             GSS1F403.692   
+                                                                           QTADV1C.68    
+      IMPLICIT NONE                                                        QTADV1C.69    
+                                                                           QTADV1C.70    
+! All TYPFLDPT arguments are intent IN                                     QTADV1C.71    
+*CALL TYPFLDPT                                                             QTADV1C.72    
+                                                                           QTADV1C.73    
+      INTEGER                                                              QTADV1C.74    
+     *  P_FIELD            !IN DIMENSION OF FIELDS ON PRESSSURE GRID.      QTADV1C.75    
+     *, U_FIELD            !IN DIMENSION OF FIELDS ON VELOCITY GRID        QTADV1C.76    
+     *, P_LEVELS           !IN NUMBER OF PRESSURE LEVELS.                  QTADV1C.77    
+     *, Q_LEVELS           !IN NUMBER OF MOIST LEVELS.                     QTADV1C.78    
+     *, ROW_LENGTH         !IN NUMBER OF POINTS PER ROW                    QTADV1C.79    
+     *, NORTHERN_FILTERED_P_ROW !IN ROW ON WHICH FILTERING STOPS           QTADV1C.80    
+     *                          ! MOVING TOWARDS EQUATOR                   QTADV1C.81    
+     *, SOUTHERN_FILTERED_P_ROW !IN ROW ON WHICH FILTERING STARTS AGAIN    QTADV1C.82    
+     *                          ! MOVING TOWARDS SOUTH POLE                QTADV1C.83    
+     &, FILTER_WAVE_NUMBER_P_ROWS(GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH)        APB0F402.27    
+     &       ! LAST WAVE NUMBER NOT TO BE CHOPPED                          APB0F402.28    
+     *, IFAX(10)           !IN HOLDS FACTORS OF ROW_LENGTH USED BY         QTADV1C.86    
+     *                     ! FILTERING.                                    QTADV1C.87    
+                                                                           QTADV1C.88    
+C LOGICAL VARIABLE                                                         QTADV1C.89    
+      LOGICAL                                                              QTADV1C.90    
+     *  L_SECOND     ! SET TO TRUE IF NU_BASIC IS ZERO.                    QTADV1C.91    
+     & ,LWHITBROM    ! LOGICAL SWITCH FOR WHITE & BROMLEY                  QTADV1C.92    
+      INTEGER extended_address(P_FIELD)                                    GSS1F403.693   
+                                                                           QTADV1C.93    
+      REAL                                                                 QTADV1C.94    
+     * U_MEAN(U_FIELD,P_LEVELS) !IN AVERAGED MASS-WEIGHTED U VELOCITY      QTADV1C.95    
+     *                          !   FROM ADJUSTMENT STEP                   QTADV1C.96    
+     *,V_MEAN(U_FIELD,P_LEVELS) !IN AVERAGED MASS-WEIGHTED V VELOCITY      QTADV1C.97    
+     *                          !   * COS(LAT) FROM ADJUSTMENT STEP        QTADV1C.98    
+     *,ETADOT_MEAN(P_FIELD,P_LEVELS)  !IN AVERAGED MASS-WEIGHTED           QTADV1C.99    
+     *                          !VERTICAL VELOCITY FROM ADJUSTMENT STEP    QTADV1C.100   
+     *,PSTAR(P_FIELD)           !IN PSTAR FIELD AT NEW TIME-LEVEL          QTADV1C.101   
+     *,PSTAR_OLD(P_FIELD)       !IN PSTAR AT PREVIOUS TIME-LEVEL           QTADV1C.102   
+     *,RS(P_FIELD,P_LEVELS)     !IN RS FIELD                               QTADV1C.103   
+                                                                           QTADV1C.104   
+      REAL                                                                 QTADV1C.105   
+     * DELTA_AK(P_LEVELS)      !IN    LAYER THICKNESS                      QTADV1C.106   
+     *,DELTA_BK(P_LEVELS)      !IN    LAYER THICKNESS                      QTADV1C.107   
+     *,AKH(P_LEVELS+1)         !IN HYBRID CO-ORDINATE AT HALF LEVELS       QTADV1C.108   
+     *,BKH(P_LEVELS+1)         !IN HYBRID CO-ORDINATE AT HALF LEVELS       QTADV1C.109   
+     *,SEC_P_LATITUDE(P_FIELD) !IN  1/COS(LAT) AT P POINTS (2-D ARRAY)     QTADV1C.110   
+     *,SEC_U_LATITUDE(U_FIELD) !IN  1/COS(LAT) AT U POINTS (2-D ARRAY)     QTADV1C.111   
+     *,LONGITUDE_STEP_INVERSE  !IN 1/(DELTA LAMDA)                         QTADV1C.112   
+     *,LATITUDE_STEP_INVERSE   !IN 1/(DELTA PHI)                           QTADV1C.113   
+     *,ADVECTION_TIMESTEP      !IN                                         QTADV1C.114   
+     *,NU_BASIC                !IN STANDARD NU TERM FOR MODEL RUN.         QTADV1C.115   
+     *,TRIGS(ROW_LENGTH)       !IN HOLDS TRIGONOMETRIC FUNCTIONS USED      QTADV1C.116   
+     *                         ! IN FILTERING.                             QTADV1C.117   
+                                                                           QTADV1C.118   
+      REAL                                                                 QTADV1C.119   
+     * QT(P_FIELD,Q_LEVELS)    !INOUT QT FIELD.                            QTADV1C.120   
+     *                         ! MASS-WEIGHTED ON OUTPUT.                  QTADV1C.121   
+                                                                           QTADV1C.122   
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    QTADV1C.123   
+C DEFINE LOCAL ARRAYS: 23 ARE REQUIRED                                     QTADV1C.124   
+                                                                           QTADV1C.125   
+      REAL                                                                 QTADV1C.126   
+     * QT_FIRST_INC(P_FIELD,Q_LEVELS) ! HOLDS QT INCREMENT                 QTADV1C.127   
+     *                       ! RETURNED BY FIRST CALL TO ADV_P_GD          QTADV1C.128   
+     *,QT_SECOND_INC(P_FIELD)! HOLDS QT INCREMENT                          QTADV1C.129   
+     *                       !RETURNED BY SECOND CALL TO ADV_P_GD          QTADV1C.130   
+     *,QT_PROV(P_FIELD,Q_LEVELS)      ! HOLDS PROVISIONAL VALUE OF QT      QTADV1C.131   
+                                                                           QTADV1C.132   
+                                                                           QTADV1C.133   
+      REAL                                                                 QTADV1C.134   
+     * NUX(P_FIELD,Q_LEVELS)     ! COURANT NUMBER DEPENDENT NU AT P PTS    QTADV1C.135   
+     *                   ! IN EAST-WEST ADVECTION.                         QTADV1C.136   
+     *,NUY(P_FIELD,Q_LEVELS)     ! COURANT NUMBER DEPENDENT NU AT P PTS    QTADV1C.137   
+     *                   ! IN NORTH-SOUTH ADVECTION.                       QTADV1C.138   
+                                                                           QTADV1C.139   
+      REAL NUX_MIN(upd_P_ROWS),  ! minimum value of NUX along a row        QTADV1C.140   
+     &     NUY_MIN(ROW_LENGTH)   ! min of NUY along a column               QTADV1C.141   
+                                                                           QTADV1C.142   
+      REAL                                                                 QTADV1C.143   
+     & ZERO(P_FIELD)              ! ARRAY OF ZEROES.                       QTADV1C.144   
+     *,QT_INCREMENT(P_FIELD,Q_LEVELS)                                      QTADV1C.145   
+                                                                           QTADV1C.146   
+      REAL                                                                 QTADV1C.147   
+     * BRSP(P_FIELD,Q_LEVELS) !MASS TERM AT LEVEL K                        QTADV1C.148   
+                                                                           QTADV1C.149   
+! Work space required to allow the use of Fourth Order Advection           QTADV1C.150   
+! U/V_MEAN_COPY and Q_COPY arrays are defined with an extra halo           QTADV1C.151   
+! this is required for the bigger stencil of the 4th order operator.       QTADV1C.152   
+      REAL  U_MEAN_COPY((ROW_LENGTH+2*extra_EW_Halo)*                      QTADV1C.153   
+     &                  (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS),            QTADV1C.154   
+     &  !    Copy of U_MEAN with extra halo space for 4th order            QTADV1C.155   
+     &      V_MEAN_COPY((ROW_LENGTH+2*extra_EW_Halo)*                      QTADV1C.156   
+     &                  (tot_U_ROWS+2*extra_NS_Halo),P_LEVELS),            QTADV1C.157   
+     &  !    Copy of V_MEAN with extra halo space for 4th order            QTADV1C.158   
+     &      Q_COPY((ROW_LENGTH+2*extra_EW_Halo)*                           QTADV1C.159   
+     &             (tot_P_ROWS+2*extra_NS_Halo),Q_LEVELS)                  QTADV1C.160   
+     &  !    Copy of QT with extra halo space for 4th order                QTADV1C.161   
+                                                                           QTADV1C.162   
+      INTEGER  extended_P_FIELD,                                           QTADV1C.163   
+     &         extended_U_FIELD                                            QTADV1C.164   
+!  These are the sizes of the arrays with the extra halos                  QTADV1C.165   
+                                                                           QTADV1C.166   
+C*---------------------------------------------------------------------    QTADV1C.167   
+C DEFINE LOCAL VARIABLES                                                   QTADV1C.168   
+      INTEGER                                                              QTADV1C.169   
+     *  P_POINTS_UPDATE    ! NUMBER OF P POINTS TO BE UPDATED.             QTADV1C.170   
+     *                     !  = ROWS*ROWLENGTH                             QTADV1C.171   
+     *, U_POINTS_UPDATE    ! NUMBER OF U POINTS TO BE UPDATED.             QTADV1C.172   
+     *                     !  = (ROWS-1)*ROWLENGTH                         QTADV1C.173   
+     *, P_POINTS_REQUIRED  ! NUMBER OF P POINTS AT WHICH VALUES ARE        QTADV1C.174   
+     *                     ! NEEDED TO UPDATE AT P_POINTS_UPDATE           QTADV1C.175   
+     *, U_POINTS_REQUIRED  ! NUMBER OF U POINTS AT WHICH VALUES ARE        QTADV1C.176   
+     *                     ! NEEDED TO UPDATE AT U_POINTS_UPDATE           QTADV1C.177   
+     *, START_U_REQUIRED   ! FIRST U POINT OF VALUES REQUIRED TO UPDATE    QTADV1C.178   
+     *                     ! AT P POINTS UPDATE.                           QTADV1C.179   
+     *, END_U_REQUIRED     ! LAST U POINT OF REQUIRED VALUES.              QTADV1C.180   
+                                                                           QTADV1C.181   
+      INTEGER info  ! return code from comms                               QTADV1C.182   
+                                                                           QTADV1C.183   
+C REAL SCALARS                                                             QTADV1C.184   
+      REAL                                                                 QTADV1C.185   
+     & SCALAR1,SCALAR2,TIMESTEP                                            QTADV1C.186   
+                                                                           QTADV1C.187   
+C COUNT VARIABLES FOR DO LOOPS ETC.                                        QTADV1C.188   
+      INTEGER                                                              QTADV1C.189   
+     &  I,J,K1,IK,K                                                        QTADV1C.190   
+     *, FILTER_SPACE ! HORIZONTAL DIMENSION OF SPACE NEEDED IN FILTERING   QTADV1C.191   
+     *               ! ROUTINE.                                            QTADV1C.192   
+     &, I_start,I_end                                                      QTADV1C.193   
+                                                                           QTADV1C.194   
+                                                                           QTADV1C.195   
+C*L   EXTERNAL SUBROUTINE CALLS:---------------------------------------    QTADV1C.196   
+      EXTERNAL ADV_P_GD,POLAR,UV_TO_P,FILTER                               QTADV1C.197   
+*IF DEF,CRAY                                                               QTADV1C.198   
+      INTEGER ISMIN                                                        QTADV1C.199   
+      EXTERNAL ISMIN                                                       QTADV1C.200   
+*ENDIF                                                                     QTADV1C.201   
+C*---------------------------------------------------------------------    QTADV1C.202   
+                                                                           QTADV1C.203   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD.                            QTADV1C.204   
+CL---------------------------------------------------------------------    QTADV1C.205   
+CL    INTERNAL STRUCTURE INCLUDING SUBROUTINE CALLS:                       QTADV1C.206   
+CL---------------------------------------------------------------------    QTADV1C.207   
+CL                                                                         QTADV1C.208   
+CL---------------------------------------------------------------------    QTADV1C.209   
+CL    SECTION 1.     INITIALISATION                                        QTADV1C.210   
+CL---------------------------------------------------------------------    QTADV1C.211   
+C INCLUDE LOCAL CONSTANTS FROM GENERAL CONSTANTS BLOCK                     QTADV1C.212   
+                                                                           QTADV1C.213   
+      P_POINTS_UPDATE   = upd_P_ROWS*ROW_LENGTH                            QTADV1C.214   
+      U_POINTS_UPDATE   = upd_U_ROWS*ROW_LENGTH                            QTADV1C.215   
+      P_POINTS_REQUIRED = (upd_P_ROWS+2)*ROW_LENGTH                        QTADV1C.216   
+      U_POINTS_REQUIRED = (upd_U_ROWS+2)*ROW_LENGTH                        QTADV1C.217   
+      START_U_REQUIRED  = START_POINT_NO_HALO-ROW_LENGTH                   QTADV1C.218   
+      END_U_REQUIRED    = END_U_POINT_NO_HALO+ROW_LENGTH                   QTADV1C.219   
+                                                                           QTADV1C.220   
+C *IF -DEF,NOWHBR replaced by LWHITBROM logical                            QTADV1C.221   
+      IF (LWHITBROM) THEN                                                  QTADV1C.222   
+CL    CALCULATE BRSP TERM AT LEVEL K                                       QTADV1C.223   
+                                                                           QTADV1C.224   
+      K=1                                                                  QTADV1C.225   
+! Loop over entire field                                                   QTADV1C.226   
+      DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                  QTADV1C.227   
+        BRSP(I,K)=(3.*RS(I,K)+RS(I,K+1))*(RS(I,K)-RS(I,K+1))               QTADV1C.228   
+     *                *BKH(K+1)*.25*(PSTAR(I)-PSTAR_OLD(I))                QTADV1C.229   
+      ENDDO                                                                QTADV1C.230   
+      K=Q_LEVELS                                                           QTADV1C.231   
+! Loop over entire field                                                   QTADV1C.232   
+      DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                  QTADV1C.233   
+        BRSP(I,K)=-(3.*RS(I,K)+RS(I,K-1))*(RS(I,K)-RS(I,K-1))              QTADV1C.234   
+     *                *BKH(K)*.25*(PSTAR(I)-PSTAR_OLD(I))                  QTADV1C.235   
+      ENDDO                                                                QTADV1C.236   
+                                                                           QTADV1C.237   
+      DO K=2,Q_LEVELS -1                                                   QTADV1C.238   
+! Loop over entire field                                                   QTADV1C.239   
+        DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                QTADV1C.240   
+          BRSP(I,K)=((3.*RS(I,K)+RS(I,K+1))*(RS(I,K)-RS(I,K+1))*BKH(K+1)   QTADV1C.241   
+     *              *.25*(PSTAR(I)-PSTAR_OLD(I)))                          QTADV1C.242   
+     *              -((3.*RS(I,K)+RS(I,K-1))*(RS(I,K)-RS(I,K-1))*BKH(K)    QTADV1C.243   
+     *              *.25*(PSTAR(I)-PSTAR_OLD(I)))                          QTADV1C.244   
+        ENDDO                                                              QTADV1C.245   
+                                                                           QTADV1C.246   
+      ENDDO                                                                QTADV1C.247   
+      END IF                                                               QTADV1C.248   
+C *ENDIF                                                                   QTADV1C.249   
+                                                                           QTADV1C.250   
+! Loop over entire field                                                   QTADV1C.251   
+      DO I=FIRST_VALID_PT,LAST_P_VALID_PT                                  QTADV1C.252   
+        ZERO(I) = 0.                                                       QTADV1C.253   
+      ENDDO                                                                QTADV1C.254   
+                                                                           QTADV1C.255   
+! In order to use the same call to adv_p_gd for both the second and        QTADV1C.256   
+! fourth order advection, U/V_MEAN are copied into _COPY arrays.           QTADV1C.257   
+! In the case of second order advection some of the work space is          QTADV1C.258   
+! wasted as there is more halo than we need.                               QTADV1C.259   
+                                                                           QTADV1C.260   
+! Calculate the size of the extended arrays which contain an               QTADV1C.261   
+! extra halo:                                                              QTADV1C.262   
+      extended_U_FIELD=(ROW_LENGTH+2*extra_EW_Halo)*                       QTADV1C.263   
+     &                 (tot_U_ROWS+2*extra_NS_Halo)                        QTADV1C.264   
+      extended_P_FIELD=(ROW_LENGTH+2*extra_EW_Halo)*                       QTADV1C.265   
+     &                 (tot_P_ROWS+2*extra_NS_Halo)                        QTADV1C.266   
+                                                                           QTADV1C.267   
+      IF (L_SECOND) THEN                                                   QTADV1C.268   
+                                                                           QTADV1C.269   
+! Copy U/V_MEAN to U/V_MEAN_COPY with the same sized halos                 QTADV1C.270   
+        CALL COPY_FIELD(U_MEAN,U_MEAN_COPY,                                QTADV1C.271   
+     &                  U_FIELD,extended_U_FIELD,                          QTADV1C.272   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    QTADV1C.273   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.274   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.275   
+     &                  .FALSE.)                                           QTADV1C.276   
+        CALL COPY_FIELD(V_MEAN,V_MEAN_COPY,                                QTADV1C.277   
+     &                  U_FIELD,extended_U_FIELD,                          QTADV1C.278   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    QTADV1C.279   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.280   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.281   
+     &                  .FALSE.)                                           QTADV1C.282   
+                                                                           QTADV1C.283   
+      ELSE  ! if its fourth order:                                         QTADV1C.284   
+                                                                           QTADV1C.285   
+        CALL COPY_FIELD(U_MEAN,U_MEAN_COPY,                                QTADV1C.286   
+     &                  U_FIELD,extended_U_FIELD,                          QTADV1C.287   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    QTADV1C.288   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.289   
+     &                  halo_4th,halo_4th,                                 QTADV1C.290   
+     &                  .TRUE.)                                            QTADV1C.291   
+        CALL COPY_FIELD(V_MEAN,V_MEAN_COPY,                                QTADV1C.292   
+     &                  U_FIELD,extended_U_FIELD,                          QTADV1C.293   
+     &                  ROW_LENGTH,tot_U_ROWS,P_LEVELS,                    QTADV1C.294   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.295   
+     &                  halo_4th,halo_4th,                                 QTADV1C.296   
+     &                  .TRUE.)                                            QTADV1C.297   
+        CALL COPY_FIELD(QT,Q_COPY,                                         QTADV1C.298   
+     &                  P_FIELD,extended_P_FIELD,                          QTADV1C.299   
+     &                  ROW_LENGTH,tot_P_ROWS,Q_LEVELS,                    QTADV1C.300   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.301   
+     &                  halo_4th,halo_4th,                                 QTADV1C.302   
+     &                  .TRUE.)                                            QTADV1C.303   
+                                                                           QTADV1C.304   
+       ENDIF ! IF (L_SECOND)                                               QTADV1C.305   
+                                                                           QTADV1C.306   
+CL LOOP OVER Q_LEVELS+1.                                                   QTADV1C.307   
+CL    ON 1 TO Q_LEVELS PROVISIONAL VALUES OF THE FIELD ARE CALCULATED.     QTADV1C.308   
+CL    ON 2 TO Q_LEVELS+1 THE FINAL INCREMENTS ARE CALCULATED AND ADDED     QTADV1C.309   
+CL    ON. THE REASON FOR THIS LOGIC IS THAT THE PROVISIONAL VALUE AT       QTADV1C.310   
+CL    LEVEL K+1 IS NEEDED BEFORE THE FINAL INCREMENT AT LEVEL K CAN BE     QTADV1C.311   
+CL    CALCULATED.                                                          QTADV1C.312   
+                                                                           QTADV1C.313   
+      DO K=1,Q_LEVELS+1                                                    QTADV1C.314   
+                                                                           QTADV1C.315   
+        TIMESTEP = ADVECTION_TIMESTEP                                      QTADV1C.316   
+                                                                           QTADV1C.317   
+CL IF NOT AT Q_LEVELS+1 THEN                                               QTADV1C.318   
+        IF(K.LE.Q_LEVELS) THEN                                             QTADV1C.319   
+                                                                           QTADV1C.320   
+CL---------------------------------------------------------------------    QTADV1C.321   
+CL    SECTION 2.     CALCULATE COURANT NUMBER DEPENDENT NU IF IN           QTADV1C.322   
+CL                   FORECAST MODE. CALCULATE PROVISIONAL VALUES OF        QTADV1C.323   
+CL                   QT AT NEW TIME-LEVEL.                                 QTADV1C.324   
+CL---------------------------------------------------------------------    QTADV1C.325   
+                                                                           QTADV1C.326   
+C ---------------------------------------------------------------------    QTADV1C.327   
+CL    SECTION 2.1    SET NU TO NU_BASIC DEPENDENT ON MAX COURANT           QTADV1C.328   
+CL                   NUMBER.                                               QTADV1C.329   
+C ---------------------------------------------------------------------    QTADV1C.330   
+CL    IF NU_BASIC NOT SET TO ZERO                                          QTADV1C.331   
+          IF(.NOT.L_SECOND) THEN                                           QTADV1C.332   
+CL    THEN SET NU DEPENDING ON NU_BASIC AND MAX                            QTADV1C.333   
+CL    COURANT NUMBER.                                                      QTADV1C.334   
+CL    CALCULATE COURANT NUMBER                                             QTADV1C.335   
+C NOTE: RS AND TRIG TERMS WILL BE INCLUDED AFTER INTERPOLATION TO P        QTADV1C.336   
+C       GRID.                                                              QTADV1C.337   
+CL    CALL UV_TO_P TO MOVE MEAN VELOCITIES ONTO P GRID                     QTADV1C.338   
+                                                                           QTADV1C.339   
+          CALL UV_TO_P(U_MEAN(START_U_REQUIRED,K),                         QTADV1C.340   
+     *                 NUX(START_POINT_NO_HALO,K),U_POINTS_REQUIRED,       QTADV1C.341   
+     *                 P_POINTS_UPDATE,ROW_LENGTH,upd_P_ROWS+1)            QTADV1C.342   
+                                                                           QTADV1C.343   
+          CALL UV_TO_P(V_MEAN(START_U_REQUIRED,K),                         QTADV1C.344   
+     *                 NUY(START_POINT_NO_HALO,K),U_POINTS_REQUIRED,       QTADV1C.345   
+     *                 P_POINTS_UPDATE,ROW_LENGTH,upd_P_ROWS+1)            QTADV1C.346   
+                                                                           QTADV1C.347   
+CL    CALCULATE NU FROM COURANT NUMBER INCLUDING TRIG AND RS TERMS.        QTADV1C.348   
+          DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                     QTADV1C.349   
+            NUX(I,K) = NUX(I,K)*LONGITUDE_STEP_INVERSE                     QTADV1C.350   
+            NUY(I,K) = NUY(I,K)*LATITUDE_STEP_INVERSE                      QTADV1C.351   
+            SCALAR1 = TIMESTEP/(RS(I,K)*                                   QTADV1C.352   
+     *                RS(I,K)*(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))      QTADV1C.353   
+            SCALAR2 = SEC_P_LATITUDE(I)*SCALAR1                            QTADV1C.354   
+            SCALAR1 = SCALAR1*SCALAR1                                      QTADV1C.355   
+            SCALAR2 = SCALAR2*SCALAR2                                      QTADV1C.356   
+            NUX(I,K) = (1. - NUX(I,K)*NUX(I,K)*SCALAR2)*NU_BASIC           QTADV1C.357   
+            NUY(I,K) = (1. - NUY(I,K)*NUY(I,K)*SCALAR1)*NU_BASIC           QTADV1C.358   
+          ENDDO                                                            QTADV1C.359   
+                                                                           QTADV1C.360   
+! Set NUX equal to minimum value along each row                            QTADV1C.361   
+                                                                           QTADV1C.362   
+          DO J=FIRST_ROW,FIRST_ROW+upd_P_ROWS-1                            QTADV1C.363   
+            I_start=(J-1)*ROW_LENGTH+FIRST_ROW_PT ! start and end of       QTADV1C.364   
+            I_end=(J-1)*ROW_LENGTH+LAST_ROW_PT    ! row, missing halos.    QTADV1C.365   
+                                                                           QTADV1C.366   
+! Calculate minimum along this row                                         QTADV1C.367   
+*IF DEF,CRAY                                                               QTADV1C.368   
+            IK=ISMIN(I_end-I_start+1,NUX(I_start,K),1)                     QTADV1C.369   
+            SCALAR1=NUX(IK+I_start-1,K)                                    QTADV1C.370   
+*ELSE                                                                      QTADV1C.371   
+            SCALAR1=NUX(I_start,K)                                         QTADV1C.372   
+            DO I=I_start+1,I_end                                           QTADV1C.373   
+              IF (NUX(I,K) .LT. SCALAR1) SCALAR1=NUX(I,K)                  QTADV1C.374   
+            ENDDO                                                          QTADV1C.375   
+*ENDIF                                                                     QTADV1C.376   
+            NUX_MIN(J-FIRST_ROW+1)=SCALAR1                                 QTADV1C.377   
+! The indexing of NUX_MIN goes from 1..ROWS                                QTADV1C.378   
+          ENDDO ! J : loop over rows                                       QTADV1C.379   
+                                                                           QTADV1C.380   
+! So far we have only calculated the minimum along our local               QTADV1C.381   
+! part of the row. Now we must find the minimum of all the                 QTADV1C.382   
+! local minimums along the row                                             QTADV1C.383   
+          CALL GCG_RMIN(upd_P_ROWS,GC_ROW_GROUP,info,NUX_MIN)              QTADV1C.384   
+                                                                           QTADV1C.385   
+! and now set all values of NUX to the minimum along the row               QTADV1C.386   
+          DO J=FIRST_ROW,FIRST_ROW+upd_P_ROWS-1                            QTADV1C.387   
+            IF (NUX_MIN(J-FIRST_ROW+1) .LT. 0.0)                           QTADV1C.388   
+     &        NUX_MIN(J-FIRST_ROW+1)=0.0                                   QTADV1C.389   
+                                                                           QTADV1C.390   
+            I_start=(J-1)*ROW_LENGTH+1  ! beginning and                    QTADV1C.391   
+            I_end=J*ROW_LENGTH          ! end of row                       QTADV1C.392   
+                                                                           QTADV1C.393   
+            DO I=I_start,I_end                                             QTADV1C.394   
+              NUX(I,K)=NUX_MIN(J-FIRST_ROW+1)                              QTADV1C.395   
+            ENDDO                                                          QTADV1C.396   
+                                                                           QTADV1C.397   
+          ENDDO ! J : loop over rows                                       QTADV1C.398   
+                                                                           QTADV1C.399   
+! Set NUY equal to minimum value along each column                         QTADV1C.400   
+                                                                           QTADV1C.401   
+          DO J=FIRST_ROW_PT,LAST_ROW_PT                                    GPB5F403.7     
+            I_start=(FIRST_ROW-1)*ROW_LENGTH+J                             QTADV1C.404   
+! I_start points to the beginning of column J                              QTADV1C.405   
+                                                                           QTADV1C.406   
+! Calculate the minimum along this column                                  QTADV1C.407   
+*IF DEF,CRAY                                                               QTADV1C.408   
+            IK=ISMIN(upd_P_ROWS,NUY(I_start,K),ROW_LENGTH)                 QTADV1C.409   
+            SCALAR1=NUY((IK-1)*ROW_LENGTH+I_start,K)                       GPB5F403.8     
+*ELSE                                                                      QTADV1C.411   
+            I_end=I_start+(upd_P_ROWS-1)*ROW_LENGTH                        GPB5F403.9     
+! I_end points to the end of column J                                      QTADV1C.413   
+            SCALAR1=NUY(I_start,K)                                         QTADV1C.414   
+            DO I=I_start+ROW_LENGTH,I_end,ROW_LENGTH                       QTADV1C.415   
+              IF (NUY(I,K) .LT. SCALAR1) SCALAR1=NUY(I,K)                  QTADV1C.416   
+            ENDDO                                                          QTADV1C.417   
+*ENDIF                                                                     QTADV1C.418   
+            NUY_MIN(J)=SCALAR1                                             QTADV1C.419   
+                                                                           QTADV1C.420   
+          ENDDO ! J : loop over columns                                    QTADV1C.421   
+! Once again, this is only the minimum along our local part                QTADV1C.422   
+! of each column. We must now find the miniumum of all the local           QTADV1C.423   
+! minimums along the column                                                QTADV1C.424   
+          CALL GCG_RMIN(ROW_LENGTH-2*EW_Halo,GC_COL_GROUP,info,            GPB5F403.10    
+     &                  NUY_MIN(EW_Halo+1))                                GPB5F403.11    
+                                                                           QTADV1C.426   
+! and now set all values of NUY to the minimum along the column            QTADV1C.427   
+          DO J=FIRST_ROW_PT,LAST_ROW_PT                                    GPB5F403.12    
+            IF (NUY_MIN(J) .LT. 0.0) NUY_MIN(J)=0.0                        QTADV1C.430   
+                                                                           QTADV1C.431   
+            I_start=(FIRST_ROW-1)*ROW_LENGTH+J                             QTADV1C.432   
+            I_end=I_start+(upd_P_ROWS-1)*ROW_LENGTH                        GPB5F403.13    
+                                                                           QTADV1C.434   
+            DO I=I_start,I_end,ROW_LENGTH                                  QTADV1C.435   
+              NUY(I,K)=NUY_MIN(J)                                          QTADV1C.436   
+            ENDDO                                                          QTADV1C.437   
+                                                                           QTADV1C.438   
+          ENDDO ! J : loop over columns                                    QTADV1C.439   
+                                                                           QTADV1C.440   
+        ENDIF  ! IF its fourth order advection                             QTADV1C.441   
+CL                                                                         QTADV1C.442   
+C ---------------------------------------------------------------------    QTADV1C.443   
+CL    SECTION 2.3    CALL ADV_P_GD TO OBTAIN FIRST INCREMENT DUE TO        QTADV1C.444   
+CL                   ADVECTION.                                            QTADV1C.445   
+C ---------------------------------------------------------------------    QTADV1C.446   
+                                                                           QTADV1C.447   
+CL    CALL ADV_P_GD FOR QT.                                                QTADV1C.448   
+          K1=K+1                                                           QTADV1C.449   
+                                                                           QTADV1C.450   
+          IF(K.EQ.Q_LEVELS) THEN                                           QTADV1C.451   
+          K1=K-1                                                           QTADV1C.452   
+          CALL ADV_P_GD(QT(1,K1),QT(1,K),QT(1,K1),                         QTADV1C.453   
+     &                  U_MEAN_COPY(1,K),V_MEAN_COPY(1,K),                 QTADV1C.454   
+     &                  ETADOT_MEAN(1,K),ZERO,SEC_P_LATITUDE,              QTADV1C.455   
+     *                  QT_FIRST_INC(1,K),NUX(1,K),NUY(1,K),P_FIELD,       QTADV1C.456   
+     *                  U_FIELD,ROW_LENGTH,                                QTADV1C.457   
+*CALL ARGFLDPT                                                             QTADV1C.458   
+     &                  TIMESTEP,LATITUDE_STEP_INVERSE,                    QTADV1C.459   
+     *                  LONGITUDE_STEP_INVERSE,                            QTADV1C.460   
+     &                  SEC_U_LATITUDE,BRSP(1,K),L_SECOND,LWHITBROM,       QTADV1C.461   
+     &                  Q_COPY(1,K),extended_P_FIELD,extended_U_FIELD,     GSS1F403.694   
+     &                  extended_address)                                  GSS1F403.695   
+          ELSE IF(K.EQ.1)THEN                                              QTADV1C.463   
+                                                                           QTADV1C.464   
+C PASS ANY QT VALUES FOR LEVEL K-1 AS ETADOT AT LEVEL 1                    QTADV1C.465   
+C IS SET TO ZERO BY USING ARRAY ZERO.                                      QTADV1C.466   
+                                                                           QTADV1C.467   
+          CALL ADV_P_GD(QT(1,K1),QT(1,K),QT(1,K1),                         QTADV1C.468   
+     &                  U_MEAN_COPY(1,K),V_MEAN_COPY(1,K),                 QTADV1C.469   
+     &                  ZERO,ETADOT_MEAN(1,K1),                            QTADV1C.470   
+     *                  SEC_P_LATITUDE,QT_FIRST_INC(1,K),                  QTADV1C.471   
+     *                  NUX(1,K),NUY(1,K),                                 QTADV1C.472   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        QTADV1C.473   
+*CALL ARGFLDPT                                                             QTADV1C.474   
+     &                  TIMESTEP,                                          QTADV1C.475   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      QTADV1C.476   
+     &                  SEC_U_LATITUDE,BRSP(1,K),L_SECOND,LWHITBROM,       QTADV1C.477   
+     &                  Q_COPY(1,K),extended_P_FIELD,extended_U_FIELD,     GSS1F403.696   
+     &                  extended_address)                                  GSS1F403.697   
+          ELSE                                                             QTADV1C.479   
+          CALL ADV_P_GD(QT(1,K-1),QT(1,K),QT(1,K1),                        QTADV1C.480   
+     &                  U_MEAN_COPY(1,K),V_MEAN_COPY(1,K),                 QTADV1C.481   
+     &                  ETADOT_MEAN(1,K),ETADOT_MEAN(1,K1),                QTADV1C.482   
+     *                  SEC_P_LATITUDE,QT_FIRST_INC(1,K),                  QTADV1C.483   
+     *                  NUX(1,K),NUY(1,K),                                 QTADV1C.484   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        QTADV1C.485   
+*CALL ARGFLDPT                                                             QTADV1C.486   
+     &                  TIMESTEP,                                          QTADV1C.487   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      QTADV1C.488   
+     &                  SEC_U_LATITUDE,BRSP(1,K),L_SECOND,LWHITBROM,       QTADV1C.489   
+     &                  Q_COPY(1,K),extended_P_FIELD,extended_U_FIELD,     GSS1F403.698   
+     &                  extended_address)                                  GSS1F403.699   
+          END IF                                                           QTADV1C.491   
+                                                                           QTADV1C.492   
+C ---------------------------------------------------------------------    QTADV1C.493   
+CL    SECTION 2.4    REMOVE MASS-WEIGHTING FROM INCREMENT AND ADD ONTO     QTADV1C.494   
+CL                   FIELD TO OBTAIN PROVISIONAL VALUE.                    QTADV1C.495   
+C ---------------------------------------------------------------------    QTADV1C.496   
+                                                                           QTADV1C.497   
+          DO I=1,START_POINT_NO_HALO-1                                     ADR2F402.13    
+            QT_PROV(I,K) = 0.0                                             ADR2F402.14    
+          ENDDO                                                            ADR2F402.15    
+                                                                           ADR2F402.16    
+          DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                     QTADV1C.498   
+            SCALAR1 = RS(I,K)*RS(I,K)                                      QTADV1C.499   
+     *                      *(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I))        QTADV1C.500   
+            QT_FIRST_INC(I,K) = QT_FIRST_INC(I,K)/SCALAR1                  QTADV1C.501   
+            QT_PROV(I,K) = QT(I,K)-QT_FIRST_INC(I,K)                       QTADV1C.502   
+          ENDDO                                                            QTADV1C.503   
+                                                                           ADR2F402.17    
+          DO I=END_P_POINT_NO_HALO+1,P_FIELD                               ADR2F402.18    
+            QT_PROV(I,K) = 0.0                                             ADR2F402.19    
+          ENDDO                                                            ADR2F402.20    
+                                                                           ADR2F402.21    
+*IF DEF,GLOBAL                                                             QTADV1C.504   
+          IF (at_top_of_LPG) THEN                                          QTADV1C.505   
+! Do North Pole                                                            QTADV1C.506   
+            DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                  QTADV1C.507   
+              QT_PROV(I,K) = QT(I,K)                                       QTADV1C.508   
+              QT_FIRST_INC(I,K) = -QT_FIRST_INC(I,K)/(RS(I,K)*RS(I,K)      QTADV1C.509   
+     &                       *(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))      QTADV1C.510   
+            ENDDO                                                          QTADV1C.511   
+          ENDIF                                                            QTADV1C.512   
+                                                                           QTADV1C.513   
+          IF (at_base_of_LPG) THEN                                         QTADV1C.514   
+! Do South Pole                                                            QTADV1C.515   
+            DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1              QTADV1C.516   
+              QT_PROV(I,K) = QT(I,K)                                       QTADV1C.517   
+              QT_FIRST_INC(I,K) = -QT_FIRST_INC(I,K)/(RS(I,K)*RS(I,K)      QTADV1C.518   
+     &                       *(DELTA_AK(K)+DELTA_BK(K)*PSTAR_OLD(I)))      QTADV1C.519   
+            ENDDO                                                          QTADV1C.520   
+          ENDIF                                                            QTADV1C.521   
+                                                                           QTADV1C.522   
+*ELSE                                                                      QTADV1C.523   
+CL    LIMITED AREA MODEL THEN SET PROVISIONAL VALUES ON BOUNDARIES         QTADV1C.524   
+CL    EQUAL TO QT AT OLD TIME LEVEL.                                       QTADV1C.525   
+      IF (at_top_of_LPG) THEN                                              QTADV1C.526   
+        DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                      QTADV1C.527   
+          QT_PROV(I,K)=QT(I,K)                                             QTADV1C.528   
+        ENDDO                                                              QTADV1C.529   
+      ENDIF                                                                QTADV1C.530   
+      IF (at_base_of_LPG) THEN                                             QTADV1C.531   
+        DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1                  QTADV1C.532   
+          QT_PROV(I,K)=QT(I,K)                                             QTADV1C.533   
+        ENDDO                                                              QTADV1C.534   
+      ENDIF                                                                QTADV1C.535   
+*ENDIF                                                                     QTADV1C.536   
+                                                                           QTADV1C.537   
+        END IF                                                             QTADV1C.538   
+CL END CONDITIONAL ON LEVEL BEING LESS THAN Q_LEVELS+1                     QTADV1C.539   
+      ENDDO                                                                QTADV1C.540   
+                                                                           QTADV1C.541   
+*IF DEF,GLOBAL                                                             QTADV1C.542   
+CL    CALL POLAR TO OBTAIN PROVISIONAL VALUE.                              QTADV1C.543   
+      CALL POLAR(QT_PROV,QT_FIRST_INC,QT_FIRST_INC,                        QTADV1C.544   
+*CALL ARGFLDPT                                                             QTADV1C.545   
+     &           P_FIELD,P_FIELD,P_FIELD,                                  QTADV1C.546   
+     &           TOP_ROW_START,P_BOT_ROW_START,                            QTADV1C.547   
+     &           ROW_LENGTH,Q_LEVELS)                                      QTADV1C.548   
+*ENDIF                                                                     QTADV1C.549   
+                                                                           QTADV1C.550   
+      IF (L_SECOND) THEN                                                   QTADV1C.551   
+                                                                           QTADV1C.552   
+! Do a halo update on QT_PROV                                              QTADV1C.553   
+        CALL SWAPBOUNDS(QT_PROV,ROW_LENGTH,tot_P_ROWS,                     QTADV1C.554   
+     &                  EW_Halo,NS_Halo,Q_LEVELS)                          QTADV1C.555   
+!        CALL SET_SIDES(QT_PROV,P_FIELD,ROW_LENGTH,                        QTADV1C.556   
+!     &                 Q_LEVELS,fld_type_p)                               QTADV1C.557   
+                                                                           QTADV1C.558   
+      ELSE  ! fourth order advection                                       QTADV1C.559   
+                                                                           QTADV1C.560   
+! Copy QT_PROV into Q_COPY which has double halos for fourth               QTADV1C.561   
+! order advection, and do swap to fill these halos                         QTADV1C.562   
+        CALL COPY_FIELD(QT_PROV,Q_COPY,                                    QTADV1C.563   
+     &                  P_FIELD,extended_P_FIELD,                          QTADV1C.564   
+     &                  ROW_LENGTH,tot_P_ROWS,Q_LEVELS,                    QTADV1C.565   
+     &                  EW_Halo,NS_Halo,                                   QTADV1C.566   
+     &                  halo_4th,halo_4th,                                 QTADV1C.567   
+     &                  .TRUE.)                                            QTADV1C.568   
+                                                                           QTADV1C.569   
+      ENDIF                                                                QTADV1C.570   
+                                                                           QTADV1C.571   
+CL BEGIN CONDITIONAL ON LEVEL BEING GREATER THAN 1                         QTADV1C.572   
+cmic$ do parallel                                                          QTADV1C.573   
+      DO K=1,Q_LEVELS+1                                                    QTADV1C.574   
+        IF(K.GT.1) THEN                                                    QTADV1C.575   
+CL---------------------------------------------------------------------    QTADV1C.576   
+CL    SECTION 3.     ALL WORK IN THIS SECTION PERFORMED AT LEVEL-1.        QTADV1C.577   
+CL                   CALCULATE SECOND INCREMENT DUE TO ADVECTION.          QTADV1C.578   
+CL                   CALCULATE TOTAL INCREMENT TO FIELD AND FILTER         QTADV1C.579   
+CL                   WHERE NECESSARY THEN UPDATE FIELD.                    QTADV1C.580   
+CL                   THE POLAR INCREMENTS ARE THEN CALCULATED AND ADDED    QTADV1C.581   
+CL                   ON BY CALLING POLAR.                                  QTADV1C.582   
+CL---------------------------------------------------------------------    QTADV1C.583   
+                                                                           QTADV1C.584   
+          TIMESTEP = ADVECTION_TIMESTEP                                    QTADV1C.585   
+                                                                           QTADV1C.586   
+C ---------------------------------------------------------------------    QTADV1C.587   
+CL    SECTION 3.1    CALL ADV_P_GD TO OBTAIN SECOND INCREMENT DUE TO       QTADV1C.588   
+CL                   ADVECTION.                                            QTADV1C.589   
+C ---------------------------------------------------------------------    QTADV1C.590   
+                                                                           QTADV1C.591   
+          K1=K-1                                                           QTADV1C.592   
+C K1 HOLDS K-1.                                                            QTADV1C.593   
+                                                                           QTADV1C.594   
+          IF(K.GT.Q_LEVELS) THEN                                           QTADV1C.595   
+C THE ZERO VERTICAL FLUX AT THE TOP IS ENSURED BY PASSING ETADOT AS        QTADV1C.596   
+C ZERO.                                                                    QTADV1C.597   
+                                                                           QTADV1C.598   
+          CALL ADV_P_GD(QT_PROV(1,K-2),QT_PROV(1,K-1),                     QTADV1C.599   
+     *                  QT_PROV(1,K-2),                                    QTADV1C.600   
+     &                  U_MEAN_COPY(1,K1),V_MEAN_COPY(1,K1),               QTADV1C.601   
+     &                  ETADOT_MEAN(1,K-1),                                QTADV1C.602   
+     *                  ZERO,SEC_P_LATITUDE,                               QTADV1C.603   
+     *                  QT_SECOND_INC,NUX(1,K-1),NUY(1,K-1),P_FIELD,       QTADV1C.604   
+     *                  U_FIELD,ROW_LENGTH,                                QTADV1C.605   
+*CALL ARGFLDPT                                                             QTADV1C.606   
+     &                  TIMESTEP,LATITUDE_STEP_INVERSE,                    QTADV1C.607   
+     *                  LONGITUDE_STEP_INVERSE,SEC_U_LATITUDE,             QTADV1C.608   
+     &                  BRSP(1,K-1),L_SECOND,LWHITBROM,                    QTADV1C.609   
+     &                  Q_COPY(1,K-1),extended_P_FIELD,extended_U_FIELD,   GSS1F403.700   
+     &                  extended_address)                                  GSS1F403.701   
+                                                                           QTADV1C.611   
+          ELSE IF(K.EQ.2) THEN                                             QTADV1C.612   
+                                                                           QTADV1C.613   
+C THE ZERO VERTICAL FLUX AT THE BOTTOM IS ENSURED BY PASSING ETADOT AS     QTADV1C.614   
+C ZERO.                                                                    QTADV1C.615   
+                                                                           QTADV1C.616   
+          CALL ADV_P_GD(QT_PROV(1,K),QT_PROV(1,K-1),                       QTADV1C.617   
+     *                  QT_PROV(1,K),                                      QTADV1C.618   
+     &                  U_MEAN_COPY(1,K1),V_MEAN_COPY(1,K1),ZERO,          QTADV1C.619   
+     *                  ETADOT_MEAN(1,K),                                  QTADV1C.620   
+     *                 SEC_P_LATITUDE,QT_SECOND_INC,                       QTADV1C.621   
+     *                 NUX(1,K-1),NUY(1,K-1),                              QTADV1C.622   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        QTADV1C.623   
+*CALL ARGFLDPT                                                             QTADV1C.624   
+     &                  TIMESTEP,                                          QTADV1C.625   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      QTADV1C.626   
+     *                  SEC_U_LATITUDE,                                    QTADV1C.627   
+     &                  BRSP(1,K-1),L_SECOND,LWHITBROM,                    QTADV1C.628   
+     &                  Q_COPY(1,K-1),extended_P_FIELD,extended_U_FIELD,   GSS1F403.702   
+     &                  extended_address)                                  GSS1F403.703   
+          ELSE                                                             QTADV1C.630   
+                                                                           QTADV1C.631   
+          CALL ADV_P_GD(QT_PROV(1,K-2),QT_PROV(1,K-1),                     QTADV1C.632   
+     *                  QT_PROV(1,K),                                      QTADV1C.633   
+     &                  U_MEAN_COPY(1,K1),V_MEAN_COPY(1,K1),               QTADV1C.634   
+     &                  ETADOT_MEAN(1,K-1),                                QTADV1C.635   
+     *                  ETADOT_MEAN(1,K),                                  QTADV1C.636   
+     *                 SEC_P_LATITUDE,QT_SECOND_INC,                       QTADV1C.637   
+     *                 NUX(1,K-1),NUY(1,K-1),                              QTADV1C.638   
+     *                  P_FIELD,U_FIELD,ROW_LENGTH,                        QTADV1C.639   
+*CALL ARGFLDPT                                                             QTADV1C.640   
+     &                  TIMESTEP,                                          QTADV1C.641   
+     *                  LATITUDE_STEP_INVERSE,LONGITUDE_STEP_INVERSE,      QTADV1C.642   
+     *                  SEC_U_LATITUDE,                                    QTADV1C.643   
+     &                  BRSP(1,K-1),L_SECOND,LWHITBROM,                    QTADV1C.644   
+     &                  Q_COPY(1,K-1),extended_P_FIELD,extended_U_FIELD,   GSS1F403.704   
+     &                  extended_address)                                  GSS1F403.705   
+                                                                           QTADV1C.646   
+          END IF                                                           QTADV1C.647   
+                                                                           QTADV1C.648   
+C ---------------------------------------------------------------------    QTADV1C.649   
+CL    SECTION 3.2    CALCULATE TOTAL MASS-WEIGHTED INCREMENT TO FIELD.     QTADV1C.650   
+C ---------------------------------------------------------------------    QTADV1C.651   
+                                                                           QTADV1C.652   
+C TOTAL MASS-WEIGHTED INCREMENT IS CALCULATED AND THEN STORED IN           QTADV1C.653   
+C QT_INCREMENT.                                                            QTADV1C.654   
+                                                                           QTADV1C.655   
+          DO I=START_POINT_NO_HALO,END_P_POINT_NO_HALO                     QTADV1C.656   
+            QT_INCREMENT(I,K1) = .5*(QT_SECOND_INC(I) +                    QTADV1C.657   
+     *                      QT_FIRST_INC(I,K-1)*RS(I,K1)*RS(I,K1)          QTADV1C.658   
+     *                      *(DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I)))         QTADV1C.659   
+          ENDDO                                                            QTADV1C.660   
+                                                                           QTADV1C.661   
+C ---------------------------------------------------------------------    QTADV1C.662   
+CL    SECTION 3.3    IF GLOBAL MODEL CALCULATE POLAR INCREMENTS.           QTADV1C.663   
+CL                   IF LIMITED AREA MASS-WEIGHT BOUNDARY VALUES.          QTADV1C.664   
+C ---------------------------------------------------------------------    QTADV1C.665   
+                                                                           QTADV1C.666   
+CL    GLOBAL MODEL SO CALCULATE POLAR INCREMENT.                           QTADV1C.667   
+CL    CALCULATE MERIDIONAL FLUX AROUND POLES BY ADDING THE TWO             QTADV1C.668   
+CL    INCREMENTS AND ALSO MASS-WEIGHTING POLAR FIELDS.                     QTADV1C.669   
+C NEGATIVE SIGN BEFORE FIRST INCS IS DUE TO THEIR SIGN BEING CHANGED       QTADV1C.670   
+C PRIOR TO THE INTERMEDIATE VALUE BEING CALCULATED.                        QTADV1C.671   
+          IF (at_top_of_LPG) THEN                                          QTADV1C.672   
+! Do Northen boundary/pole                                                 QTADV1C.673   
+            DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                  QTADV1C.674   
+              SCALAR1 = RS(I,K1)*RS(I,K1)*                                 QTADV1C.675   
+     &                  (DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(I))               QTADV1C.676   
+*IF DEF,GLOBAL                                                             QTADV1C.677   
+              QT_INCREMENT(I,K1) = -.5*(QT_SECOND_INC(I) -                 QTADV1C.678   
+     &                             QT_FIRST_INC(I,K-1)*SCALAR1)            QTADV1C.679   
+*ENDIF                                                                     QTADV1C.680   
+              QT(I,K1)=QT(I,K1)*SCALAR1                                    QTADV1C.681   
+            ENDDO                                                          QTADV1C.682   
+          ENDIF ! (attop)                                                  QTADV1C.683   
+                                                                           QTADV1C.684   
+          IF (at_base_of_LPG) THEN                                         QTADV1C.685   
+! Do Southern boundary/pole                                                QTADV1C.686   
+            DO IK=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1             QTADV1C.687   
+              SCALAR2 = RS(IK,K1)*RS(IK,K1)*                               QTADV1C.688   
+     &                  (DELTA_AK(K1)+DELTA_BK(K1)*PSTAR(IK))              QTADV1C.689   
+*IF DEF,GLOBAL                                                             QTADV1C.690   
+              QT_INCREMENT(IK,K1) = -.5*(QT_SECOND_INC(IK) -               QTADV1C.691   
+     &                              QT_FIRST_INC(IK,K-1)*SCALAR2)          QTADV1C.692   
+*ENDIF                                                                     QTADV1C.693   
+              QT(IK,K1)     = QT(IK,K1)*SCALAR2                            QTADV1C.694   
+            ENDDO                                                          QTADV1C.695   
+          ENDIF ! (atbase)                                                 QTADV1C.696   
+                                                                           QTADV1C.697   
+CL END CONDITIONAL LEVEL GREATER THAN ONE                                  QTADV1C.698   
+        END IF                                                             QTADV1C.699   
+                                                                           QTADV1C.700   
+CL END LOOP OVER Q_LEVELS+1                                                QTADV1C.701   
+      ENDDO                                                                QTADV1C.702   
+                                                                           QTADV1C.703   
+CL---------------------------------------------------------------------    QTADV1C.704   
+CL    SECTION 4      IF GLOBAL MODEL THEN FILTER INCREMENTS AND            QTADV1C.705   
+CL                   UPDATE POLAR VALUES BY CALLING POLAR.                 QTADV1C.706   
+CL                   UPDATE ALL OTHER VALUES.                              QTADV1C.707   
+CL---------------------------------------------------------------------    QTADV1C.708   
+                                                                           QTADV1C.709   
+*IF DEF,GLOBAL                                                             QTADV1C.710   
+C ---------------------------------------------------------------------    QTADV1C.711   
+CL    SECTION 4.1    CALL FILTER TO DO FILTERING.                          QTADV1C.712   
+C ---------------------------------------------------------------------    QTADV1C.713   
+                                                                           QTADV1C.714   
+C SET FILTER_SPACE WHICH IS ROW_LENGTH+2 TIMES THE NUMBER OF ROWS TO       QTADV1C.715   
+C BE FILTERED.                                                             QTADV1C.716   
+                                                                           QTADV1C.717   
+      FILTER_SPACE = (ROW_LENGTH+2)*(NORTHERN_FILTERED_P_ROW-1+            QTADV1C.718   
+     *                tot_P_ROWS-SOUTHERN_FILTERED_P_ROW)                  QTADV1C.719   
+CL    CALL FILTER FOR QT INCREMENTS                                        QTADV1C.720   
+                                                                           QTADV1C.721   
+      CALL FILTER(QT_INCREMENT,P_FIELD,Q_LEVELS,                           APB0F402.29    
+     &            FILTER_SPACE,ROW_LENGTH,                                 APB0F402.30    
+*CALL ARGFLDPT                                                             APB0F402.31    
+     &            FILTER_WAVE_NUMBER_P_ROWS,TRIGS,IFAX,                    APB0F402.32    
+     *            NORTHERN_FILTERED_P_ROW,SOUTHERN_FILTERED_P_ROW)         QTADV1C.725   
+                                                                           QTADV1C.726   
+C ---------------------------------------------------------------------    QTADV1C.727   
+CL    SECTION 4.2    CALL POLAR TO UPDATE POLAR VALUES                     QTADV1C.728   
+C ---------------------------------------------------------------------    QTADV1C.729   
+                                                                           QTADV1C.730   
+      CALL POLAR(QT,QT_INCREMENT,QT_INCREMENT,                             QTADV1C.731   
+*CALL ARGFLDPT                                                             QTADV1C.732   
+     &           P_FIELD,P_FIELD,P_FIELD,                                  QTADV1C.733   
+     &           TOP_ROW_START,P_BOT_ROW_START,                            QTADV1C.734   
+     &           ROW_LENGTH,Q_LEVELS)                                      QTADV1C.735   
+                                                                           QTADV1C.736   
+*ENDIF                                                                     QTADV1C.737   
+C ---------------------------------------------------------------------    QTADV1C.738   
+CL    SECTION 4.3    UPDATE ALL OTHER POINTS.                              QTADV1C.739   
+C ---------------------------------------------------------------------    QTADV1C.740   
+                                                                           QTADV1C.741   
+      DO K=1,Q_LEVELS                                                      QTADV1C.742   
+C UPDATE QT.                                                               QTADV1C.743   
+CFPP$ SELECT(CONCUR)                                                       QTADV1C.744   
+        DO I= START_POINT_NO_HALO,END_P_POINT_NO_HALO                      QTADV1C.745   
+          QT(I,K)=QT(I,K)*RS(I,K)*RS(I,K)*                                 QTADV1C.746   
+     &            (DELTA_AK(K)+DELTA_BK(K)*PSTAR(I))-QT_INCREMENT(I,K)     QTADV1C.747   
+        ENDDO                                                              QTADV1C.748   
+      ENDDO                                                                QTADV1C.749   
+                                                                           QTADV1C.750   
+CL    END OF ROUTINE QT_ADV                                                QTADV1C.751   
+                                                                           QTADV1C.752   
+      RETURN                                                               QTADV1C.753   
+      END                                                                  QTADV1C.754   
+*ENDIF                                                                     ATJ0F402.13    
+*ENDIF                                                                     QTADV1C.755   

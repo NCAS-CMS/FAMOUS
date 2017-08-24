@@ -1,0 +1,235 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#
+#  Script: qslistobj
+#
+#  Description: returns a list of build combinations required to run
+#               the given model configuration
+#  Interface and arguments:
+#	qslistobj <updefs> <sectmode> <obj_xref> <buildhost>
+#
+#  Author: Andy Brady
+#  Owner:
+#
+#  History:
+#  Vn   Date      Change
+#  4.2	?.?.96	  Original Code. (A Brady)		
+#  4.4	22.06.97  Script header and some comments added. (S Robertson)
+#  4.4  01.08.97  Added code to detect if people change the pre-compiled
+#                 sections they're using and force make to re-link the
+#                 executable. Similarly where the mode of a section is
+#                 changed e.g. from 'normal' to 'debug'.  (S Robertson)
+#  4.4  10.10.97  Modified qslistobj to enable parsing of new form
+#                 obj_xref file.  (S Robertson)
+#  4.5  10.10.97  Added space after -e option on sed command
+#                 (A Van der Wal)
+#
+#  argument1: UPDEFS	list of defs which are set in the model run
+#  argument2: SECTMODE  the type of build e.g. N NORMAL, D DEBUG
+#  argument3: OBJXREF 	the obj_xref file to be used (information
+#                       relating to the UM sections)
+#  argument4: BUILDHOST identifies the system the UM is being built
+#                       upon e.g. CrPVPf77 machine and compiler
+#
+#  Script called by: qsmncompile
+#  Script calls:
+#------------------------------------------------
+
+#incorrect no of arguments - terminate the calling process
+if [ $# -eq 4 ]
+then
+  UPDEFS=$1
+  SECTMODE=$2
+  OBJXREF=$3
+  BUILDHOST=$4
+else
+  NAME=`basename $0`
+  echo -e "$NAME: Error"
+  echo -e "  CALLED: $0 $*"
+  echo -e "  USAGE: $NAME <updefs> <sectmode> <objxref> <buildhost>"
+  exit 1
+fi
+
+UPDEFSOLD=${UPDEFSOLD:-$UCOMPDIR/updefs.old}
+SECTMODEOLD=${SECTMODEOLD:-$UCOMPDIR/sect_mode.old}
+
+# Determine if the pre-compiled sections selected in this run
+# differ from the previous run (if there was one) and if the mode
+# has changed for any section e.g. from normal to debug.  In either
+# case remove the executable to force make to relink.
+
+if [[ -f $UPDEFSOLD ]] && [[ -f $SECTMODEOLD ]]
+then
+  # an UPDEFS file and SECT_MODE file exist from the previous run
+  cmp -s $UPDEFS $UPDEFSOLD
+  rel1=$?
+
+  cmp -s $SECTMODE $SECTMODEOLD
+  rel2=$?
+
+  if test $rel1 -ne 0 -o $rel2 -ne 0
+  then
+    # Need to relink, remove executable set e(xit)stat(us) to 9
+    estat=99
+    rm -rf $LOADMODULE
+    CC=$?
+    if test $CC -ne 0
+    then
+      echo -e \
+"qslistobj ($SECONDS): ***\tCannot relink, failed to remove executable."
+      exit $CC
+    fi
+  fi
+fi
+
+# copy the current UPDEFS file, to UPDEFSOLD and the current
+# SECTMODE, to SECTMODEOLD.
+
+cp $UPDEFS $UPDEFSOLD
+cp $SECTMODE $SECTMODEOLD
+
+typeset -l lcomtag # -l convert lowercase
+typeset -u ucomtag comtype # -u convert uppercase
+
+# identify the general compile options for the given BUILDHOST and set
+# up an equivalence between the compile type identifer and its full
+# name. e.g. BUILDHOST=T3E_f90; has a compile type n:normal ->
+# tmp_n=normal and tmp_normal=n
+
+for switch in `$UM_GREP -E 'COMP_GEN_OPTS '$BUILDHOST $OBJXREF|\
+                 $UM_SED 's/COMP_GEN_OPTS '$BUILDHOST' *//g'`
+do
+  lcomtag=${switch%:*}
+  ucomtag=${switch%:*}
+  comtype=${switch##[$lcomtag$ucomtag]:}
+  eval tmp_$lcomtag=$comtype
+  eval tmp_$comtype=$lcomtag
+done
+
+# similarly, set up an equivalence for each DEF_SWITCH in the obj_xref
+# file, between the switch identifier and its associated def name.
+# e.g. DEF_SWITCHES  Aa:BIOLOGY -> tmp_Aa=BIOLOGY and tmp_BIOLOGY=Aa
+
+for switch in \
+  `$UM_GREP DEF_SWITCHES $OBJXREF| $UM_SED 's/DEF_SWITCHES *//g'`
+do
+  OLDIFS=$IFS
+  IFS=:
+  set $switch
+  IFS=$OLDIFS
+  eval tmp_${2}=$1
+  eval tmp_${1}=$2
+done
+
+# create a template for the list of section def combinations required
+# e.g. a01_3a/@defdir@/$tmp_n a02_3a/@defdir@/$tmp_n  The @defdir@ is
+# a marker that will be replaced with a section def combination
+
+dirs=`$UM_GREP -E -v '^..._0A' $SECTMODE|\
+      $UM_AWK -F: '{print tolower($1)"/@defdir@/$tmp_"tolower($2)}' |\
+      $UM_SED 's/ //g'`
+
+# extract, from the updefs file, the names of the defs which have been
+# set in the run e.g C96_1A C97_4A.  A list with an entry on each line.
+
+defs=`$UM_GREP -E -v '\*/|^$' $UPDEFS|\
+        $UM_SED 's/\*DEFINE //g' |\
+        tr -s "," "\012" |\
+        sort -u`
+
+# loop over each def name
+for def in $defs
+do
+  # for the given def get its identifier
+  eobj="\$tmp_$def"
+  pdef=`eval echo -e $eobj`
+
+  if [ -z "$pdef" ]
+  then
+    # add def name to a(ssumed) deflist
+    adeflist="$adeflist $def"
+  else
+    # add identifier to pdeflist (to be used)
+    pdeflist="$pdeflist $pdef"
+  fi
+done
+
+#echo -e "*** `date +%H:%M:%S`\tAssumed DEFS:      $adeflist\n"
+#echo -e "*** `date +%H:%M:%S`\tUsing DEFS:        $pdeflist\n"
+
+for dir in `eval echo -e $dirs`
+do
+
+  # evaluate any equivalences and produce a string with a marker
+  # in it e.g. a01_3a/@defdir@/$tmp_n -> a01_3a/@defdir@/NORMAL
+
+  unset def
+
+#  echo -e "*** `date +%H:%M:%S`\t$dir"
+
+  # given a01_3a/@defdir@/NORMAL, rest=/@defdir@/NORMAL, sect=a01_3a
+  # and def=NORMAL
+
+  rest=${dir##???_??} ;  sect=${dir%%$rest} ; def=${rest##/@defdir@/}
+
+  if [ -z "$def" ]
+  then
+     echo -e \
+"qslistobj: ERROR: COMP_GEN_OPT for $sect, $BUILDHOST is not found." >&2
+     exit 1
+  fi
+
+
+# parse the model defs (on DEFS line) and machine defs (on DEFSM
+# line) for the given section and merge them into a sorted space
+# separted string.
+
+  mndefs="G0 "`$UM_GREP -E -i "^$sect DEFS |^$sect DEFSM " $OBJXREF|\
+        $UM_SED -e 's/+[^ ]*//g' -e 's/#.*$//g' |\
+        $UM_AWK -F"\040" '{for (i=3; i<=NF; i++)
+                        print $i }' | sort`
+
+#  echo -e "*** `date +%H:%M:%S`\t  Precompiled DEFS:  $mndefs"
+
+  unset deflist
+
+  # loop over each section def identifier and determine which have been
+  # set in the run (and should be used to create build combination for
+  # the section) by comparing them with the pdeflist.
+
+  for mndef in $mndefs
+  do
+    if [[ "$pdeflist" = *"$mndef"* ]]
+    then
+      deflist="$deflist $mndef"
+    fi
+  done
+
+  # default is G0 - no defs
+  if [ -z "$deflist" ] ; then deflist=G0 ; fi
+
+  deflist=${deflist# }
+
+#  echo -e "*** `date +%H:%M:%S`\t  Using DEFS:        $deflist\n"
+
+  # remove spaces in the def combination list
+
+  defdir=`echo -e $deflist | $UM_SED 's/ //g'`
+
+  # thedirs is a list of build combinations for each section required to
+  # run the model configuration requested
+  thedirs="$thedirs `echo -e $dir | $UM_SED s^@defdir@^$defdir^g`"
+done
+
+echo -e $thedirs
+# if e(xit)stat(us) has not already been set make default
+estat=${estat:-0}
+exit $estat

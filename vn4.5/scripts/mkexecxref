@@ -1,0 +1,241 @@
+#!/bin/ksh
+# ----------------------------- COPYRIGHT ---------------------------- #
+#           (c) BRITISH CROWN COPYRIGHT 2000, THE MET.OFFICE           #
+#                                                                      #
+# Use, duplication or disclosure of this code is subject to the        #
+# restrictions as set forth in the contract. If no contract has been   #
+# raised with this copy of the code, use, duplication or disclosure    #
+# of it is strictly prohibited. Permission to do so must be obtained   #
+# in writing from the Head of Numerical Modelling at The Met. Office.  #
+# ----------------------------- COPYRIGHT ---------------------------- #
+#
+#  Script: mkexecxref
+#
+#  Synopsis:
+#    Parse input execxref file to produce machine dependent
+#    execxref file.
+#  Interface and arguments:
+#     Optional: mkexecxref <ifile> <ofile> <buildhost>
+#     If 3 args are given then they are used as above.
+#     If 0 args are given then the environment variables
+#     XREFIN, XREF and BUILDHOST are used.
+#     If any other number of args are given the script
+#     will abort, returning error code 1.
+#
+#  Author:   Andy Brady
+#  Reviewer: Karen Rogers
+#  Owner:    UM development Team
+#
+#  History:
+#  vn4.4        14.11.97        Original Code. (A Brady)
+#  vn4.5        12.06.98        Added functionality for MACHINE=OTHER.
+#                               Stop some small execs being added to
+#                               exec_xref for workstations.
+#                               (A Van der Wal)
+#  vn4.5        14.07.98        Moved functions to a separate file
+#                               and autoloaded them. (A Van der Wal)
+#
+#  Script called by: unpackmodel
+#  Script calls: None
+#
+#  argument1:
+#
+#  input :
+#
+#  output :
+#
+#  Variables that must be imported:
+#    PROGDEFS     list of machine specific DEFS taken from setglobalvars
+#
+#  Variables that can be imported:
+#    BUILDHOST    identifies the system the UM is being built upon
+#                 e.g. T3E_f90 machine and compiler. [no default]
+#    XREF         pathname of the xref file created for the platform
+#                 the UM is being installed upon.
+#                 [$UMDIR/vn$VN/source/exec_xref]
+#    XREFIN       pathname of the input xref file which is processed.
+#                 [$UMDIR/vn$VN/source/exec_xref_base]
+#    XREFMID      temporary file to hold intermediate version of the
+#                 xref file. [$TMPDIR/exec_xref.mid.$$]
+#    SEDSCRIPT    temporary file. [$TMPDIR/sedscript.$$]
+#    TMPDIR       directory in which temporary files are created [/tmp]
+#    UMDIR	  pathname for the UM files and dirs. [no default]
+#    VN		  a given version of the UM. [no default]
+#
+#  Variables that are exported: None
+#
+#  Local variables: Undefined
+#
+#  Restrictions and limitations:
+#    1) Currently there must be only one "exec DEFS @host@" line
+#       for each executable.
+#    2) MACHINE DEFS that are <Y:N> are parsed as "Y" because
+#       currently only one version of each script is built per
+#       configuration.
+#
+#  Description:
+#    mkexecxref takes an input, machine independent, exec_xref
+#    file and generates a machine dependent version.
+#    There are two important parts in the inputs file that are
+#    used, the "^MACHINE" line and the "^script DEFS @host" line.
+#    The ^MACHINE line contains a list of machine depdendent DEFS
+#    for each supported machine type and a tag "<y>" or "<n>"
+#    that means "yes this def should be used" or "no this def
+#    should not be used". If the relevent def appears in the
+#    @host@ line it is parsed accordingly.
+#----------------------------------------------------------------
+
+TMPDIR=${TMPDIR:-/tmp}
+#
+# If this script has 3 arguments then $1 is the input xref file,
+# $2 is the output xref file and #3 is the BUILDHOST. If there
+# are no arguments, then
+# the environment variables are used. If there are no environment
+# variables then the defaults are used.
+if test $# -eq 3
+then
+  XREFIN=$1
+  XREF=$2
+  BUILDHOST=$3
+else
+  if [ -z "$UMDIR" ] || [ -z "$VN" ]
+  then
+    echo -e "ERROR: UMDIR or VN not defined"
+    exit 1
+  fi
+  XREF=${XREF:-$UMDIR/vn$VN/source/exec_xref}
+  XREFIN=${XREFIN:-$UMDIR/vn$VN/source/exec_xref_base}
+  BUILDHOST=${BUILDHOST:-T3E_f90}
+fi
+#
+# The input file cannot be found.
+if [ ! -f "$XREFIN" ]
+then
+  echo -e "ERROR: file $XREFIN not found"
+  exit 1
+fi
+
+XREFMID=${XREFMID:-$TMPDIR/exec_xref.mid.$$}
+XREFTMP=${XREFTMP:-$TMPDIR/exec_xref.tmp}
+SEDSCRIPT=${SEDSCRIPT:-$TMPDIR/sedscript.$$}
+
+# Load functions
+
+autoload findstr
+
+
+# parse the machine DEFS for MACHINE=OTHER into the base xref file
+# (replacing @??@ markers). Values taken from setglobalvars
+
+c_low=`findstr C_LOW "$PROGDEFS"`
+c_low_u=`findstr C_LOW_U "$PROGDEFS"`
+frl8=`findstr FRL8 "$PROGDEFS"`
+cri_open=`findstr CRI_OPEN "$PROGDEFS"`
+cray=`findstr CRAY "$PROGDEFS"`
+mpp=`findstr MPP "$PROGDEFS"`
+t3e=`findstr T3E "$PROGDEFS"`
+vectlib=`findstr VECTLIB "$PROGDEFS"`
+fujitsu=`findstr FUJITSU "$PROGDEFS"`
+sgi=`findstr SGI "$PROGDEFS"`
+sun=`findstr SUN "$PROGDEFS"`
+linux=`findstr LINUX "$PROGDEFS"`
+intll=`findstr INTLL "$PROGDEFS"`
+mppx=`findstr BLDNOMPP "$PROGDEFS"`
+if [ "$mppx" = "Y" -a "$mpp" = "Y" ]
+then
+  mpp="Y:N"
+fi
+
+$UM_SED -e "s/@c_low@/$c_low/g" -e "s/@c_low_u@/$c_low_u/g" \
+    -e "s/@frl8@/$frl8/g" -e "s/@cri_open@/$cri_open/g" \
+    -e "s/@cray@/$cray/g" -e "s/@mpp@/$mpp/g" \
+    -e "s/@t3e@/$t3e/g" -e "s/@vectlib@/$vectlib/g" \
+    -e "s/@fujitsu@/$fujitsu/g" -e "s/@sgi@/$sgi/g" \
+    -e "s/@sun@/$sun/g" -e "s/@linux@/$linux/g" \
+    -e "s/@intll@/$intll/g" -e "s/@buildhost@/$BUILDHOST/g" \
+    $XREFIN  > $XREFMID
+
+# These are the machine specific DEFS selection
+mccomb=`$UM_AWK "/^MACHINE .*DEFS .*<*>/"'{for (i=3; i<=NF; i++)
+                                      print $i}' $XREFMID`
+echo -e mccomb=$mccomb
+
+#
+# Main
+#
+
+# remove any existing file(s) containing sed commands
+rm -f $SEDSCRIPT*
+
+OLDIFS=$IFS
+for section in `$UM_AWK /TITLE/'{print $1}' $XREFMID | sort -u`
+do
+  IFS=$OLDIFS
+  for defsm in \
+    `$UM_AWK "/$section .*DEFS .*@host@/"'{for (i=4; i<=NF; i++)
+     print $i }' $XREFMID`
+  do
+
+  # Have to use "," as the field seperater because
+  # the machine dependent defs on the host line are
+  # "," sperated.
+  IFS=","
+
+  # reset the accumulating strings for each loop over sections
+  unset usedefs alldefs
+
+  # Loop over machine dependent defs in @host@ line checking
+  # them against the "MACHINE" entries for this BUILDHOST
+  for def in $defsm
+  do
+    alldefs="$alldefs$def,"
+    if [[ "$mccomb" = *"$def<"[yY]":"[nN]">"* ]]
+    then
+      usedefs="$usedefs $def"
+    elif [[ "$mccomb" = *"$def<"[yY]">"*  ]]
+    then
+      usedefs="$usedefs$def,"
+    fi
+  done
+
+  alldefs=${alldefs%,} # Remove trailing ","
+  usedefs=${usedefs%,} # Remove trailing ","
+
+  # Some info to stdout
+  echo -e "\n$section:\talldefs=$alldefs" | expand -t1,16
+  echo -e   "$section:\tusedefs=$usedefs" | expand -t1,16
+
+  if [ ! -z "$usedefs" ]
+  then
+    # Generate a sed expression that will remove the "@host@ alldefs"
+    # line and replace it with "$BUILDHOST usedefs"
+
+    chardefs=`echo -e $alldefs | $UM_AWK '{print length}'`
+    tab1=1
+    tab2=15
+    tab3=`expr 32 + $chardefs + 4 + 14`
+    tab4=`expr $tab3 + 15`
+
+    echo -e \
+"s/$section\t.*DEFS .*@host@ .*${alldefs}.*$/\
+$section\tDEFS  $BUILDHOST\t$usedefs/"\
+ | expand -t"$tab1,$tab2,$tab3,$tab4" >> $SEDSCRIPT
+  else
+    # Generate a sed expression to delete the "@host@ alldefs" line
+    # as there are none for this BUILDHOST
+    echo -e \
+"/$section .*DEFS .*@host@ .*$/d"\
+ >> $SEDSCRIPT
+  fi
+  done
+done
+
+# remove trailing blanks expression.
+echo -e "s/ *$//" >> $SEDSCRIPT
+
+# Parse input xref file using the sedscript, generated earlier.
+$UM_SED -f $SEDSCRIPT < $XREFMID > $XREFTMP
+
+# Install the final version of the xref file in the UM
+# source directory.
+mv $XREFTMP $XREF

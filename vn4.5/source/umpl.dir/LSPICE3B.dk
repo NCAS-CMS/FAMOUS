@@ -1,0 +1,835 @@
+*IF DEF,A04_3B                                                             LSPICE3B.2     
+C *****************************COPYRIGHT******************************     LSPICE3B.3     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    LSPICE3B.4     
+C                                                                          LSPICE3B.5     
+C Use, duplication or disclosure of this code is subject to the            LSPICE3B.6     
+C restrictions as set forth in the contract.                               LSPICE3B.7     
+C                                                                          LSPICE3B.8     
+C                Meteorological Office                                     LSPICE3B.9     
+C                London Road                                               LSPICE3B.10    
+C                BRACKNELL                                                 LSPICE3B.11    
+C                Berkshire UK                                              LSPICE3B.12    
+C                RG12 2SZ                                                  LSPICE3B.13    
+C                                                                          LSPICE3B.14    
+C If no contract has been raised with this copy of the code, the use,      LSPICE3B.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      LSPICE3B.16    
+C to do so must first be obtained in writing from the Head of Numerical    LSPICE3B.17    
+C Modelling at the above address.                                          LSPICE3B.18    
+C ******************************COPYRIGHT******************************    LSPICE3B.19    
+!  SUBROUTINE LSP_ICE------------------------------------------------      LSPICE3B.20    
+!                                                                          LSPICE3B.21    
+!  Purpose: Form or augment ice at the expense of cloud water or           LSPICE3B.22    
+!           vapour in one model layer.                                     LSPICE3B.23    
+!           Also perform flux divergence of falling ice and rain,          LSPICE3B.24    
+!           Evaporation and melting of snow,                               LSPICE3B.25    
+!           Evaporation of rain, formation of rain.                        LSPICE3B.26    
+!           This is the principal subroutine of the 3B large scale         LSPICE3B.27    
+!           precipitation scheme.                                          LSPICE3B.28    
+!                                                                          LSPICE3B.29    
+! S Ballard   <- programmer                                                LSPICE3B.30    
+! D Wilson    <- programmer                                                LSPICE3B.31    
+!                                                                          LSPICE3B.32    
+!  Model            Modification history from model version 4.5:           LSPICE3B.33    
+! version  Date                                                            LSPICE3B.34    
+!  4.5     Feb 98  New deck                      Damian Wilson             LSPICE3B.35    
+!                                                                          LSPICE3B.36    
+!  Programming standard: Unified Model Documentation Paper No 4,           LSPICE3B.37    
+!                        Version 1dated  12/9/89.                          LSPICE3B.38    
+!                                                                          LSPICE3B.39    
+!  Logical component covered: Part of P26.                                 LSPICE3B.40    
+!                                                                          LSPICE3B.41    
+!  System task:                                                            LSPICE3B.42    
+!                                                                          LSPICE3B.43    
+!  Documentation: Unified Model Documentation Paper No 26.                 LSPICE3B.44    
+!                                                                          LSPICE3B.45    
+!  Arguments:-----------------------------------------------------------   LSPICE3B.46    
+      SUBROUTINE LSP_ICE(                                                  LSPICE3B.47    
+     &  P,RHODZ,TIMESTEPFIXED,POINTS,                                      LSPICE3B.48    
+     &  RHCPT,                                                             LSPICE3B.49    
+     &  SO4_ACC,SO4_DIS,                                                   LSPICE3B.50    
+     &  QCF,QCL,Q,RAIN,SNOW,VF,                                            LSPICE3B.51    
+     &  T,CFLIQ,CFICE,BLAND,CX,CONSTP)                                     LSPICE3B.52    
+      IMPLICIT NONE                                                        LSPICE3B.53    
+!                                                                          LSPICE3B.54    
+*CALL C_R_CP                                                               LSPICE3B.55    
+*CALL C_EPSLON                                                             LSPICE3B.56    
+*CALL C_0_DG_C                                                             LSPICE3B.57    
+*CALL C_LHEAT                                                              LSPICE3B.58    
+*CALL C_LSPMIC                                                             LSPICE3B.59    
+*CALL C_LSPDIF                                                             LSPICE3B.60    
+!                                                                          LSPICE3B.61    
+      INTEGER         !, INTENT(IN)                                        LSPICE3B.62    
+     & POINTS                                                              LSPICE3B.63    
+!        Number of points to be processed.                                 LSPICE3B.64    
+!                                                                          LSPICE3B.65    
+      REAL            !, INTENT(IN)                                        LSPICE3B.66    
+     & TIMESTEPFIXED                                                       LSPICE3B.67    
+!        Timestep of physics in model (s).                                 LSPICE3B.68    
+     &, RHCPT(POINTS)                                                      LSPICE3B.69    
+!        Critical humidity of all points for cloud formation.              LSPICE3B.70    
+!                                                                          LSPICE3B.71    
+      REAL            !, INTENT(IN)                                        LSPICE3B.72    
+     &  CFLIQ(POINTS)                                                      LSPICE3B.73    
+!         Liquid cloud fraction in this layer.                             LSPICE3B.74    
+     &, CFICE(POINTS)                                                      LSPICE3B.75    
+!         Frozen cloud fraction in this layer.                             LSPICE3B.76    
+     &, P(POINTS)                                                          LSPICE3B.77    
+!         Air pressure at this level (Pa).                                 LSPICE3B.78    
+     &, RHODZ(POINTS)                                                      LSPICE3B.79    
+!         Air mass p.u.a. in this layer (kg per sq m).                     LSPICE3B.80    
+     &, SO4_ACC(POINTS)                                                    LSPICE3B.81    
+!         Sulphur cycle variable                                           LSPICE3B.82    
+     &, SO4_DIS(POINTS)                                                    LSPICE3B.83    
+!         Sulphur cycle variable                                           LSPICE3B.84    
+!                                                                          LSPICE3B.85    
+      REAL            !, INTENT(INOUT)                                     LSPICE3B.86    
+     & Q(POINTS)                                                           LSPICE3B.87    
+!        Specific humidity at this level (kg wat per kg air).              LSPICE3B.88    
+     &,QCF(POINTS)                                                         LSPICE3B.89    
+!        Cloud ice (kg water per kg air).                                  LSPICE3B.90    
+     &,QCL(POINTS)                                                         LSPICE3B.91    
+!        Cloud liquid water (kg water per kg air).                         LSPICE3B.92    
+     &,T(POINTS)                                                           LSPICE3B.93    
+!        Temperature at this level (K).                                    LSPICE3B.94    
+     &,RAIN(POINTS)                                                        LSPICE3B.95    
+!        On input: Rate of rainfall entering this layer from above.        LSPICE3B.96    
+!        On output: Rate of rainfall leaving this layer.                   LSPICE3B.97    
+!                   (kg per sq m per s).                                   LSPICE3B.98    
+     &,SNOW(POINTS)                                                        LSPICE3B.99    
+!        On input: Rate of snowfall entering this layer from above.        LSPICE3B.100   
+!        On Output: Rate of snowfall leaving this layer.                   LSPICE3B.101   
+!                    (kg per sq m per s).                                  LSPICE3B.102   
+     &,VF(POINTS)                                                          LSPICE3B.103   
+!        On input: Fall speed of ice into layer from above.                LSPICE3B.104   
+!        On output: Fall speed of ice into layer below.                    LSPICE3B.105   
+!                   (m per s).                                             LSPICE3B.106   
+!                                                                          LSPICE3B.107   
+      LOGICAL         !, INTENT(IN)                                        LSPICE3B.108   
+     &  BLAND(POINTS)                                                      LSPICE3B.109   
+!         Land/sea mask                                                    LSPICE3B.110   
+!                                                                          LSPICE3B.111   
+!  Workspace usage: 3 real arrays---------------------------------------   LSPICE3B.112   
+      REAL                                                                 LSPICE3B.113   
+     &  QS(POINTS)                                                         LSPICE3B.114   
+!         Saturated sp humidity for (T,p) in layer                         LSPICE3B.115   
+     &, QSL(POINTS)                                                        LSPICE3B.116   
+!         Saturated sp humidity for (T,p) in layer                         LSPICE3B.117   
+!         wrt water at all temps                                           LSPICE3B.118   
+     &, SNOWT(POINTS)                                                      LSPICE3B.119   
+!         Cumulative fall out of snow within iterations.                   LSPICE3B.120   
+!                                                                          LSPICE3B.121   
+! external subprograms are called --------------------------------------   LSPICE3B.122   
+      EXTERNAL QSAT,QSAT_WAT                                               LSPICE3B.123   
+!                                                                          LSPICE3B.124   
+!  Local (derived) physical constants ----------------------------------   LSPICE3B.125   
+      REAL LCRCP,LFRCP,LSRCP,CONW,RHO1                                     LSPICE3B.126   
+      PARAMETER(                                                           LSPICE3B.127   
+     &  LCRCP=LC/CP                                                        LSPICE3B.128   
+!         Latent heat of condensation / Cp (K).                            LSPICE3B.129   
+     &, LFRCP=LF/CP                                                        LSPICE3B.130   
+!         Latent heat of fusion / Cp (K).                                  LSPICE3B.131   
+     &, LSRCP=LCRCP+LFRCP                                                  LSPICE3B.132   
+!         Sum of the above (S for Sublimation).                            LSPICE3B.133   
+     &, CONW=R/(EPSILON*LC)                                                LSPICE3B.134   
+!         Constant in wet bulb temperature calculation.                    LSPICE3B.135   
+     &, RHO1=1.0                                                           LSPICE3B.136   
+!         Reference density of air (kg/m3)                                 LSPICE3B.137   
+     &  )                                                                  LSPICE3B.138   
+!                                                                          LSPICE3B.139   
+! ----------------------------------------------------------------------   LSPICE3B.140   
+!  1   Define local scalars.                                               LSPICE3B.141   
+! ----------------------------------------------------------------------   LSPICE3B.142   
+      INTEGER                                                              LSPICE3B.143   
+     &  I                                                                  LSPICE3B.144   
+! Loop counter (horizontal field index).                                   LSPICE3B.145   
+     &, J                                                                  LSPICE3B.146   
+! Counter for the iterations                                               LSPICE3B.147   
+!                                                                          LSPICE3B.148   
+!       Reals effectively expanded to workspace by the Cray (using         LSPICE3B.149   
+!       vector registers).                                                 LSPICE3B.150   
+!                                                                          LSPICE3B.151   
+      REAL                                                                 LSPICE3B.152   
+!       Real workspace.  At end of DO loop, contains :-                    LSPICE3B.153   
+     &  RHO(POINTS)                                                        LSPICE3B.154   
+!         Density of air in the layer.                                     LSPICE3B.155   
+     &, RHOR(POINTS)                                                       LSPICE3B.156   
+!         1.0/RHO to speed up calculations.                                LSPICE3B.157   
+     &, VTEMP                                                              LSPICE3B.158   
+!         Virtual temperature as at start of loop.                         LSPICE3B.159   
+     &, TEMPC                                                              LSPICE3B.160   
+!         temperature degree C as at start of loop.                        LSPICE3B.161   
+     &, ESI(POINTS)                                                        LSPICE3B.162   
+!         saturation vapour pressure (wrt ice below zero)                  LSPICE3B.163   
+     &, ESW(POINTS)                                                        LSPICE3B.164   
+!         saturation vapour pressure (wrt water at all T)                  LSPICE3B.165   
+     &, DQI                                                                LSPICE3B.166   
+!         increment to/from ice/snow                                       LSPICE3B.167   
+     &, DQIL                                                               LSPICE3B.168   
+!         increment to/from cloud water                                    LSPICE3B.169   
+     &, DPR                                                                LSPICE3B.170   
+!         increment to/from rain                                           LSPICE3B.171   
+     &, CFICETEMP                                                          LSPICE3B.172   
+!         fraction of ice inferred for fall speed calculations.            LSPICE3B.173   
+     &, FQI                                                                LSPICE3B.174   
+!         fallspeed for ice                                                LSPICE3B.175   
+     &, DHI(POINTS)                                                        LSPICE3B.176   
+!         CFL limit                                                        LSPICE3B.177   
+     &, DHIR(POINTS)                                                       LSPICE3B.178   
+!         1.0/DHI                                                          LSPICE3B.179   
+     &, DHILSITERR(POINTS)                                                 LSPICE3B.180   
+!         1.0/(DHI*LSITER)                                                 LSPICE3B.181   
+     &, FQIRQI                                                             LSPICE3B.182   
+!         saved flux of ice out of layer                                   LSPICE3B.183   
+     &, FQIRQI2                                                            LSPICE3B.184   
+!         saved flux of ice out of layer from layer above                  LSPICE3B.185   
+     &, QUP                                                                LSPICE3B.186   
+!         updated ice for long timestep                                    LSPICE3B.187   
+     &, QCLNEW                                                             LSPICE3B.188   
+!         updated liquid cloud in implicit calculations                    LSPICE3B.189   
+     &, TEMP7                                                              LSPICE3B.190   
+!         term in melting                                                  LSPICE3B.191   
+     &, PR02                                                               LSPICE3B.192   
+!         term in evaporation of rain                                      LSPICE3B.193   
+     &, PR04                                                               LSPICE3B.194   
+!         square of pr02                                                   LSPICE3B.195   
+     &, QC                                                                 LSPICE3B.196   
+!         term in autoconversion of cloud to rain                          LSPICE3B.197   
+     &, APLUSB                                                             LSPICE3B.198   
+!         denominator in deposition or evaporation of ice                  LSPICE3B.199   
+     &, CORR(POINTS)                                                       LSPICE3B.200   
+!         density correction for fall speed                                LSPICE3B.201   
+     &, ROCOR(POINTS)                                                      LSPICE3B.202   
+!         density correction for fall speed                                LSPICE3B.203   
+     &, VR1                                                                LSPICE3B.204   
+!         Mean fall speed of rain                                          LSPICE3B.205   
+     &, VS1                                                                LSPICE3B.206   
+!         Mean fall speed of snow                                          LSPICE3B.207   
+     &, LAMR1                                                              LSPICE3B.208   
+!         Inverse lambda in rain exponential distribution                  LSPICE3B.209   
+     &, LAMR2                                                              LSPICE3B.210   
+!         Inverse lambda in rain exponential distribution                  LSPICE3B.211   
+     &, LAMFAC1                                                            LSPICE3B.212   
+!         Expression containing calculations with lambda                   LSPICE3B.213   
+     &, LAMS1                                                              LSPICE3B.214   
+!         Inverse lambda in snow exponential distribution                  LSPICE3B.215   
+     &, FV1                                                                LSPICE3B.216   
+!         Mean velocity difference between rain and snow                   LSPICE3B.217   
+     &, TIMESTEP                                                           LSPICE3B.218   
+!         Timestep of each iteration                                       LSPICE3B.219   
+     &, CORR2(POINTS)                                                      LSPICE3B.220   
+!         Temperature correction of viscosity etc.                         LSPICE3B.221   
+     &, RHNUC                                                              LSPICE3B.222   
+!         Relative humidity required for nucleation                        LSPICE3B.223   
+     &, TCG(POINTS)                                                        LSPICE3B.224   
+!         Temperature Factor for X1I in Cox Golding calculation            LSPICE3B.225   
+     &, TCGI                                                               LSPICE3B.226   
+!         Inverse of TCG                                                   LSPICE3B.227   
+     &, RATEQ                                                              LSPICE3B.228   
+!         Constant effecting rate of deposition/sublimation of ice         LSPICE3B.229   
+     &, RATEQCF                                                            LSPICE3B.230   
+!         Constant representing effect of sub grid distribution of ice     LSPICE3B.231   
+     &, RATEQS(POINTS)                                                     LSPICE3B.232   
+!         Critical humidity for ice deposition                             LSPICE3B.233   
+     &, RATEQSL(POINTS)                                                    LSPICE3B.234   
+!         Critical humidity for rain evaporation                           LSPICE3B.235   
+     &, HM_NORMALIZE                                                       LSPICE3B.236   
+!         Normalization for Hallett Mossop process                         LSPICE3B.237   
+     &, HM_RATE                                                            LSPICE3B.238   
+!         Increase in deposition due to Hallett Mossop process             LSPICE3B.239   
+*IF DEF,VECTLIB                                                            PXVECTLB.37    
+     &, TEMP1(POINTS)                                                      LSPICE3B.241   
+     &, TEMP2(POINTS)                                                      LSPICE3B.242   
+! Temporary arrays for T3E vector functions                                LSPICE3B.243   
+      INTEGER KK                                                           LSPICE3B.244   
+! Variables for condensed points compression                               LSPICE3B.245   
+      REAL POWER                                                           LSPICE3B.246   
+! Power for T3E vector functions                                           LSPICE3B.247   
+*ENDIF                                                                     LSPICE3B.248   
+! Obtain the size for CX and CONSTP                                        LSPICE3B.249   
+*CALL C_LSPSIZ                                                             LSPICE3B.250   
+!                                                                          LSPICE3B.251   
+! ----------------------------------------------------------------------   LSPICE3B.252   
+!  2.1 Start the microphysics calculations                                 LSPICE3B.253   
+! ----------------------------------------------------------------------   LSPICE3B.254   
+! Set up the iterations                                                    LSPICE3B.255   
+       TIMESTEP=TIMESTEPFIXED/LSITER                                       LSPICE3B.256   
+! Set up sub grid scale constants. For no sub grid scale variability       LSPICE3B.257   
+! use the set up RATEQ=1.0, RATEQCF=0.0, RATEQS=1.0.                       LSPICE3B.258   
+! Ideally represent these in a comdeck but require RHCRIT                  LSPICE3B.259   
+       RATEQ=1.0                                                           LSPICE3B.260   
+       RATEQCF=0.0                                                         LSPICE3B.261   
+! Set up SNOWT(I) to be zero for all I.                                    LSPICE3B.262   
+! Points_do1:                                                              LSPICE3B.263   
+       DO I=1,POINTS                                                       LSPICE3B.264   
+         SNOWT(I)=0.0                                                      LSPICE3B.265   
+       END DO ! Points_do1                                                 LSPICE3B.266   
+! Set up Hallett Mossop calculation                                        LSPICE3B.267   
+       HM_NORMALIZE=1.0/(1.0-EXP((HM_T_MIN-HM_T_MAX)*HM_DECAY))            LSPICE3B.268   
+! ----------------------------------------------------------------------   LSPICE3B.269   
+!  2.2 Start iterating.                                                    LSPICE3B.270   
+! ----------------------------------------------------------------------   LSPICE3B.271   
+! Iters_do1:                                                               LSPICE3B.272   
+       DO J=1,LSITER                                                       LSPICE3B.273   
+! ----------------------------------------------------------------------   LSPICE3B.274   
+!  2.3  Calculate sat humidity mixing ratios                               LSPICE3B.275   
+! ----------------------------------------------------------------------   LSPICE3B.276   
+! Qsat with respect to ice                                                 LSPICE3B.277   
+       CALL QSAT(QS,T,P,POINTS)                                            LSPICE3B.278   
+!                                                                          LSPICE3B.279   
+! Qsat with respect to liquid water                                        LSPICE3B.280   
+       CALL QSAT_WAT(QSL,T,P,POINTS)                                       LSPICE3B.281   
+! ----------------------------------------------------------------------   LSPICE3B.282   
+!  2.4 Start loop over points.                                             LSPICE3B.283   
+! ----------------------------------------------------------------------   LSPICE3B.284   
+! Points_do2:                                                              LSPICE3B.285   
+*IF DEF,VECTLIB                                                            PXVECTLB.38    
+       DO I=1,POINTS                                                       PXVECTLB.39    
+!                                                                          PXVECTLB.40    
+! ----------------------------------------------------------------------   PXVECTLB.41    
+!  3.1 Calculate density of air, RHO, via virtual temperature.             PXVECTLB.42    
+! ----------------------------------------------------------------------   PXVECTLB.43    
+         VTEMP=T(I)*(1.+C_VIRTUAL*Q(I)-QCL(I)-QCF(I)) ! Virtual Temp       PXVECTLB.44    
+         RHO(I)=P(I)/(R*VTEMP)                                             PXVECTLB.45    
+         RHOR(I)=1.0/RHO(I)                                                PXVECTLB.46    
+! Correction factor of fall speeds etc. due to density.                    PXVECTLB.47    
+         CORR(I)=(RHO1*RHOR(I))                                            PXVECTLB.48    
+! Correction factor in viscosity etc. due to temperature.                  PXVECTLB.49    
+         CORR2(I)=(T(I)/273.0)                                             PXVECTLB.50    
+       ENDDO                                                               PXVECTLB.51    
+! Use T3E vector functions to speed up code                                PXVECTLB.52    
+       CALL POWR_V(POINTS,CORR,0.4,CORR)                                   PXVECTLB.53    
+       CALL POWR_V(POINTS,CORR2,1.5,CORR2)                                 PXVECTLB.54    
+       DO I=1,POINTS                                                       PXVECTLB.55    
+         TEMPC=T(I)-ZERODEGC                                               PXVECTLB.56    
+! Complete calculation of CORR2                                            PXVECTLB.57    
+         CORR2(I)=CORR2(I)*(393.0/(T(I)+120.0))                            PXVECTLB.58    
+! Combined correction factor                                               PXVECTLB.59    
+         ROCOR(I)=RHO(I)*CORR(I)*CORR2(I)                                  PXVECTLB.60    
+! Calculate a temperature factor for N0snow. CX(13)=1.0 if there is a      PXVECTLB.61    
+! temperature dependence, and 0.0 if there is not.                         PXVECTLB.62    
+         TCG(I)=-CX(13)*TEMPC/8.18                                         PXVECTLB.63    
+       ENDDO                                                               PXVECTLB.64    
+! Use T3E vector functions to speed up code                                PXVECTLB.65    
+       CALL SQRT_V(POINTS,ROCOR,ROCOR)                                     PXVECTLB.66    
+       CALL EXP_V(POINTS,TCG,TCG)                                          PXVECTLB.67    
+*ELSE                                                                      PXVECTLB.68    
+       DO I=1,POINTS                                                       PXVECTLB.69    
+!                                                                          PXVECTLB.70    
+! ----------------------------------------------------------------------   PXVECTLB.71    
+!  3.1 Calculate density of air, RHO, via virtual temperature.             PXVECTLB.72    
+! ----------------------------------------------------------------------   PXVECTLB.73    
+         VTEMP=T(I)*(1.+C_VIRTUAL*Q(I)-QCL(I)-QCF(I)) ! Virtual Temp       PXVECTLB.74    
+         RHO(I)=P(I)/(R*VTEMP)                                             PXVECTLB.75    
+         RHOR(I)=1.0/RHO(I)                                                PXVECTLB.76    
+! Correction factor of fall speeds etc. due to density.                    PXVECTLB.77    
+         CORR(I)=(RHO1*RHOR(I))**0.4                                       PXVECTLB.78    
+! Correction factor in viscosity etc. due to temperature.                  PXVECTLB.79    
+         CORR2(I)=(T(I)/273.0)**1.5 * (393.0/(T(I)+120.0))                 PXVECTLB.80    
+       ENDDO                                                               PXVECTLB.81    
+       DO I=1,POINTS                                                       PXVECTLB.82    
+         TEMPC=T(I)-ZERODEGC                                               PXVECTLB.83    
+! Combined correction factor                                               PXVECTLB.84    
+         ROCOR(I)=SQRT(RHO(I)*CORR(I)*CORR2(I))                            PXVECTLB.85    
+! Calculate a temperature factor for N0snow. CX(13)=1.0 if there is a      PXVECTLB.86    
+! temperature dependence, and 0.0 if there is not.                         PXVECTLB.87    
+         TCG(I)=EXP(-CX(13)*TEMPC/8.18)                                    PXVECTLB.88    
+       ENDDO                                                               PXVECTLB.89    
+*ENDIF                                                                     PXVECTLB.90    
+       DO I=1,POINTS                                                       LSPICE3B.334   
+! ----------------------------------------------------------------------   LSPICE3B.335   
+!  3.2 Set T in deg C and saturated vapour pressures in N/m2               LSPICE3B.336   
+! ----------------------------------------------------------------------   LSPICE3B.337   
+         ESI(I)=QS(I)*P(I)/EPSILON                                         LSPICE3B.338   
+         ESW(I)=QSL(I)*P(I)/EPSILON                                        LSPICE3B.339   
+         TCGI=1.0/TCG(I)                                                   LSPICE3B.340   
+         TEMPC=T(I)-ZERODEGC                                               LSPICE3B.341   
+! ----------------------------------------------------------------------   LSPICE3B.342   
+! 3.3 Calculate RATEQS and RATEQSL as a func of RHCRIT and cloud fracs.    LSPICE3B.343   
+! ----------------------------------------------------------------------   LSPICE3B.344   
+         RATEQS(I)=RHCPT(I)+CFICE(I)*(1.0-RHCPT(I))                        LSPICE3B.345   
+         RATEQSL(I)=RHCPT(I)+CFLIQ(I)*(1.0-RHCPT(I))                       LSPICE3B.346   
+!                                                                          LSPICE3B.347   
+! ----------------------------------------------------------------------   LSPICE3B.348   
+!  4   Check that ice cloud fraction is sensible.                          LSPICE3B.349   
+! ----------------------------------------------------------------------   LSPICE3B.350   
+         CFICETEMP=CFICE(I)                                                LSPICE3B.351   
+! The possibility exists in multiple iterations that ice cloud fraction    LSPICE3B.352   
+! is equal to zero but nucleation and deposition from the last iteration   LSPICE3B.353   
+! has produced a finite ice content. Hence this section produces a fix     LSPICE3B.354   
+! which will stop the scheme crashing. Only need to use for more than 1    LSPICE3B.355   
+! iteration                                                                LSPICE3B.356   
+         IF (LSITER.GT.1) THEN                                             LSPICE3B.357   
+           IF (QCF(I).GT.0.0 .AND. CFICE(I).LE.0.1) THEN                   LSPICE3B.358   
+             CFICETEMP=MAX(CFLIQ(I),0.1)                                   LSPICE3B.359   
+           END IF                                                          LSPICE3B.360   
+         END IF                                                            LSPICE3B.361   
+!                                                                          LSPICE3B.362   
+! ----------------------------------------------------------------------   LSPICE3B.363   
+!  5   Falling ice is advected downwards                                   LSPICE3B.364   
+! ----------------------------------------------------------------------   LSPICE3B.365   
+! Estimate fall speed out of this layer. We want to avoid advecting        LSPICE3B.366   
+! very small amounts of snow between layers, as this can cause numerical   LSPICE3B.367   
+! problems in other routines, so if QCF is smaller than a single           LSPICE3B.368   
+! nucleation mass per metre cubed don't advect it.                         LSPICE3B.369   
+         IF (QCF(I).GT.M0) THEN                                            LSPICE3B.370   
+!                                                                          LSPICE3B.371   
+! Estimate the mean fall speed across the entire gridbox.                  LSPICE3B.372   
+! Use a top hat distrubution within the gridbox                            LSPICE3B.373   
+           FQI=CONSTP(3)*CORR(I)*                                          LSPICE3B.374   
+     &         (RHO(I)*QCF(I)*CONSTP(1)*TCGI/CFICETEMP)**CX(3)             LSPICE3B.375   
+         ELSE                                                              LSPICE3B.376   
+! QCF is smaller than zero so set fall speed to zero                       LSPICE3B.377   
+           FQI=0.0                                                         LSPICE3B.378   
+! Endif for calculation of fall speed                                      LSPICE3B.379   
+         END IF                                                            LSPICE3B.380   
+! Calculate CFL quantity of timestep over level separation.                LSPICE3B.381   
+         DHI(I)=TIMESTEP*RHO(I)/RHODZ(I)                                   LSPICE3B.382   
+! Define DHIR and DHILSITERR(I) to speed up calculations.                  LSPICE3B.383   
+         DHIR(I)=1.0/DHI(I)                                                LSPICE3B.384   
+         DHILSITERR(I)=1.0/(DHI(I)*LSITER)                                 LSPICE3B.385   
+! ----------------------------------------------------------------------   LSPICE3B.386   
+! Choice of advection methods to use                                       LSPICE3B.387   
+! ----------------------------------------------------------------------   LSPICE3B.388   
+         IF (ADV_TYPE .EQ. 1) THEN                                         LSPICE3B.389   
+! ----------------------------------------------------------------------   LSPICE3B.390   
+!  5.1 Original advection scheme                                           LSPICE3B.391   
+! ----------------------------------------------------------------------   LSPICE3B.392   
+! See if fall speed is small enough that not all the ice falls out of      LSPICE3B.393   
+! the layer.                                                               LSPICE3B.394   
+           IF(VF(I).LE.DHIR(I))THEN                                        LSPICE3B.395   
+! short timestep solution                                                  LSPICE3B.396   
+             VF(I)=FQI                                                     LSPICE3B.397   
+             IF(VF(I).LE.DHIR(I))THEN                                      LSPICE3B.398   
+! flux out is just represented by the fall speed estimated above           LSPICE3B.399   
+               FQIRQI=FQI*RHO(I)*QCF(I)                                    LSPICE3B.400   
+             ELSE                                                          LSPICE3B.401   
+! cannot allow more ice to leave than was already there                    LSPICE3B.402   
+               FQIRQI=RHO(I)*QCF(I)*DHIR(I)                                LSPICE3B.403   
+             ENDIF                                                         LSPICE3B.404   
+! calculate new ice content in this layer by flux divergence               LSPICE3B.405   
+             QCF(I)=QCF(I)+(SNOW(I)-FQIRQI)*DHI(I)*RHOR(I)                 LSPICE3B.406   
+           ELSE                                                            LSPICE3B.407   
+! long timestep case                                                       LSPICE3B.408   
+             QUP = SNOW(I)*RHOR(I)/VF(I)                                   LSPICE3B.409   
+             FQIRQI = SNOW(I) - (RHODZ(I)*(QUP-QCF(I))/TIMESTEP)           LSPICE3B.410   
+             QCF(I) = QUP                                                  LSPICE3B.411   
+! VF must be as least as great as the fall velocity of the current layer   LSPICE3B.412   
+             IF(VF(I).LT.FQI) VF(I)=FQI                                    LSPICE3B.413   
+!                                                                          LSPICE3B.414   
+! END IF for VF(I).LE.DHIR(I)                                              LSPICE3B.415   
+!                                                                          LSPICE3B.416   
+           END IF                                                          LSPICE3B.417   
+! ----------------------------------------------------------------------   LSPICE3B.418   
+!  5.2 Modified advection scheme treats better ice falling across layers   LSPICE3B.419   
+! ----------------------------------------------------------------------   LSPICE3B.420   
+           ELSEIF (ADV_TYPE .EQ. 2) THEN                                   LSPICE3B.421   
+! Fall of ice OUT of the layer                                             LSPICE3B.422   
+! FQIRQI is the flux out                                                   LSPICE3B.423   
+           FQIRQI=RHO(I)*QCF(I)*MIN(FQI,DHIR(I))                           LSPICE3B.424   
+! QCF(I) is what remains in the layer                                      LSPICE3B.425   
+           QCF(I)=QCF(I)-FQIRQI*DHI(I)*RHOR(I)                             LSPICE3B.426   
+! Fall of ice INTO the layer                                               LSPICE3B.427   
+! QUP is ice content from flux in which remains in layer                   LSPICE3B.428   
+           IF (VF(I).GT.DHIR(I)) THEN                                      LSPICE3B.429   
+             QUP=SNOW(I)*RHOR(I)/VF(I)                                     LSPICE3B.430   
+! FQIRQI2 is flux straight through the layer                               LSPICE3B.431   
+             FQIRQI2=SNOW(I)-RHO(I)*QUP*DHIR(I)                            LSPICE3B.432   
+           ELSE                                                            LSPICE3B.433   
+             QUP=SNOW(I)*RHOR(I)*DHI(I)                                    LSPICE3B.434   
+             FQIRQI2=0.0                                                   LSPICE3B.435   
+           ENDIF                                                           LSPICE3B.436   
+! QCF is updated ice content in the layer                                  LSPICE3B.437   
+           QCF(I)=QCF(I)+QUP                                               LSPICE3B.438   
+! FQIRQI is updated flux out of the layer                                  LSPICE3B.439   
+           FQIRQI=FQIRQI+FQIRQI2                                           LSPICE3B.440   
+! Now update fall speed out of layer. This is a weighted average           LSPICE3B.441   
+! of fall speed from layer and excess fall speed from fall                 LSPICE3B.442   
+! through the layer.                                                       LSPICE3B.443   
+!          VF(I)=MAX(FQI,VF(I)-DHIR(I))                                    LSPICE3B.444   
+           IF (FQIRQI2.GT.0.0) THEN                                        LSPICE3B.445   
+             VF(I)=FQI + FQIRQI2/FQIRQI * (VF(I)-DHIR(I)-FQI)              LSPICE3B.446   
+           ELSE                                                            LSPICE3B.447   
+             VF(I)=FQI                                                     LSPICE3B.448   
+           ENDIF                                                           LSPICE3B.449   
+! End of advection calculations for type 2                                 LSPICE3B.450   
+! ----------------------------------------------------------------------   LSPICE3B.451   
+!  5.3 Other advection methods aren't written yet!                         LSPICE3B.452   
+! ----------------------------------------------------------------------   LSPICE3B.453   
+         ELSE                                                              LSPICE3B.454   
+! Error: Advection type does not exist                                     LSPICE3B.455   
+!                                                                          LSPICE3B.456   
+! ENDIF for advection method                                               LSPICE3B.457   
+         ENDIF                                                             LSPICE3B.458   
+! ----------------------------------------------------------------------   LSPICE3B.459   
+!  5.4 Snow is used to save fall out of layer                              LSPICE3B.460   
+!      for calculation of fall into next layer                             LSPICE3B.461   
+! ----------------------------------------------------------------------   LSPICE3B.462   
+         SNOWT(I)=SNOWT(I)+FQIRQI/LSITER                                   LSPICE3B.463   
+!                                                                          LSPICE3B.464   
+! ----------------------------------------------------------------------   LSPICE3B.465   
+!      Transfer processes only active at T less than 0 deg C               LSPICE3B.466   
+! ----------------------------------------------------------------------   LSPICE3B.467   
+         IF(T(I).LT.ZERODEGC) THEN                                         LSPICE3B.468   
+!                                                                          LSPICE3B.469   
+! ----------------------------------------------------------------------   LSPICE3B.470   
+!  6.1 Homogenous nucleation takes place at temperatures less than THOMO   LSPICE3B.471   
+! ----------------------------------------------------------------------   LSPICE3B.472   
+            IF (T(I).LT.(ZERODEGC+THOMO)) THEN                             LSPICE3B.473   
+! Turn all liquid to ice                                                   LSPICE3B.474   
+              QCF(I)=QCF(I)+QCL(I)                                         LSPICE3B.475   
+              T(I)=T(I)+LFRCP*QCL(I)                                       LSPICE3B.476   
+              QCL(I)=0.0                                                   LSPICE3B.477   
+            END IF                                                         LSPICE3B.478   
+! ----------------------------------------------------------------------   LSPICE3B.479   
+!  6.2 Heteorgenous nucleation occurs for temps less than TNUC deg C       LSPICE3B.480   
+! ----------------------------------------------------------------------   LSPICE3B.481   
+           IF (T(I).LT.(ZERODEGC+TNUC)) THEN                               LSPICE3B.482   
+! Calculate number of active ice nucleii                                   LSPICE3B.483   
+             DQI=MIN(0.01*EXP(-0.6*TEMPC),1.0E5)                           LSPICE3B.484   
+! Each nucleus can grow to arbitary mass of M0 kg                          LSPICE3B.485   
+             DQI=M0*DQI*RHOR(I)                                            LSPICE3B.486   
+! RHNUC represents how much moisture is available for ice formation.       LSPICE3B.487   
+             RHNUC=(188.92+2.81*(T(I)-ZERODEGC)                            LSPICE3B.488   
+     &       +0.013336*(T(I)-ZERODEGC)**2-10.0)*0.01                       LSPICE3B.489   
+             RHNUC=MIN(RHNUC,1.0)                                          LSPICE3B.490   
+! Predict transfer of mass to ice.                                         LSPICE3B.491   
+             DQI=MAX(MIN(DQI,Q(I)+QCL(I)                                   LSPICE3B.492   
+     &           -RATEQS(I)*MAX(QSL(I)*RHNUC,QS(I))),0.0)                  LSPICE3B.493   
+             QCF(I)=QCF(I)+DQI                                             LSPICE3B.494   
+! This comes initially from liquid water                                   LSPICE3B.495   
+             DQIL=MIN(DQI,QCL(I))                                          LSPICE3B.496   
+             QCL(I)=QCL(I)-DQIL                                            LSPICE3B.497   
+             T(I)=T(I)+LFRCP*DQIL                                          LSPICE3B.498   
+! If more moisture is required then nucleation removes from vapour.        LSPICE3B.499   
+             DQI=DQI-DQIL                                                  LSPICE3B.500   
+             T(I)=T(I)+LSRCP*DQI                                           LSPICE3B.501   
+             Q(I)=Q(I)-DQI                                                 LSPICE3B.502   
+! END IF for nucleation                                                    LSPICE3B.503   
+           END IF                                                          LSPICE3B.504   
+!                                                                          LSPICE3B.505   
+! ----------------------------------------------------------------------   LSPICE3B.506   
+!  7   Deposition/Sublimation of snow - explicit.                          LSPICE3B.507   
+!      Hallett Mossop process enhances growth.                             LSPICE3B.508   
+! ----------------------------------------------------------------------   LSPICE3B.509   
+           IF(QCF(I).GT.M0) THEN                                           LSPICE3B.510   
+! Calculate transfer rate as a function of QCF and T                       LSPICE3B.511   
+             PR02=RHO(I)*QCF(I)*CONSTP(1)*TCGI                             LSPICE3B.512   
+             APLUSB=(APB1-APB2*T(I))*ESI(I)                                LSPICE3B.513   
+             APLUSB=APLUSB+(T(I)**3)*P(I)*APB3                             LSPICE3B.514   
+             DQI=TCG(I)*CONSTP(5)*T(I)**2*ESI(I)*RATEQ*                    LSPICE3B.515   
+     &      (MIN((Q(I)+QCL(I)),QSL(I))-RATEQCF*QCF(I)-RATEQS(I)*QS(I))*    LSPICE3B.516   
+     &       (0.65*CONSTP(13)*CORR2(I)*PR02**CX(1)+CONSTP(6)*ROCOR(I)*     LSPICE3B.517   
+     &       PR02**CX(2))/(QS(I)*APLUSB*RHO(I))                            LSPICE3B.518   
+! Limits depend on whether deposition or sublimation occurs                LSPICE3B.519   
+             IF (DQI.GT.0.0) THEN                                          LSPICE3B.520   
+! Deposition is occuring.                                                  LSPICE3B.521   
+! Hallett Mossop Enhancement                                               LSPICE3B.522   
+               IF ( (T(I)-ZERODEGC) .GE. HM_T_MAX) THEN                    LSPICE3B.523   
+! Temperature is greater than maximum threshold for HM.                    LSPICE3B.524   
+                 HM_RATE=0.0                                               LSPICE3B.525   
+               ELSEIF ((T(I)-ZERODEGC) .LT. HM_T_MAX                       LSPICE3B.526   
+! Temperature is between HM thresholds                                     LSPICE3B.527   
+     &           .AND. (T(I)-ZERODEGC) .GT. HM_T_MIN) THEN                 LSPICE3B.528   
+                 HM_RATE=(1.0-EXP( (T(I)-ZERODEGC-HM_T_MAX)*HM_DECAY) )    LSPICE3B.529   
+     &             *HM_NORMALIZE                                           LSPICE3B.530   
+               ELSE                                                        LSPICE3B.531   
+! Temperature is less than minimum threshold for HM.                       LSPICE3B.532   
+                 HM_RATE=EXP( (T(I)-ZERODEGC-HM_T_MIN)*HM_DECAY)           LSPICE3B.533   
+               ENDIF                                                       LSPICE3B.534   
+! Calculate enhancement factor for HM process.                             LSPICE3B.535   
+               HM_RATE=1.0+HM_RATE*QCL(I)*HM_RQCL                          LSPICE3B.536   
+! Calculate Transfer. Limit is available moisture.                         LSPICE3B.537   
+               DQI=MIN(DQI*TIMESTEP*HM_RATE,                               LSPICE3B.538   
+     &         (Q(I)+QCL(I)-RATEQCF*QCF(I)-RATEQS(I)*QS(I))                LSPICE3B.539   
+     &          /(1.0+RATEQCF))                                            LSPICE3B.540   
+             ELSE                                                          LSPICE3B.541   
+! Sublimation is occuring. Limits are spare moisture capacity and QCF      LSPICE3B.542   
+               DQI=MAX(MAX(DQI*TIMESTEP,                                   LSPICE3B.543   
+     &           (Q(I)+QCL(I)-RATEQCF*QCF(I)-RATEQS(I)*QS(I))              LSPICE3B.544   
+     &                            /(1.0+RATEQCF)),-QCF(I))                 LSPICE3B.545   
+             END IF                                                        LSPICE3B.546   
+! Adjust ice content                                                       LSPICE3B.547   
+             QCF(I)=QCF(I)+DQI                                             LSPICE3B.548   
+             DQIL=MAX(MIN(DQI,QCL(I)),0.0)                                 LSPICE3B.549   
+! Adjust liquid content (deposits before vapour by Bergeron Findeison      LSPICE3B.550   
+!  process).                                                               LSPICE3B.551   
+             QCL(I)=QCL(I)-DQIL                                            LSPICE3B.552   
+             T(I)=T(I)+LFRCP*DQIL                                          LSPICE3B.553   
+             DQI=DQI-DQIL                                                  LSPICE3B.554   
+! Adjust vapour content                                                    LSPICE3B.555   
+             Q(I)=Q(I)-DQI                                                 LSPICE3B.556   
+             T(I)=T(I)+LSRCP*DQI                                           LSPICE3B.557   
+! END IF for QCF.GT.M0.                                                    LSPICE3B.558   
+           END IF                                                          LSPICE3B.559   
+!                                                                          LSPICE3B.560   
+! ----------------------------------------------------------------------   LSPICE3B.561   
+!  8   Riming of snow by cloud water -implicit in QCL                      LSPICE3B.562   
+! ----------------------------------------------------------------------   LSPICE3B.563   
+           IF (QCF(I).GT.M0.AND.QCL(I).GT.0.0) THEN                        LSPICE3B.564   
+               QCLNEW=QCL(I)/(1.0+CONSTP(4)*TCG(I)*CORR(I)*TIMESTEP*       LSPICE3B.565   
+     &         (RHO(I)*QCF(I)*CONSTP(1)*TCGI)**CX(4))                      LSPICE3B.566   
+! Recalculate water contents                                               LSPICE3B.567   
+               QCF(I)=QCF(I)+(QCL(I)-QCLNEW)                               LSPICE3B.568   
+               T(I)=T(I)+LFRCP*(QCL(I)-QCLNEW)                             LSPICE3B.569   
+               QCL(I)=QCLNEW                                               LSPICE3B.570   
+! END IF for QCF.GT.M0.AND.QCL(I).GT.0.0                                   LSPICE3B.571   
+           END IF                                                          LSPICE3B.572   
+!                                                                          LSPICE3B.573   
+! ----------------------------------------------------------------------   LSPICE3B.574   
+!  9   Capture of rain by snow - implicit in rain                          LSPICE3B.575   
+! ----------------------------------------------------------------------   LSPICE3B.576   
+           IF (RAIN(I).GT.0.0.AND.QCF(I).GT.M0) THEN                       LSPICE3B.577   
+! Calculate velocities                                                     LSPICE3B.578   
+             VR1=CORR(I)*CONSTP(11)/6.0*                                   LSPICE3B.579   
+     &              (RAIN(I)/(CONSTP(8)*CORR(I)))**CX(5)                   LSPICE3B.580   
+             VS1=CONSTP(3)*CORR(I)*(RHO(I)*QCF(I)*CONSTP(1)*TCGI)**CX(3)   LSPICE3B.581   
+! Estimate the mean absolute differences in velocities.                    LSPICE3B.582   
+             FV1=MAX(ABS(VR1-VS1),(VR1+VS1)/8.0)                           LSPICE3B.583   
+! Calculate functions of slope parameter lambda                            LSPICE3B.584   
+             LAMR1=(RAIN(I)/(CONSTP(8)*CORR(I)))**(CX(10))                 LSPICE3B.585   
+             LAMS1=(RHO(I)*QCF(I)*CONSTP(1)*TCGI)**(-CX(6))                LSPICE3B.586   
+             LAMFAC1=CONSTP(16)*(LAMR1**6.0*LAMS1**CX(16)) +               LSPICE3B.587   
+     &               CONSTP(15)*(LAMR1**5.0*LAMS1**CX(15)) +               LSPICE3B.588   
+     &               CONSTP(14)*(LAMR1**4.0*LAMS1**CX(14))                 LSPICE3B.589   
+! Calculate transfer                                                       LSPICE3B.590   
+             DPR=TCG(I)*CONSTP(9)*LAMS1**(-CX(8))*LAMR1**(-CX(9))*FV1*     LSPICE3B.591   
+     &       LAMFAC1*TIMESTEP*RHOR(I)                                      LSPICE3B.592   
+             DPR=MIN(DPR,RAIN(I)*(DHI(I)*LSITER)*RHOR(I))                  LSPICE3B.593   
+! Adjust ice and rain contents                                             LSPICE3B.594   
+             QCF(I)=QCF(I)+DPR                                             LSPICE3B.595   
+             RAIN(I)=RAIN(I)-DPR*RHO(I)*DHILSITERR(I)                      LSPICE3B.596   
+             T(I)=T(I)+LFRCP*DPR                                           LSPICE3B.597   
+!      Endif for RAIN.GT.0.0 in capture term                               LSPICE3B.598   
+           END IF                                                          LSPICE3B.599   
+! ----------------------------------------------------------------------   LSPICE3B.600   
+!      End of transfer processes only active at T less than 0 deg C        LSPICE3B.601   
+! ----------------------------------------------------------------------   LSPICE3B.602   
+         END IF                                                            LSPICE3B.603   
+! ----------------------------------------------------------------------   LSPICE3B.604   
+!  10  Evaporate melting snow - implicit in subsaturation                  LSPICE3B.605   
+! ----------------------------------------------------------------------   LSPICE3B.606   
+         IF(QCF(I).GT.M0.AND.T(I).GT.ZERODEGC)THEN                         LSPICE3B.607   
+! Calculate transfer as a function of QCF, T and specific humidity         LSPICE3B.608   
+           PR02=RHO(I)*QCF(I)*CONSTP(1)*TCGI                               LSPICE3B.609   
+           PR04=((APB4-APB5*T(I))*ESW(I)+APB6*P(I)*T(I)**3)                LSPICE3B.610   
+           DPR=TCG(I)*RATEQ*CONSTP(5)*T(I)**2*ESW(I)*TIMESTEP*             LSPICE3B.611   
+     &     (0.65*CONSTP(13)*CORR2(I)*PR02**CX(1)                           LSPICE3B.612   
+     &      +CONSTP(6)*ROCOR(I)*PR02**CX(2))/(QSL(I)*RHO(I)*PR04)          LSPICE3B.613   
+           DPR=DPR*MAX(                                                    LSPICE3B.614   
+     &         (RATEQS(I)*QSL(I)+RATEQCF*QCF(I)-Q(I)-QCL(I)),0.0)          LSPICE3B.615   
+     &                /(1.0+DPR*(1.0+RATEQCF))                             LSPICE3B.616   
+! Extra check to see we don't get a negative QCF                           LSPICE3B.617   
+           DPR=MIN(DPR,QCF(I))                                             LSPICE3B.618   
+! Update values of ice and vapour                                          LSPICE3B.619   
+           QCF(I)=QCF(I)-DPR                                               LSPICE3B.620   
+           Q(I)=Q(I)+DPR                                                   LSPICE3B.621   
+           T(I)=T(I)-DPR*LSRCP                                             LSPICE3B.622   
+         END IF                                                            LSPICE3B.623   
+!                                                                          LSPICE3B.624   
+! ----------------------------------------------------------------------   LSPICE3B.625   
+!  11  Melting of snow - explicit                                          LSPICE3B.626   
+!      USE WET BULB TEMP (DEG.C) IN SNOW MELT CALC.                        LSPICE3B.627   
+!      Use a numerical approximation.                                      LSPICE3B.628   
+! ----------------------------------------------------------------------   LSPICE3B.629   
+         IF(QCF(I).GT.M0.AND.T(I).GT.ZERODEGC)THEN                         LSPICE3B.630   
+           TEMPC=T(I)-ZERODEGC                                             LSPICE3B.631   
+! An approximate calculation of wet bulb temperature                       LSPICE3B.632   
+           TEMP7=TEMPC-RATEQ*                                              LSPICE3B.633   
+     &            (RATEQS(I)*QSL(I)+RATEQCF*QCF(I)-Q(I)-QCL(I))            LSPICE3B.634   
+     &           *(TW1+TW2*(P(I)-TW3) - TW4*(T(I)-TW5) )                   LSPICE3B.635   
+           TEMP7=MAX(TEMP7,0.0)                                            LSPICE3B.636   
+! End of wet bulb temp formulations.                                       LSPICE3B.637   
+           PR02=RHO(I)*QCF(I)*CONSTP(1)*TCGI                               LSPICE3B.638   
+           DPR=TCG(I)*CONSTP(7)*TIMESTEP*                                  LSPICE3B.639   
+     &            (0.65*CONSTP(13)*CORR2(I)*PR02**CX(1)                    LSPICE3B.640   
+     &         + CONSTP(6)*ROCOR(I)*PR02**CX(2))*RHOR(I)                   LSPICE3B.641   
+! Solve implicitly in terms of temperature                                 LSPICE3B.642   
+           DPR=TEMP7*(1.0-1.0/(1.0+DPR*LFRCP))/LFRCP                       LSPICE3B.643   
+           DPR=MIN(DPR,QCF(I))                                             LSPICE3B.644   
+! Update values of ice and Rain                                            LSPICE3B.645   
+           QCF(I)=QCF(I)-DPR                                               LSPICE3B.646   
+           RAIN(I)=RAIN(I)+DPR*RHO(I)*DHILSITERR(I)                        LSPICE3B.647   
+           T(I)=T(I)-LFRCP*DPR                                             LSPICE3B.648   
+! ENDIF for melting snow                                                   LSPICE3B.649   
+         END IF                                                            LSPICE3B.650   
+       ENDDO                                                               LSPICE3B.651   
+!                                                                          LSPICE3B.652   
+! ----------------------------------------------------------------------   LSPICE3B.653   
+!  12  Evaporation of rain - implicit in subsaturation                     LSPICE3B.654   
+! ----------------------------------------------------------------------   LSPICE3B.655   
+*IF DEF,VECTLIB                                                            PXVECTLB.91    
+! Use a condensed points calculation to speed up the code                  LSPICE3B.657   
+       KK=0                                                                LSPICE3B.658   
+       DO I=1,POINTS                                                       LSPICE3B.659   
+          IF(RAIN(I).GT.0.0)THEN                                           LSPICE3B.660   
+            KK=KK+1                                                        LSPICE3B.661   
+            TEMP1(KK)=RAIN(I)/(CONSTP(8)*CORR(I))                          LSPICE3B.662   
+          ENDIF                                                            LSPICE3B.663   
+       ENDDO                                                               LSPICE3B.664   
+! Define a joint power of CX(12) and CX(10) as real to real operations     LSPICE3B.665   
+! are expensive                                                            LSPICE3B.666   
+       POWER=(CX(12)*CX(10))                                               LSPICE3B.667   
+       CALL POWR_V(KK,TEMP1,POWER,TEMP2)                                   LSPICE3B.668   
+       POWER=(CX(11)*CX(10))                                               LSPICE3B.669   
+       CALL POWR_V(KK,TEMP1,POWER,TEMP1)                                   LSPICE3B.670   
+! Set condensed points counter back to zero                                LSPICE3B.671   
+       KK=0                                                                LSPICE3B.672   
+*ENDIF                                                                     LSPICE3B.673   
+       DO I=1,POINTS                                                       LSPICE3B.674   
+         IF(RAIN(I).GT.0.0)THEN                                            LSPICE3B.675   
+           PR04=((APB4-APB5*T(I))*ESW(I)+APB6*P(I)*T(I)**3)                LSPICE3B.676   
+*IF DEF,VECTLIB                                                            PXVECTLB.92    
+! Copy temp values to LAMR2 and LAMR1                                      LSPICE3B.678   
+           KK=KK+1                                                         LSPICE3B.679   
+           LAMR2=TEMP2(KK)                                                 LSPICE3B.680   
+           LAMR1=TEMP1(KK)                                                 LSPICE3B.681   
+*ELSE                                                                      LSPICE3B.682   
+! Define LAMR1 and LAMR2                                                   LSPICE3B.683   
+           LAMR1=RAIN(I)/(CONSTP(8)*CORR(I))                               LSPICE3B.684   
+           LAMR2=LAMR1**(CX(12)*CX(10))                                    LSPICE3B.685   
+           LAMR1=LAMR1**(CX(11)*CX(10))                                    LSPICE3B.686   
+*ENDIF                                                                     LSPICE3B.687   
+! New, consistent evaporation method, with rain fall speed relationship.   LSPICE3B.688   
+           DPR=CONSTP(2)*T(I)**2*ESW(I)*TIMESTEP                           LSPICE3B.689   
+           DPR=DPR*( (0.78*CORR2(I)*LAMR2)                                 LSPICE3B.690   
+     &               + (CONSTP(12)*ROCOR(I)*LAMR1) )                       LSPICE3B.691   
+           DPR=DPR*RATEQ/(QSL(I)*RHO(I)*PR04)                              LSPICE3B.692   
+! Calculate transfers.                                                     LSPICE3B.693   
+           DPR=DPR*MAX((RATEQSL(I)*QSL(I)-Q(I)-QCL(I)),0.0)/(1.0+DPR)      LSPICE3B.694   
+           DPR=DPR*RHO(I)*DHILSITERR(I)                                    LSPICE3B.695   
+           DPR=MIN(DPR,RAIN(I))                                            LSPICE3B.696   
+! Update values of rain and vapour                                         LSPICE3B.697   
+           RAIN(I)=RAIN(I)-DPR                                             LSPICE3B.698   
+           Q(I)=Q(I)+DPR*DHI(I)*LSITER*RHOR(I)                             LSPICE3B.699   
+           T(I)=T(I)-DPR*LCRCP*DHI(I)*LSITER*RHOR(I)                       LSPICE3B.700   
+! END IF for evaporation of rain.                                          LSPICE3B.701   
+         END IF                                                            LSPICE3B.702   
+!                                                                          LSPICE3B.703   
+! ----------------------------------------------------------------------   LSPICE3B.704   
+!  13  Accretion of cloud on rain - implicit in liquid water content       LSPICE3B.705   
+! ----------------------------------------------------------------------   LSPICE3B.706   
+         IF(RAIN(I).GT.0.0.AND.QCL(I).GT.0.0)THEN                          LSPICE3B.707   
+! New accretion formulation.                                               LSPICE3B.708   
+           PR02=RAIN(I)/(CONSTP(8)*CORR(I))                                LSPICE3B.709   
+           QCLNEW=QCL(I)/                                                  LSPICE3B.710   
+     &            ((1.0+CONSTP(10)*CORR(I)*TIMESTEP*PR02**CX(7)))          LSPICE3B.711   
+! Now calculate increments to rain.                                        LSPICE3B.712   
+           RAIN(I)=RAIN(I)+(QCL(I)-QCLNEW)*RHO(I)*DHILSITERR(I)            LSPICE3B.713   
+           QCL(I)=QCL(I)-(QCL(I)-QCLNEW)                                   LSPICE3B.714   
+! END IF for accretion of cloud on rain.                                   LSPICE3B.715   
+         END IF                                                            LSPICE3B.716   
+       ENDDO                                                               LSPICE3B.717   
+!                                                                          LSPICE3B.718   
+! ----------------------------------------------------------------------   LSPICE3B.719   
+!  14  Autoconversion of cloud to rain - explicit                          LSPICE3B.720   
+! ----------------------------------------------------------------------   LSPICE3B.721   
+*IF DEF,VECTLIB                                                            PXVECTLB.93    
+! Use a condensed points calculation to speed up the code                  LSPICE3B.723   
+       KK=0                                                                LSPICE3B.724   
+       DO I=1,POINTS                                                       LSPICE3B.725   
+            IF (QCL(I).GT.0.0.AND.CFLIQ(I).GT.0.0) THEN                    LSPICE3B.726   
+              KK=KK+1                                                      LSPICE3B.727   
+              TEMP1(KK)=(RHO(I)*QCL(I)/CFLIQ(I))                           LSPICE3B.728   
+            ENDIF                                                          LSPICE3B.729   
+       ENDDO                                                               LSPICE3B.730   
+       CALL POWR_V(KK,TEMP1,1.333,TEMP1)                                   LSPICE3B.731   
+       KK=0                                                                LSPICE3B.732   
+*ENDIF                                                                     LSPICE3B.733   
+       DO I=1,POINTS                                                       LSPICE3B.734   
+         IF (QCL(I).GT.0.0.AND.CFLIQ(I).GT.0.0) THEN                       LSPICE3B.735   
+! Use a liquid cloud fraction here as this term is very non-linear         LSPICE3B.736   
+! The section below is a simple way of proceeding.                         LSPICE3B.737   
+           IF (BLAND(I)) THEN                                              LSPICE3B.738   
+! Land point                                                               LSPICE3B.739   
+             QC=MIN(AUTOLIM_LAND*CFLIQ(I)*RHOR(I),QCL(I))                  LSPICE3B.740   
+           ELSE                                                            LSPICE3B.741   
+! Sea point                                                                LSPICE3B.742   
+             QC=MIN(AUTOLIM_SEA*CFLIQ(I)*RHOR(I),QCL(I))                   LSPICE3B.743   
+           END IF                                                          LSPICE3B.744   
+*IF DEF,VECTLIB                                                            PXVECTLB.94    
+! Using a condensed point array in TEMP1 indexed by KK                     LSPICE3B.746   
+           KK=KK+1                                                         LSPICE3B.747   
+           IF (BLAND(I)) THEN                                              LSPICE3B.748   
+             DPR=MIN(AUTORATE_LAND*TEMP1(KK)                               LSPICE3B.749   
+     &                *TIMESTEP*QCL(I)/CORR2(I),QCL(I)-QC)                 LSPICE3B.750   
+           ELSE                                                            LSPICE3B.751   
+             DPR=MIN(AUTORATE_SEA*TEMP1(KK)                                LSPICE3B.752   
+     &                *TIMESTEP*QCL(I)/CORR2(I),QCL(I)-QC)                 LSPICE3B.753   
+           ENDIF                                                           LSPICE3B.754   
+*ELSE                                                                      LSPICE3B.755   
+           IF (BLAND(I)) THEN                                              LSPICE3B.756   
+! Land point                                                               LSPICE3B.757   
+             DPR=MIN(AUTORATE_LAND*(RHO(I)*QCL(I)/CFLIQ(I))**1.333         LSPICE3B.758   
+     &                 *TIMESTEP*QCL(I)/CORR2(I),QCL(I)-QC)                LSPICE3B.759   
+           ELSE                                                            LSPICE3B.760   
+! Sea point                                                                LSPICE3B.761   
+             DPR=MIN(AUTORATE_SEA*(RHO(I)*QCL(I)/CFLIQ(I))**1.333          LSPICE3B.762   
+     &                 *TIMESTEP*QCL(I)/CORR2(I),QCL(I)-QC)                LSPICE3B.763   
+           END IF                                                          LSPICE3B.764   
+*ENDIF                                                                     LSPICE3B.765   
+! End of calculation of autoconversion amount DPR                          LSPICE3B.766   
+           QCL(I)=QCL(I)-DPR                                               LSPICE3B.767   
+           RAIN(I)=RAIN(I)+DPR*RHO(I)*DHILSITERR(I)                        LSPICE3B.768   
+! ENDIF for autoconversion.                                                LSPICE3B.769   
+         END IF                                                            LSPICE3B.770   
+! ----------------------------------------------------------------------   LSPICE3B.771   
+!  15  Now continue the loops over points and iterations.                  LSPICE3B.772   
+! ----------------------------------------------------------------------   LSPICE3B.773   
+! Continue DO loop over points                                             LSPICE3B.774   
+       END DO ! Points_do2                                                 LSPICE3B.775   
+! Continue DO loop over iterations                                         LSPICE3B.776   
+       END DO ! Iters_do1                                                  LSPICE3B.777   
+!                                                                          LSPICE3B.778   
+! Copy contents of SNOWT to SNOW, to fall into next layer down             LSPICE3B.779   
+! Points_do3                                                               LSPICE3B.780   
+      DO I=1,POINTS                                                        LSPICE3B.781   
+        SNOW(I)=SNOWT(I)                                                   LSPICE3B.782   
+! ----------------------------------------------------------------------   LSPICE3B.783   
+!  16 Melt any SNOW which has reached here, as long as T is large enough   LSPICE3B.784   
+! ----------------------------------------------------------------------   LSPICE3B.785   
+! Only use if long timestep case. In which case melt the excess snow       LSPICE3B.786   
+! which falls straight through a layer. Use DQI variable to save space.    LSPICE3B.787   
+! DQI APPROXIMATELY represents the excess SNOW.                            LSPICE3B.788   
+           DQI=MIN(VF(I)*DHI(I)-1.0,1.0)                                   LSPICE3B.789   
+           IF (DQI.GT.0.0) THEN                                            LSPICE3B.790   
+! Long timestep case                                                       LSPICE3B.791   
+             TEMPC=T(I)-ZERODEGC                                           LSPICE3B.792   
+             IF (SNOW(I).GT.0.0.AND.T(I).GT.ZERODEGC) THEN                 LSPICE3B.793   
+! Numerical approximation of wet bulb temperature.                         LSPICE3B.794   
+               TEMP7=TEMPC-RATEQ*(RATEQS(I)*QSL(I)                         LSPICE3B.795   
+     &           +RATEQCF*QCF(I)-Q(I)-QCL(I))*(TW1+TW2*                    LSPICE3B.796   
+     &           (P(I)-TW3) - TW4*(T(I)-TW5) )                             LSPICE3B.797   
+               TEMP7=MAX(TEMP7,0.0)                                        LSPICE3B.798   
+! End of wet bulb calculation                                              LSPICE3B.799   
+               DPR=TEMP7/(LFRCP*LSITER)                                    LSPICE3B.800   
+               DPR=MIN(DPR,SNOW(I)*DHI(I)*RHOR(I)*DQI)                     LSPICE3B.801   
+! Update values of snow and rain                                           LSPICE3B.802   
+               SNOW(I)=SNOW(I)-DPR*RHO(I)*DHIR(I)                          LSPICE3B.803   
+               RAIN(I)=RAIN(I)+DPR*RHO(I)*DHIR(I)                          LSPICE3B.804   
+               T(I)=T(I)-LFRCP*DPR*LSITER                                  LSPICE3B.805   
+! END IF for long timestep                                                 LSPICE3B.806   
+             END IF                                                        LSPICE3B.807   
+! END IF for melting of excess snow.                                       LSPICE3B.808   
+           END IF                                                          LSPICE3B.809   
+! ----------------------------------------------------------------------   LSPICE3B.810   
+!  17  Remove any small amount of QCF which is left over to be tidy.       LSPICE3B.811   
+!      If QCF is less than QCFMIN and isn't growing                        LSPICE3B.812   
+!      by deposition (assumed to be given by RHCPT) then remove it.        LSPICE3B.813   
+! ----------------------------------------------------------------------   LSPICE3B.814   
+!           DQI=M0*RHOR(I)*MIN( 0.01*EXP(-0.6*TEMPC),1.0E5 )               LSPICE3B.815   
+!           IF (QCF(I).LT.MIN( MAX(M0*RHOR(I),DQI),1.0E-5*QS(I) ) ) THEN   LSPICE3B.816   
+           IF (QCF(I).LT.QCFMIN.AND.                                       LSPICE3B.817   
+     &     (T(I).GT.ZERODEGC .OR. (Q(I)+QCL(I) .LE. RHCPT(I)*QS(I))        LSPICE3B.818   
+     &     .OR. QCF(I).LT.0.0)  )  THEN                                    LSPICE3B.819   
+             Q(I)=Q(I)+QCF(I)                                              LSPICE3B.820   
+             T(I)=T(I)-LSRCP*QCF(I)                                        LSPICE3B.821   
+             QCF(I)=0.0                                                    LSPICE3B.822   
+           END IF                                                          LSPICE3B.823   
+! END DO for melting of excess snow loop over points.                      LSPICE3B.824   
+      END DO ! Points_do3                                                  LSPICE3B.825   
+! ----------------------------------------------------------------------   LSPICE3B.826   
+!  18  End of the LSP_ICE subroutine                                       LSPICE3B.827   
+! ----------------------------------------------------------------------   LSPICE3B.828   
+      RETURN                                                               LSPICE3B.829   
+      END                                                                  LSPICE3B.830   
+*ENDIF                                                                     LSPICE3B.831   

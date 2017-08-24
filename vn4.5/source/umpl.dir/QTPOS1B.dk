@@ -1,0 +1,913 @@
+*IF DEF,A13_1B                                                             QTPOS1B.2     
+C ******************************COPYRIGHT******************************    QTPOS1B.3     
+C (c) CROWN COPYRIGHT 1996, METEOROLOGICAL OFFICE, All Rights Reserved.    QTPOS1B.4     
+C                                                                          QTPOS1B.5     
+C Use, duplication or disclosure of this code is subject to the            QTPOS1B.6     
+C restrictions as set forth in the contract.                               QTPOS1B.7     
+C                                                                          QTPOS1B.8     
+C                Meteorological Office                                     QTPOS1B.9     
+C                London Road                                               QTPOS1B.10    
+C                BRACKNELL                                                 QTPOS1B.11    
+C                Berkshire UK                                              QTPOS1B.12    
+C                RG12 2SZ                                                  QTPOS1B.13    
+C                                                                          QTPOS1B.14    
+C If no contract has been raised with this copy of the code, the use,      QTPOS1B.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      QTPOS1B.16    
+C to do so must first be obtained in writing from the Head of Numerical    QTPOS1B.17    
+C Modelling at the above address.                                          QTPOS1B.18    
+C ******************************COPYRIGHT******************************    QTPOS1B.19    
+C                                                                          QTPOS1B.20    
+!+ Interface routine for QTPOS allowing both normal and MPP code to use    QTPOS1B.21    
+!+ current algorithms                                                      QTPOS1B.22    
+!                                                                          QTPOS1B.23    
+! Subroutine Interface                                                     QTPOS1B.24    
+      SUBROUTINE QT_POS_CTL                                                QTPOS1B.25    
+     &                     (QT,RS_SQUARED_DELTAP,ROW_LENGTH,               QTPOS1B.26    
+     &                      P_FIELD,Q_LEVELS,                              QTPOS1B.27    
+*CALL ARGFLDPT                                                             QTPOS1B.28    
+     &                      ERROR_CODE,ERROR_MESSAGE,                      QTPOS1B.29    
+     &                      COS_P_LATITUDE,SEC_P_LATITUDE,                 QTPOS1B.30    
+     &                      L_NEG_QT,L_QT_POS_LOCAL,DT,SF_QTFIX,QTFIX)     QTPOS1B.31    
+                                                                           QTPOS1B.32    
+      IMPLICIT NONE                                                        QTPOS1B.33    
+                                                                           QTPOS1B.34    
+!                                                                          QTPOS1B.35    
+! Description:                                                             QTPOS1B.36    
+! QT fields are mass weighted, and then                                    QTPOS1B.37    
+! if MPP *DEF is set, the field is gathered a level to a processor, and    QTPOS1B.38    
+! QT_POS is called by each processor with its levels. Otherwise (ie. non   QTPOS1B.39    
+! MPP), this routine just passed the mass-weighted QT field straight       QTPOS1B.40    
+! through to QTPOS. Finally, the mass weighting is removed, and            QTPOS1B.41    
+! the QT_FIX diagnostic is calculated (if required)                        QTPOS1B.42    
+!                                                                          QTPOS1B.43    
+! Current code owner (QT_POS_CTL only) : Paul Burton                       QTPOS1B.44    
+!                                                                          QTPOS1B.45    
+! History                                                                  QTPOS1B.46    
+!  Model    Date      Modification history:                                QTPOS1B.47    
+!   4.2   28/10/96  New deck for HADCM2-specific section A13_1B,           QTPOS1B.48    
+!                   as QTPOS1A but with inconsistent 'old' type            QTPOS1B.49    
+!                   of polar weights.  T.Johns                             QTPOS1B.50    
+!    4.3    24/04/97  Improved error trapping for MPP code                 GPB5F403.73    
+!                     Set QTFIX to safe values         P.Burton            GPB5F403.74    
+!    4.4    22/09/97  Correct missetting of local variables  T Johns       ATJ0F404.1     
+!    4.5    29/09/98  T3E only: remove negative zeros from QT              GPB0F405.196   
+!                                                    P.Burton              GPB0F405.197   
+!                                                                          QTPOS1B.51    
+! Subroutine Arguments:                                                    QTPOS1B.52    
+                                                                           QTPOS1B.53    
+      INTEGER                                                              QTPOS1B.54    
+     &  P_FIELD                  ! IN : Size of fields on P grid           QTPOS1B.55    
+     &, ROW_LENGTH               ! IN : number of points per row           QTPOS1B.56    
+     &, Q_LEVELS                 ! IN : number of moist levels             QTPOS1B.57    
+!                                                                          QTPOS1B.58    
+     &, ERROR_CODE               ! INOUT : 0 on entry                      QTPOS1B.59    
+!                                !         1 on exit if error detected     QTPOS1B.60    
+                                                                           QTPOS1B.61    
+! All TYPFLDPT arguments are intent IN                                     QTPOS1B.62    
+*CALL TYPFLDPT                                                             QTPOS1B.63    
+                                                                           QTPOS1B.64    
+      CHARACTER*(80)                                                       QTPOS1B.65    
+     &  ERROR_MESSAGE            ! OUT : Error message                     QTPOS1B.66    
+                                                                           QTPOS1B.67    
+      REAL                                                                 QTPOS1B.68    
+     &  QT(P_FIELD,Q_LEVELS)     ! INOUT : QT field                        QTPOS1B.69    
+     &, QTFIX(P_FIELD,Q_LEVELS) ! OUT : QT fix diagnostic from             QTPOS1B.70    
+!                                !       resetting and redistributing      QTPOS1B.71    
+!                                !       negative QT values                QTPOS1B.72    
+     &, RS_SQUARED_DELTAP(P_FIELD,Q_LEVELS)                                QTPOS1B.73    
+!                                ! IN : RS*RS*DELTA_P                      QTPOS1B.74    
+     &, COS_P_LATITUDE(P_FIELD)  ! IN : COS(LATITUDE) at P points          QTPOS1B.75    
+     &, SEC_P_LATITUDE(P_FIELD)  ! IN : SEC(LATITUDE) at P points          QTPOS1B.76    
+     &, DT                       ! IN : dynamics timestep                  QTPOS1B.77    
+                                                                           QTPOS1B.78    
+      LOGICAL                                                              QTPOS1B.79    
+     &  L_NEG_QT                 ! IN : Switch to continue in event of     QTPOS1B.80    
+!                                !      excessive negative QT              QTPOS1B.81    
+!                                !      (non-conservative)                 QTPOS1B.82    
+     &, L_QT_POS_LOCAL           ! IN : perform local correction           QTPOS1B.83    
+!                                !      (method 2)                         QTPOS1B.84    
+     &, SF_QTFIX                 ! IN : STASHflag for output of QT fix     QTPOS1B.85    
+!                                !      diagnostic                         QTPOS1B.86    
+                                                                           QTPOS1B.87    
+! Local variables                                                          QTPOS1B.88    
+                                                                           QTPOS1B.89    
+      INTEGER                                                              QTPOS1B.90    
+     &  K,I                      ! loop variables                          QTPOS1B.91    
+     &, I_start                  ! start address for QTPOS calcs           QTPOS1B.92    
+     &, I_end                    ! end address of QTPOS calcs              QTPOS1B.93    
+*IF DEF,MPP                                                                QTPOS1B.94    
+     &, I_start_local            ! local start address for QTPOS calcs     QTPOS1B.95    
+     &, I_end_local              ! local end address for QTPOS calcs       QTPOS1B.96    
+     &, info                     ! return code from comms.                 QTPOS1B.97    
+     &, MAP(Q_LEVELS)            ! processor number for level              QTPOS1B.98    
+     &, N_LEVS_ON_PROC(0:N_PROCS-1) ! number of levels on each processor   QTPOS1B.99    
+     &, int_FAILURE(Q_LEVELS)    ! version of LOGICAL FAILURE array,       QTPOS1B.100   
+!                                ! but using integers                      QTPOS1B.101   
+*ENDIF                                                                     QTPOS1B.102   
+                                                                           QTPOS1B.103   
+      REAL                                                                 QTPOS1B.104   
+     &  FACTOR(Q_LEVELS)         ! scaling factor for revised QT           QTPOS1B.105   
+*IF DEF,GLOBAL                                                             QTPOS1B.106   
+     &, LATITUDE_STEP_INVERSE    ! Computed 1/(DELTA_LAMBDA)               QTPOS1B.107   
+     &, COS_P_LAT_NP             ! COS(latitude) at North Pole             QTPOS1B.108   
+     &, COS_P_LAT_SP             ! COS(latitude) at South Pole             QTPOS1B.109   
+     &, SEC_P_LAT_NP             ! SEC(latitude) at North Pole             QTPOS1B.110   
+     &, SEC_P_LAT_SP             ! SEC(latitude) at South Pole             QTPOS1B.111   
+! See note below concerning rotated global grids                           QTPOS1B.112   
+*ENDIF                                                                     QTPOS1B.113   
+*IF DEF,MPP                                                                QTPOS1B.114   
+     &, local_FACTOR((Q_LEVELS/N_PROCS)+1)  ! scaling factors for the      QTPOS1B.115   
+!                                          ! levels I process              QTPOS1B.116   
+     &,  global_QT_data(GLOBAL_P_FIELD,(Q_LEVELS/N_PROCS)+1)               QTPOS1B.117   
+! Array containing the QT levels to be processed on this processor         QTPOS1B.118   
+     &,  NP_VALUE(Q_LEVELS,2)    ! value of QT + QTFIX at North Pole       QTPOS1B.119   
+     &,  SP_VALUE(Q_LEVELS,2)    ! value of QT + QTFIX at South Pole       QTPOS1B.120   
+*ENDIF                                                                     QTPOS1B.121   
+                                                                           QTPOS1B.122   
+      LOGICAL                                                              QTPOS1B.123   
+     &  FAILURE(Q_LEVELS)  ! Indicates if a particular level has           QTPOS1B.124   
+!                          ! failed to be QT_POSd.                         QTPOS1B.125   
+*IF DEF,MPP                                                                QTPOS1B.126   
+     &, local_FAILURE((Q_LEVELS/N_PROCS)+1)  ! FAILURE array for           QTPOS1B.127   
+!                                           ! levels I process             QTPOS1B.128   
+*ENDIF                                                                     QTPOS1B.129   
+                                                                           QTPOS1B.130   
+*CALL C_A                                                                  QTPOS1B.131   
+*CALL C_G                                                                  QTPOS1B.132   
+*CALL C_PI                                                                 QTPOS1B.133   
+                                                                           QTPOS1B.134   
+!---------------------------------------------------------------------     QTPOS1B.135   
+! NOTE : The MPP code assumes, that for global models, the value of        QTPOS1B.136   
+!        latitude remains constant over a row (in particular the polar     QTPOS1B.137   
+!        rows). This implies the code will not give the correct answers    QTPOS1B.138   
+!        if a rotated global grid is used.                                 QTPOS1B.139   
+                                                                           QTPOS1B.140   
+*IF DEF,GLOBAL                                                             QTPOS1B.141   
+! Recalculate LATITUDE_STEP_INVERSE to avoid changing argument list        QTPOS1B.142   
+! (HADCM2-specific code, needs *CALL C_PI)                                 QTPOS1B.143   
+                                                                           QTPOS1B.144   
+      LATITUDE_STEP_INVERSE=RECIP_PI_OVER_180 *                            ATJ0F404.2     
+     &           REAL((GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH)-1) / REAL(180)    ATJ0F404.3     
+                                                                           QTPOS1B.147   
+      IF (L_QT_POS_LOCAL) THEN                                             QTPOS1B.148   
+        I_start=1                                                          QTPOS1B.149   
+        I_end=GLOBAL_P_FIELD                                               QTPOS1B.150   
+*IF DEF,MPP                                                                QTPOS1B.151   
+        I_start_local=FIRST_FLD_PT                                         QTPOS1B.152   
+        I_end_local=LAST_P_FLD_PT                                          QTPOS1B.153   
+*ENDIF                                                                     QTPOS1B.154   
+      ELSE ! global correction scheme                                      QTPOS1B.155   
+        I_start=GLOBAL_ROW_LENGTH                                          QTPOS1B.156   
+        I_end=GLOBAL_P_FIELD+1-GLOBAL_ROW_LENGTH                           QTPOS1B.157   
+*IF DEF,MPP                                                                QTPOS1B.158   
+        IF (at_top_of_LPG) THEN                                            QTPOS1B.159   
+          I_start_local=TOP_ROW_START+LAST_ROW_PT-1                        QTPOS1B.160   
+        ELSE                                                               QTPOS1B.161   
+          I_start_local=FIRST_FLD_PT                                       QTPOS1B.162   
+        ENDIF                                                              QTPOS1B.163   
+        IF (at_base_of_LPG) THEN                                           QTPOS1B.164   
+          I_end_local=P_BOT_ROW_START+FIRST_ROW_PT-1                       QTPOS1B.165   
+        ELSE                                                               QTPOS1B.166   
+          I_end_local=LAST_P_FLD_PT                                        QTPOS1B.167   
+        ENDIF                                                              QTPOS1B.168   
+*ENDIF                                                                     QTPOS1B.169   
+                                                                           QTPOS1B.170   
+*IF DEF,MPP                                                                QTPOS1B.171   
+        IF (at_top_of_LPG .AND. at_right_of_LPG) THEN                      QTPOS1B.172   
+*ENDIF                                                                     QTPOS1B.173   
+          COS_P_LAT_NP=COS_P_LATITUDE(1)                                   QTPOS1B.174   
+          SEC_P_LAT_NP=SEC_P_LATITUDE(1)                                   QTPOS1B.175   
+          COS_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=                     QTPOS1B.176   
+     &      .125*GLOBAL_ROW_LENGTH/LATITUDE_STEP_INVERSE                   QTPOS1B.177   
+          SEC_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=                     QTPOS1B.178   
+     &      1.0/COS_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)                QTPOS1B.179   
+*IF DEF,MPP                                                                QTPOS1B.180   
+        ENDIF                                                              QTPOS1B.181   
+                                                                           QTPOS1B.182   
+        IF (at_base_of_LPG .AND. at_left_of_LPG) THEN                      QTPOS1B.183   
+*ENDIF                                                                     QTPOS1B.184   
+       COS_P_LAT_SP=COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)         ATJ0F404.4     
+       SEC_P_LAT_SP=SEC_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)         ATJ0F404.5     
+          COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=                  QTPOS1B.187   
+     &      .125*GLOBAL_ROW_LENGTH/LATITUDE_STEP_INVERSE                   QTPOS1B.188   
+          SEC_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=                  QTPOS1B.189   
+     &      1.0/COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)             QTPOS1B.190   
+*IF DEF,MPP                                                                QTPOS1B.191   
+        ENDIF                                                              QTPOS1B.192   
+*ENDIF                                                                     QTPOS1B.193   
+                                                                           QTPOS1B.194   
+      ENDIF                                                                QTPOS1B.195   
+                                                                           QTPOS1B.196   
+*ELSE                                                                      QTPOS1B.197   
+      I_start=1                                                            QTPOS1B.198   
+      I_end=GLOBAL_P_FIELD                                                 QTPOS1B.199   
+*IF DEF,MPP                                                                QTPOS1B.200   
+      I_start_local=FIRST_FLD_PT                                           QTPOS1B.201   
+      I_end_local=LAST_P_FLD_PT                                            QTPOS1B.202   
+*ENDIF                                                                     QTPOS1B.203   
+*ENDIF                                                                     QTPOS1B.204   
+                                                                           QTPOS1B.205   
+      DO K=1,Q_LEVELS                                                      QTPOS1B.206   
+*IF -DEF,MPP                                                               QTPOS1B.207   
+        DO I=I_start,I_end                                                 QTPOS1B.208   
+*ELSE                                                                      QTPOS1B.209   
+        DO I=I_start_local,I_end_local                                     QTPOS1B.210   
+*ENDIF                                                                     QTPOS1B.211   
+          QT(I,K)=QT(I,K)*RS_SQUARED_DELTAP(I,K)*COS_P_LATITUDE(I)         QTPOS1B.212   
+        ENDDO                                                              QTPOS1B.213   
+                                                                           QTPOS1B.214   
+        IF (SF_QTFIX) THEN                                                 QTPOS1B.215   
+          DO I=FIRST_VALID_PT,LAST_P_VALID_PT                              QTPOS1B.216   
+            QTFIX(I,K)=QT(I,K)                                             QTPOS1B.217   
+          ENDDO                                                            QTPOS1B.218   
+          DO I=1,FIRST_VALID_PT-1                                          GPB5F403.75    
+            QTFIX(I,K)=QT(FIRST_VALID_PT,K)                                GPB5F403.76    
+          ENDDO                                                            GPB5F403.77    
+          DO I=LAST_P_VALID_PT+1,P_FIELD                                   GPB5F403.78    
+            QTFIX(I,K)=QT(LAST_P_VALID_PT,K)                               GPB5F403.79    
+          ENDDO                                                            GPB5F403.80    
+        ENDIF                                                              QTPOS1B.219   
+                                                                           QTPOS1B.220   
+*IF DEF,MPP                                                                QTPOS1B.221   
+! Caclulate the mapping of which processor each level will go to           QTPOS1B.222   
+        MAP(K)=MOD((K-1),N_PROCS)  ! assumes first PE is PE 0              QTPOS1B.223   
+                                                                           QTPOS1B.224   
+*ENDIF                                                                     QTPOS1B.225   
+      ENDDO                                                                QTPOS1B.226   
+                                                                           QTPOS1B.227   
+*IF DEF,MPP                                                                QTPOS1B.228   
+! Distribute QT over the processors                                        QTPOS1B.229   
+      DO K=0,N_PROCS-1                                                     QTPOS1B.230   
+        N_LEVS_ON_PROC(K)=0                                                QTPOS1B.231   
+      ENDDO                                                                QTPOS1B.232   
+                                                                           QTPOS1B.233   
+      DO K=1,Q_LEVELS                                                      QTPOS1B.234   
+        N_LEVS_ON_PROC(MAP(K))=N_LEVS_ON_PROC(MAP(K))+1                    QTPOS1B.235   
+                                                                           QTPOS1B.236   
+        CALL GATHER_FIELD(QT(1,K),                                         QTPOS1B.237   
+     &                    global_QT_data(1,N_LEVS_ON_PROC(MAP(K))),        QTPOS1B.238   
+     &                    ROW_LENGTH,tot_P_ROWS,                           QTPOS1B.239   
+     &                    GLOBAL_ROW_LENGTH,                               QTPOS1B.240   
+     &                    GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH,                QTPOS1B.241   
+     &                    MAP(K),GC_ALL_GROUP,info)                        QTPOS1B.242   
+                                                                           QTPOS1B.243   
+      ENDDO                                                                QTPOS1B.244   
+                                                                           QTPOS1B.245   
+! and call QT_POS with the whole levels on this processor                  QTPOS1B.246   
+                                                                           QTPOS1B.247   
+      DO K=1,N_LEVS_ON_PROC(MY_PROC_ID)                                    QTPOS1B.248   
+        local_FAILURE(K)=.FALSE.                                           QTPOS1B.249   
+      ENDDO                                                                QTPOS1B.250   
+                                                                           QTPOS1B.251   
+      CALL QT_POS(global_QT_data,global_ROW_LENGTH,global_P_FIELD,         QTPOS1B.252   
+     &            I_start,I_end,                                           QTPOS1B.253   
+     &            N_LEVS_ON_PROC(MY_PROC_ID),                              QTPOS1B.254   
+     &            ERROR_CODE,ERROR_MESSAGE,                                QTPOS1B.255   
+     &            local_FACTOR,local_FAILURE,                              QTPOS1B.256   
+     &            L_NEG_QT,L_QT_POS_LOCAL)                                 QTPOS1B.257   
+                                                                           QTPOS1B.258   
+! Set ERROR_CODE and ERROR_MESSAGE if any pe has set ERROR_CODE            GPB5F403.81    
+                                                                           GPB5F403.82    
+      CALL GC_IMAX(1,n_procs,info,ERROR_CODE)                              GPB5F403.83    
+                                                                           GPB5F403.84    
+      IF (ERROR_CODE .NE. 0) THEN                                          GPB5F403.85    
+        ERROR_MESSAGE=                                                     GPB5F403.86    
+     & 'QT_POS   : MASS-WEIGHTED QT SUMMED OVER A LEVEL WAS NEGATIVE.'     GPB5F403.87    
+      ENDIF                                                                GPB5F403.88    
+! and gather back levels to original processors                            QTPOS1B.259   
+                                                                           QTPOS1B.260   
+      DO K=0,N_PROCS-1                                                     QTPOS1B.261   
+        N_LEVS_ON_PROC(K)=0                                                QTPOS1B.262   
+      ENDDO                                                                QTPOS1B.263   
+                                                                           QTPOS1B.264   
+      DO K=1,Q_LEVELS                                                      QTPOS1B.265   
+        N_LEVS_ON_PROC(MAP(K))=N_LEVS_ON_PROC(MAP(K))+1                    QTPOS1B.266   
+                                                                           QTPOS1B.267   
+! collect the FAILURE and FACTOR array elements for this level             QTPOS1B.268   
+                                                                           QTPOS1B.269   
+        IF (MY_PROC_ID .EQ. MAP(K)) THEN                                   QTPOS1B.270   
+!         I processed this level                                           QTPOS1B.271   
+          IF (local_FAILURE(N_LEVS_ON_PROC(MY_PROC_ID))) THEN              QTPOS1B.272   
+            int_FAILURE(K)=1                                               QTPOS1B.273   
+          ELSE                                                             QTPOS1B.274   
+            int_FAILURE(K)=0                                               QTPOS1B.275   
+          ENDIF                                                            QTPOS1B.276   
+          FACTOR(K)=local_FACTOR(N_LEVS_ON_PROC(MY_PROC_ID))               QTPOS1B.277   
+        ELSE  ! I didn't process this level                                QTPOS1B.278   
+          int_FAILURE(K)=0                                                 QTPOS1B.279   
+          FACTOR(K)=0.0                                                    QTPOS1B.280   
+        ENDIF                                                              QTPOS1B.281   
+                                                                           QTPOS1B.282   
+! and scatter this level back to it's original home                        QTPOS1B.283   
+                                                                           QTPOS1B.284   
+        CALL SCATTER_FIELD(QT(1,K),                                        QTPOS1B.285   
+     &                    global_QT_data(1,N_LEVS_ON_PROC(MAP(K))),        QTPOS1B.286   
+     &                    ROW_LENGTH,tot_P_ROWS,                           QTPOS1B.287   
+     &                    GLOBAL_ROW_LENGTH,                               QTPOS1B.288   
+     &                    GLOBAL_P_FIELD/GLOBAL_ROW_LENGTH,                QTPOS1B.289   
+     &                    MAP(K),GC_ALL_GROUP,info)                        QTPOS1B.290   
+                                                                           QTPOS1B.291   
+      ENDDO                                                                QTPOS1B.292   
+                                                                           QTPOS1B.293   
+! and distribute the FAILURE and FACTOR arrays                             QTPOS1B.294   
+                                                                           QTPOS1B.295   
+      CALL GC_ISUM(Q_LEVELS,N_PROCS,info,int_FAILURE)                      QTPOS1B.296   
+      CALL GC_RSUM(Q_LEVELS,N_PROCS,info,FACTOR)                           QTPOS1B.297   
+                                                                           QTPOS1B.298   
+      DO K=1,Q_LEVELS                                                      QTPOS1B.299   
+        IF (int_FAILURE(K) .EQ. 0) THEN                                    QTPOS1B.300   
+          FAILURE(K)=.FALSE.                                               QTPOS1B.301   
+        ELSE                                                               QTPOS1B.302   
+          FAILURE(K)=.TRUE.                                                QTPOS1B.303   
+        ENDIF                                                              QTPOS1B.304   
+      ENDDO                                                                QTPOS1B.305   
+                                                                           QTPOS1B.306   
+*ELSE                                                                      QTPOS1B.307   
+! Call QT_POS                                                              QTPOS1B.308   
+                                                                           QTPOS1B.309   
+      CALL QT_POS(QT,ROW_LENGTH,P_FIELD,I_start,I_end,Q_LEVELS,            QTPOS1B.310   
+     &            ERROR_CODE,ERROR_MESSAGE,FACTOR,FAILURE,                 QTPOS1B.311   
+     &            L_NEG_QT,L_QT_POS_LOCAL)                                 QTPOS1B.312   
+                                                                           QTPOS1B.313   
+*ENDIF                                                                     QTPOS1B.314   
+                                                                           QTPOS1B.315   
+! Now remove the mass weighting, and calculate QT_FIX diagnostic           QTPOS1B.316   
+                                                                           QTPOS1B.317   
+      DO K=1,Q_LEVELS                                                      QTPOS1B.318   
+        IF (FAILURE(K)) THEN                                               QTPOS1B.319   
+          IF (SF_QTFIX) THEN                                               QTPOS1B.320   
+*IF -DEF,MPP                                                               QTPOS1B.321   
+            DO I=I_start,I_end                                             QTPOS1B.322   
+*ELSE                                                                      QTPOS1B.323   
+            DO I=I_start_local,I_end_local                                 QTPOS1B.324   
+*ENDIF                                                                     QTPOS1B.325   
+              QTFIX(I,K) = (QT(I,K) * FACTOR(K) - QTFIX(I,K))*             QTPOS1B.326   
+     &                     SEC_P_LATITUDE(I)/(A*A*G*DT)                    QTPOS1B.327   
+            ENDDO                                                          QTPOS1B.328   
+          ENDIF                                                            QTPOS1B.329   
+*IF -DEF,MPP                                                               QTPOS1B.330   
+          DO I=I_start,I_end                                               QTPOS1B.331   
+*ELSE                                                                      QTPOS1B.332   
+          DO I=I_start_local,I_end_local                                   QTPOS1B.333   
+*ENDIF                                                                     QTPOS1B.334   
+            QT(I,K)=QT(I,K)*FACTOR(K)/RS_SQUARED_DELTAP(I,K)*              QTPOS1B.335   
+     &              SEC_P_LATITUDE(I)                                      QTPOS1B.336   
+          ENDDO                                                            QTPOS1B.337   
+        ELSE  ! FAILURE(K) .EQ. .FALSE.                                    QTPOS1B.338   
+          IF (SF_QTFIX) THEN                                               QTPOS1B.339   
+*IF -DEF,MPP                                                               QTPOS1B.340   
+            DO I=I_start,I_end                                             QTPOS1B.341   
+*ELSE                                                                      QTPOS1B.342   
+            DO I=I_start_local,I_end_local                                 QTPOS1B.343   
+*ENDIF                                                                     QTPOS1B.344   
+              QTFIX(I,K) = (QT(I,K) - QTFIX(I,K)) *                        QTPOS1B.345   
+     &                     SEC_P_LATITUDE(I)/(A*A*G*DT)                    QTPOS1B.346   
+            ENDDO                                                          QTPOS1B.347   
+          ENDIF                                                            QTPOS1B.348   
+*IF -DEF,MPP                                                               QTPOS1B.349   
+          DO I=I_start,I_end                                               QTPOS1B.350   
+*ELSE                                                                      QTPOS1B.351   
+          DO I=I_start_local,I_end_local                                   QTPOS1B.352   
+*ENDIF                                                                     QTPOS1B.353   
+            QT(I,K)=QT(I,K)/RS_SQUARED_DELTAP(I,K)*                        QTPOS1B.354   
+     &              SEC_P_LATITUDE(I)                                      QTPOS1B.355   
+          ENDDO                                                            QTPOS1B.356   
+        ENDIF                                                              QTPOS1B.357   
+                                                                           QTPOS1B.358   
+      ENDDO ! K : loop over levels                                         QTPOS1B.359   
+                                                                           QTPOS1B.360   
+*IF DEF,GLOBAL                                                             QTPOS1B.361   
+      IF (.NOT. L_QT_POS_LOCAL) THEN                                       QTPOS1B.362   
+                                                                           QTPOS1B.363   
+! Set all points at poles equal to last(NP)/first(SP) point                QTPOS1B.364   
+*IF -DEF,MPP                                                               QTPOS1B.365   
+          DO K=1,Q_LEVELS                                                  QTPOS1B.366   
+            DO I=1,ROW_LENGTH-1                                            QTPOS1B.367   
+              QT(I,K) = QT(ROW_LENGTH,K)                                   QTPOS1B.368   
+              QT(P_FIELD+1-I,K) = QT(P_FIELD+1-ROW_LENGTH,K)               QTPOS1B.369   
+            ENDDO                                                          QTPOS1B.370   
+                                                                           QTPOS1B.371   
+            IF (SF_QTFIX) THEN                                             QTPOS1B.372   
+              DO I=1,ROW_LENGTH-1                                          QTPOS1B.373   
+                QTFIX(I,K) = QTFIX(ROW_LENGTH,K)                           QTPOS1B.374   
+                QTFIX(P_FIELD+1-I,K) = QTFIX(P_FIELD+1-ROW_LENGTH,K)       QTPOS1B.375   
+              ENDDO                                                        QTPOS1B.376   
+            ENDIF                                                          QTPOS1B.377   
+          ENDDO                                                            QTPOS1B.378   
+*ELSE                                                                      QTPOS1B.379   
+! Set up arrays containing NP values                                       QTPOS1B.380   
+          IF (at_top_of_LPG .AND. at_right_of_LPG) THEN                    QTPOS1B.381   
+            DO K=1,Q_LEVELS                                                QTPOS1B.382   
+              NP_VALUE(K,1)=QT(I_start_local,K)                            QTPOS1B.383   
+              NP_VALUE(K,2)=QTFIX(I_start_local,K)                         QTPOS1B.384   
+            ENDDO                                                          QTPOS1B.385   
+          ELSE                                                             QTPOS1B.386   
+            DO K=1,Q_LEVELS                                                QTPOS1B.387   
+              NP_VALUE(K,1)=0.0                                            QTPOS1B.388   
+              NP_VALUE(K,2)=0.0                                            QTPOS1B.389   
+            ENDDO                                                          QTPOS1B.390   
+          ENDIF                                                            QTPOS1B.391   
+                                                                           QTPOS1B.392   
+! Distribute the NP value over processors on polar row                     QTPOS1B.393   
+          IF (at_top_of_LPG) THEN                                          QTPOS1B.394   
+            CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_VALUE(1,1))        QTPOS1B.395   
+            DO K=1,Q_LEVELS                                                QTPOS1B.396   
+              DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1                QTPOS1B.397   
+                QT(I,K)=NP_VALUE(K,1)                                      QTPOS1B.398   
+              ENDDO                                                        QTPOS1B.399   
+            ENDDO                                                          QTPOS1B.400   
+            IF (SF_QTFIX) THEN                                             QTPOS1B.401   
+              CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_VALUE(1,2))      QTPOS1B.402   
+              DO K=1,Q_LEVELS                                              QTPOS1B.403   
+                DO I=TOP_ROW_START,TOP_ROW_START+ROW_LENGTH-1              QTPOS1B.404   
+                  QTFIX(I,K)=NP_VALUE(K,2)                                 QTPOS1B.405   
+                ENDDO                                                      QTPOS1B.406   
+              ENDDO                                                        QTPOS1B.407   
+            ENDIF                                                          QTPOS1B.408   
+          ENDIF                                                            QTPOS1B.409   
+                                                                           QTPOS1B.410   
+! Set up arrays containing SP values                                       QTPOS1B.411   
+          IF (at_base_of_LPG .AND. at_left_of_LPG) THEN                    QTPOS1B.412   
+            DO K=1,Q_LEVELS                                                QTPOS1B.413   
+              SP_VALUE(K,1)=QT(I_end_local,K)                              QTPOS1B.414   
+              SP_VALUE(K,2)=QTFIX(I_end_local,K)                           QTPOS1B.415   
+            ENDDO                                                          QTPOS1B.416   
+          ELSE                                                             QTPOS1B.417   
+            DO K=1,Q_LEVELS                                                QTPOS1B.418   
+              SP_VALUE(K,1)=0.0                                            QTPOS1B.419   
+              SP_VALUE(K,2)=0.0                                            QTPOS1B.420   
+            ENDDO                                                          QTPOS1B.421   
+          ENDIF                                                            QTPOS1B.422   
+                                                                           QTPOS1B.423   
+! Distribute the SP value over processors on polar row                     QTPOS1B.424   
+          IF (at_base_of_LPG) THEN                                         QTPOS1B.425   
+            CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,SP_VALUE(1,1))        QTPOS1B.426   
+            DO K=1,Q_LEVELS                                                QTPOS1B.427   
+              DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1            QTPOS1B.428   
+                QT(I,K)=SP_VALUE(K,1)                                      QTPOS1B.429   
+              ENDDO                                                        QTPOS1B.430   
+            ENDDO                                                          QTPOS1B.431   
+            IF (SF_QTFIX) THEN                                             QTPOS1B.432   
+              CALL GCG_RSUM(Q_LEVELS,GC_ROW_GROUP,info,NP_VALUE(1,2))      QTPOS1B.433   
+              DO K=1,Q_LEVELS                                              QTPOS1B.434   
+                DO I=P_BOT_ROW_START,P_BOT_ROW_START+ROW_LENGTH-1          QTPOS1B.435   
+                  QTFIX(I,K)=SP_VALUE(K,2)                                 QTPOS1B.436   
+                ENDDO                                                      QTPOS1B.437   
+              ENDDO                                                        QTPOS1B.438   
+            ENDIF                                                          QTPOS1B.439   
+          ENDIF                                                            QTPOS1B.440   
+*ENDIF                                                                     QTPOS1B.441   
+! Reset the pole rows of latitude                                          QTPOS1B.442   
+                                                                           QTPOS1B.443   
+*IF DEF,MPP                                                                QTPOS1B.444   
+        IF (at_top_of_LPG .AND. at_right_of_LPG) THEN                      QTPOS1B.445   
+*ENDIF                                                                     QTPOS1B.446   
+          COS_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=COS_P_LAT_NP         QTPOS1B.447   
+          SEC_P_LATITUDE(TOP_ROW_START+LAST_ROW_PT-1)=SEC_P_LAT_NP         QTPOS1B.448   
+*IF DEF,MPP                                                                QTPOS1B.449   
+        ENDIF                                                              QTPOS1B.450   
+                                                                           QTPOS1B.451   
+        IF (at_base_of_LPG .AND. at_left_of_LPG) THEN                      QTPOS1B.452   
+*ENDIF                                                                     QTPOS1B.453   
+          COS_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=COS_P_LAT_SP      QTPOS1B.454   
+          SEC_P_LATITUDE(P_BOT_ROW_START+FIRST_ROW_PT-1)=SEC_P_LAT_SP      QTPOS1B.455   
+*IF DEF,MPP                                                                QTPOS1B.456   
+        ENDIF                                                              QTPOS1B.457   
+*ENDIF                                                                     QTPOS1B.458   
+      ENDIF ! IF (.NOT. L_QT_POS_LOCAL)                                    QTPOS1B.459   
+*ENDIF                                                                     QTPOS1B.460   
+                                                                           QTPOS1B.461   
+*IF DEF,T3E                                                                GPB0F405.198   
+      CALL REMOVE_NEGATIVE_ZERO(QT,P_FIELD,Q_LEVELS)                       GPB0F405.199   
+*ENDIF                                                                     GPB0F405.200   
+*IF DEF,MPP                                                                QTPOS1B.462   
+! Bring halos up to date                                                   QTPOS1B.463   
+      CALL SWAPBOUNDS(QT,ROW_LENGTH,tot_P_ROWS,                            QTPOS1B.464   
+     &                EW_Halo,NS_Halo,Q_LEVELS)                            QTPOS1B.465   
+*ENDIF                                                                     QTPOS1B.466   
+                                                                           QTPOS1B.467   
+      RETURN                                                               QTPOS1B.468   
+      END                                                                  QTPOS1B.469   
+                                                                           QTPOS1B.470   
+CLL   SUBROUTINE QT_POS -------------------------------------------        QTPOS1B.471   
+CLL                                                                        QTPOS1B.472   
+CLL   PURPOSE:   REMOVES NEGATIVE VALUES OF QT.  THERE ARE TWO ALTERNAT-   QTPOS1B.473   
+CLL              IVE METHODS: METHOD 1 IS THE ORIGINAL SCHEME WHILE        QTPOS1B.474   
+CLL              IF L_QT_POS_LOCAL = .TRUE. METHOD 2 IS USED.              QTPOS1B.475   
+CLL              METHOD 2 IS DESIGNED TO ELIMINATE THE                     QTPOS1B.476   
+CLL              VERY SLOW CLIMATE DRIFT IN QT IN UPPER MODEL LEVELS.      QTPOS1B.477   
+CLL              IT IS UNNECESSARILY COMPLICATED (AND EXPENSIVE) FOR       QTPOS1B.478   
+CLL              FORECAST USE.                                             QTPOS1B.479   
+CLL                                                                        QTPOS1B.480   
+CLL        METHOD 1:  ACCUMULATES TOTALS OF                                QTPOS1B.481   
+CLL              OF NEGATIVE AND POSITIVE VALUES ON A LEVEL, ZEROING       QTPOS1B.482   
+CLL              ALL NEGATIVE POINTS AND PROPORTIONALLY REMOVING THE       QTPOS1B.483   
+CLL              SUM OF THE NEGATIVES FROM ALL POSITIVE POINTS.            QTPOS1B.484   
+CLL        METHOD 2:  THE FOLLOWING METHOD IS APPLIED AT EACH LAYER:       QTPOS1B.485   
+CLL            STEP 1 - LOOP ROUND ALL POINTS. IF QT IS NEGATIVE,          QTPOS1B.486   
+CLL              (a):                                                      QTPOS1B.487   
+CLL              SUM QT ROUND NEIGHBOURING POINTS WITHIN ONE ROW AND       QTPOS1B.488   
+CLL              ONE COLUMN OF POINT IN CURRENT LAYER.  IF THIS VALUE      QTPOS1B.489   
+CLL              IS POSITIVE AND LARGE ENOUGH,THE CENTRE NEGATIVE VALUE    QTPOS1B.490   
+CLL              IS SET EQUAL TO ZERO AND THE NEIGHBOURS ARE SCALED        QTPOS1B.491   
+CLL              TO CONSERVE MASS WEIGHTED QT. IF (a) DOES NOT WORK        QTPOS1B.492   
+CLL              THEN (b):                                                 QTPOS1B.493   
+CLL              EXTEND SUMMATION WITH A LARGER SEARCH RADIUS AND REPEAT   QTPOS1B.494   
+CLL              PROCESS. (SEARCH RADIUS = 4 FOUND TO BE SUFFICIENT)       QTPOS1B.495   
+CLL            STEP 2 - IF GLOBAL MODEL, CHECK FOR NEGATIVE QT AT POLES    QTPOS1B.496   
+CLL              AND CORRECT USING ALL VALUES IN NEIGHBOURING ROW.         QTPOS1B.497   
+CLL            STEP 3 - IF ANY NEGATIVE VALUES REMAIN (VERY UNCOMMON)      QTPOS1B.498   
+CLL              PERFORM GLOBAL CORRECTION AS IN METHOD 1.                 QTPOS1B.499   
+CLL                                                                        QTPOS1B.500   
+CLL              IN BOTH METHODS IF THERE ARE INSUFFICIENT                 QTPOS1B.501   
+CLL              POSITIVE VALUES WITHIN THE WHOLE LAYER AN ERROR           QTPOS1B.502   
+CLL              MESSAGE IS PRODUCED.  PROGRAM CONTINUES IF L_NEG_Q        QTPOS1B.503   
+CLL              IS TRUE IN WHICH CASE QT IS NOT CONSERVED.                QTPOS1B.504   
+CLL   N.B.       DEFINITION OF RS SQUARED DELTAP MEANS THAT POSITIVE       QTPOS1B.505   
+CLL              QT VALUES HAVE A NEGATIVE SIGN!                           QTPOS1B.506   
+CLL                                                                        QTPOS1B.507   
+CLL                                                                        QTPOS1B.508   
+CLL   NOT SUITABLE FOR SINGLE COLUMN USE.                                  QTPOS1B.509   
+CLL   VERSION FOR CRAY Y-MP                                                QTPOS1B.510   
+CLL                                                                        QTPOS1B.511   
+CLL  MM, SB     <- PROGRAMMER OF SOME OR ALL OF PREVIOUS CODE OR CHANGES   QTPOS1B.512   
+CLL                                                                        QTPOS1B.513   
+CLL  MODEL            MODIFICATION HISTORY FROM MODEL VERSION 4.2:         ATJ0F403.225   
+CLL VERSION  DATE                                                          QTPOS1B.515   
+!LL   4.3   14/04/97  Minor updates in line with QTPOS1A.  T Johns         ATJ0F403.226   
+CLL                                                                        QTPOS1B.516   
+CLL   PROGRAMMING STANDARD: UNIFIED MODEL DOCUMENTATION PAPER NO. 4,       QTPOS1B.517   
+CLL                         STANDARD A. VERSION 2, DATED 18/01/90          QTPOS1B.518   
+CLL                                                                        QTPOS1B.519   
+CLL   SYSTEM COMPONENTS COVERED: P 191                                     QTPOS1B.520   
+CLL                                                                        QTPOS1B.521   
+CLL   SYSTEM TASK: P1                                                      QTPOS1B.522   
+CLL                                                                        QTPOS1B.523   
+CLL   DOCUMENTATION:       SECTION 3.7                                     QTPOS1B.524   
+CLL                        IN UNIFIED MODEL DOCUMENTATION PAPER            QTPOS1B.525   
+CLL                        NO. 10 M.J.P.CULLEN,T.DAVIES AND M.H.MAWSON     QTPOS1B.526   
+CLL                        VERSION 10, DATED 10/09/90.                     QTPOS1B.527   
+CLLEND-------------------------------------------------------------        QTPOS1B.528   
+                                                                           QTPOS1B.529   
+C*L   ARGUMENTS:---------------------------------------------------        QTPOS1B.530   
+      SUBROUTINE QT_POS                                                    QTPOS1B.531   
+     1                 (QT,ROW_LENGTH,P_FIELD,ISTART,IEND,Q_LEVELS,        QTPOS1B.532   
+     2                  ERROR_CODE,ERROR_MESSAGE,FACTOR,FAILURE,           QTPOS1B.533   
+     3                  L_NEG_QT,L_QT_POS_LOCAL)                           QTPOS1B.534   
+                                                                           QTPOS1B.535   
+      IMPLICIT NONE                                                        QTPOS1B.536   
+                                                                           QTPOS1B.537   
+      INTEGER                                                              QTPOS1B.538   
+     &  ROW_LENGTH         ! IN : number of points per row                 QTPOS1B.539   
+     &, P_FIELD            ! IN : size of horizontal P field               QTPOS1B.540   
+     &, ISTART             ! IN : first point to process                   QTPOS1B.541   
+     &, IEND               ! IN : last point to process                    QTPOS1B.542   
+     &, Q_LEVELS           ! IN : number of (moist) levels to process      QTPOS1B.543   
+                                                                           QTPOS1B.544   
+      LOGICAL                                                              QTPOS1B.545   
+     &  L_NEG_QT           ! IN : switch to continue in event of           QTPOS1B.546   
+!                          !      excessive negative QTs (non-conserv.)    QTPOS1B.547   
+     &, L_QT_POS_LOCAL     ! IN : perform local corrections (method 2)     QTPOS1B.548   
+                                                                           QTPOS1B.549   
+      REAL                                                                 QTPOS1B.550   
+     &  QT(P_FIELD,Q_LEVELS) ! IN/OUT : QT field to update                 QTPOS1B.551   
+                                                                           QTPOS1B.552   
+      INTEGER                                                              QTPOS1B.553   
+     &  ERROR_CODE         ! OUT : 1 on exit if error detected             QTPOS1B.554   
+                                                                           QTPOS1B.555   
+      CHARACTER*(80)                                                       QTPOS1B.556   
+     &  ERROR_MESSAGE      ! OUT : Error message if ERROR_CODE not zero    QTPOS1B.557   
+                                                                           QTPOS1B.558   
+      REAL                                                                 QTPOS1B.559   
+     &  FACTOR(Q_LEVELS)   ! OUT : Scaling factor for QT                   QTPOS1B.560   
+                                                                           QTPOS1B.561   
+      LOGICAL                                                              QTPOS1B.562   
+     &  FAILURE(Q_LEVELS)  ! OUT : Indicates a level needs rescaling       QTPOS1B.563   
+                                                                           QTPOS1B.564   
+C*---------------------------------------------------------------------    QTPOS1B.565   
+                                                                           QTPOS1B.566   
+C*L   DEFINE ARRAYS AND VARIABLES USED IN THIS ROUTINE-----------------    QTPOS1B.567   
+C DEFINE LOCAL ARRAYS: NONE ARE REQUIRED                                   QTPOS1B.568   
+C*---------------------------------------------------------------------    QTPOS1B.569   
+C DEFINE LOCAL VARIABLES                                                   QTPOS1B.570   
+                                                                           QTPOS1B.571   
+      INTEGER                                                              QTPOS1B.572   
+     *  I,K,II,JJ,NN,J   ! Loop variables                                  QTPOS1B.573   
+     *, IN,IS,JE,JW        ! Row/column indices to north/south/east/west   QTPOS1B.574   
+     *, POINTER            ! Array pointer                                 QTPOS1B.575   
+     *, ROW                ! Row number counting from 0                    QTPOS1B.576   
+     *, NPT                ! Point in row counting from 1                  QTPOS1B.577   
+     *, ROWS               ! Number of rows                                QTPOS1B.578   
+     *, MAX_SEARCH         ! Maximum search radius (points)                QTPOS1B.579   
+     *, NO_NEG             ! Count of number negative in step 3 & 1        QTPOS1B.580   
+     *, NO_NEG2            ! Count of number negative                      QTPOS1B.581   
+     *, NINDEX(P_FIELD)    ! locations of negative q                       QTPOS1B.582   
+      REAL                                                                 QTPOS1B.583   
+     *  SUM_NEIGHBOURS     ! Sum of QT around neighbours                   QTPOS1B.584   
+     *, SUM_POSITIVE       ! Global sum of positive QT                     QTPOS1B.585   
+     *, SUM_NEGATIVE       ! Global sum of negative QT                     QTPOS1B.586   
+     *, TEMP1,TEMP2        ! Temporary sums                                QTPOS1B.587   
+                                                                           QTPOS1B.588   
+C*L   NO EXTERNAL SUBROUTINE CALLS:------------------------------------    QTPOS1B.589   
+C*---------------------------------------------------------------------    QTPOS1B.590   
+CL    MAXIMUM VECTOR LENGTH ASSUMED IS P_FIELD.                            QTPOS1B.591   
+CL---------------------------------------------------------------------    QTPOS1B.592   
+CL    INTERNAL STRUCTURE.                                                  QTPOS1B.593   
+CL---------------------------------------------------------------------    QTPOS1B.594   
+CL                                                                         QTPOS1B.595   
+      ROWS=P_FIELD/ROW_LENGTH                                              QTPOS1B.596   
+      MAX_SEARCH=4                                                         QTPOS1B.597   
+                                                                           QTPOS1B.598   
+CL LOOP OVER LEVELS                                                        QTPOS1B.599   
+      DO K= 1,Q_LEVELS                                                     QTPOS1B.600   
+        FAILURE(K)=.FALSE.                                                 QTPOS1B.601   
+        FACTOR(K)=0.0                                                      QTPOS1B.602   
+        IF (L_QT_POS_LOCAL) THEN                                           QTPOS1B.603   
+CL---------------------------------------------------------------------    QTPOS1B.604   
+CL    METHOD 2                                                             QTPOS1B.605   
+CL---------------------------------------------------------------------    QTPOS1B.606   
+          NO_NEG=0                                                         QTPOS1B.607   
+                                                                           QTPOS1B.608   
+*IF DEF,GLOBAL                                                             QTPOS1B.609   
+C   Loop round non-polar points                                            QTPOS1B.610   
+          DO I=ROW_LENGTH+1,P_FIELD-ROW_LENGTH                             QTPOS1B.611   
+*ELSE                                                                      QTPOS1B.612   
+          DO I=1,P_FIELD                                                   QTPOS1B.613   
+*ENDIF                                                                     QTPOS1B.614   
+            IF(QT(I,K).GT.0.0) THEN                                        QTPOS1B.615   
+              NO_NEG=NO_NEG+1                                              QTPOS1B.616   
+              NINDEX(NO_NEG)=I                                             QTPOS1B.617   
+            ENDIF                                                          QTPOS1B.618   
+          ENDDO                                                            QTPOS1B.619   
+                                                                           QTPOS1B.620   
+          DO J=1,NO_NEG                                                    QTPOS1B.621   
+            I=NINDEX(J)                                                    QTPOS1B.622   
+CL                                                                         QTPOS1B.623   
+CL---------------------------------------------------------------------    QTPOS1B.624   
+CL    SECTION 2.    STEP 1. WHERE QT IS NEGATIVE LOOP ROUND                QTPOS1B.625   
+CL              8 NEIGHBOURS TO PERFORM LOCAL CORRECTION.  THIS OCCURS     QTPOS1B.626   
+CL              AT APPROXIMATELY 2% OF THE POINTS.  THE FOLLOWING CODE     QTPOS1B.627   
+CL              IN SECTIONS 2 & 3 IS RATHER LONG-WINDED, BUT CPU IS        QTPOS1B.628   
+CL              SIGNIFICANTLY REDUCED OVER A SIMPLER APPROACH.             QTPOS1B.629   
+CL---------------------------------------------------------------------    QTPOS1B.630   
+C   If QT is negative find 8 neighbours ...                                QTPOS1B.631   
+              ROW=(I-1)/ROW_LENGTH                                         QTPOS1B.632   
+              NPT=I-ROW*ROW_LENGTH                                         QTPOS1B.633   
+              JE=1                                                         QTPOS1B.634   
+              JW=-1                                                        QTPOS1B.635   
+*IF DEF,GLOBAL                                                             QTPOS1B.636   
+              IF(NPT.EQ.ROW_LENGTH) JE=1-ROW_LENGTH                        QTPOS1B.637   
+              IF(NPT.EQ.1) JW=ROW_LENGTH-1                                 QTPOS1B.638   
+*ELSE                                                                      QTPOS1B.639   
+C   Abandon search for neighbours on LAM boundary                          QTPOS1B.640   
+              IF(NPT.EQ.ROW_LENGTH.OR.NPT.EQ.1) THEN                       QTPOS1B.641   
+                FAILURE(K)=.TRUE.                                          QTPOS1B.642   
+                GOTO 200                                                   QTPOS1B.643   
+              END IF                                                       QTPOS1B.644   
+*ENDIF                                                                     QTPOS1B.645   
+C   ... and sum neighbouring 8 values                                      QTPOS1B.646   
+              SUM_NEIGHBOURS = QT(I+JE,K) + QT(I+JW,K)                     QTPOS1B.647   
+              IF(ROW.GT.0) THEN                                            QTPOS1B.648   
+                II=I-ROW_LENGTH                                            QTPOS1B.649   
+                SUM_NEIGHBOURS = SUM_NEIGHBOURS +                          QTPOS1B.650   
+     *                           QT(II,K) + QT(II+JE,K) + QT(II+JW,K)      QTPOS1B.651   
+              END IF                                                       QTPOS1B.652   
+              IF(ROW.LT.ROWS-1) THEN                                       QTPOS1B.653   
+                II=I+ROW_LENGTH                                            QTPOS1B.654   
+                SUM_NEIGHBOURS = SUM_NEIGHBOURS +                          QTPOS1B.655   
+     *                           QT(II,K) + QT(II+JE,K) + QT(II+JW,K)      QTPOS1B.656   
+              END IF                                                       QTPOS1B.657   
+C                                                                          QTPOS1B.658   
+C   If possible set QT=0 at point with negative value and adjust           QTPOS1B.659   
+C   neighbouring values by FACTOR to conserve QT                           QTPOS1B.660   
+              IF(SUM_NEIGHBOURS.LT.0.0) THEN                               QTPOS1B.661   
+                FACTOR(K)=1.0+QT(I,K)/SUM_NEIGHBOURS                       QTPOS1B.662   
+                IF(FACTOR(K).GE.0.0) THEN                                  QTPOS1B.663   
+                  QT(I,K)=0.0                                              QTPOS1B.664   
+                  QT(I+JE,K) = QT(I+JE,K)*FACTOR(K)                        QTPOS1B.665   
+                  QT(I+JW,K) = QT(I+JW,K)*FACTOR(K)                        QTPOS1B.666   
+                  IF(ROW.GT.0) THEN                                        QTPOS1B.667   
+                    II=I-ROW_LENGTH                                        QTPOS1B.668   
+                    QT(II,K) = QT(II,K)*FACTOR(K)                          QTPOS1B.669   
+                    QT(II+JE,K) = QT(II+JE,K)*FACTOR(K)                    QTPOS1B.670   
+                    QT(II+JW,K) = QT(II+JW,K)*FACTOR(K)                    QTPOS1B.671   
+                  END IF                                                   QTPOS1B.672   
+                  IF(ROW.LT.ROWS-1) THEN                                   QTPOS1B.673   
+                    II=I+ROW_LENGTH                                        QTPOS1B.674   
+                    QT(II,K) = QT(II,K)*FACTOR(K)                          QTPOS1B.675   
+                    QT(II+JE,K) = QT(II+JE,K)*FACTOR(K)                    QTPOS1B.676   
+                    QT(II+JW,K) = QT(II+JW,K)*FACTOR(K)                    QTPOS1B.677   
+                  END IF                                                   QTPOS1B.678   
+                END IF                                                     QTPOS1B.679   
+              END IF                                                       QTPOS1B.680   
+*IF -DEF,GLOBAL                                                            QTPOS1B.681   
+  200       CONTINUE       ! LAM only                                      QTPOS1B.682   
+*ENDIF                                                                     QTPOS1B.683   
+          END DO       ! loop over negative grid points                    QTPOS1B.684   
+                                                                           QTPOS1B.685   
+! recalculate number of negative gridpoints                                QTPOS1B.686   
+          NO_NEG2=0                                                        QTPOS1B.687   
+          DO J=1,NO_NEG                                                    QTPOS1B.688   
+            I=NINDEX(J)                                                    QTPOS1B.689   
+            IF(QT(I,K).GT.0.0) THEN                                        QTPOS1B.690   
+              NO_NEG2=NO_NEG2+1                                            QTPOS1B.691   
+              NINDEX(NO_NEG2)=I                                            QTPOS1B.692   
+            ENDIF                                                          QTPOS1B.693   
+          ENDDO                                                            QTPOS1B.694   
+!         WRITE(6,*),' Step 1 level ',k,' no neg ',no_NEG                  ATJ0F403.227   
+!         WRITE(6,*),' Step 2 level ',k,' no neg ',no_NEG2                 ATJ0F403.228   
+CL                                                                         QTPOS1B.697   
+CL---------------------------------------------------------------------    QTPOS1B.698   
+CL    SECTION 3.    STEP 2. WHERE QT IS NEGATIVE AND STEP 1 CORRECTIONS    QTPOS1B.699   
+CL              HAVE FAILED, ATTEMPT LOCAL CORRECTION BY EXTENDING         QTPOS1B.700   
+CL              SEARCH TO 24, 48 OR 80 SURROUNDING POINTS (SEARCH RADIUS   QTPOS1B.701   
+CL              EQUALS 2, 3 OR 4), OR FURTHER.  THIS OCCURS ABOUT          QTPOS1B.702   
+CL              0.1% OF THE TIME AT CLIMATE RESOLUTION AND MUCH MORE       QTPOS1B.703   
+CL              FREQUENTLY AT FORECAST RESOLUTION.  ALTHOUGH SMALL IN      QTPOS1B.704   
+CL              NUMBER, LOCAL CORRECTIONS AT THESE POINTS ARE REQUIRED     QTPOS1B.705   
+CL              TO SLOW DOWN THE LOSS OF STRATOSPHERIC MOISTURE THAT       QTPOS1B.706   
+CL              OCCURS ON CLIMATE TIME SCALES.                             QTPOS1B.707   
+CL---------------------------------------------------------------------    QTPOS1B.708   
+         IF (NO_NEG2.GT.0) THEN         ! only do this if required         QTPOS1B.709   
+           DO J=1,NO_NEG2                                                  QTPOS1B.710   
+            I=NINDEX(J)                                                    QTPOS1B.711   
+              ROW=(I-1)/ROW_LENGTH                                         QTPOS1B.712   
+              NPT=I-ROW*ROW_LENGTH                                         QTPOS1B.713   
+*IF -DEF,GLOBAL                                                            QTPOS1B.714   
+C   Abandon search for neighbours on LAM boundary                          QTPOS1B.715   
+              IF(NPT.EQ.ROW_LENGTH.OR.NPT.EQ.1) THEN                       QTPOS1B.716   
+                FAILURE(K)=.TRUE.                                          QTPOS1B.717   
+                GOTO 300                                                   QTPOS1B.718   
+              END IF                                                       QTPOS1B.719   
+*ENDIF                                                                     QTPOS1B.720   
+              DO NN=2,MAX_SEARCH                                           QTPOS1B.721   
+                JW=NPT-NN                                                  QTPOS1B.722   
+                JE=NPT+NN                                                  QTPOS1B.723   
+*IF -DEF,GLOBAL                                                            QTPOS1B.724   
+                IF(JE.GT.ROW_LENGTH) JE=ROW_LENGTH                         QTPOS1B.725   
+                IF(JW.LT.1) JW=1                                           QTPOS1B.726   
+*ENDIF                                                                     QTPOS1B.727   
+                IN=ROW-NN                                                  QTPOS1B.728   
+                IS=ROW+NN                                                  QTPOS1B.729   
+                IF(IN.LT.0) IN=0                                           QTPOS1B.730   
+                IF(IS.GE.ROWS) IS=ROWS-1                                   QTPOS1B.731   
+C   ... and sum QT at neighbouring points                                  QTPOS1B.732   
+                SUM_NEIGHBOURS=-QT(I,K)                                    QTPOS1B.733   
+                DO II=IN,IS                                                QTPOS1B.734   
+                  DO JJ=JW,JE                                              QTPOS1B.735   
+                    POINTER = II*ROW_LENGTH + JJ                           QTPOS1B.736   
+*IF DEF,GLOBAL                                                             QTPOS1B.737   
+                    IF(JJ.GT.ROW_LENGTH) POINTER = POINTER-ROW_LENGTH      QTPOS1B.738   
+                    IF(JJ.LT.1) POINTER = POINTER+ROW_LENGTH               QTPOS1B.739   
+*ENDIF                                                                     QTPOS1B.740   
+                    SUM_NEIGHBOURS = SUM_NEIGHBOURS + QT(POINTER,K)        QTPOS1B.741   
+                  END DO                                                   QTPOS1B.742   
+                END DO                                                     QTPOS1B.743   
+C                                                                          QTPOS1B.744   
+C   If possible set QT=0 at point with negative value and adjust           QTPOS1B.745   
+C   neighbouring values by FACTOR to conserve QT                           QTPOS1B.746   
+                IF(SUM_NEIGHBOURS.LT.0.0) THEN                             QTPOS1B.747   
+                  FACTOR(K)=1.0+QT(I,K)/SUM_NEIGHBOURS                     QTPOS1B.748   
+                  IF(FACTOR(K).GE.0.0) THEN                                QTPOS1B.749   
+                    QT(I,K)=0.0                                            QTPOS1B.750   
+                    DO II=IN,IS                                            QTPOS1B.751   
+                      DO JJ=JW,JE                                          QTPOS1B.752   
+                        POINTER = II*ROW_LENGTH + JJ                       QTPOS1B.753   
+*IF DEF,GLOBAL                                                             QTPOS1B.754   
+                        IF(JJ.GT.ROW_LENGTH) POINTER =POINTER-ROW_LENGTH   QTPOS1B.755   
+                        IF(JJ.LT.1) POINTER = POINTER+ROW_LENGTH           QTPOS1B.756   
+*ENDIF                                                                     QTPOS1B.757   
+                        QT(POINTER,K) = QT(POINTER,K)*FACTOR(K)            QTPOS1B.758   
+                      END DO                                               QTPOS1B.759   
+                    END DO                                                 QTPOS1B.760   
+                    GOTO 300    ! Successfull correction performed         QTPOS1B.761   
+                  END IF                                                   QTPOS1B.762   
+                END IF                                                     QTPOS1B.763   
+              END DO     ! End loop on search radius (NN)                  QTPOS1B.764   
+C                                                                          QTPOS1B.765   
+C  No correction possible within maximum search radius (=4)                QTPOS1B.766   
+              FAILURE(K)=.TRUE.                                            QTPOS1B.767   
+  300       CONTINUE                                                       QTPOS1B.768   
+          END DO         ! End loop on points (I)                          QTPOS1B.769   
+         END IF          ! end step 2                                      QTPOS1B.770   
+                                                                           QTPOS1B.771   
+*IF DEF,GLOBAL                                                             QTPOS1B.772   
+C                                                                          QTPOS1B.773   
+C  Loop round polar points                                                 QTPOS1B.774   
+CL                                                                         QTPOS1B.775   
+CL---------------------------------------------------------------------    QTPOS1B.776   
+CL    SECTION 4.     STEP 2. IF GLOBAL MODEL DEAL WITH POLES IN            QTPOS1B.777   
+CL                   SIMILAR FASHION EXCEPT WORKING ROW AT A TIME.         QTPOS1B.778   
+CL---------------------------------------------------------------------    QTPOS1B.779   
+C  Set all ploar points equal                                              QTPOS1B.780   
+          TEMP1=0.0                                                        QTPOS1B.781   
+          TEMP2=0.0                                                        QTPOS1B.782   
+          DO I=1,ROW_LENGTH                                                QTPOS1B.783   
+            TEMP1=TEMP1+QT(I,K)                                            QTPOS1B.784   
+            TEMP2=TEMP2+QT(P_FIELD-ROW_LENGTH+I,K)                         QTPOS1B.785   
+          END DO                                                           QTPOS1B.786   
+          DO I=1,ROW_LENGTH                                                QTPOS1B.787   
+            QT(I,K)=TEMP1/ROW_LENGTH                                       QTPOS1B.788   
+            QT(P_FIELD-ROW_LENGTH+I,K)=TEMP2/ROW_LENGTH                    QTPOS1B.789   
+          END DO                                                           QTPOS1B.790   
+C  Check for negative QT at north pole                                     QTPOS1B.791   
+          IF(QT(1,K).GT.0.0) THEN                                          QTPOS1B.792   
+            SUM_NEIGHBOURS=0.0                                             QTPOS1B.793   
+            DO I=1,ROW_LENGTH                                              QTPOS1B.794   
+              SUM_NEIGHBOURS = SUM_NEIGHBOURS + QT(ROW_LENGTH+I,K)         QTPOS1B.795   
+            END DO                                                         QTPOS1B.796   
+            IF(SUM_NEIGHBOURS.LT.0.0) THEN                                 QTPOS1B.797   
+              FACTOR(K)=1.0+QT(1,K)*ROW_LENGTH/SUM_NEIGHBOURS              QTPOS1B.798   
+              IF(FACTOR(K).GE.0.0) THEN                                    QTPOS1B.799   
+                DO I=1,ROW_LENGTH                                          QTPOS1B.800   
+                  QT(I,K)=0.0                                              QTPOS1B.801   
+                  QT(ROW_LENGTH+I,K)=QT(ROW_LENGTH+I,K)*FACTOR(K)          QTPOS1B.802   
+                END DO                                                     QTPOS1B.803   
+                GOTO 400    ! Correction performed                         QTPOS1B.804   
+              END IF                                                       QTPOS1B.805   
+            END IF                                                         QTPOS1B.806   
+C                                                                          QTPOS1B.807   
+C  No correction possible: global QT in layer is negative                  QTPOS1B.808   
+            FAILURE(K)=.TRUE.                                              QTPOS1B.809   
+                                                                           QTPOS1B.810   
+          END IF                                                           QTPOS1B.811   
+  400     CONTINUE                                                         QTPOS1B.812   
+C  Check for negative QT at south pole                                     QTPOS1B.813   
+          IF(QT(P_FIELD-1,K).GT.0.0) THEN                                  QTPOS1B.814   
+            SUM_NEIGHBOURS=0.0                                             QTPOS1B.815   
+            DO I=1,ROW_LENGTH                                              QTPOS1B.816   
+              SUM_NEIGHBOURS=SUM_NEIGHBOURS+QT(P_FIELD+1-ROW_LENGTH-I,K)   QTPOS1B.817   
+            END DO                                                         QTPOS1B.818   
+            IF(SUM_NEIGHBOURS.LT.0.0) THEN                                 QTPOS1B.819   
+              FACTOR(K)=1.0+QT(P_FIELD-1,K)*ROW_LENGTH/SUM_NEIGHBOURS      QTPOS1B.820   
+              IF(FACTOR(K).GE.0.0) THEN                                    QTPOS1B.821   
+CDIR$ IVDEP                                                                QTPOS1B.822   
+                DO I=1,ROW_LENGTH                                          QTPOS1B.823   
+                  QT(P_FIELD-ROW_LENGTH+I,K)=0.0                           QTPOS1B.824   
+                  QT(P_FIELD+1-ROW_LENGTH-I,K) =                           QTPOS1B.825   
+     *                       QT(P_FIELD+1-ROW_LENGTH-I,K)*FACTOR(K)        QTPOS1B.826   
+                END DO                                                     QTPOS1B.827   
+                GOTO 500    ! Correction performed                         QTPOS1B.828   
+              END IF                                                       QTPOS1B.829   
+            END IF                                                         QTPOS1B.830   
+C                                                                          QTPOS1B.831   
+C  No correction possible: global QT in layer is negative                  QTPOS1B.832   
+            FAILURE(K)=.TRUE.                                              QTPOS1B.833   
+          END IF                                                           QTPOS1B.834   
+  500     CONTINUE                                                         QTPOS1B.835   
+*ENDIF                                                                     QTPOS1B.836   
+        END IF          !  End main section for method 1                   QTPOS1B.837   
+CL---------------------------------------------------------------------    QTPOS1B.838   
+CL    SECTION 5.     METHOD 1.  ALSO METHOD 2 STEP 3.                      QTPOS1B.839   
+CL              REMOVE REMAINING NEGATIVE QT BY SUMMING                    QTPOS1B.840   
+CL              NEGATIVE AND POSITIVE VALUES SEPARATELY ON THE             QTPOS1B.841   
+CL              LEVEL AND PERFORMING A GLOBAL CORRECTION.                  QTPOS1B.842   
+CL---------------------------------------------------------------------    QTPOS1B.843   
+        IF(FAILURE(K).OR..NOT.L_QT_POS_LOCAL) THEN                         QTPOS1B.844   
+          NO_NEG=0            !zero count of -ve points                    QTPOS1B.845   
+          SUM_POSITIVE = 0.0                                               QTPOS1B.846   
+          SUM_NEGATIVE = 0.0                                               QTPOS1B.847   
+          DO I=ISTART,IEND                                                 QTPOS1B.848   
+            IF(QT(I,K).GT.0.)THEN                                          QTPOS1B.849   
+              NO_NEG=NO_NEG+1           !count number of -ve points        QTPOS1B.850   
+              SUM_NEGATIVE = SUM_NEGATIVE + QT(I,K)                        QTPOS1B.851   
+              QT(I,K) = 0.0                                                QTPOS1B.852   
+            ELSE                                                           QTPOS1B.853   
+              SUM_POSITIVE = SUM_POSITIVE + QT(I,K)                        QTPOS1B.854   
+            END IF                                                         QTPOS1B.855   
+          END DO                                                           QTPOS1B.856   
+!         WRITE(6,*),' GLOBAL correction level ',k,' no neg ',no_NEG       ATJ0F403.229   
+                                                                           QTPOS1B.858   
+CL If a negative value is found re-scale all positive points               QTPOS1B.859   
+CL                                                                         QTPOS1B.860   
+          IF (SUM_NEGATIVE.GT.0.0) THEN                                    QTPOS1B.861   
+            FAILURE(K)=.TRUE.                                              QTPOS1B.862   
+            FACTOR(K) = 1. + SUM_NEGATIVE/SUM_POSITIVE                     QTPOS1B.863   
+            IF(L_NEG_QT.AND.FACTOR(K).LT.0)THEN                            QTPOS1B.864   
+CL Skip abort if L_NEG_QT is true                                          QTPOS1B.865   
+              WRITE(6,*)' QT_POS : Mass weighted QT summed over level ',   QTPOS1B.866   
+     *            K,' was negative.  WARNING: QT not conserved'            QTPOS1B.867   
+              WRITE(6,*) NO_NEG,' points were -ve and the scaling ',       QTPOS1B.868   
+     *           'factor has been reset to 1'                              QTPOS1B.869   
+              FACTOR(K) = 1.0                                              QTPOS1B.870   
+            ENDIF                                                          QTPOS1B.871   
+            IF(FACTOR(K).LT.0.0) THEN                                      QTPOS1B.872   
+              ERROR_CODE = 1                                               QTPOS1B.873   
+              ERROR_MESSAGE=                                               QTPOS1B.874   
+     *  'QT_POS   : MASS-WEIGHTED QT SUMMED OVER A LEVEL WAS NEGATIVE.'    QTPOS1B.875   
+              RETURN                                                       QTPOS1B.876   
+            END IF                                                         QTPOS1B.877   
+          ELSE                                                             QTPOS1B.878   
+            FAILURE(K)=.FALSE.                                             QTPOS1B.879   
+          END IF                                                           QTPOS1B.880   
+        END IF                                                             QTPOS1B.881   
+                                                                           QTPOS1B.882   
+CL END LOOP OVER LEVELS                                                    QTPOS1B.883   
+      END DO                                                               QTPOS1B.884   
+                                                                           QTPOS1B.885   
+                                                                           QTPOS1B.886   
+CL    END OF ROUTINE QT_POS                                                QTPOS1B.887   
+                                                                           QTPOS1B.888   
+      RETURN                                                               QTPOS1B.889   
+      END                                                                  QTPOS1B.890   
+*ENDIF                                                                     QTPOS1B.891   

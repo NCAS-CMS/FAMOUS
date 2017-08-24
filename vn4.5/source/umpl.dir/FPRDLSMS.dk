@@ -1,0 +1,467 @@
+*IF DEF,FLUXPROC                                                           FPRDLSMS.2     
+C ******************************COPYRIGHT******************************    FPRDLSMS.3     
+C (c) CROWN COPYRIGHT 1998, METEOROLOGICAL OFFICE, All Rights Reserved.    FPRDLSMS.4     
+C                                                                          FPRDLSMS.5     
+C Use, duplication or disclosure of this code is subject to the            FPRDLSMS.6     
+C restrictions as set forth in the contract.                               FPRDLSMS.7     
+C                                                                          FPRDLSMS.8     
+C                Meteorological Office                                     FPRDLSMS.9     
+C                London Road                                               FPRDLSMS.10    
+C                BRACKNELL                                                 FPRDLSMS.11    
+C                Berkshire UK                                              FPRDLSMS.12    
+C                RG12 2SZ                                                  FPRDLSMS.13    
+C                                                                          FPRDLSMS.14    
+C If no contract has been raised with this copy of the code, the use,      FPRDLSMS.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      FPRDLSMS.16    
+C to do so must first be obtained in writing from the Head of Numerical    FPRDLSMS.17    
+C Modelling at the above address.                                          FPRDLSMS.18    
+C ******************************COPYRIGHT******************************    FPRDLSMS.19    
+C                                                                          FPRDLSMS.20    
+C Programming standard: Unified Model Documentation Paper No 3             FPRDLSMS.21    
+C                       Version No 1 15/1/90                               FPRDLSMS.22    
+C History:                                                                 FPRDLSMS.23    
+C version  date         change                                             FPRDLSMS.24    
+C 4.5      03/09/98     New code                                           FPRDLSMS.25    
+C                                                                          FPRDLSMS.26    
+! Author:     M. J. Bell                                                   FPRDLSMS.27    
+!----------------------------------------------------------------------    FPRDLSMS.28    
+! deck: RDLSMS                                                             FPRDLSMS.29    
+!                                                                          FPRDLSMS.30    
+! contains routines: read_lsms                                             FPRDLSMS.31    
+!                                                                          FPRDLSMS.32    
+! Purpose: reads land / sea masks, calculates coefficients for             FPRDLSMS.33    
+!          interpolation between grids and indices for "unresolved"        FPRDLSMS.34    
+!          seapoints on ocean grid which are not surrounded by seapoints   FPRDLSMS.35    
+!          on the atmosphere grid.                                         FPRDLSMS.36    
+!          Addition to handle rotated grids (S. Spall)                     FPRDLSMS.37    
+!----------------------------------------------------------------------    FPRDLSMS.38    
+      subroutine read_lsms(                                                FPRDLSMS.39    
+*CALL AFIELDS                                                              FPRDLSMS.40    
+*CALL ARGPPX                                                               FPRDLSMS.41    
+     #           icode)                                                    FPRDLSMS.42    
+                                                                           FPRDLSMS.43    
+      implicit none                                                        FPRDLSMS.44    
+                                                                           FPRDLSMS.45    
+! declaration of arguments                                                 FPRDLSMS.46    
+                                                                           FPRDLSMS.47    
+*CALL CFIELDS                                                              FPRDLSMS.48    
+                                                                           FPRDLSMS.49    
+      integer icode  ! IN/OUT error code ; > 0 => fatal error detected     FPRDLSMS.50    
+                                                                           FPRDLSMS.51    
+! parameters                                                               FPRDLSMS.52    
+*CALL PLOOKUPS                                                             FPRDLSMS.53    
+*CALL CSUBMODL                                                             FPRDLSMS.54    
+*CALL CPPXREF                                                              FPRDLSMS.55    
+*CALL PPXLOOK                                                              FPRDLSMS.56    
+                                                                           FPRDLSMS.57    
+! Globals                                                                  FPRDLSMS.58    
+*CALL CUNITNOS                                                             FPRDLSMS.59    
+*CALL CMESS                                                                FPRDLSMS.60    
+*CALL CLOOKUPS                                                             FPRDLSMS.61    
+*CALL CLOOKADD                                                             FPRDLSMS.62    
+                                                                           FPRDLSMS.63    
+! declaration of local arrays                                              FPRDLSMS.64    
+                                                                           FPRDLSMS.65    
+! arrays required as input by h_int_co                                     FPRDLSMS.66    
+       real phi_full(ncolsO*nrowstO)      ! { allocated with largest       FPRDLSMS.67    
+       real lambda_full(ncolsO*nrowstO)   ! { row dimension                FPRDLSMS.68    
+                                                                           FPRDLSMS.69    
+! temporary arrays of positions on atmosphere grid required for w_coeff    FPRDLSMS.70    
+       real lambda_eqA(ncols*nrowsu) ! Longitude on atmos. eq. grid        FPRDLSMS.71    
+       real phi_eqA(ncols*nrowsu)    ! Latitude on atmos. eq. grid         FPRDLSMS.72    
+       real lambda_tmp1(ncols*nrowsu) ! Longitude on reg. lat-long grid    FPRDLSMS.73    
+       real phi_tmp1(ncols*nrowsu)    ! Latitude on reg. lat-long grid     FPRDLSMS.74    
+       real lambda_tmp2(ncols*nrowsu) ! Longitude on ocean eq. grid        FPRDLSMS.75    
+       real phi_tmp2(ncols*nrowsu)    ! Latitude on ocean eq. grid         FPRDLSMS.76    
+                                                                           FPRDLSMS.77    
+! arrays required in the conversion of lat-long for ocean points           FPRDLSMS.78    
+       real phi_eq(ncolsO*nrowstO)      ! {                                FPRDLSMS.79    
+       real lambda_eq(ncolsO*nrowstO)   ! { allocated with largest         FPRDLSMS.80    
+       real phi_ll(ncolsO*nrowstO)      ! { row dimension                  FPRDLSMS.81    
+       real lambda_ll(ncolsO*nrowstO)   ! {                                FPRDLSMS.82    
+                                                                           FPRDLSMS.83    
+! arrays output by coast_aj which are not subsequently used                FPRDLSMS.84    
+! they are allocated with largest ocean grid dimensions (i.e. tracer)      FPRDLSMS.85    
+       integer index_targ(ncolsO*nrowstO)                                  FPRDLSMS.86    
+       integer index_srce(ncols*nrowst)                                    FPRDLSMS.87    
+!       integer coastal_points(ncolsO*nrowstO)                             FPRDLSMS.88    
+       integer coastal_points                                              FPRDLSMS.89    
+       integer index_land_unres(ncolsO*nrowstO)                            FPRDLSMS.90    
+                                                                           FPRDLSMS.91    
+! declaration of local scalars                                             FPRDLSMS.92    
+       logical mask    ! T => land sea mask is provided                    FPRDLSMS.93    
+       integer i       ! loop index for columns                            FPRDLSMS.94    
+       integer j       ! loop index for rows                               FPRDLSMS.95    
+       integer ij      ! loop index for points in 2D field                 FPRDLSMS.96    
+                                                                           FPRDLSMS.97    
+! scalar output by coast_aj which is not subsequently used                 FPRDLSMS.98    
+       integer n_pts_unres_land   ! number of unresolved land points       FPRDLSMS.99    
+                                                                           FPRDLSMS.100   
+       external read_lsm_anc, set_lsmu, h_int_co,                          FPRDLSMS.101   
+     #         coast_aj, set_searches, copy_to_real, eqtoll, lltoeq        FPRDLSMS.102   
+                                                                           FPRDLSMS.103   
+!----------------------------------------------------------------------    FPRDLSMS.104   
+                                                                           FPRDLSMS.105   
+! 0. Preliminaries                                                         FPRDLSMS.106   
+      CSub = 'read_lsms'  ! subroutine name for error messages             FPRDLSMS.107   
+                                                                           FPRDLSMS.108   
+!----------------------------------------------------------------------    FPRDLSMS.109   
+! 1. Read land / sea masks                                                 FPRDLSMS.110   
+!----------------------------------------------------------------------    FPRDLSMS.111   
+                                                                           FPRDLSMS.112   
+! 1.1 read atmosphere tracer land / sea mask and calculate                 FPRDLSMS.113   
+!    grid coordinates                                                      FPRDLSMS.114   
+      call read_lsm_anc(UnitNWPlsmt, Len_FixHd, Len1_Lookup, FixHdlsmt,    FPRDLSMS.115   
+     #       Lookuplsmt, ncols, nrowst, lsmt, lambda_t, phi_t,             FPRDLSMS.116   
+*CALL ARGPPX                                                               FPRDLSMS.117   
+     #       icode)                                                        FPRDLSMS.118   
+                                                                           FPRDLSMS.119   
+! check icode                                                              FPRDLSMS.120   
+      if (icode .gt. 0)then                                                FPRDLSMS.121   
+        write(UnErr,*)CErr,CSub,                                           FPRDLSMS.122   
+     #       ' step 1.1 failed reading NWP tracer land / sea mask'         FPRDLSMS.123   
+        go to 9999                                                         FPRDLSMS.124   
+      end if                                                               FPRDLSMS.125   
+                                                                           FPRDLSMS.126   
+! 1.2 set atmosphere velocity land / sea mask from tracer land / sea       FPRDLSMS.127   
+!     mask and calculate grid coordinates                                  FPRDLSMS.128   
+                                                                           FPRDLSMS.129   
+      call set_lsmu ( Len1_Lookup, Lookuplsmu, ncols, nrowst, nrowsu,      FPRDLSMS.130   
+     #                LCyclic, lsmt, lsmu, lambda_u, phi_u )               FPRDLSMS.131   
+                                                                           FPRDLSMS.132   
+                                                                           FPRDLSMS.133   
+! 1.3 read ocean tracer land / sea mask and calculate                      FPRDLSMS.134   
+!    grid coordinates                                                      FPRDLSMS.135   
+      call read_lsm_anc(UnitFOAMlsmt, Len_FixHd, Len1_Lookup,              FPRDLSMS.136   
+     #       FixHdlsmtO, LookuplsmtO, ncolsO, nrowstO, lsmtO,              FPRDLSMS.137   
+     #       lambda_tO, phi_tO,                                            FPRDLSMS.138   
+*CALL ARGPPX                                                               FPRDLSMS.139   
+     #       icode)                                                        FPRDLSMS.140   
+                                                                           FPRDLSMS.141   
+! check icode                                                              FPRDLSMS.142   
+      if (icode .gt. 0)then                                                FPRDLSMS.143   
+        write(UnErr,*)CErr,CSub,                                           FPRDLSMS.144   
+     #       ' step 1.3 failed reading ocean tracer land / sea mask'       FPRDLSMS.145   
+        icode = icode + 2000                                               FPRDLSMS.146   
+        go to 9999                                                         FPRDLSMS.147   
+      end if                                                               FPRDLSMS.148   
+                                                                           FPRDLSMS.149   
+! 1.4 read ocean velocity land / sea mask and calculate                    FPRDLSMS.150   
+!    grid coordinates                                                      FPRDLSMS.151   
+      call read_lsm_anc(UnitFOAMlsmu, Len_FixHd, Len1_Lookup,              FPRDLSMS.152   
+     #       FixHdlsmuO, LookuplsmuO, ncolsO, nrowsuO, lsmuO,              FPRDLSMS.153   
+     #       lambda_uO, phi_uO,                                            FPRDLSMS.154   
+*CALL ARGPPX                                                               FPRDLSMS.155   
+     #       icode)                                                        FPRDLSMS.156   
+                                                                           FPRDLSMS.157   
+! check icode                                                              FPRDLSMS.158   
+      if (icode .gt. 0)then                                                FPRDLSMS.159   
+        write(UnErr,*)CErr,CSub,                                           FPRDLSMS.160   
+     #       ' step 1.4 failed reading ocean velocity land / sea mask'     FPRDLSMS.161   
+        icode = icode + 2000                                               FPRDLSMS.162   
+        go to 9999                                                         FPRDLSMS.163   
+      end if                                                               FPRDLSMS.164   
+                                                                           FPRDLSMS.165   
+!----------------------------------------------------------------------    FPRDLSMS.166   
+! 2. Find if the atmosphere grid is rotated                                FPRDLSMS.167   
+!---------------------------------------------------------------------     FPRDLSMS.168   
+                                                                           FPRDLSMS.169   
+! 2.1 Get the position of the poles from the                               FPRDLSMS.170   
+!     atmosphere lsm header                                                FPRDLSMS.171   
+                                                                           FPRDLSMS.172   
+      call copy_to_real ( Lookuplsmt(BPLAT), pole_lat )                    FPRDLSMS.173   
+      call copy_to_real ( Lookuplsmt(BPLON), pole_lon )                    FPRDLSMS.174   
+                                                                           FPRDLSMS.175   
+! 2.2 Find if a rotated grid is being used                                 FPRDLSMS.176   
+                                                                           FPRDLSMS.177   
+      rotg=.true.                                                          FPRDLSMS.178   
+      if ( pole_lat .gt. 89.99 .and. pole_lat .lt. 90.01) then             FPRDLSMS.179   
+        rotg=.false.                                                       FPRDLSMS.180   
+      end if                                                               FPRDLSMS.181   
+                                                                           FPRDLSMS.182   
+      if (pole_lat .lt. -1.0e5) then                                       FPRDLSMS.183   
+        rotg=.false.                                                       FPRDLSMS.184   
+      end if                                                               FPRDLSMS.185   
+                                                                           FPRDLSMS.186   
+! 2.3 Do error checking on the positions of the poles                      FPRDLSMS.187   
+                                                                           FPRDLSMS.188   
+      if (rotg) then                                                       FPRDLSMS.189   
+                                                                           FPRDLSMS.190   
+        if ( pole_lat .gt. 90.0 .or. pole_lat .lt. -90.0 ) then            FPRDLSMS.191   
+          write(UnErr,*)CErr,CSub,                                         FPRDLSMS.192   
+     #       ' step 2.3 incorrect latitude of pole in atmos lsm header'    FPRDLSMS.193   
+          icode = icode + 2000                                             FPRDLSMS.194   
+          go to 9999                                                       FPRDLSMS.195   
+        end if                                                             FPRDLSMS.196   
+                                                                           FPRDLSMS.197   
+        if ( pole_lon .gt. 360.0 .or. pole_lon .lt. -360.0 ) then          FPRDLSMS.198   
+          write(UnErr,*)CErr,CSub,                                         FPRDLSMS.199   
+     #       ' step 2.3 incorrect longitude of pole in atmos lsm header'   FPRDLSMS.200   
+          icode = icode + 2000                                             FPRDLSMS.201   
+          go to 9999                                                       FPRDLSMS.202   
+        end if                                                             FPRDLSMS.203   
+                                                                           FPRDLSMS.204   
+      end if                                                               FPRDLSMS.205   
+                                                                           FPRDLSMS.206   
+! 2.4 Write out details of the type of grid                                FPRDLSMS.207   
+                                                                           FPRDLSMS.208   
+      if (rotg) then                                                       FPRDLSMS.209   
+        write(UnStd,*)CStd//CSub//'Atmosphere on a rotated grid;',         FPRDLSMS.210   
+     #    ' BPLAT = ', pole_lat, '; BPLON = ', pole_lon                    FPRDLSMS.211   
+      else                                                                 FPRDLSMS.212   
+        write(UnStd,*)CStd//CSub//'Atmosphere on a non-rotated grid'       FPRDLSMS.213   
+      end if                                                               FPRDLSMS.214   
+                                                                           FPRDLSMS.215   
+!----------------------------------------------------------------------    FPRDLSMS.216   
+! 3. Find if the ocean grid is rotated                                     FPRDLSMS.217   
+!---------------------------------------------------------------------     FPRDLSMS.218   
+                                                                           FPRDLSMS.219   
+! 3.1 Get the position of the poles from the                               FPRDLSMS.220   
+!     ocean tracer grid lsm header                                         FPRDLSMS.221   
+                                                                           FPRDLSMS.222   
+      call copy_to_real ( LookuplsmtO(BPLAT), poleO_lat )                  FPRDLSMS.223   
+      call copy_to_real ( LookuplsmtO(BPLON), poleO_lon )                  FPRDLSMS.224   
+                                                                           FPRDLSMS.225   
+! 3.2 Find if a rotated grid is being used                                 FPRDLSMS.226   
+                                                                           FPRDLSMS.227   
+      rotgO=.true.                                                         FPRDLSMS.228   
+      if ( poleO_lat .gt. 89.99 .and. poleO_lat .lt. 90.01) then           FPRDLSMS.229   
+        rotgO=.false.                                                      FPRDLSMS.230   
+      end if                                                               FPRDLSMS.231   
+                                                                           FPRDLSMS.232   
+      if (poleO_lat .lt. -1.0e5) then                                      FPRDLSMS.233   
+        rotgO=.false.                                                      FPRDLSMS.234   
+      end if                                                               FPRDLSMS.235   
+                                                                           FPRDLSMS.236   
+! 3.3 Do error checking on the positions of the poles                      FPRDLSMS.237   
+                                                                           FPRDLSMS.238   
+      if (rotgO) then                                                      FPRDLSMS.239   
+                                                                           FPRDLSMS.240   
+        if ( poleO_lat .gt. 90.0 .or. poleO_lat .lt. -90.0 ) then          FPRDLSMS.241   
+          write(UnErr,*)CErr,CSub,                                         FPRDLSMS.242   
+     #       ' step 3.3 incorrect latitude of pole in ocean lsm header'    FPRDLSMS.243   
+          icode = icode + 2000                                             FPRDLSMS.244   
+          go to 9999                                                       FPRDLSMS.245   
+        end if                                                             FPRDLSMS.246   
+                                                                           FPRDLSMS.247   
+        if ( poleO_lon .gt. 360.0 .or. poleO_lon .lt. -360.0 ) then        FPRDLSMS.248   
+          write(UnErr,*)CErr,CSub,                                         FPRDLSMS.249   
+     #       ' step 3.3 incorrect longitude of pole in ocean lsm header'   FPRDLSMS.250   
+          icode = icode + 2000                                             FPRDLSMS.251   
+          go to 9999                                                       FPRDLSMS.252   
+        end if                                                             FPRDLSMS.253   
+                                                                           FPRDLSMS.254   
+      end if                                                               FPRDLSMS.255   
+                                                                           FPRDLSMS.256   
+! 3.4 Write out details of the type of grid                                FPRDLSMS.257   
+                                                                           FPRDLSMS.258   
+      if (rotgO) then                                                      FPRDLSMS.259   
+        write(UnStd,*)CStd//CSub//'Ocean on a rotated grid;',              FPRDLSMS.260   
+     #    ' BPLAT = ', poleO_lat, '; BPLON = ', poleO_lon                  FPRDLSMS.261   
+      else                                                                 FPRDLSMS.262   
+        write(UnStd,*)CStd//CSub//'Ocean on a non-rotated grid'            FPRDLSMS.263   
+      end if                                                               FPRDLSMS.264   
+                                                                           FPRDLSMS.265   
+!----------------------------------------------------------------------    FPRDLSMS.266   
+! 4. Calculate interpolation coefficients for interpolation                FPRDLSMS.267   
+!    from atmosphere to ocean grids                                        FPRDLSMS.268   
+!----------------------------------------------------------------------    FPRDLSMS.269   
+                                                                           FPRDLSMS.270   
+! 4.1 prepare target grid coordinates required                             FPRDLSMS.271   
+!     by h_int_co for tracer grid                                          FPRDLSMS.272   
+                                                                           FPRDLSMS.273   
+      do j = 1, nrowstO                                                    FPRDLSMS.274   
+        do i = 1, ncolsO                                                   FPRDLSMS.275   
+          ij = i + (j-1) * ncolsO                                          FPRDLSMS.276   
+          phi_eq( ij ) = phi_tO ( j )                                      FPRDLSMS.277   
+          lambda_eq( ij ) =  lambda_tO ( i )                               FPRDLSMS.278   
+       end do                                                              FPRDLSMS.279   
+      end do                                                               FPRDLSMS.280   
+                                                                           FPRDLSMS.281   
+! 4.2 If the ocean uses a rotated grid, convert the ocean lat-long         FPRDLSMS.282   
+!     vector to a standard lat-long grid                                   FPRDLSMS.283   
+                                                                           FPRDLSMS.284   
+      if (rotgO) then                                                      FPRDLSMS.285   
+        call eqtoll(phi_eq, lambda_eq, phi_ll, lambda_ll,                  FPRDLSMS.286   
+     #                      poleO_lat, poleO_lon, ncolsO*nrowstO)          FPRDLSMS.287   
+      else                                                                 FPRDLSMS.288   
+        do i = 1, ncolsO*nrowstO                                           FPRDLSMS.289   
+          phi_ll( i ) = phi_eq( i )                                        FPRDLSMS.290   
+          lambda_ll( i ) =  lambda_eq ( i )                                FPRDLSMS.291   
+        end do                                                             FPRDLSMS.292   
+      end if                                                               FPRDLSMS.293   
+                                                                           FPRDLSMS.294   
+! 4.3 If the atmosphere uses a rotated grid, convert the ocean standard    FPRDLSMS.295   
+!     lat-long to the atmosphere rotated grid                              FPRDLSMS.296   
+                                                                           FPRDLSMS.297   
+      if (rotg) then                                                       FPRDLSMS.298   
+        call lltoeq(phi_ll, lambda_ll, phi_full, lambda_full,              FPRDLSMS.299   
+     #                      pole_lat, pole_lon, ncolsO*nrowstO)            FPRDLSMS.300   
+      else                                                                 FPRDLSMS.301   
+        do i = 1, ncolsO*nrowstO                                           FPRDLSMS.302   
+          phi_full( i ) = phi_ll( i )                                      FPRDLSMS.303   
+          lambda_full( i ) =  lambda_ll ( i )                              FPRDLSMS.304   
+        end do                                                             FPRDLSMS.305   
+      end if                                                               FPRDLSMS.306   
+                                                                           FPRDLSMS.307   
+! 4.4 Convert target longitude to correct range                            FPRDLSMS.308   
+                                                                           FPRDLSMS.309   
+      do i = 1, ncolsO*nrowstO                                             FPRDLSMS.310   
+        lambda_full(i)=mod(lambda_full(i)-lambda_t(1)+720.,360.)           FPRDLSMS.311   
+     #                         +lambda_t(1)                                FPRDLSMS.312   
+      end do                                                               FPRDLSMS.313   
+                                                                           FPRDLSMS.314   
+! 4.5 Calculate interpolation coefficients for tracer grids                FPRDLSMS.315   
+                                                                           FPRDLSMS.316   
+      call h_int_co(index_bl_t,index_br_t,                                 FPRDLSMS.317   
+     # weight_tr_t,weight_br_t,weight_tl_t,weight_bl_t,                    FPRDLSMS.318   
+     # lambda_t, phi_t, lambda_full, phi_full,                             FPRDLSMS.319   
+     # ncols,nrowst,ncolsO*nrowstO,LCyclic)                                FPRDLSMS.320   
+                                                                           FPRDLSMS.321   
+! 4.6 prepare target grid coordinates required                             FPRDLSMS.322   
+!     by h_int_co for velocity grid                                        FPRDLSMS.323   
+                                                                           FPRDLSMS.324   
+      do j = 1, nrowsuO                                                    FPRDLSMS.325   
+        do i = 1, ncolsO                                                   FPRDLSMS.326   
+          ij = i + (j-1) * ncolsO                                          FPRDLSMS.327   
+          phi_eq( ij ) = phi_uO ( j )                                      FPRDLSMS.328   
+          lambda_eq (ij ) =  lambda_uO ( i )                               FPRDLSMS.329   
+       end do                                                              FPRDLSMS.330   
+      end do                                                               FPRDLSMS.331   
+                                                                           FPRDLSMS.332   
+! 4.7 If the ocean uses a rotated grid, convert the ocean lat-long         FPRDLSMS.333   
+!     vector to a standard lat-long grid                                   FPRDLSMS.334   
+                                                                           FPRDLSMS.335   
+      if (rotgO) then                                                      FPRDLSMS.336   
+        call eqtoll(phi_eq, lambda_eq, phi_ll, lambda_ll,                  FPRDLSMS.337   
+     #                      poleO_lat, poleO_lon, ncolsO*nrowsuO)          FPRDLSMS.338   
+      else                                                                 FPRDLSMS.339   
+        do i = 1, ncolsO*nrowsuO                                           FPRDLSMS.340   
+          phi_ll( i ) = phi_eq( i )                                        FPRDLSMS.341   
+          lambda_ll( i ) =  lambda_eq ( i )                                FPRDLSMS.342   
+        end do                                                             FPRDLSMS.343   
+      end if                                                               FPRDLSMS.344   
+                                                                           FPRDLSMS.345   
+! 4.8 If the atmosphere uses a rotated grid, convert the ocean standard    FPRDLSMS.346   
+!     lat-long to the atmosphere rotated grid                              FPRDLSMS.347   
+                                                                           FPRDLSMS.348   
+      if (rotg) then                                                       FPRDLSMS.349   
+        call lltoeq(phi_ll, lambda_ll, phi_full, lambda_full,              FPRDLSMS.350   
+     #                      pole_lat, pole_lon, ncolsO*nrowsuO)            FPRDLSMS.351   
+      else                                                                 FPRDLSMS.352   
+        do i = 1, ncolsO*nrowsuO                                           FPRDLSMS.353   
+          phi_full( i ) = phi_ll( i )                                      FPRDLSMS.354   
+          lambda_full( i ) =  lambda_ll ( i )                              FPRDLSMS.355   
+        end do                                                             FPRDLSMS.356   
+      end if                                                               FPRDLSMS.357   
+                                                                           FPRDLSMS.358   
+! 4.9 Convert target longitude to correct range                            FPRDLSMS.359   
+                                                                           FPRDLSMS.360   
+      do i = 1, ncolsO*nrowsuO                                             FPRDLSMS.361   
+        lambda_full(i)=mod(lambda_full(i)-lambda_u(1)+720.,360.)           FPRDLSMS.362   
+     #                         +lambda_u(1)                                FPRDLSMS.363   
+      end do                                                               FPRDLSMS.364   
+                                                                           FPRDLSMS.365   
+! 4.10 Calculate interpolation coefficients for velocity grids             FPRDLSMS.366   
+      call h_int_co(index_bl_u,index_br_u,                                 FPRDLSMS.367   
+     # weight_tr_u,weight_br_u,weight_tl_u,weight_bl_u,                    FPRDLSMS.368   
+     # lambda_u, phi_u, lambda_full, phi_full,                             FPRDLSMS.369   
+     # ncols,nrowsu,ncolsO*nrowsuO,LCyclic)                                FPRDLSMS.370   
+                                                                           FPRDLSMS.371   
+!----------------------------------------------------------------------    FPRDLSMS.372   
+! 5. Calculate the coefficients for rotating wind vectors to align         FPRDLSMS.373   
+!    with the ocean grid                                                   FPRDLSMS.374   
+!----------------------------------------------------------------------    FPRDLSMS.375   
+                                                                           FPRDLSMS.376   
+! 5.1 Set up the coefficients for atmosphere to reg. lat-long              FPRDLSMS.377   
+                                                                           FPRDLSMS.378   
+      do j = 1, nrowsu                                                     FPRDLSMS.379   
+        do i = 1, ncols                                                    FPRDLSMS.380   
+          ij = i + (j-1) * ncols                                           FPRDLSMS.381   
+          phi_eqA( ij ) = phi_u ( j )                                      FPRDLSMS.382   
+          lambda_eqA ( ij ) =  lambda_u ( i )                              FPRDLSMS.383   
+       end do                                                              FPRDLSMS.384   
+      end do                                                               FPRDLSMS.385   
+                                                                           FPRDLSMS.386   
+      if (rotg) then                                                       FPRDLSMS.387   
+        call eqtoll(phi_eqA, lambda_eqA, phi_tmp1, lambda_tmp1,            FPRDLSMS.388   
+     #                      pole_lat, pole_lon, ncols*nrowsu)              FPRDLSMS.389   
+        call w_coeff(coef_angle1, coef_angle2, lambda_tmp1,                FPRDLSMS.390   
+     #             lambda_eqA, pole_lat, pole_lon, ncols*nrowsu)           FPRDLSMS.391   
+      else                                                                 FPRDLSMS.392   
+        do ij = 1, ncols*nrowsu                                            FPRDLSMS.393   
+          lambda_tmp1(ij)=lambda_eqA(ij)                                   FPRDLSMS.394   
+          phi_tmp1(ij)=phi_eqA(ij)                                         FPRDLSMS.395   
+        enddo                                                              FPRDLSMS.396   
+      endif                                                                FPRDLSMS.397   
+                                                                           FPRDLSMS.398   
+! 5.2 Set up the coefficients for reg. lat-long to ocean                   FPRDLSMS.399   
+                                                                           FPRDLSMS.400   
+      if (rotgO) then                                                      FPRDLSMS.401   
+        call lltoeq(phi_tmp1, lambda_tmp1, phi_tmp2, lambda_tmp2,          FPRDLSMS.402   
+     #                      poleO_lat, poleO_lon, ncols*nrowsu)            FPRDLSMS.403   
+        call w_coeff(coef_angle3, coef_angle4, lambda_tmp1,                FPRDLSMS.404   
+     #             lambda_tmp2, poleO_lat, poleO_lon, ncols*nrowsu)        FPRDLSMS.405   
+      endif                                                                FPRDLSMS.406   
+                                                                           FPRDLSMS.407   
+!----------------------------------------------------------------------    FPRDLSMS.408   
+! 6. Calculate indices for unresolved points i.e. seapoints on ocean       FPRDLSMS.409   
+!    grid which are not surrounded by seapoints on the atmosphere grid     FPRDLSMS.410   
+!----------------------------------------------------------------------    FPRDLSMS.411   
+                                                                           FPRDLSMS.412   
+! 6.1 Calculate indices for unresolved points for tracer grids             FPRDLSMS.413   
+                                                                           FPRDLSMS.414   
+      mask = .true.  ! land / sea mask for target grid is to be used       FPRDLSMS.415   
+                                                                           FPRDLSMS.416   
+      call coast_aj (index_bl_t,index_br_t,                                FPRDLSMS.417   
+     # weight_tr_t,weight_br_t,weight_tl_t,weight_bl_t,                    FPRDLSMS.418   
+     # ncols,nrowst,ncolsO*nrowstO,                                        FPRDLSMS.419   
+     # lsmt,lsmtO,                                                         FPRDLSMS.420   
+     # index_targ,index_srce,coastal_points,mask,                          FPRDLSMS.421   
+     # index_unres_t,n_pts_unres_t,                                        FPRDLSMS.422   
+     # index_land_unres,n_pts_unres_land)                                  FPRDLSMS.423   
+                                                                           FPRDLSMS.424   
+! 6.2 Calculate indices for unresolved points for velocity grids           FPRDLSMS.425   
+                                                                           FPRDLSMS.426   
+      call coast_aj (index_bl_u,index_br_u,                                FPRDLSMS.427   
+     # weight_tr_u,weight_br_u,weight_tl_u,weight_bl_u,                    FPRDLSMS.428   
+     # ncols,nrowsu,ncolsO*nrowsuO,                                        FPRDLSMS.429   
+     # lsmu,lsmuO,                                                         FPRDLSMS.430   
+     # index_targ,index_srce,coastal_points,mask,                          FPRDLSMS.431   
+     # index_unres_u,n_pts_unres_u,                                        FPRDLSMS.432   
+     # index_land_unres,n_pts_unres_land)                                  FPRDLSMS.433   
+                                                                           FPRDLSMS.434   
+!----------------------------------------------------------------------    FPRDLSMS.435   
+! 7. Determine number of searchs needed to fill in unresolved points       FPRDLSMS.436   
+!----------------------------------------------------------------------    FPRDLSMS.437   
+                                                                           FPRDLSMS.438   
+! 7.1 on tracer grid                                                       FPRDLSMS.439   
+      call set_searches ( ncolsO, nrowstO, LCyclic, ISeaPt,                FPRDLSMS.440   
+     #     lsmtO, n_pts_unres_t, index_unres_t, max_no_searches,           FPRDLSMS.441   
+     #     n_calls_spiral_t, n_pts_spiral_t, icode)                        FPRDLSMS.442   
+                                                                           FPRDLSMS.443   
+      if (icode .gt. 0)then                                                FPRDLSMS.444   
+        write(UnErr,*)CErr,CSub,                                           FPRDLSMS.445   
+     #       ' step 4.1 unable to fill in all unresolved points '          FPRDLSMS.446   
+        icode = icode + 2000                                               FPRDLSMS.447   
+        go to 9999                                                         FPRDLSMS.448   
+      end if                                                               FPRDLSMS.449   
+                                                                           FPRDLSMS.450   
+                                                                           FPRDLSMS.451   
+! 7.2 on velocity grid                                                     FPRDLSMS.452   
+      call set_searches ( ncolsO, nrowsuO, LCyclic, ISeaPt,                FPRDLSMS.453   
+     #     lsmuO, n_pts_unres_u, index_unres_u, max_no_searches,           FPRDLSMS.454   
+     #     n_calls_spiral_u, n_pts_spiral_u, icode)                        FPRDLSMS.455   
+                                                                           FPRDLSMS.456   
+      if (icode .gt. 0)then                                                FPRDLSMS.457   
+        write(UnErr,*)CErr,CSub,                                           FPRDLSMS.458   
+     #       ' step 4.2 unable to fill in all unresolved points '          FPRDLSMS.459   
+        icode = icode + 2000                                               FPRDLSMS.460   
+        go to 9999                                                         FPRDLSMS.461   
+      end if                                                               FPRDLSMS.462   
+                                                                           FPRDLSMS.463   
+9999  continue                                                             FPRDLSMS.464   
+      return                                                               FPRDLSMS.465   
+      end                                                                  FPRDLSMS.466   
+!----------------------------------------------------------------------    FPRDLSMS.467   
+*ENDIF                                                                     FPRDLSMS.468   

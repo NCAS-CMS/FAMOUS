@@ -1,0 +1,437 @@
+*IF DEF,C84_1A                                                             STFLDM1A.2     
+C ******************************COPYRIGHT******************************    GTS2F400.9595  
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS2F400.9596  
+C                                                                          GTS2F400.9597  
+C Use, duplication or disclosure of this code is subject to the            GTS2F400.9598  
+C restrictions as set forth in the contract.                               GTS2F400.9599  
+C                                                                          GTS2F400.9600  
+C                Meteorological Office                                     GTS2F400.9601  
+C                London Road                                               GTS2F400.9602  
+C                BRACKNELL                                                 GTS2F400.9603  
+C                Berkshire UK                                              GTS2F400.9604  
+C                RG12 2SZ                                                  GTS2F400.9605  
+C                                                                          GTS2F400.9606  
+C If no contract has been raised with this copy of the code, the use,      GTS2F400.9607  
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS2F400.9608  
+C to do so must first be obtained in writing from the Head of Numerical    GTS2F400.9609  
+C Modelling at the above address.                                          GTS2F400.9610  
+C ******************************COPYRIGHT******************************    GTS2F400.9611  
+C                                                                          GTS2F400.9612  
+CLL  Routine: STFIELDM -------------------------------------------------   STFLDM1A.3     
+CLL                                                                        STFLDM1A.4     
+CLL  Purpose: Calculate weighted field mean within a region specified      STFLDM1A.5     
+CLL           by a lower left hand and upper right hand corner.            STFLDM1A.6     
+CLL           Single level fields only.                                    STFLDM1A.7     
+CLL           (STASH service routine).                                     STFLDM1A.8     
+CLL                                                                        STFLDM1A.9     
+CLL  Tested under compiler:   cft77                                        STFLDM1A.10    
+CLL  Tested under OS version: UNICOS 5.1                                   STFLDM1A.11    
+CLL                                                                        STFLDM1A.12    
+CLL  Author:   T.Johns/S.Tett                                              STFLDM1A.13    
+CLL                                                                        STFLDM1A.14    
+CLL  Model            Modification history from model version 3.0:         STFLDM1A.15    
+CLL version  date                                                          STFLDM1A.16    
+CLL   3.3  16/09/93  Allow level-by-level mass-weighting if mass-weights   TJ170993.206   
+CLL                  are so defined, otherwise use P*.                     TJ170993.207   
+!LL   4.3  28/01/97  Moved weighting and masking calculations up to        GPB0F403.193   
+!LL                  SPATIAL.                                              GPB0F403.194   
+!LL                  Significantly rewritten for MPP mode - data           GPB0F403.195   
+!LL                  must be gathered to a processor for                   GPB0F403.196   
+!LL                  reproducible sums to be calculated.   P.Burton        GPB0F403.197   
+!LL   4.4  13/06/97  MPP: Set fieldout to zero for processors in           GPB0F404.268   
+!LL                  subdomain area which will not otherwise receive       GPB0F404.269   
+!LL                  the result of the field mean.                         GPB0F404.270   
+!LL                  MPP: Correct bug in calculating SUMGBOT in non        GPB0F404.271   
+!LL                       reproducible code                   P.Burton     GPB0F404.272   
+!LL   4.5  12/01/98  Replaced usage of shmem common block by a             GPB2F405.196   
+!LL                  dynamic array.                   P.Burton             GPB2F405.197   
+!LL   4.5  09/01/98  Correct calculation of sum_pe      P.Burton           GPB0F405.9     
+CLL                                                                        STFLDM1A.17    
+CLL  Programming standard: UM Doc Paper 3, version 2 (7/9/90)              STFLDM1A.18    
+CLL                                                                        STFLDM1A.19    
+CLL  Logical components covered: D715                                      STFLDM1A.20    
+CLL                                                                        STFLDM1A.21    
+CLL  Project task: D7                                                      STFLDM1A.22    
+CLL                                                                        STFLDM1A.23    
+CLL  External documentation:                                               STFLDM1A.24    
+CLL    Unified Model Doc Paper C4 - Storage handling and diagnostic        STFLDM1A.25    
+CLL                                 system (STASH)                         STFLDM1A.26    
+CLL                                                                        STFLDM1A.27    
+C*L  Interface and arguments: ------------------------------------------   STFLDM1A.28    
+C                                                                          STFLDM1A.29    
+      SUBROUTINE STFIELDM(fieldin,vx,vy,st_grid,gr,lwrap,lmasswt,          GPB0F403.198   
+     &                  xstart,ystart,xend,yend,                           STFLDM1A.31    
+*IF DEF,MPP                                                                GPB0F403.199   
+     &                  global_xstart,global_ystart,                       GPB0F403.200   
+     &                  global_xend,global_yend,                           GPB0F403.201   
+*ENDIF                                                                     GPB0F403.202   
+     &                  fieldout,                                          STFLDM1A.32    
+     &                  pstar_weight,delta_ak,delta_bk,                    GPB0F403.203   
+     &                  area_weight,mask,                                  GPB0F403.204   
+     &                  row_length,p_rows,                                 GPB0F403.205   
+     &                  level_code,mask_code,weight_code,rmdi,             STFLDM1A.36    
+     &                  icode,cmessage)                                    STFLDM1A.37    
+C                                                                          STFLDM1A.38    
+      IMPLICIT NONE                                                        STFLDM1A.39    
+C                                                                          STFLDM1A.40    
+      INTEGER                                                              STFLDM1A.41    
+     &    vx,vy,                                ! IN  input field size     STFLDM1A.42    
+     &    st_grid,                              ! IN  STASH grdtype code   STFLDM1A.43    
+     &    gr,                                   ! IN input fld grid        GPB0F403.206   
+     &    xstart,ystart,                        ! IN  lower LH corner      STFLDM1A.44    
+     &    xend,yend,                            ! IN  upper RH corner      STFLDM1A.45    
+*IF DEF,MPP                                                                GPB0F403.207   
+     &    global_xstart,global_ystart,          ! IN global versions of    GPB0F403.208   
+     &    global_xend,  global_yend,            ! IN xstart etc.           GPB0F403.209   
+*ENDIF                                                                     GPB0F403.210   
+     &    row_length,p_rows,                    ! IN  primary dimensions   GPB0F403.211   
+     &    level_code,                           ! IN  input level code     STFLDM1A.47    
+     &    mask_code,                            ! IN  masking code         STFLDM1A.48    
+     &    weight_code,                          ! IN  weighting code       STFLDM1A.49    
+     &    icode                                 ! OUT error return code    STFLDM1A.50    
+      CHARACTER*(*)                                                        STFLDM1A.51    
+     &    cmessage                              ! OUT error return msg     STFLDM1A.52    
+      LOGICAL                                                              STFLDM1A.53    
+     &    lwrap,                                ! IN  TRUE if wraparound   STFLDM1A.54    
+     &    lmasswt,                              ! IN  TRUE if masswts OK   TJ170993.209   
+     &    mask(row_length,p_rows)               ! IN  mask array           GPB0F403.212   
+      REAL                                                                 STFLDM1A.56    
+     &    fieldin(vx,vy),                       ! IN  input field          STFLDM1A.57    
+     &    fieldout,                             ! OUT output field         STFLDM1A.58    
+     &    pstar_weight(row_length,p_rows),      ! IN  pstar mass weight    GPB0F403.213   
+     &    delta_ak(*),                          ! IN  hybrid coordinates   STFLDM1A.61    
+     &    delta_bk(*),                          ! IN  hybrid coordinates   STFLDM1A.62    
+     &    area_weight(row_length,p_rows),       ! IN  area weighting       GPB0F403.214   
+! (already interpolated to the correct grid and                            GPB0F403.215   
+!  set to 1.0 where no area weighting is required)                         GPB0F403.216   
+     &    rmdi                                  ! IN  missing data indic   STFLDM1A.65    
+C*----------------------------------------------------------------------   STFLDM1A.66    
+C                                                                          STFLDM1A.67    
+C External subroutines called                                              STFLDM1A.68    
+C                                                                          STFLDM1A.69    
+C                                                                          STFLDM1A.71    
+*CALL STPARAM                                                              STFLDM1A.72    
+*CALL STERR                                                                STFLDM1A.73    
+C                                                                          STFLDM1A.74    
+C Local variables                                                          STFLDM1A.75    
+C                                                                          STFLDM1A.76    
+        INTEGER i,ii,j ! ARRAY INDICES FOR VARIABLE                        STFLDM1A.77    
+                                                                           STFLDM1A.78    
+*IF DEF,MPP                                                                GPB0F403.217   
+                                                                           GPB0F403.218   
+*CALL PARVARS                                                              GPB0F403.219   
+                                                                           GPB0F403.220   
+                                                                           GPB0F403.221   
+*IF DEF,REPROD                                                             GPB0F403.222   
+                                                                           GPB0F403.223   
+      INTEGER                                                              GPB0F403.224   
+! Co-ords to PE at top left of subarea                                     GPB0F403.225   
+     &  proc_top_left_x , proc_top_left_y                                  GPB0F403.226   
+                                                                           GPB0F403.227   
+! unused return values from GLOBAL_TO_LOCAL_RC                             GPB0F403.228   
+     &, dummy1 , dummy2                                                    GPB0F403.229   
+                                                                           GPB0F403.230   
+! PE number of PE at top left of subarea                                   GPB0F403.231   
+     &, sum_pe                                                             GPB0F403.232   
+                                                                           GPB0F403.233   
+! size of local and global arrays                                          GPB0F403.234   
+     &, local_size,global_size                                             GPB0F403.235   
+                                                                           GPB0F403.236   
+! Weighted version of fieldin                                              GPB0F403.237   
+      REAL local_sum_array_top(xstart:xend,ystart:yend)                    GPB0F403.238   
+! Weights applied to fieldin                                               GPB0F403.239   
+      REAL local_sum_array_bot(xstart:xend,ystart:yend)                    GPB0F403.240   
+                                                                           GPB0F403.241   
+*ELSE                                                                      GPB0F403.242   
+                                                                           GPB0F403.243   
+      INTEGER                                                              GPB0F403.244   
+! limits of local data to be summed                                        GPB0F403.245   
+     &  local_sum_xstart,local_sum_xend                                    GPB0F403.246   
+     &, local_sum_ystart,local_sum_yend                                    GPB0F403.247   
+                                                                           GPB0F403.248   
+! return code from GCOM routines                                           GPB0F403.249   
+     &, info                                                               GPB0F403.250   
+                                                                           GPB0F403.251   
+*ENDIF                                                                     GPB0F403.252   
+                                                                           GPB0F403.253   
+                                                                           GPB0F403.256   
+*IF DEF,REPROD                                                             GPB0F403.257   
+      INTEGER                                                              GPB0F403.258   
+! Sizes of the global_sum_arrays defined below                             GPB2F405.198   
+     &  global_sum_array_sizex,global_sum_array_sizey                      GPB0F403.262   
+                                                                           GPB0F403.263   
+      REAL                                                                 GPB0F403.272   
+! Collected versions of fieldin and the weights containing                 GPB0F403.273   
+! whole (subarea) columns of meridional data                               GPB0F403.274   
+     &  global_sum_array_top(global_xstart:global_xend,                    GPB2F405.199   
+     &                       global_ystart:global_yend)                    GPB2F405.200   
+     &, global_sum_array_bot(global_xstart:global_xend,                    GPB2F405.201   
+     &                       global_ystart:global_yend)                    GPB2F405.202   
+                                                                           GPB0F403.279   
+*ELSE                                                                      GPB0F403.289   
+                                                                           GPB0F403.290   
+! sum(1) is equivalenced to SUMFBOT                                        GPB0F403.291   
+! sum(2) is equivalenced to SUMFTOP                                        GPB0F403.292   
+      REAL sum(2)                                                          GPB0F403.294   
+                                                                           GPB0F403.295   
+      EQUIVALENCE                                                          GPB0F403.296   
+     &  (sum(1) , SUMFBOT ) , (sum(2) , SUMFTOP)                           GPB2F405.203   
+                                                                           GPB0F403.299   
+*ENDIF                                                                     GPB0F403.300   
+                                                                           GPB0F403.301   
+*ENDIF                                                                     GPB0F403.302   
+        REAL SUMFTOP                                                       STFLDM1A.81    
+        REAL SUMFBOT                                                       STFLDM1A.82    
+                                                                           STFLDM1A.83    
+CL----------------------------------------------------------------------   STFLDM1A.84    
+CL 0. Initialise sums                                                      STFLDM1A.85    
+CL                                                                         STFLDM1A.86    
+      SUMFTOP=0.0                                                          STFLDM1A.87    
+      SUMFBOT=0.0                                                          STFLDM1A.88    
+CL----------------------------------------------------------------------   STFLDM1A.89    
+                                                                           GPB0F403.312   
+*IF -DEF,MPP,OR,DEF,REPROD                                                 GPB0F403.313   
+*IF -DEF,MPP                                                               GPB0F403.314   
+! Sum up weighted versions of fieldin array                                GPB0F403.315   
+*ELSE                                                                      GPB0F403.316   
+! Create arrays of weighted data suitable to be summed                     GPB0F403.317   
+*ENDIF                                                                     GPB0F403.318   
+                                                                           GPB0F403.319   
+*IF DEF,MPP                                                                GPB0F403.320   
+! Only do the calculations if some of the subarea is contained             GPB0F403.321   
+! within this processor                                                    GPB0F403.322   
+      IF ((xstart .NE. st_no_data) .AND. (xend .NE. st_no_data) .AND.      GPB0F403.323   
+     &    (ystart .NE. st_no_data) .AND. (yend .NE. st_no_data)) THEN      GPB0F403.324   
+                                                                           GPB0F403.325   
+*ENDIF                                                                     GPB0F403.326   
+                                                                           GPB0F403.327   
+        DO i=xstart,xend                                                   GPB0F403.328   
+*IF -DEF,MPP                                                               GPB0F403.329   
+          IF (lwrap) THEN                                                  STFLDM1A.105   
+            ii=1+MOD(i-1,vx)                                               GPB0F403.330   
+          ELSE                                                             STFLDM1A.107   
+            ii=i                                                           STFLDM1A.108   
+          ENDIF                                                            STFLDM1A.109   
+*ELSE                                                                      GPB0F403.331   
+          IF ( lwrap .AND. (i .GT. (lasize(1)-Offx))) THEN                 GPB0F403.332   
+            ii=i-lasize(1)+2*Offx ! miss halos on wrap around              GPB0F403.333   
+          ELSE                                                             STFLDM1A.125   
+            ii=i                                                           STFLDM1A.126   
+          ENDIF                                                            STFLDM1A.127   
+*ENDIF                                                                     GPB0F403.334   
+          DO j=ystart,yend                                                 STFLDM1A.128   
+            IF (mask(ii,j)) THEN                                           GPB0F403.335   
+              IF (.NOT. lmasswt) THEN                                      GPB0F403.336   
+*IF -DEF,MPP                                                               GPB0F403.337   
+                SUMFBOT=SUMFBOT+                                           GPB0F403.338   
+     &            pstar_weight(ii,j)*area_weight(ii,j)                     GPB0F403.339   
+                SUMFTOP=SUMFTOP+                                           GPB0F403.340   
+     &            fieldin(ii,j)*pstar_weight(ii,j)*area_weight(ii,j)       GPB0F403.341   
+*ELSE                                                                      GPB0F403.342   
+                local_sum_array_bot(i,j)=                                  GPB0F403.343   
+     &            pstar_weight(ii,j)*area_weight(ii,j)                     GPB0F403.344   
+                local_sum_array_top(i,j)=                                  GPB0F403.345   
+     &            fieldin(ii,j)*pstar_weight(ii,j)*area_weight(ii,j)       GPB0F403.346   
+*ENDIF                                                                     GPB0F403.347   
+              ELSE                                                         GPB0F403.348   
+*IF -DEF,MPP                                                               GPB0F403.349   
+                SUMFBOT=SUMFBOT-                                           GPB0F403.350   
+     &            (delta_ak(1)+delta_bk(1)*pstar_weight(ii,j))*            GPB0F403.351   
+     &            area_weight(ii,j)                                        GPB0F403.352   
+                SUMFTOP=SUMFTOP-fieldin(ii,j)*                             GPB0F403.353   
+     &            (delta_ak(1)+delta_bk(1)*pstar_weight(ii,j))*            GPB0F403.354   
+     &            area_weight(ii,j)                                        GPB0F403.355   
+*ELSE                                                                      GPB0F403.356   
+                local_sum_array_bot(i,j)=                                  GPB0F403.357   
+     &            -1.0*(delta_ak(1)+delta_bk(1)*pstar_weight(ii,j))*       GPB0F403.358   
+     &            area_weight(ii,j)                                        GPB0F403.359   
+                local_sum_array_top(i,j)=                                  GPB0F403.360   
+     &            -1.0*fieldin(ii,j)*                                      GPB0F403.361   
+     &            (delta_ak(1)+delta_bk(1)*pstar_weight(ii,j))*            GPB0F403.362   
+     &            area_weight(ii,j)                                        GPB0F403.363   
+*ENDIF                                                                     GPB0F403.364   
+              ENDIF                                                        GPB0F403.365   
+*IF -DEF,MPP                                                               GPB0F403.366   
+            ENDIF                                                          GPB0F403.367   
+*ELSE                                                                      GPB0F403.368   
+            ELSE                                                           STFLDM1A.131   
+              local_sum_array_bot(i,j)=0.0                                 GPB0F403.369   
+              local_sum_array_top(i,j)=0.0                                 GPB0F403.370   
+            ENDIF                                                          STFLDM1A.133   
+*ENDIF                                                                     GPB0F403.371   
+          ENDDO                                                            STFLDM1A.134   
+        ENDDO                                                              GPB0F403.372   
+                                                                           GPB0F403.373   
+*IF DEF,MPP                                                                GPB0F403.374   
+      ENDIF  ! if this processor contains any of the subarea               GPB0F403.375   
+*ENDIF                                                                     GPB0F403.376   
+                                                                           GPB0F403.377   
+*IF -DEF,MPP                                                               GPB0F403.378   
+      IF (SUMFBOT .EQ. 0.0) THEN                                           GPB0F403.379   
+        fieldout=rmdi                                                      STFLDM1A.323   
+      ELSE                                                                 STFLDM1A.324   
+        fieldout=SUMFTOP/SUMFBOT                                           STFLDM1A.325   
+      ENDIF                                                                STFLDM1A.326   
+                                                                           GPB0F403.380   
+*ELSE                                                                      GPB0F403.381   
+                                                                           GPB0F404.273   
+! Initialise fieldout - so all PE's have valid data                        GPB0F404.274   
+! (Only PEs on top left of subdomain get the field mean)                   GPB0F404.275   
+                                                                           GPB0F404.276   
+      fieldout=0.0                                                         GPB0F404.277   
+                                                                           GPB0F404.278   
+                                                                           GPB0F403.382   
+! The local_sum_arrays must be distributed so that the complete            GPB0F403.383   
+! sub-area exists on a single processor, so that a reproducible sum        GPB0F403.384   
+! can be carried out.                                                      GPB0F403.385   
+                                                                           GPB0F403.386   
+! 0.0 : Initialise variables defining the size of the arrays               GPB0F403.387   
+!       global_sum_arrays                                                  GPB0F403.388   
+                                                                           GPB0F403.389   
+      global_sum_array_sizex=global_xend-global_xstart+1                   GPB2F405.204   
+      global_sum_array_sizey=global_yend-global_ystart+1                   GPB2F405.205   
+                                                                           GPB0F403.393   
+! 1.0 Gather the fields to a single processor                              GPB0F403.394   
+                                                                           GPB0F403.395   
+      CALL GLOBAL_TO_LOCAL_RC(gr,                                          GPB0F403.396   
+     &  global_xstart , global_ystart,                                     GPB0F403.397   
+     &  proc_top_left_x, proc_top_left_y,                                  GPB0F403.398   
+     &  dummy1,dummy2)                                                     GPB0F403.399   
+                                                                           GPB0F403.400   
+      sum_pe=proc_top_left_x + nproc_x*proc_top_left_y                     GPB0F405.10    
+                                                                           GPB0F403.402   
+      local_size=(xend-xstart+1)*(yend-ystart+1)                           GPB0F403.403   
+      global_size=global_sum_array_sizex*global_sum_array_sizey            GPB0F403.404   
+                                                                           GPB0F403.405   
+      CALL STASH_GATHER_FIELD (                                            GPB0F403.406   
+     &  local_sum_array_top , global_sum_array_top ,                       GPB0F403.407   
+     &  local_size          , global_size,                                 GPB0F403.408   
+     &  1,  ! 1 level                                                      GPB0F403.409   
+     &  global_ystart, global_xend, global_yend, global_xstart,            GPB0F403.410   
+     &  gr , sum_pe,                                                       GPB0F403.411   
+     &  .TRUE., ! data has been extracted                                  GPB0F403.412   
+     &  ICODE,CMESSAGE)                                                    GPB0F403.413   
+                                                                           GPB0F403.414   
+      IF (ICODE .NE. 0) THEN                                               GPB0F403.415   
+        WRITE(6,*) 'STFIELDM : MPP Error in STASH_GATHER_FIELD'            GPB0F403.416   
+        WRITE(6,*) CMESSAGE                                                GPB0F403.417   
+        GOTO 999                                                           GPB0F403.418   
+      ENDIF                                                                GPB0F403.419   
+                                                                           GPB0F403.420   
+      CALL STASH_GATHER_FIELD (                                            GPB0F403.421   
+     &  local_sum_array_bot , global_sum_array_bot ,                       GPB0F403.422   
+     &  local_size          , global_size,                                 GPB0F403.423   
+     &  1,  ! 1 level                                                      GPB0F403.424   
+     &  global_ystart, global_xend, global_yend, global_xstart,            GPB0F403.425   
+     &  gr , sum_pe,                                                       GPB0F403.426   
+     &  .TRUE., ! data has been extracted                                  GPB0F403.427   
+     &  ICODE,CMESSAGE)                                                    GPB0F403.428   
+                                                                           GPB0F403.429   
+      IF (ICODE .NE. 0) THEN                                               GPB0F403.430   
+        WRITE(6,*) 'STFIELDM : MPP Error in STASH_GATHER_FIELD'            GPB0F403.431   
+        WRITE(6,*) CMESSAGE                                                GPB0F403.432   
+        GOTO 999                                                           GPB0F403.433   
+      ENDIF                                                                GPB0F403.434   
+                                                                           GPB0F403.435   
+! 2.0 Calculate the sums                                                   GPB0F403.436   
+                                                                           GPB0F403.437   
+      IF (mype .EQ. sum_pe) THEN                                           GPB0F403.438   
+                                                                           GPB0F403.439   
+        DO i=global_xstart,global_xend                                     GPB2F405.206   
+          DO j=global_ystart,global_yend                                   GPB2F405.207   
+            SUMFTOP=SUMFTOP+global_sum_array_top(i,j)                      GPB2F405.208   
+            SUMFBOT=SUMFBOT+global_sum_array_bot(i,j)                      GPB2F405.209   
+          ENDDO                                                            GPB0F403.446   
+        ENDDO                                                              GPB0F403.447   
+                                                                           GPB0F403.448   
+        IF (SUMFBOT .EQ. 0.0) THEN                                         GPB0F403.449   
+          fieldout=rmdi                                                    GPB0F403.450   
+        ELSE                                                               GPB0F403.451   
+         fieldout=SUMFTOP/SUMFBOT                                          GPB0F403.452   
+        ENDIF                                                              GPB0F403.453   
+                                                                           GPB0F403.454   
+      ENDIF                                                                GPB0F403.455   
+                                                                           GPB0F403.456   
+*ENDIF                                                                     GPB0F403.457   
+*ELSE                                                                      GPB0F403.458   
+                                                                           GPB0F403.459   
+! 1.0 Find the bounds of the actual data required in the summation         GPB0F403.460   
+!    (ie. excluding the halos, contained within                            GPB0F403.461   
+!    xstart,xend,ystart,yend.                                              GPB0F403.462   
+                                                                           GPB0F403.463   
+      CALL GLOBAL_TO_LOCAL_SUBDOMAIN(.FALSE.,.FALSE.,                      GPB0F403.464   
+     &  gr,mype,                                                           GPB0F403.465   
+     &  global_ystart,global_xend,                                         GPB0F403.466   
+     &  global_yend,global_xstart,                                         GPB0F403.467   
+     &  local_sum_ystart,local_sum_xend,                                   GPB0F403.468   
+     &  local_sum_yend,local_sum_xstart)                                   GPB0F403.469   
+                                                                           GPB0F403.470   
+      IF (local_sum_xstart .GT. local_sum_xend)                            GPB0F403.471   
+     &  local_sum_xend=local_sum_xend+ROW_LENGTH-2*Offx                    GPB0F403.472   
+                                                                           GPB0F403.473   
+! 2.0 Calculate the partial sums                                           GPB0F403.474   
+                                                                           GPB0F403.475   
+! Only do the calculations if some of the subdomain exists on this         GPB0F403.476   
+! processor                                                                GPB0F403.477   
+                                                                           GPB0F403.478   
+      IF ( (local_sum_xstart .NE. st_no_data) .AND.                        GPB0F403.479   
+     &     (local_sum_xend   .NE. st_no_data) .AND.                        GPB0F403.480   
+     &     (local_sum_ystart .NE. st_no_data) .AND.                        GPB0F403.481   
+     &     (local_sum_yend   .NE. st_no_data)) THEN                        GPB0F403.482   
+                                                                           GPB0F403.483   
+! 2.2 Do the actual sum                                                    GPB0F403.484   
+                                                                           GPB0F403.485   
+        DO i=local_sum_xstart,local_sum_xend                               GPB0F403.486   
+                                                                           GPB0F403.487   
+          IF ( lwrap .AND. (i .GT. (lasize(1)-Offx))) THEN                 GPB0F403.488   
+            ii=i-lasize(1)+2*Offx ! miss halos on wrap around              GPB0F403.489   
+          ELSE                                                             GPB0F403.490   
+            ii=i                                                           GPB0F403.491   
+          ENDIF                                                            GPB0F403.492   
+                                                                           GPB0F403.493   
+          DO j=local_sum_ystart,local_sum_yend                             GPB0F403.494   
+            IF (mask(ii,j)) THEN                                           GPB0F403.495   
+              IF (.NOT. lmasswt) THEN                                      GPB0F403.496   
+                                                                           GPB0F403.497   
+                SUMFBOT=SUMFBOT+                                           GPB0F404.279   
+     &            pstar_weight(ii,j)*area_weight(ii,j)                     GPB0F403.499   
+                SUMFTOP=SUMFTOP+                                           GPB0F403.500   
+     &            fieldin(ii,j)*pstar_weight(ii,j)*area_weight(ii,j)       GPB0F403.501   
+              ELSE                                                         GPB0F403.502   
+                SUMFBOT=SUMFBOT-                                           GPB0F403.503   
+     &           (delta_ak(1)+delta_bk(1)*pstar_weight(ii,j))*             GPB0F403.504   
+     &           area_weight(ii,j)                                         GPB0F403.505   
+                SUMFTOP=                                                   GPB0F403.506   
+     &            SUMFTOP-fieldin(ii,j)*                                   GPB0F403.507   
+     &            (delta_ak(1)+delta_bk(1)*pstar_weight(ii,j))*            GPB0F403.508   
+     &            area_weight(ii,j)                                        GPB0F403.509   
+              ENDIF ! if (.NOT. lmasswt)                                   GPB0F403.510   
+            ENDIF ! if this point is to be processed                       GPB0F403.511   
+          ENDDO ! j : loop over rows                                       GPB0F403.512   
+        ENDDO ! i : loop over columns                                      GPB0F403.513   
+      ENDIF ! if subdomain covers this processor                           GPB0F403.514   
+                                                                           GPB0F403.515   
+! 3.0  add all the partial sums together, and store                        GPB0F403.516   
+                                                                           GPB0F403.517   
+! sum(1) is equivalenced to SUMFTOP                                        GPB0F403.518   
+! sum(2) is equivalenced to SUMFBOT                                        GPB0F403.519   
+                                                                           GPB0F403.520   
+      CALL GC_RSUM(2,nproc,info,sum)                                       GPB0F403.521   
+                                                                           GPB0F403.522   
+      IF ( (local_sum_xstart .NE. st_no_data) .AND.                        GPB0F403.523   
+     &     (local_sum_xend   .NE. st_no_data) .AND.                        GPB0F403.524   
+     &     (local_sum_ystart .NE. st_no_data) .AND.                        GPB0F403.525   
+     &     (local_sum_yend   .NE. st_no_data)) THEN                        GPB0F403.526   
+                                                                           GPB0F403.527   
+        IF (SUMFBOT .EQ. 0.0) THEN                                         GPB0F403.528   
+          fieldout=rmdi                                                    GPB0F403.529   
+        ELSE                                                               GPB0F403.530   
+          fieldout=SUMFTOP/SUMFBOT                                         GPB0F403.531   
+        ENDIF                                                              GPB0F403.532   
+      ENDIF                                                                GPB0F403.533   
+                                                                           GPB0F403.534   
+*ENDIF                                                                     GPB0F403.535   
+  999 CONTINUE                                                             STFLDM1A.328   
+      RETURN                                                               STFLDM1A.329   
+      END                                                                  STFLDM1A.330   
+*ENDIF                                                                     STFLDM1A.331   

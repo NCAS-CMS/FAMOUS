@@ -1,0 +1,592 @@
+*IF DEF,OCEAN                                                              CALCRL1A.2     
+C *****************************COPYRIGHT******************************     CALCRL1A.3     
+C (c) CROWN COPYRIGHT 1997, METEOROLOGICAL OFFICE, All Rights Reserved.    CALCRL1A.4     
+C                                                                          CALCRL1A.5     
+C Use, duplication or disclosure of this code is subject to the            CALCRL1A.6     
+C restrictions as set forth in the contract.                               CALCRL1A.7     
+C                                                                          CALCRL1A.8     
+C                Meteorological Office                                     CALCRL1A.9     
+C                London Road                                               CALCRL1A.10    
+C                BRACKNELL                                                 CALCRL1A.11    
+C                Berkshire UK                                              CALCRL1A.12    
+C                RG12 2SZ                                                  CALCRL1A.13    
+C                                                                          CALCRL1A.14    
+C If no contract has been raised with this copy of the code, the use,      CALCRL1A.15    
+C duplication or disclosure of it is strictly prohibited.  Permission      CALCRL1A.16    
+C to do so must first be obtained in writing from the Head of Numerical    CALCRL1A.17    
+C Modelling at the above address.                                          CALCRL1A.18    
+C ******************************COPYRIGHT******************************    CALCRL1A.19    
+!+ Routine to calculate rigid lid surface pressure                         CALCRL1A.20    
+! Subroutine Interface:                                                    CALCRL1A.21    
+                                                                           CALCRL1A.22    
+      SUBROUTINE CALC_RLIDP(                                               CALCRL1A.23    
+*CALL ARGSIZE                                                              CALCRL1A.24    
+*CALL ARGOCALL                                                             CALCRL1A.25    
+*CALL ARGOINDX                                                             CALCRL1A.26    
+     & ICODE,CMESSAGE                                                      CALCRL1A.27    
+     &,ITT,ZU,ZV,PTD                                                       CALCRL1A.28    
+     &,rlsrfp)                                                             CALCRL1A.29    
+                                                                           CALCRL1A.30    
+      IMPLICIT NONE                                                        CALCRL1A.31    
+                                                                           CALCRL1A.32    
+! Purpose:                                                                 CALCRL1A.33    
+! To calculate the rigid lid pressure over the model domain                CALCRL1A.34    
+!                                                                          CALCRL1A.35    
+! Method:                                                                  CALCRL1A.36    
+! Calculates sea surface pressure gradient from vertically averaged        CALCRL1A.37    
+! forcing and streamfunction tendency.                                     CALCRL1A.38    
+! Integrates sea surface pressure gradient over the domain and             CALCRL1A.39    
+! subtracts area average to obtain the surface pressure to within a        CALCRL1A.40    
+! constant.  Divides by 1000 to yield the sea surface height.              CALCRL1A.41    
+!                                                                          CALCRL1A.42    
+! Current Code Owner: R.Forbes                                             CALCRL1A.43    
+!                                                                          CALCRL1A.44    
+! History:                                                                 CALCRL1A.45    
+! Version   Date     Comment                                               CALCRL1A.46    
+! -------   ----     -------                                               CALCRL1A.47    
+!   4.4  01/10/97    New code   R.Forbes                                   CALCRL1A.48    
+!LL   4.5     17/09/98 Update calls to timer, required because of          GPB8F405.80    
+!LL                    new barrier inside timer.         P.Burton          GPB8F405.81    
+!                                                                          CALCRL1A.49    
+! Code Description:                                                        CALCRL1A.50    
+!   Language: FORTRAN 77 + common extensions.                              CALCRL1A.51    
+!   This code is written to UMDP3 v6 programming standards.                CALCRL1A.52    
+!                                                                          CALCRL1A.53    
+! ----------------------------------------------------------------------   CALCRL1A.54    
+! Global variables:                                                        CALCRL1A.55    
+*CALL UMSCALAR                                                             CALCRL1A.56    
+                                                                           CALCRL1A.57    
+! Subroutine arguments:                                                    CALCRL1A.58    
+                                                                           CALCRL1A.59    
+*CALL OARRYSIZ                                                             CALCRL1A.60    
+*CALL TYPSIZE                                                              CALCRL1A.61    
+*CALL TYPOINDX                                                             PXORDER.8     
+*CALL TYPOCALL                                                             CALCRL1A.62    
+                                                                           CALCRL1A.64    
+!   Scalar arguments with intent(in):                                      CALCRL1A.65    
+      INTEGER ITT         ! time step                                      CALCRL1A.66    
+                                                                           CALCRL1A.67    
+!   Array arguments with intent(in):                                       CALCRL1A.68    
+      REAL ZU(IMT,JMT)    ! U-component of vertically averaged forcing     CALCRL1A.69    
+      REAL ZV(IMT,JMT)    ! V-component of vertically averaged forcing     CALCRL1A.70    
+      REAL PTD(IMT_STREAM, JMT_STREAM) ! streamfunction tendency           CALCRL1A.71    
+                                                                           CALCRL1A.72    
+!   Array arguments with intent(out):                                      CALCRL1A.73    
+      REAL rlsrfp(IMT,JMT)  ! sea surface height (cm) on TS-grid           CALCRL1A.74    
+                                                                           CALCRL1A.75    
+!   ErrorStatus:                                                           CALCRL1A.76    
+      INTEGER ICODE           ! Return code : 0 Normal Exit : >0 Error     CALCRL1A.77    
+      CHARACTER*(80) CMESSAGE ! Error message if return code >0            CALCRL1A.78    
+                                                                           CALCRL1A.79    
+! Local Parameters:                                                        CALCRL1A.80    
+*CALL CNTLOCN                                                              CALCRL1A.81    
+*CALL OTIMER                                                               CALCRL1A.82    
+*CALL C_MDI                                                                CALCRL1A.83    
+*CALL GCCOM                                                                CALCRL1A.84    
+                                                                           CALCRL1A.85    
+! Local Scalars:                                                           CALCRL1A.86    
+      INTEGER i,j   ! loop indices                                         CALCRL1A.87    
+      INTEGER ndry  ! number of land points                                CALCRL1A.88    
+      INTEGER nwet  ! number of ocean points                               CALCRL1A.89    
+      INTEGER info                                                         CALCRL1A.90    
+      REAL surfpx,surfpy ! rl surface pressure gradient                    CALCRL1A.91    
+      REAL dubdt,dvbdt   ! }                                               CALCRL1A.92    
+      REAL diago3,diago4 ! } variables for rigid lid surface               CALCRL1A.93    
+      REAL fxa,f2,f3     ! }  pressure gradient calculation                CALCRL1A.94    
+      REAL atosp,detmr   ! }                                               CALCRL1A.95    
+      REAL r2dtuv        ! reciprocal of baroclinic timestep               CALCRL1A.96    
+                                                                           CALCRL1A.97    
+! Local Arrays:                                                            CALCRL1A.98    
+      REAL spx(imt,jmt)     ! x-gradient in surface pressure on uv-grid    CALCRL1A.99    
+      REAL spy(imt,jmt)     ! y-gradient in surface pressure on uv-grid    CALCRL1A.100   
+      LOGICAL wet(imt,jmt)  ! T=> ocean point on ts-grid                   CALCRL1A.101   
+      LOGICAL wetu(imt,jmt) ! T=> ocean point on uv-grid                   CALCRL1A.102   
+                                                                           CALCRL1A.103   
+! Local Arrays on mpp "global" grid                                        CALCRL1A.104   
+      REAL spx_gl(imt,jmt_global)                                          CALCRL1A.105   
+      REAL spy_gl(imt,jmt_global)                                          CALCRL1A.106   
+      REAL dyu_gl(jmt_global)         ! y grid spacing on uv-grid          CALCRL1A.107   
+      REAL dyt_gl(jmt_global)         ! y grid spacing on ts-grid          CALCRL1A.108   
+      REAL cs_gl(jmt_global)          ! cos(lat) on uv-grid                CALCRL1A.109   
+      REAL cst_gl(jmt_global)         ! cos(lat) on ts-grid                CALCRL1A.110   
+      REAL rlsrfp_gl(imt,jmt_global)  ! rigid-lid surface pressure         CALCRL1A.111   
+      LOGICAL wet_gl(imt,jmt_global)  ! T=> ocean point on ts-grid         CALCRL1A.112   
+      LOGICAL wetu_gl(imt,jmt_global) ! T=> ocean point on uv-grid         CALCRL1A.113   
+                                                                           CALCRL1A.114   
+! Function & Subroutine calls:                                             CALCRL1A.115   
+      EXTERNAL RLP_LINEINT                                                 CALCRL1A.116   
+                                                                           CALCRL1A.117   
+!- End of header                                                           CALCRL1A.118   
+! ----------------------------------------------------------------------   CALCRL1A.119   
+                                                                           CALCRL1A.120   
+      IF (L_OTIMER) CALL TIMER('CALC_RLP',103)                             GPB8F405.82    
+                                                                           CALCRL1A.122   
+!     Initialize arrays                                                    CALCRL1A.123   
+      DO j=j_1,j_jmt                                                       CALCRL1A.124   
+        DO i=1,imt                                                         CALCRL1A.125   
+          spx(i,j)    = 0.0                                                CALCRL1A.126   
+          spy(i,j)    = 0.0                                                CALCRL1A.127   
+          rlsrfp(i,j) = 0.0                                                CALCRL1A.128   
+          wet(i,j)    = .false.                                            CALCRL1A.129   
+          wetu(i,j)   = .false.                                            CALCRL1A.130   
+        ENDDO                                                              CALCRL1A.131   
+      ENDDO                                                                CALCRL1A.132   
+                                                                           CALCRL1A.133   
+!     On mixing time steps "ptd" has been multiplied by a factor of 2      CALCRL1A.134   
+!     and the time step has to be adjusted also.                           CALCRL1A.135   
+                                                                           CALCRL1A.136   
+      fxa = 1.0                                                            CALCRL1A.137   
+      IF (MIX.EQ.1) THEN                                                   CALCRL1A.138   
+        fxa = 0.5                                                          CALCRL1A.139   
+      ENDIF                                                                CALCRL1A.140   
+                                                                           CALCRL1A.141   
+! ---------------------------------------------------------------------    CALCRL1A.142   
+!       Compute surface pressure gradient on uv-grid                       CALCRL1A.143   
+!       Add in the external mode part of d/dt for the momentum balance     CALCRL1A.144   
+!       Also add in external mode part of the implicit coriolis term       CALCRL1A.145   
+!       Also set mask "wet" on TS-grid                                     CALCRL1A.146   
+! ---------------------------------------------------------------------    CALCRL1A.147   
+                                                                           CALCRL1A.148   
+      r2dtuv = 1.0/c2dtuv                                                  CALCRL1A.149   
+      DO j=j_1,j_jmtm1                                                     CALCRL1A.150   
+                                                                           CALCRL1A.151   
+        atosp = acor*2.0*omega*sine(j)                                     CALCRL1A.152   
+        f2    = atosp*c2dtuv                                               CALCRL1A.153   
+        detmr = 1.0/(1.0+f2*f2)                                            CALCRL1A.154   
+        IF (.NOT.(L_ONOCLIN)) f3 = c2dtuv/c2dtsf                           CALCRL1A.155   
+                                                                           CALCRL1A.156   
+        DO i=1,imtm1                                                       CALCRL1A.157   
+                                                                           CALCRL1A.158   
+          wet(i,j)  = fkmp(i,j).GT.0                                       CALCRL1A.159   
+          wetu(i,j) = fkmq(i,j).GT.0                                       CALCRL1A.160   
+                                                                           CALCRL1A.161   
+          IF (wetu(i,j)) THEN                                              CALCRL1A.162   
+          ! This is an ocean grid point                                    CALCRL1A.163   
+                                                                           CALCRL1A.164   
+            IF (.NOT.(L_ONOCLIN))THEN                                      CALCRL1A.165   
+            ! Section 31: Barotropic solution                              CALCRL1A.166   
+              diago3 = fxa*(ptd(i+1,j+1)-ptd(i  ,j))                       CALCRL1A.167   
+              diago4 = fxa*(ptd(i  ,j+1)-ptd(i+1,j))                       CALCRL1A.168   
+              dubdt = (diago3+diago4)*dyu2r(j)*hr(i,j)                     CALCRL1A.169   
+              dvbdt = (diago3-diago4)*dxu2r(i)*hr(i,j)*csr(j)              CALCRL1A.170   
+              surfpx   = r2dtuv*( dubdt + f3*zu(i,j) + f2*dvbdt)           CALCRL1A.171   
+              surfpy   = r2dtuv*(-dvbdt + f3*zv(i,j) + f2*dubdt)           CALCRL1A.172   
+            ELSE                                                           CALCRL1A.173   
+            ! Section 30: No barotropic solution                           CALCRL1A.174   
+              surfpx   = r2dtuv*detmr*(zu(i,j) + zv(i,j)*f2)               CALCRL1A.175   
+              surfpy   = r2dtuv*detmr*(zv(i,j) - zu(i,j)*f2)               CALCRL1A.176   
+            ENDIF  ! L_ONOCLIN                                             CALCRL1A.177   
+                                                                           CALCRL1A.178   
+            spx(i,j)   = surfpx                                            CALCRL1A.179   
+            spy(i,j)   = surfpy                                            CALCRL1A.180   
+                                                                           CALCRL1A.181   
+          ENDIF ! wetu                                                     CALCRL1A.182   
+                                                                           CALCRL1A.183   
+        ENDDO                                                              CALCRL1A.184   
+      ENDDO                                                                CALCRL1A.185   
+                                                                           CALCRL1A.186   
+!     Apply cyclic boundary condition                                      CALCRL1A.187   
+                                                                           CALCRL1A.188   
+      IF (L_OCYCLIC) THEN                                                  CALCRL1A.189   
+        DO j=j_1,j_jmtm1                                                   CALCRL1A.190   
+          spx(1,j)   = spx(imtm1,j)                                        CALCRL1A.191   
+          spx(imt,j) = spx(2,j)                                            CALCRL1A.192   
+          spy(1,j)   = spy(imtm1,j)                                        CALCRL1A.193   
+          spy(imt,j) = spy(2,j)                                            CALCRL1A.194   
+          wet(1,j)   = wet(imtm1,j)                                        CALCRL1A.195   
+          wet(imt,j) = wet(2,j)                                            CALCRL1A.196   
+          wetu(1,j)  = wetu(imtm1,j)                                       CALCRL1A.197   
+          wetu(imt,j)= wetu(2,j)                                           CALCRL1A.198   
+        ENDDO                                                              CALCRL1A.199   
+      ENDIF                                                                CALCRL1A.200   
+                                                                           CALCRL1A.201   
+!     Find number of wet and dry TS-points                                 CALCRL1A.202   
+                                                                           CALCRL1A.203   
+      ndry = 0                                                             CALCRL1A.204   
+      nwet = 0                                                             CALCRL1A.205   
+      DO j=j_1,j_jmt                                                       CALCRL1A.206   
+        DO i=1,imt                                                         CALCRL1A.207   
+          IF (wet(i,j)) THEN                                               CALCRL1A.208   
+            nwet = nwet + 1                                                CALCRL1A.209   
+          ELSE                                                             CALCRL1A.210   
+            ndry = ndry + 1                                                CALCRL1A.211   
+          ENDIF                                                            CALCRL1A.212   
+        ENDDO                                                              CALCRL1A.213   
+      ENDDO                                                                CALCRL1A.214   
+                                                                           CALCRL1A.215   
+! ---------------------------------------------------------------------    CALCRL1A.216   
+!  Perform integration to obtain surface pressure field                    CALCRL1A.217   
+! ---------------------------------------------------------------------    CALCRL1A.218   
+                                                                           CALCRL1A.219   
+*IF DEF,MPP                                                                CALCRL1A.220   
+!     Gather local fields to form global field                             CALCRL1A.221   
+                                                                           CALCRL1A.222   
+      CALL O_SMARTPASS(1,1,dyu(J_1),dyu_gl                                 CALCRL1A.223   
+     &                ,jfin-jst+1,jmt_global,jst,2)                        CALCRL1A.224   
+                                                                           CALCRL1A.225   
+      CALL O_SMARTPASS(1,1,dyt(J_1),dyt_gl                                 CALCRL1A.226   
+     &                ,jfin-jst+1,jmt_global,jst,2)                        CALCRL1A.227   
+                                                                           CALCRL1A.228   
+      CALL O_SMARTPASS(1,1,cs(J_1),cs_gl                                   CALCRL1A.229   
+     &                ,jfin-jst+1,jmt_global,jst,2)                        CALCRL1A.230   
+                                                                           CALCRL1A.231   
+      CALL O_SMARTPASS(1,1,cst(J_1),cst_gl                                 CALCRL1A.232   
+     &                ,jfin-jst+1,jmt_global,jst,2)                        CALCRL1A.233   
+                                                                           CALCRL1A.234   
+      CALL GATHER_FIELD(spx,spx_gl,                                        CALCRL1A.235   
+     &                  imt,jmt,imt,jmt_global,                            CALCRL1A.236   
+     &                  0,GC_ALLGROUP,info)                                CALCRL1A.237   
+                                                                           CALCRL1A.238   
+      CALL GATHER_FIELD(spy,spy_gl,                                        CALCRL1A.239   
+     &                  imt,jmt,imt,jmt_global,                            CALCRL1A.240   
+     &                  0,GC_ALLGROUP,info)                                CALCRL1A.241   
+                                                                           CALCRL1A.242   
+      CALL GATHER_FIELD(wet,wet_gl,                                        CALCRL1A.243   
+     &                  imt,jmt,imt,jmt_global,                            CALCRL1A.244   
+     &                  0,GC_ALLGROUP,info)                                CALCRL1A.245   
+                                                                           CALCRL1A.246   
+      CALL GATHER_FIELD(wetu,wetu_gl,                                      CALCRL1A.247   
+     &                  imt,jmt,imt,jmt_global,                            CALCRL1A.248   
+     &                  0,GC_ALLGROUP,info)                                CALCRL1A.249   
+                                                                           CALCRL1A.250   
+      CALL GC_ISUM(1,O_NPROC,info,nwet)                                    CALCRL1A.251   
+      CALL GC_ISUM(1,O_NPROC,info,ndry)                                    CALCRL1A.252   
+                                                                           CALCRL1A.253   
+      ! Switch to single processor                                         CALCRL1A.254   
+      IF (o_mype .EQ. 0) THEN                                              CALCRL1A.255   
+                                                                           CALCRL1A.256   
+*ENDIF                                                                     CALCRL1A.257   
+                                                                           CALCRL1A.258   
+      ! Perform line integral                                              CALCRL1A.259   
+      CALL RLP_LINEINT(icode,cmessage,imt,jmt_global,ndry,nwet,            CALCRL1A.260   
+     & dxu,dyu_gl,dxt,dyt_gl,cs_gl,cst_gl,                                 CALCRL1A.261   
+     & spx_gl,spy_gl,rlsrfp_gl,l_ocyclic,wet_gl,wetu_gl )                  CALCRL1A.262   
+                                                                           CALCRL1A.263   
+*IF DEF,MPP                                                                CALCRL1A.264   
+      ENDIF ! am I PE 0 ?                                                  CALCRL1A.265   
+                                                                           CALCRL1A.266   
+      ! Scatter global field to local fields                               CALCRL1A.267   
+      CALL SCATTER_FIELD(rlsrfp,rlsrfp_gl,                                 CALCRL1A.268   
+     &                  imt,jmt,imt,jmt_global,                            CALCRL1A.269   
+     &                  0,GC_ALLGROUP,info)                                CALCRL1A.270   
+                                                                           CALCRL1A.271   
+*ENDIF                                                                     CALCRL1A.272   
+                                                                           CALCRL1A.273   
+  999 CONTINUE                                                             CALCRL1A.274   
+                                                                           CALCRL1A.275   
+      IF (L_OTIMER) CALL TIMER('CALC_RLP',104)                             GPB8F405.83    
+                                                                           CALCRL1A.277   
+      RETURN                                                               CALCRL1A.278   
+      END                                                                  CALCRL1A.279   
+! ---------------------------------------------------------------------    CALCRL1A.280   
+!+ Routine to perform line integral of a 2-D gradient field                CALCRL1A.281   
+! Subroutine Interface:                                                    CALCRL1A.282   
+                                                                           CALCRL1A.283   
+      SUBROUTINE RLP_LINEINT(icode,cmessage,                               CALCRL1A.284   
+     & imt,jmt,ndry,nwet,dxu,dyu,dxt,dyt,cs,cst,                           CALCRL1A.285   
+     & spx,spy,rlsrfp,l_ocyclic,wet,wetu)                                  CALCRL1A.286   
+                                                                           CALCRL1A.287   
+      IMPLICIT NONE                                                        CALCRL1A.288   
+                                                                           CALCRL1A.289   
+! Purpose:                                                                 CALCRL1A.290   
+! perform line integral of a 2-D gradient field                            CALCRL1A.291   
+!                                                                          CALCRL1A.292   
+! Method:                                                                  CALCRL1A.293   
+!                                                                          CALCRL1A.294   
+! Current Code Owner: R.Forbes                                             CALCRL1A.295   
+!                                                                          CALCRL1A.296   
+! History:                                                                 CALCRL1A.297   
+! Version   Date     Comment                                               CALCRL1A.298   
+! -------   ----     -------                                               CALCRL1A.299   
+!   4.4  01/10/97    New code   R.Forbes                                   CALCRL1A.300   
+!                                                                          CALCRL1A.301   
+! Code Description:                                                        CALCRL1A.302   
+!   Language: FORTRAN 77 + common extensions.                              CALCRL1A.303   
+!   This code is written to UMDP3 v6 programming standards.                CALCRL1A.304   
+!                                                                          CALCRL1A.305   
+! ----------------------------------------------------------------------   CALCRL1A.306   
+!   Array arguments with intent(in):                                       CALCRL1A.307   
+      INTEGER imt,jmt       ! grid dimensions                              CALCRL1A.308   
+      INTEGER ndry,nwet     ! no. of land and ocean points on ts-grid      CALCRL1A.309   
+      REAL dxu(imt)         ! x grid spacing on uv-grid                    CALCRL1A.310   
+      REAL dyu(jmt)         ! y grid spacing on uv-grid                    CALCRL1A.311   
+      REAL dxt(imt)         ! x grid spacing on ts-grid                    CALCRL1A.312   
+      REAL dyt(jmt)         ! y grid spacing on ts-grid                    CALCRL1A.313   
+      REAL cs(jmt)          ! cos(lat) on uv-grid                          CALCRL1A.314   
+      REAL cst(jmt)         ! cos(lat) on ts-grid                          CALCRL1A.315   
+      REAL spx(imt,jmt)     ! x-gradient in surface pressure on uv-grid    CALCRL1A.316   
+      REAL spy(imt,jmt)     ! y-gradient in surface pressure on uv-grid    CALCRL1A.317   
+      LOGICAL wet(imt,jmt)  ! T=> ocean point on ts-grid                   CALCRL1A.318   
+      LOGICAL wetu(imt,jmt) ! T=> ocean point on uv-grid                   CALCRL1A.319   
+      LOGICAL L_OCYCLIC     ! T=> cyclic grid                              CALCRL1A.320   
+                                                                           CALCRL1A.321   
+!   Array arguments with intent(out):                                      CALCRL1A.322   
+      REAL rlsrfp(IMT,JMT)  ! sea surface height (cm) on TS-grid           CALCRL1A.323   
+                                                                           CALCRL1A.324   
+!   ErrorStatus:                                                           CALCRL1A.325   
+      INTEGER ICODE           ! Return code : 0 Normal Exit : >0 Error     CALCRL1A.326   
+      CHARACTER*(80) CMESSAGE ! Error message if return code >0            CALCRL1A.327   
+                                                                           CALCRL1A.328   
+! Local Scalars:                                                           CALCRL1A.329   
+      INTEGER maxpass         ! maximum no. of passes for fill-in loop     CALCRL1A.330   
+      INTEGER npass           ! counter for number of passes               CALCRL1A.331   
+      INTEGER gridpass        ! loop index over chequerboard grids         CALCRL1A.332   
+      INTEGER i,j,ii,jj       ! loop indices                               CALCRL1A.333   
+      INTEGER nfilled         ! number of filled points                    CALCRL1A.334   
+      INTEGER noldfilled      ! number of filled points                    CALCRL1A.335   
+      INTEGER ilon0,jlat0     ! }                                          CALCRL1A.336   
+      INTEGER istrti,jstrti   ! }  start and end grid points               CALCRL1A.337   
+      INTEGER istopi,jstopi   ! }    for line integral                     CALCRL1A.338   
+      INTEGER jrev            ! }                                          CALCRL1A.339   
+      REAL    pavg            ! area mean surface pressure                 CALCRL1A.340   
+      REAL    wetarea         ! total area covered by ocean                CALCRL1A.341   
+                                                                           CALCRL1A.342   
+! Local Arrays:                                                            CALCRL1A.343   
+      LOGICAL filled(imt,jmt)                                              CALCRL1A.344   
+                                                                           CALCRL1A.345   
+! ---------------------------------------------------------------------    CALCRL1A.346   
+!     Initialize parameters                                                CALCRL1A.347   
+      maxpass = 200                                                        CALCRL1A.348   
+                                                                           CALCRL1A.349   
+      ! Initialize arrays                                                  CALCRL1A.350   
+      DO j=1,jmt                                                           CALCRL1A.351   
+        DO i=1,imt                                                         CALCRL1A.352   
+          rlsrfp(i,j) = 0.0                                                CALCRL1A.353   
+          filled(i,j) = .false.                                            CALCRL1A.354   
+        ENDDO                                                              CALCRL1A.355   
+      ENDDO                                                                CALCRL1A.356   
+                                                                           CALCRL1A.357   
+! ---------------------------------------------------------------------    CALCRL1A.358   
+!       make first pass over domain integrating until land is reached      CALCRL1A.359   
+!       (integration on TS-grid)                                           CALCRL1A.360   
+! ---------------------------------------------------------------------    CALCRL1A.361   
+                                                                           CALCRL1A.362   
+      ! Hardwire start point for surface pressure integration              CALCRL1A.363   
+      ! for Tropical Pacific grid                                          CALCRL1A.364   
+      ! Note: these parameters should be set in the user-interface         CALCRL1A.365   
+      ! or calculated from the land sea mask                               CALCRL1A.366   
+      ilon0   = 80                                                         CALCRL1A.367   
+      jlat0   = 60                                                         CALCRL1A.368   
+                                                                           CALCRL1A.369   
+      ! Loop over two grids for integration                                CALCRL1A.370   
+      DO gridpass = 1,2                                                    CALCRL1A.371   
+                                                                           CALCRL1A.372   
+        ! make sure starting out in ocean                                  CALCRL1A.373   
+        IF (.NOT.wet(ilon0,jlat0)) THEN                                    CALCRL1A.374   
+          WRITE(6,9901) ilon0,jlat0                                        CALCRL1A.375   
+9901      FORMAT(' ERROR: START POINT (',i3,',',i3,') NOT IN OCEAN')       CALCRL1A.376   
+          ICODE=1                                                          CALCRL1A.377   
+          CMESSAGE='ERROR: START POINT NOT IN OCEAN'                       CALCRL1A.378   
+          GOTO 999                                                         CALCRL1A.379   
+        ENDIF                                                              CALCRL1A.380   
+                                                                           CALCRL1A.381   
+        ! start integration with pressure equal to zero (arbitrary)        CALCRL1A.382   
+        rlsrfp(ilon0,jlat0) = 0.0                                          CALCRL1A.383   
+        filled(ilon0,jlat0) = .true.                                       CALCRL1A.384   
+c                                                                          CALCRL1A.385   
+C ---------------------------------------------------------------------    CALCRL1A.386   
+C       integrate north-east starting from ilon0,jlat0                     CALCRL1A.387   
+C ---------------------------------------------------------------------    CALCRL1A.388   
+        jstopi = jlat0                                                     CALCRL1A.389   
+        i = ilon0                                                          CALCRL1A.390   
+        IF (jlat0+1 .LE. jmt-1) THEN                                       CALCRL1A.391   
+          DO j=jlat0+1,jmt-1                                               CALCRL1A.392   
+            i = i + 1                                                      CALCRL1A.393   
+            IF ((i .LE. imt-1) .AND. wet(i,j) .AND. wetu(i-1,j-1)) THEN    CALCRL1A.394   
+              istopi = i                                                   CALCRL1A.395   
+              jstopi = j                                                   CALCRL1A.396   
+              rlsrfp(i,j) = rlsrfp(i-1,j-1) +                              CALCRL1A.397   
+     &         spx(i-1,j-1)*dxu(i-1)*cs(j-1) + spy(i-1,j-1)*dyu(j-1)       CALCRL1A.398   
+              filled(i,j) = .true.                                         CALCRL1A.399   
+            ENDIF                                                          CALCRL1A.400   
+          ENDDO                                                            CALCRL1A.401   
+        ENDIF                                                              CALCRL1A.402   
+                                                                           CALCRL1A.403   
+! ---------------------------------------------------------------------    CALCRL1A.404   
+!       integrate south-west starting from ilon0,jlat0                     CALCRL1A.405   
+! ---------------------------------------------------------------------    CALCRL1A.406   
+        jstrti = jlat0                                                     CALCRL1A.407   
+        i=ilon0                                                            CALCRL1A.408   
+        IF (jlat0-1 .ge. 2) THEN                                           CALCRL1A.409   
+          DO jrev=2,jlat0-1                                                CALCRL1A.410   
+            j = jlat0 - jrev + 1                                           CALCRL1A.411   
+            i = i - 1                                                      CALCRL1A.412   
+            IF ((i .GE. 2) .AND. wet(i,j) .AND. wetu(i+1,j+1)) THEN        CALCRL1A.413   
+              istrti = i                                                   CALCRL1A.414   
+              jstrti = j                                                   CALCRL1A.415   
+              rlsrfp(i,j) = rlsrfp(i+1,j+1) -                              CALCRL1A.416   
+     &         spx(i,j)*dxu(i)*cs(j) - spy(i,j)*dyu(j)                     CALCRL1A.417   
+              filled(i,j) = .true.                                         CALCRL1A.418   
+            ENDIF                                                          CALCRL1A.419   
+          ENDDO                                                            CALCRL1A.420   
+        ENDIF                                                              CALCRL1A.421   
+                                                                           CALCRL1A.422   
+! ---------------------------------------------------------------------    CALCRL1A.423   
+!       integrate south-east from initial long. until land is reached      CALCRL1A.424   
+! ---------------------------------------------------------------------    CALCRL1A.425   
+        ii = istrti - 1                                                    CALCRL1A.426   
+        DO jj=jstrti,jstopi                                                CALCRL1A.427   
+                                                                           CALCRL1A.428   
+          ii = ii + 1                                                      CALCRL1A.429   
+          i = ii                                                           CALCRL1A.430   
+          DO j=jj-1,2,-1                                                   CALCRL1A.431   
+            i = i + 1                                                      CALCRL1A.432   
+            IF ((i .LE. imt-1) .AND. wet(i,j) .AND. wetu(i-1,j+1)) THEN    CALCRL1A.433   
+              rlsrfp(i,j) = rlsrfp(i-1,j+1) +                              CALCRL1A.434   
+     &          spx(i-1,j)*dxu(i-1)*cs(j) - spy(i-1,j)*dyu(j)              CALCRL1A.435   
+              filled(i,j) = .true.                                         CALCRL1A.436   
+            ENDIF                                                          CALCRL1A.437   
+          ENDDO                                                            CALCRL1A.438   
+                                                                           CALCRL1A.439   
+! ---------------------------------------------------------------------    CALCRL1A.440   
+!       integrate north-west from initial long. until land is reached      CALCRL1A.441   
+! ---------------------------------------------------------------------    CALCRL1A.442   
+          i = ii                                                           CALCRL1A.443   
+          DO j=jj+1,jmt-1                                                  CALCRL1A.444   
+            i = i - 1                                                      CALCRL1A.445   
+            IF ((i .GE. 2) .AND. wet(i,j) .AND. wetu(i+1,j-1)) THEN        CALCRL1A.446   
+              rlsrfp(i,j) = rlsrfp(i+1,j-1) -                              CALCRL1A.447   
+     &          spx(i,j-1)*dxu(i)*cs(j-1) + spy(i,j-1)*dyu(j-1)            CALCRL1A.448   
+              filled(i,j) = .true.                                         CALCRL1A.449   
+            ENDIF                                                          CALCRL1A.450   
+          ENDDO                                                            CALCRL1A.451   
+                                                                           CALCRL1A.452   
+        ENDDO                                                              CALCRL1A.453   
+                                                                           CALCRL1A.454   
+                                                                           CALCRL1A.455   
+        IF (L_OCYCLIC) THEN                                                CALCRL1A.456   
+          DO j=1,jmt-1                                                     CALCRL1A.457   
+            rlsrfp(1,j)   = rlsrfp(imt-1,j)                                CALCRL1A.458   
+            rlsrfp(imt,j) = rlsrfp(2,j)                                    CALCRL1A.459   
+            filled(1,j)   = filled(imt-1,j)                                CALCRL1A.460   
+            filled(imt,j) = filled(2,j)                                    CALCRL1A.461   
+          ENDDO                                                            CALCRL1A.462   
+        ENDIF                                                              CALCRL1A.463   
+                                                                           CALCRL1A.464   
+        nfilled = 0                                                        CALCRL1A.465   
+        DO j=1,jmt                                                         CALCRL1A.466   
+          DO i=1,imt                                                       CALCRL1A.467   
+            IF (wet(i,j) .AND. filled(i,j))                                CALCRL1A.468   
+     &       nfilled = nfilled + 1                                         CALCRL1A.469   
+          ENDDO                                                            CALCRL1A.470   
+        ENDDO                                                              CALCRL1A.471   
+                                                                           CALCRL1A.472   
+! ---------------------------------------------------------------------    CALCRL1A.473   
+!       pass over entire domain looking for unfilled wet points            CALCRL1A.474   
+! ---------------------------------------------------------------------    CALCRL1A.475   
+        npass = 0                                                          CALCRL1A.476   
+        noldfilled = 0                                                     CALCRL1A.477   
+                                                                           CALCRL1A.478   
+        DO WHILE (nfilled .LT. nwet .AND. npass .LT. maxpass .AND.         CALCRL1A.479   
+     &      nfilled .GT. noldfilled)                                       CALCRL1A.480   
+                                                                           CALCRL1A.481   
+         noldfilled = nfilled                                              CALCRL1A.482   
+                                                                           CALCRL1A.483   
+         DO j=1,jmt                                                        CALCRL1A.484   
+          DO i=1,imt                                                       CALCRL1A.485   
+            IF (wet(i,j) .AND. (.NOT. filled(i,j)) ) THEN                  CALCRL1A.486   
+            ! this point needs to be filled, look at surrounding points    CALCRL1A.487   
+                                                                           CALCRL1A.488   
+              ! look south-east                                            CALCRL1A.489   
+              IF ((i .ne. imt) .AND. (j .ne. 1) .AND.                      CALCRL1A.490   
+     &         wet(i+1,j-1) .AND. filled(i+1,j-1) .AND.                    CALCRL1A.491   
+     &         wetu(i,j-1)) THEN                                           CALCRL1A.492   
+                rlsrfp(i,j) = rlsrfp(i+1,j-1) -                            CALCRL1A.493   
+     &           spx(i,j-1)*dxu(i)*cs(j-1) + spy(i,j-1)*dyu(j-1)           CALCRL1A.494   
+                filled(i,j) = .true.                                       CALCRL1A.495   
+                                                                           CALCRL1A.496   
+              ! look south-west                                            CALCRL1A.497   
+              ELSEIF ((i .ne. 1) .AND. (j .ne. 1) .AND.                    CALCRL1A.498   
+     &         wet(i-1,j-1) .AND. filled(i-1,j-1) .AND.                    CALCRL1A.499   
+     &         wetu(i-1,j-1)) THEN                                         CALCRL1A.500   
+                rlsrfp(i,j) = rlsrfp(i-1,j-1) +                            CALCRL1A.501   
+     &           spx(i-1,j-1)*dxu(i-1)*cs(j-1) + spy(i-1,j-1)*dyu(j-1)     CALCRL1A.502   
+                filled(i,j) = .true.                                       CALCRL1A.503   
+                                                                           CALCRL1A.504   
+              ! look north-west                                            CALCRL1A.505   
+              ELSEIF ((i .ne. 1) .AND. (j .ne. jmt) .AND.                  CALCRL1A.506   
+     &         wet(i-1,j+1) .AND. filled(i-1,j+1) .AND.                    CALCRL1A.507   
+     &         wetu(i-1,j)) THEN                                           CALCRL1A.508   
+                rlsrfp(i,j) = rlsrfp(i-1,j+1) +                            CALCRL1A.509   
+     &            spx(i-1,j)*dxu(i-1)*cs(j) - spy(i-1,j)*dyu(j)            CALCRL1A.510   
+                filled(i,j) = .true.                                       CALCRL1A.511   
+                                                                           CALCRL1A.512   
+             ! look north-east                                             CALCRL1A.513   
+              ELSEIF ((i .ne. imt) .AND. (j .ne. jmt) .AND.                CALCRL1A.514   
+     &         wet(i+1,j+1) .AND. filled(i+1,j+1) .AND.                    CALCRL1A.515   
+     &         wetu(i,j)) THEN                                             CALCRL1A.516   
+                rlsrfp(i,j) = rlsrfp(i+1,j+1) -                            CALCRL1A.517   
+     &           spx(i,j)*dxu(i)*cs(j) - spy(i,j)*dyu(j)                   CALCRL1A.518   
+                filled(i,j) = .true.                                       CALCRL1A.519   
+                                                                           CALCRL1A.520   
+              ENDIF                                                        CALCRL1A.521   
+            ENDIF                                                          CALCRL1A.522   
+          ENDDO                                                            CALCRL1A.523   
+         ENDDO                                                             CALCRL1A.524   
+                                                                           CALCRL1A.525   
+         npass = npass + 1                                                 CALCRL1A.526   
+                                                                           CALCRL1A.527   
+         IF (L_OCYCLIC) THEN                                               CALCRL1A.528   
+          DO j=1,jmt-1                                                     CALCRL1A.529   
+            rlsrfp(1,j)   = rlsrfp(imt-1,j)                                CALCRL1A.530   
+            rlsrfp(imt,j) = rlsrfp(2,j)                                    CALCRL1A.531   
+            filled(1,j)   = filled(imt-1,j)                                CALCRL1A.532   
+            filled(imt,j) = filled(2,j)                                    CALCRL1A.533   
+          ENDDO                                                            CALCRL1A.534   
+         ENDIF                                                             CALCRL1A.535   
+                                                                           CALCRL1A.536   
+         nfilled = 0                                                       CALCRL1A.537   
+         DO j=1,jmt                                                        CALCRL1A.538   
+          DO i=1,imt                                                       CALCRL1A.539   
+            IF (wet(i,j) .AND. filled(i,j)) nfilled = nfilled + 1          CALCRL1A.540   
+          ENDDO                                                            CALCRL1A.541   
+         ENDDO                                                             CALCRL1A.542   
+                                                                           CALCRL1A.543   
+        ENDDO ! on while                                                   CALCRL1A.544   
+                                                                           CALCRL1A.545   
+                                                                           CALCRL1A.546   
+        ! if not all points filled after maxpass, write out indices        CALCRL1A.547   
+        IF ((nwet/2)-1 .GT. nfilled) THEN                                  CALCRL1A.548   
+          DO j=1,jmt                                                       CALCRL1A.549   
+            DO i=1,imt                                                     CALCRL1A.550   
+              IF (wet(i,j) .AND. (.NOT. filled(i,j)))                      CALCRL1A.551   
+     &          WRITE(6,9905) i,j                                          CALCRL1A.552   
+9905            FORMAT(' UNFILLED POINT AT I,J = ',2i5)                    CALCRL1A.553   
+            ENDDO                                                          CALCRL1A.554   
+          ENDDO                                                            CALCRL1A.555   
+          ICODE=1                                                          CALCRL1A.556   
+          CMESSAGE='RLIDSRFP: ERROR - UNFILLED POINTS IN INTEGRATION'      CALCRL1A.557   
+          GOTO 999                                                         CALCRL1A.558   
+        ENDIF                                                              CALCRL1A.559   
+                                                                           CALCRL1A.560   
+                                                                           CALCRL1A.561   
+        ! compute area mean pressure                                       CALCRL1A.562   
+        pavg    = 0.0                                                      CALCRL1A.563   
+        wetarea = 0.0                                                      CALCRL1A.564   
+        DO j=1,jmt                                                         CALCRL1A.565   
+          DO i=1,imt                                                       CALCRL1A.566   
+            IF (wet(i,j) .AND. filled(i,j)) THEN                           CALCRL1A.567   
+              pavg = pavg + rlsrfp(i,j)*dxt(i)*cst(j)*dyt(j)               CALCRL1A.568   
+              wetarea =wetarea + dxt(i)*cst(j)*dyt(j)                      CALCRL1A.569   
+            ENDIF                                                          CALCRL1A.570   
+          ENDDO                                                            CALCRL1A.571   
+        ENDDO                                                              CALCRL1A.572   
+        pavg = pavg/wetarea                                                CALCRL1A.573   
+                                                                           CALCRL1A.574   
+                                                                           CALCRL1A.575   
+        ! normalize pressure                                               CALCRL1A.576   
+        DO j=1,jmt                                                         CALCRL1A.577   
+          DO i=1,imt                                                       CALCRL1A.578   
+            IF (wet(i,j) .AND. filled(i,j))                                CALCRL1A.579   
+     &       rlsrfp(i,j) = (rlsrfp(i,j) - pavg)                            CALCRL1A.580   
+          ENDDO                                                            CALCRL1A.581   
+        ENDDO                                                              CALCRL1A.582   
+        ilon0 = ilon0 + 1                                                  CALCRL1A.583   
+                                                                           CALCRL1A.584   
+      ENDDO ! on gridpass                                                  CALCRL1A.585   
+                                                                           CALCRL1A.586   
+  999 CONTINUE                                                             CALCRL1A.587   
+                                                                           CALCRL1A.588   
+      RETURN                                                               CALCRL1A.589   
+      END                                                                  CALCRL1A.590   
+*ENDIF                                                                     CALCRL1A.591   

@@ -1,0 +1,2144 @@
+*IF DEF,OCEAN                                                              @DYALLOC.3993  
+C ******************************COPYRIGHT******************************    GTS3F400.1     
+C (c) CROWN COPYRIGHT 1995, METEOROLOGICAL OFFICE, All Rights Reserved.    GTS3F400.2     
+C                                                                          GTS3F400.3     
+C Use, duplication or disclosure of this code is subject to the            GTS3F400.4     
+C restrictions as set forth in the contract.                               GTS3F400.5     
+C                                                                          GTS3F400.6     
+C                Meteorological Office                                     GTS3F400.7     
+C                London Road                                               GTS3F400.8     
+C                BRACKNELL                                                 GTS3F400.9     
+C                Berkshire UK                                              GTS3F400.10    
+C                RG12 2SZ                                                  GTS3F400.11    
+C                                                                          GTS3F400.12    
+C If no contract has been raised with this copy of the code, the use,      GTS3F400.13    
+C duplication or disclosure of it is strictly prohibited.  Permission      GTS3F400.14    
+C to do so must first be obtained in writing from the Head of Numerical    GTS3F400.15    
+C Modelling at the above address.                                          GTS3F400.16    
+C ******************************COPYRIGHT******************************    GTS3F400.17    
+C ****************************ACKNOWLEDGMENT***************************    GTS3F400.18    
+C This code is derived from Public Domain code (the Cox 1984 Ocean         GTS3F400.19    
+C Model) distributed by the Geophysical Fluid Dynamics Laboratory.         GTS3F400.20    
+C               NOAA                                                       GTS3F400.21    
+C               PO Box 308                                                 GTS3F400.22    
+C               Princeton                                                  GTS3F400.23    
+C               New Jersey USA                                             GTS3F400.24    
+C If you wish to obtain a copy of the original code that does not have     GTS3F400.25    
+C Crown Copyright use, duplication or disclosure restrictions, please      GTS3F400.26    
+C contact them at the above address.                                       GTS3F400.27    
+C ****************************ACKNOWLEDGMENT***************************    GTS3F400.28    
+C                                                                          GTS3F400.29    
+CLL SUBROUTINE CLINIC                                                      @DYALLOC.3994  
+CLL Calculate changes to baroclinic currents                               @DYALLOC.3995  
+CLL                                                                        @DYALLOC.3996  
+CLL Modification History                                                   @DYALLOC.3997  
+CLL   21/05/93: Enter UPDATE library; add arguments for dynamic alloc      @DYALLOC.3998  
+CLL   03/09/93: Correct code for implicit advection diffusion (Foreman)    SF020993.1     
+CLL   12/12/93  O. Alves add Skipland option to STATE routines             JA121293.68    
+CLL   01/09/94: R.Hill  Moved ZTD calculation to BLOKCALC, also            ORH1F304.80    
+CLL                     ZUS,ZUN,ZVS,ZVN replaced with ZU and ZV            ORH1F304.81    
+CLL                     indexed over J. Similarly ZUSENG,ZUNENG            ORH1F304.82    
+CLL                     ZVSENG and ZVNENG replaced with ZUENG and          ORH1F304.83    
+CLL                     ZVENG indexed over J. Required for                 ORH1F304.84    
+CLL                     parallelisation at ocean row level.                ORH1F304.85    
+CLL    4.1      M.Bell  Introduce diagnostics of contributions to          OMB3F401.209   
+CLL                     vertical mean vorticity tendencies; using          OMB3F401.210   
+CLL                     arrays UCONA, VCONA, ZCONU and ZCONV               OMB3F401.211   
+CLL    4.3      R. Hill Mods to allow filtering to be assisted             ORH1F403.59    
+CLL                     by all PEs in MPP mode.                            ORH1F403.60    
+CLL    4.4      M.Bell  Contributions to bottom pressure torque            OMB2F404.16    
+CLL                     corrected: V component had been missed.            OMB2F404.17    
+!      4.4      Pass stash flag for rigid-lid surface pressure             OFRAF404.65    
+!               and calculate ZU and ZV if set to true (R. Forbes)         OFRAF404.66    
+!   4.4  15/08/97  Remove SKIPLAND code. R. Hill                           ORH7F404.48    
+CLL   15/06/97 R.Lenton Changes to accomodate the free surface             ORL1F404.401   
+CLL   (vn 4.4)          solution. For the free surface solution external   ORL1F404.402   
+CLL                     components are now calculated using the            ORL1F404.403   
+CLL                     velocities calculated in TROPIC. The forcing       ORL1F404.404   
+CLL                     array xf,yf is now used in TROPIC without the      ORL1F404.405   
+CLL                     vertically averaged horizontal diffusion and       ORL1F404.406   
+CLL                     coriolis components, which are removed here.       ORL1F404.407   
+CLL                     Vertical velocities are now non-zero at the        ORL1F404.408   
+CLL                     surface and the velocity fluxes are now calc'ed    ORL1F404.409   
+CLL                     using the new flux solution scheme based on        ORL1F404.410   
+CLL                     'scheme D' described in:                           ORL1F404.411   
+CLL                     'Velocity Fluxes next to topography in the         ORL1F404.412   
+CLL                     Bryan-Cox Ocean Model', M.J.Bell 1996              ORL1F404.413   
+CLL                     for further details.                               ORL1F404.414   
+CLL                     Note for the free surface solution the forcing     ORL1F404.415   
+CLL                     array is not multiplied by a timestep here.        ORL1F404.416   
+CLL   4.5   3.11.98   Calculate j+2 total velocity if required             OOM3F405.877   
+CLL                   Calculate biharmonic mom diff variables              OOM3F405.878   
+CLL                   and apply dissipation to velocities and              OOM3F405.879   
+CLL                   diagnostics.             M. Roberts                  OOM3F405.880   
+!LL   4.5     17/09/98 Update calls to timer, required because of          GPB8F405.84    
+!LL                    new barrier inside timer.         P.Burton          GPB8F405.85    
+!      4.5      C.Sherlock  Control logicals changed for ice dynamics      ODC1F405.146   
+CLL    4.4      M.Bell  Correction to vorticity diagnostics: set viscous   ORH0F405.22    
+CLL               force to zero at land points                             ORH0F405.23    
+CLL                                                                        @DYALLOC.3999  
+      SUBROUTINE CLINIC(                                                   @DYALLOC.4000  
+*CALL ARGSIZE                                                              @DYALLOC.4001  
+*CALL ARGOCALL                                                             @DYALLOC.4002  
+*CALL ARGOINDX                                                             ORH7F402.287   
+     & J,                                                                  @DYALLOC.4003  
+*CALL COCAROWS                                                             CLINIC.3     
+     &,                                                                    @DYALLOC.4004  
+*CALL COCAWRKA                                                             CLINIC.4     
+     +,RHOSRN,RHOSRNA,RHOSRNB                                              OOM1F405.743   
+     +,LL_ASS_BTRP,DU_ASS_BTRP,DV_ASS_BTRP                                 CLINIC.9     
+     &,SF_RLIDP                                                            OFRAF404.67    
+     &,ISX,ISY,WSX_LEADS,WSY_LEADS                                         ORH1F305.2908  
+     &,IMT_GNU_ARG,KM_GNU_ARG,IMU_GNUZ_ARG,KM_GNUZ_ARG                     ORH1F305.2909  
+     &,IMT_idr_ARG                                                         ORH1F405.467   
+     &,gnum,Rim,hm,IMT_QLARGE_ARG                                          OLA3F403.34    
+     &,L_M,MLD_LARGE,MLD_LARGEP,WATERFLUX_ICE,LAMBDA_LARGE                 OOM1F405.744   
+     &,HTNP,PMEP,WATERFLUX_ICEP,SOLP,WMEP                                  OOM1F405.745   
+     &,L_OWINDMIX,L_OBULKMAXMLD                                            OOM1F405.746   
+     &,OCEANHEATFLUX,OCEANHEATFLUXP                                        OOM1F405.747   
+     &,CARYHEAT,CARYHEATP                                                  OOM1F405.748   
+     &,FLXTOICE,FLXTOICEP )                                                OOM1F405.749   
+C                                                                          CLINIC.12    
+C=======================================================================   CLINIC.13    
+C                                                                    ===   CLINIC.14    
+C  CLINIC COMPUTES, FOR ONE ROW, THE INTERNAL MODE COMPONENT OF      ===   CLINIC.15    
+C         THE U AND V VELOCITIES, AS WELL AS THE VORTICITY DRIVING   ===   CLINIC.16    
+C         FUNCTION FOR USE BY "RELAX" LATER IN DETERMINING THE       ===   CLINIC.17    
+C         EXTERNAL MODES, WHERE:                                     ===   CLINIC.18    
+C           J=THE ROW NUMBER                                         ===   CLINIC.19    
+C                                                                    ===   CLINIC.20    
+C=======================================================================   CLINIC.21    
+C                                                                          CLINIC.22    
+      IMPLICIT NONE                                                        RH011293.1     
+C---------------------------------------------------------------------     CLINIC.23    
+C  DEFINE GLOBAL DATA                                                      CLINIC.24    
+C---------------------------------------------------------------------     CLINIC.25    
+C                                                                          CLINIC.26    
+*CALL OARRYSIZ                                                             ORH6F401.29    
+*CALL TYPSIZE                                                              @DYALLOC.4005  
+*CALL TYPOINDX                                                             PXORDER.10    
+*CALL TYPOCALL                                                             @DYALLOC.4006  
+*CALL UMSCALAR                                                             CLINIC.29    
+*CALL CNTLOCN                                                              ORH1F305.2911  
+*CALL OTIMER                                                               ORH1F305.2913  
+C                                                                          CLINIC.37    
+*CALL COCTROWS                                                             CLINIC.38    
+*CALL COCTWRKA                                                             CLINIC.39    
+                                                                           ORH1F305.2914  
+      REAL rhosrn(IMT_RIC,KM_RIC)  ! OUT  Density on TS row to S           ORH1F305.2915  
+                                     ! of UV row J (i.e. on TS row J),     ORH1F305.2916  
+                                     ! from STATED                         ORH1F305.2917  
+      REAL RHOSRNA(IMT_RIC,KM_RIC+1),RHOSRNB(IMT_RIC,KM_RIC+1)             OOM1F405.750   
+        ! OUT  DENSITY ON TS ROW TO S OF UV ROW J (I.E. ON TS ROW J),      OOM1F405.751   
+        ! FROM STATEC NOW (JUNE 1998)                                      OOM1F405.752   
+                                                                           ORH1F305.2918  
+      REAL                                                                 CLINIC.45    
+     & DU_ASS_BTRP(IMT_ASM,JMT_ASM)! u_component  data assim increment     ORH1F305.2919  
+     &,DV_ASS_BTRP(IMT_ASM,JMT_ASM)! v_component  data assim increment     ORH1F305.2920  
+                                                                           ORH1F305.2921  
+      LOGICAL                                                              CLINIC.48    
+     & LL_ASS_BTRP  ! logical selecting data assimilation                  CLINIC.49    
+     &,SF_RLIDP     ! stash flag set if rigid-lid pressure required        OFRAF404.68    
+                                                                           ORH1F305.2922  
+      REAL                                                                 JT161193.335   
+     & ISX(IMT_idr)            ! IN Stress under sea ice fraction.         ODC1F405.147   
+     &,ISY(IMT_idr)            ! IN Stress under sea ice fraction.         ODC1F405.148   
+     &,WSX_LEADS(IMT_idr)      ! IN Stress under leads fraction.           ODC1F405.149   
+     &,WSY_LEADS(IMT_idr)      ! IN Stress under leads fraction.           ODC1F405.150   
+      REAL                                                                 OOM1F405.753   
+     &  MLD_LARGE(IMT)  ! IN MIXED LAYER DEPTH ON T GRID, ROW J (CM)       OOM1F405.754   
+     &, MLD_LARGEP(IMT) ! IN MIXED LAYER DEPTH ON T GRID, ROW J+1 (CM)     OOM1F405.755   
+     &, HTNP(IMT) ! IN NON-PENETRATING HEAT FLUX (W/M2) ON ROW J+1         OOM1F405.756   
+     &, PMEP(IMT) ! IN PRECIP MINUS EVAP (KG/M2/S) ON ROW J+1              OOM1F405.757   
+     &, SOLP(IMT) ! IN SOLAR IRRADIANCE (W/M2) AT SURFACE ON ROW J+1       OOM1F405.758   
+     &, WMEP(IMT) ! IN WIND MIXING POWER ON ROW J+1 (W M^-2)               OOM1F405.759   
+     &, WATERFLUX_ICE(IMT) ! IN WATER FLUX FROM ICE (KG/M2/S) ,ROW J       OOM1F405.760   
+     &, WATERFLUX_ICEP(IMT) ! IN WATER FLUX FROM ICE (KG/M2/S) ,ROW J+1    OOM1F405.761   
+     &, L_M(IMT)  ! OUT MONIN OBUKHOV LENGTH LARGE SCHEME (MOMENTUM)       OOM1F405.762   
+     &, LAMBDA_LARGE ! IN FOR CALCULATING MINIMUM MLD                      OOM1F405.763   
+      LOGICAL L_OWINDMIX,L_OBULKMAXMLD                                     OOM1F405.764   
+      INTEGER                                                              PXORDER.11    
+     &     IMT_GNU_ARG  ! } Arguments for dynamic allocation of local      PXORDER.12    
+     &,    KM_GNU_ARG   ! } arrays - passed in through arg list to         PXORDER.13    
+     &,    IMT_QLARGE_ARG ! }                                              PXORDER.14    
+        REAL gnum(IMT_GNU_ARG,KM_GNU_ARG-1)                                OLA3F403.36    
+        REAL Rim(IMT_GNU_ARG,KM_GNU_ARG-1)                                 OLA3F403.37    
+        REAL hm(IMT_QLARGE_ARG)                                            OLA3F403.38    
+       REAL                                                                OOM1F405.765   
+     & OCEANHEATFLUX(IMT),OCEANHEATFLUXP(IMT)                              OOM1F405.766   
+     &      !HTN:NON-PENETRATIVE SURFACE HEATFLUX INTO OCEAN BUDGET        OOM1F405.767   
+     &,CARYHEAT(IMT),CARYHEATP(IMT) !MISCELLANEOUS HEATFLUX FROM ICE       OOM1F405.768   
+     &,FLXTOICE(IMT),FLXTOICEP(IMT) !OCEAN TO ICE HEATFLUX                 OOM1F405.769   
+C                                                                          CLINIC.51    
+C---------------------------------------------------------------------     CLINIC.52    
+C  DEFINE LOCAL DATA                                                       CLINIC.53    
+C---------------------------------------------------------------------     CLINIC.54    
+C                                                                          CLINIC.55    
+C                                                                          ORH1F304.86    
+*CALL TYPOCLWK                                                             ORH1F304.87    
+      INTEGER                                                              ORH6F401.71    
+     &     IMU_GNUZ_ARG ! } avoid problems with portable versions          PXORDER.15    
+     &,    KM_GNUZ_ARG  ! } of model.                                      ORH6F401.75    
+     &,    IMT_idr_ARG  ! }                                                ODC1F405.151   
+C                                                                          ORH1F304.88    
+      REAL DPDX(IMT+1,KM),DPDY(IMT+1,KM),UENG(IMT,KM),VENG(IMT,KM)         @DYALLOC.4007  
+C LOCAL VARIABLES FOR BIHARMONIC DIFFUSION                                 OOM3F405.881   
+       REAL TEMPAP(IMT,KM),TEMPBP(IMT,KM)                                  OOM3F405.882   
+       REAL Uxx(IMT,KM),Uyy(IMT,KM),Umet(IMT,KM)                           OOM3F405.883   
+       REAL Vxx(IMT,KM),Vyy(IMT,KM),Vmet(IMT,KM)                           OOM3F405.884   
+       REAL pt1,pt2,pt3                                                    OOM3F405.885   
+                                                                           ORH1F305.2927  
+      REAL gnu(IMT_GNU_ARG,KM_GNU_ARG)   ! Vertical viscosity (cm2/s)      ORH1F305.2928  
+     &,gnu1z(IMU_GNUZ_ARG,KM_GNUZ_ARG+1) ! }     Arrays used in            ORH1F305.2929  
+     &,gnu2z(IMU_GNUZ_ARG,KM_GNUZ_ARG+1) ! }   energy calculation          ORH1F305.2930  
+                                                                           ORH1F305.2931  
+                                                                           ORH1F305.2932  
+      REAL UCOR(IMT,KM)      ! u comp coriolis force                       ORL1F404.417   
+      REAL VCOR(IMT,KM)      ! v comp coriolis force                       ORL1F404.418   
+      REAL UCORTOT(IMT)      ! u comp depth averaged coriolis term         ORL1F404.419   
+      REAL VCORTOT(IMT)      ! v comp depth averaged coriolis term         ORL1F404.420   
+      REAL UDFN(IMT)         ! local array for u horizontal diffusion      ORL1F404.421   
+      REAL VDFN(IMT)         ! local array for v horizontal diffusion      ORL1F404.422   
+      REAL UDFNTOT(IMT)      ! local total horztl diffn in u dir           ORL1F404.423   
+      REAL VDFNTOT(IMT)      ! local total horizl diffn in v dir           ORL1F404.424   
+      REAL scale(2)        ! Scaling coefft for surface fluxes             ORH1F305.2933  
+      REAL tscale(KM)      ! Scaled timesteps (for implicit code)          ORH1F305.2934  
+C                                                                          RH011293.2     
+      REAL UCONA(IMT_ZVRT,KM,5) ! contributions to UA and VA stored for    OMB3F401.212   
+      REAL VCONA(IMT_ZVRT,KM,5) ! vertical mean vorticity diagnostics      OMB3F401.213   
+C                                                                          OMB3F401.214   
+C          DECLARE REAL NUMBER VARIABLES                                   RH011293.3     
+C                                                                          RH011293.4     
+      REAL DIAG1,            ! Temporary storage of diagonal diff          RH011293.5     
+     &     DIAG2,            !    "         "    "     "      "            RH011293.6     
+     &     BBUJ,             ! Coeff used in horizontal U,V mixing         RH011293.7     
+     &     CCUJ,             !    "   "   "      "       "    "            RH011293.8     
+     &     DDUJ,             !    "   "   "      "       "    "            RH011293.9     
+     &     GGUJ,             !    "   "   "      "       "    "            RH011293.10    
+     &     HHUJ,             !    "   "   "      "       "    "            RH011293.11    
+     &     FX,               ! Temporary value                             RH011293.12    
+     &     FXA,              ! Temporary value                             RH011293.13    
+     &     FXB,              ! Temporary value                             RH011293.14    
+     &     DETMR             ! Reciprocal of matrix determinant from       ORH0F405.3     
+                             ! simultaneous eqns of coriolis term          ORH0F405.4     
+C                                                                          RH011293.19    
+C          DECLARE INTEGER VARIABLES                                       RH011293.20    
+C                                                                          RH011293.21    
+      INTEGER I,             ! Grid point index (zonal)                    RH011293.22    
+     &     J,                ! Grid point index (meridional)               RH011293.23    
+     &     K,                ! Grid point index (Vertical TOP DOWN)        RH011293.24    
+     &     LL,               ! Loop control for energy components          RH011293.26    
+     &     KM1,              ! K - 1                                       RH011293.27    
+     &     KP1,              ! K + 1                                       RH011293.28    
+     &     KZ,               ! Number of sea levels at point               RH011293.29    
+     &     ID                ! loop counter for vorticity diagnostics      OMB3F401.216   
+                                                                           ORH1F305.2935  
+      REAL                                                                 JT161193.342   
+     & XSTRESS_ICE(IMT_idr) ! Total stress under sea ice.                  ODC1F405.152   
+     &,YSTRESS_ICE(IMT_idr) ! (Wind stress at ice free points)             ODC1F405.153   
+                                                                           ORH1F304.77    
+C                                                                          CLINIC.74    
+C---------------------------------------------------------------------     CLINIC.75    
+C  BEGIN EXECUTABLE CODE                                                   CLINIC.76    
+C---------------------------------------------------------------------     CLINIC.77    
+      IF (L_OTIMER) THEN                                                   ORH1F305.2947  
+          CALL TIMER('CLINIC  ',103)                                       GPB8F405.86    
+      ENDIF                                                                ORH1F305.2949  
+                                                                           ORH1F403.62    
+      IF (J.GE.J_2.AND.J.LE.J_JMTM1) THEN                                  ORH1F403.63    
+                                                                           ORH1F403.64    
+          IF (L_OSYMM.OR.(J+J_OFFSET.NE.JMTM1_GLOBAL)) THEN                ORH1F403.65    
+C                                                                          CLINIC.81    
+C=======================================================================   CLINIC.82    
+C  BEGIN INTRODUCTORY SECTION, PREPARING VARIOUS     ===================   CLINIC.83    
+C  ARRAYS FOR THE COMPUTATION OF THE INTERNAL MODES  ===================   CLINIC.84    
+C=======================================================================   CLINIC.85    
+C                                                                          CLINIC.86    
+C----------------------------------------------------------------          CLINIC.87    
+C         Initialise the IMTP1th column of the local workspace             CLINIC.88    
+C        arrays DPDX,DPDY. This prevents an 'unitialised data'             CLINIC.89    
+C        type of floating point error when this element is first           CLINIC.90    
+C        referenced in the 273 loop.                                       CLINIC.91    
+C----------------------------------------------------------------          CLINIC.92    
+C                                                                          CLINIC.93    
+      DO 50 K=1,KM                                                         CLINIC.94    
+        DPDX(IMT+1,K)=0.                                                   @DYALLOC.4010  
+        DPDY(IMT+1,K)=0.                                                   @DYALLOC.4011  
+   50 CONTINUE                                                             CLINIC.97    
+                                                                           ORH1F305.2950  
+      IF (L_ICEFREEDR) THEN                                                ODC1F405.154   
+C                                                                          CLINIC.98    
+C-----------------------------------------------------------------------   JT161193.347   
+C Calculate total stress when dynamic sea ice is in the model and store    JT161193.348   
+C in arrays XSTRESS_ICE and YSTRESS_ICE                                    JT161193.349   
+C-----------------------------------------------------------------------   JT161193.350   
+         do i=1,imt                                                        ORH1F305.2952  
+            xstress_ice(i) = ( wsx_leads(i) + isx(i) ) * gm(i,1)           ORH1F305.2953  
+            ystress_ice(i) = ( wsy_leads(i) + isy(i) ) * gm(i,1)           ORH1F305.2954  
+         end do                                                            ORH1F305.2955  
+      ENDIF                                                                ORH1F305.2956  
+C                                                                          JT161193.356   
+C                                                                          JT161193.357   
+C---------------------------------------------------------------------     CLINIC.99    
+C  FIND ADVECTIVE COEFFICIENT 'FUW' FOR WEST  FACE OF U,V BOX              CLINIC.100   
+C                           & 'FVN' FOR NORTH FACE OF U,V BOX              CLINIC.101   
+C---------------------------------------------------------------------     CLINIC.102   
+C                                                                          CLINIC.103   
+C  1ST, FORM PART OF BAROTROPIC U AT WEST  FACE OF U,V BOX                 ORL1F404.876   
+C                             & V AT NORTH FACE OF U,V BOX                 ORL1F404.877   
+C                                                                          CLINIC.109   
+      IF ((.NOT.L_ONOCLIN).AND.(.NOT.L_OFREESFC)) THEN                     ORL1F404.425   
+C                                                                          ORL1F404.426   
+C  FOR RIGID LID CASE SFU,SFV FROM THE STREAMFUNCTION.                     ORL1F404.427   
+C                                                                          ORL1F404.428   
+        IF (.NOT.(L_FLUXD)) THEN                                           ORL1F404.878   
+                                                                           ORL1F404.879   
+C use the old cox scheme to calculate the fluxes on the box faces          ORL1F404.880   
+                                                                           ORL1F404.881   
+         DO 101 I=2,IMT                                                    ORH1F305.2958  
+            SFU(I)=-(P(I  ,J+1)-P(I,J  ))*DYUR(J)                          ORH1F305.2959  
+     &                         *MIN(HR(I-1,J  ),HR(I,J))                   ORH1F305.2960  
+ 101     CONTINUE                                                          ORH1F305.2961  
+         SFU(1)=0.0                                                        ORH1F305.2962  
+         DO 102 I=1,IMTM1                                                  ORH1F305.2963  
+            SFV(I)= ((P(I+1,J+1)-P(I,J+1))*DXUR(I))                        OOM3F405.886   
+     &        *(MIN(HR(I  ,J+1),HR(I,J))*CSTR(J+1))                        OOM3F405.887   
+                                                                           OOM3F405.888   
+ 102     CONTINUE                                                          ORH1F305.2966  
+         SFV(IMT)=0.0                                                      ORH1F305.2967  
+                                                                           ORL1F404.882   
+        ELSE                                                               ORL1F404.883   
+                                                                           ORL1F404.884   
+C use the new 'version D' method to calculate fluxes at the faces          ORL1F404.885   
+                                                                           ORL1F404.886   
+          DO I=2,IMT                                                       ORL1F404.887   
+           SFU(I)=-(P(I  ,J+1)-P(I,J  ))*DYUR(J)                           ORL1F404.888   
+          ENDDO                                                            ORL1F404.889   
+          SFU(1)=0.0                                                       ORL1F404.890   
+          DO I=1,IMTM1                                                     ORL1F404.891   
+           SFV(I)= (P(I+1,J+1)-P(I,J+1))*DXUR(I)*CSTR(J+1)                 ORL1F404.892   
+          ENDDO                                                            ORL1F404.893   
+          SFV(IMT)=0.0                                                     ORL1F404.894   
+                                                                           ORL1F404.895   
+        ENDIF     ! type of flux solution                                  ORL1F404.896   
+                                                                           ORL1F404.897   
+                                                                           ORL1F404.429   
+      ELSE IF ((.NOT.L_ONOCLIN).AND.(L_OFREESFC)) THEN                     ORL1F404.430   
+C                                                                          ORL1F404.431   
+C  FOR FREE SURFACE CASE CALCULATE SFU,SFV FROM THE BAROTROPIC VELYS       ORL1F404.432   
+C  CALCULATED IN TROPIC                                                    ORL1F404.433   
+C                                                                          ORL1F404.434   
+                                                                           ORL1F404.435   
+         DO I=2,IMT                                                        ORL1F404.436   
+            SFU(I)= 0.5*( UBT(I-1,J) + UBT(I,J) )                          ORL1F404.437   
+         ENDDO                                                             ORL1F404.438   
+         SFU(1)=0.0                                                        ORL1F404.439   
+                                                                           ORL1F404.440   
+         DO I=1,IMTM1                                                      ORL1F404.441   
+            SFV(I)= 0.5*( VBT(I,J+1) + VBT(I,J) )                          ORL1F404.442   
+         ENDDO                                                             ORL1F404.443   
+         SFV(IMT)=0.0                                                      ORL1F404.444   
+                                                                           ORL1F404.445   
+      ENDIF      !(.NOT.L_ONOCLIN).AND.(.NOT.L_OFREESFC)                   ORL1F404.446   
+C                                                                          CLINIC.121   
+C  2ND, CALCULATE INT. MODE U AT WEST  FACE OF U,V BOX                     CLINIC.122   
+C                         & V AT NORTH FACE OF U,V BOX                     CLINIC.123   
+C                                                                          CLINIC.124   
+      IF ((L_ONOCLIN).OR.((.NOT.L_ONOCLIN).AND.(.NOT.L_FLUXD))) THEN       ORL1F404.898   
+                                                                           ORL1F404.899   
+c follow the method used in the original COX scheme                        ORL1F404.900   
+                                                                           ORL1F404.901   
+      FX=0.5                                                               CLINIC.125   
+        IF (.NOT.(L_OBIMOM.or.L_OBIHARMGM)) THEN                           OOM3F405.889   
+      DO 110 K=1,KM                                                        CLINIC.126   
+      DO 111 I=2,IMT                                                       CLINIC.127   
+        FUW(I,K)=(UCLIN(I,K)+UCLIN(I-1,K))*FX                              CLINIC.128   
+        FVN(I,K)=(VP   (I,K)+VCLIN(I  ,K))*FX                              CLINIC.129   
+ 111  CONTINUE                                                             CLINIC.130   
+      FUW(1,K)=0.0                                                         CLINIC.131   
+      FVN(1,K)=(VP(1,K)+VCLIN(1,K))*FX                                     CLINIC.132   
+ 110  CONTINUE                                                             CLINIC.133   
+        ELSE                                                               OOM3F405.890   
+C For biharmonic runs, VCLINP becomes the baroclinic velocity              OOM3F405.891   
+C for row j+1                                                              OOM3F405.892   
+          DO K=1,KM                                                        OOM3F405.893   
+            DO I=2,IMT                                                     OOM3F405.894   
+             FUW(I,K)=(UCLIN(I,K)+UCLIN(I-1,K))*FX                         OOM3F405.895   
+             FVN(I,K)=(VCLINP(I,K)+VCLIN(I  ,K))*FX                        OOM3F405.896   
+            ENDDO                                                          OOM3F405.897   
+            FUW(1,K)=0.0                                                   OOM3F405.898   
+            FVN(1,K)=(VCLINP(1,K)+VCLIN(1,K))*FX                           OOM3F405.899   
+          ENDDO                                                            OOM3F405.900   
+        ENDIF !  not L_OBIMOM.or.L_OBIHARMGM                               OOM3F405.901   
+                                                                           ORH1F305.2969  
+                                                                           ORL1F404.902   
+      ELSE   !   .NOT. L_ONOCLIN                                           ORL1F404.903   
+                                                                           ORL1F404.904   
+C new 'version D' formula to calculate the fluxes                          ORL1F404.905   
+                                                                           ORL1F404.906   
+      DO K = 1, KM                                                         ORL1F404.907   
+                                                                           ORL1F404.908   
+C first contributions for each term                                        ORL1F404.909   
+        DO I=1,IMT                                                         ORL1F404.910   
+          IF ( KMU(I) .GE. KAR(K) ) THEN                                   ORL1F404.911   
+            FUW(I,K) = 0.5 * ( UCLIN(I,K) + SFU(I)*HR(I,J) )               ORL1F404.912   
+            FVN(I,K) = 0.5 * ( VCLIN(I,K) + SFV(I)*HR(I,J) )               ORL1F404.913   
+          ELSE                                                             ORL1F404.914   
+            FUW(I,K) = 0.0                                                 ORL1F404.915   
+            FVN(I,K) = 0.0                                                 ORL1F404.916   
+          END IF                                                           ORL1F404.917   
+        END DO                                                             ORL1F404.918   
+                                                                           ORL1F404.919   
+C second contributions for each term                                       ORL1F404.920   
+C no additional contributions from land points                             ORL1F404.921   
+        DO I=2,IMT                                                         ORL1F404.922   
+          IF ( KMU(I-1) .GE. KAR(K) ) THEN                                 ORL1F404.923   
+            FUW(I,K) = FUW(I,K) +                                          ORL1F404.924   
+     #       0.5 * ( UCLIN(I-1,K) + SFU(I)*HR(I-1,J) )                     ORL1F404.925   
+          END IF                                                           ORL1F404.926   
+        END DO                                                             ORL1F404.927   
+        FUW(1,K) = 0.0                                                     ORL1F404.928   
+                                                                           ORL1F404.929   
+        IF (.NOT.(L_OBIMOM.or.L_OBIHARMGM)) THEN                           OOM3F405.902   
+        DO I=1,IMT                                                         ORL1F404.930   
+          IF ( KMUP(I) .GE. KAR(K) ) THEN                                  ORL1F404.931   
+            FVN(I,K) = FVN(I,K) +                                          ORL1F404.932   
+     #       0.5 * ( VP(I,K) + SFV(I)*HR(I,J+1) )                          ORL1F404.933   
+          END IF                                                           ORL1F404.934   
+        END DO                                                             ORL1F404.935   
+        ELSE                                                               OOM3F405.903   
+C For biharmonic runs, VCLINP becomes the baroclinic velocity              OOM3F405.904   
+C for row j+1                                                              OOM3F405.905   
+          DO I=1,IMT                                                       OOM3F405.906   
+            IF ( KMUP(I) .GE. KAR(K) ) THEN                                OOM3F405.907   
+              FVN(I,K) = FVN(I,K) +                                        OOM3F405.908   
+     #         0.5 * ( VCLINP(I,K) + SFV(I)*HR(I,J+1) )                    OOM3F405.909   
+            END IF                                                         OOM3F405.910   
+          END DO                                                           OOM3F405.911   
+        ENDIF  ! L_OBIMOM.or.L_OBIHARMGM                                   OOM3F405.912   
+                                                                           ORL1F404.936   
+      END DO    ! KM                                                       ORL1F404.937   
+                                                                           ORL1F404.938   
+      END IF  ! L_ONOCLIN, L_FLUXD - type of flux solution                 ORL1F404.939   
+C                                                                          CLINIC.135   
+C  ADD DATA ASSIMILATION INCREMENTS                                        CLINIC.136   
+C                                                                          CLINIC.137   
+      IF (LL_ASS_BTRP) THEN                                                CLINIC.138   
+        DO 112 K=1,KM                                                      CLINIC.139   
+        DO 112 I=1,IMT                                                     CLINIC.140   
+          FUW(I,K)=FUW(I,K)+(DU_ASS_BTRP(I,J)+DU_ASS_BTRP(I-1,J))*FX       CLINIC.141   
+          FVN(I,K)=FVN(I,K)+(DV_ASS_BTRP(I,J+1)+DV_ASS_BTRP(I,J))*FX       CLINIC.142   
+ 112    CONTINUE                                                           CLINIC.143   
+      END IF                                                               CLINIC.144   
+                                                                           ORH1F305.2970  
+C                                                                          CLINIC.146   
+                                                                           ORH1F305.2971  
+C  3RD, ADD GRID WGT. FACTOR                                               CLINIC.151   
+                                                                           ORH1F305.2972  
+C                                                                          CLINIC.153   
+      FX=(DYU2R(J)*CSR(J))*CST(J+1)                                        OOM3F405.913   
+                                                                           ORH1F305.2973  
+      IF ((.NOT.L_ONOCLIN).AND.(.NOT.L_FLUXD)) THEN                        ORL1F404.940   
+        DO K=1,KM                                                          ORL1F404.941   
+           DO I=1,IMT                                                      ORL1F404.942   
+              FUW(I,K)=(FUW(I,K)+SFU(I))*CSR(J)                            ORL1F404.943   
+              FVN(I,K)=(FVN(I,K)+SFV(I))*FX                                ORL1F404.944   
+           ENDDO                                                           ORL1F404.945   
+        ENDDO                                                              ORL1F404.946   
+                                                                           ORL1F404.947   
+      ELSE                                                                 ORL1F404.948   
+                                                                           ORL1F404.949   
+        DO K=1,KM                                                          ORL1F404.950   
+          DO I=1,IMT                                                       ORL1F404.951   
+            FUW(I,K)=FUW(I,K)*CSR(J)                                       ORL1F404.952   
+            FVN(I,K)=FVN(I,K)*FX                                           ORL1F404.953   
+          ENDDO                                                            ORL1F404.954   
+        ENDDO                                                              ORL1F404.955   
+                                                                           ORL1F404.956   
+      ENDIF   ! (.NOT.L_ONOCLIN).AND.(L_FLUXD)                             ORL1F404.957   
+                                                                           ORH1F305.2989  
+C---------------------------------------------------------------------     CLINIC.171   
+C  SAVE INTERNAL MODE VELOCITIES                                           CLINIC.172   
+C---------------------------------------------------------------------     CLINIC.173   
+C                                                                          CLINIC.174   
+        IF (.NOT.(L_OBIMOM.or.L_OBIHARMGM)) THEN                           OOM3F405.914   
+      DO 140 K=1,KM                                                        CLINIC.175   
+      DO 140 I=1,IMT                                                       CLINIC.176   
+        USAV(I,K)=UCLIN(I,K)                                               CLINIC.177   
+        VSAV(I,K)=VCLIN(I,K)                                               CLINIC.178   
+        UCLIN(I,K)=UP(I,K)                                                 CLINIC.179   
+        VCLIN(I,K)=VP(I,K)                                                 CLINIC.180   
+ 140  CONTINUE                                                             CLINIC.181   
+        ELSE                                                               OOM3F405.915   
+C update rows J and J+1 with baroclinic velocities                         OOM3F405.916   
+          DO K=1,KM                                                        OOM3F405.917   
+            DO I=1,IMT                                                     OOM3F405.918   
+              USAV(I,K)=UCLIN(I,K)                                         OOM3F405.919   
+              VSAV(I,K)=VCLIN(I,K)                                         OOM3F405.920   
+              UCLIN(I,K)=UCLINP(I,K)                                       OOM3F405.921   
+              VCLIN(I,K)=VCLINP(I,K)                                       OOM3F405.922   
+              UCLINP(I,K)=UPP(I,K)                                         OOM3F405.923   
+              VCLINP(I,K)=VPP(I,K)                                         OOM3F405.924   
+            ENDDO                                                          OOM3F405.925   
+          ENDDO                                                            OOM3F405.926   
+        ENDIF  ! L_OBIMOM.or.L_OBIHARMGM                                   OOM3F405.927   
+                                                                           OOM3F405.928   
+C                                                                          CLINIC.182   
+      IF (L_OSYMM) THEN                                                    ORH1F305.2990  
+C  IF LAST ROW, NO NEED TO PERFORM OPERATIONS ON J+1 ROW                   CLINIC.184   
+C  IF LAST TWO ROWS, NO NEED TO PERFORM OPERATIONS ON J+2 ROW              OOM3F405.929   
+C  IF USING BIHARMONIC MOMENTUM DIFF                                       OOM3F405.930   
+C                                                                          CLINIC.185   
+      IF ((J+J_OFFSET.EQ.JMTM1_GLOBAL-1).AND.(L_OBIMOM)) GO TO 176         OOM3F405.931   
+      IF ((J+J_OFFSET.EQ.JMTM1_GLOBAL).AND.(.NOT.L_OBIMOM)) GO TO 176      OOM3F405.932   
+C                                                                          CLINIC.187   
+      ELSE IF ((J+J_OFFSET.EQ.JMTM1_GLOBAL).AND.(L_OBIMOM)) THEN           OOM3F405.933   
+        GO TO 176                                                          OOM3F405.934   
+      ELSE                                                                 ORH1F305.2992  
+                                                                           ORH1F305.2993  
+        IF (.NOT.L_ONOCLIN) THEN                                           ORH0F401.50    
+      IF (.NOT.(L_OBIMOM.or.L_OBIHARMGM)) THEN                             OOM3F405.935   
+C---------------------------------------------------------------------     CLINIC.190   
+C  COMPUTE EXTERNAL MODE VELOCITIES FOR ROW J+1                            CLINIC.191   
+C---------------------------------------------------------------------     CLINIC.192   
+C                                                                          CLINIC.193   
+C  1ST, COMPUTE FOR TAU-1 TIME LEVEL                                       CLINIC.194   
+C                                                                          CLINIC.195   
+                                                                           ORL1F404.447   
+      IF (L_OFREESFC) THEN                                                 ORL1F404.448   
+        DO I=1,IMTM1                                                       ORL1F404.449   
+          SFUB(I) = UBTBBC(I,J+1)*HR(I,J+1)                                ORL1F404.450   
+          SFVB(I) = VBTBBC(I,J+1)*HR(I,J+1)                                ORL1F404.451   
+        ENDDO       ! over i                                               ORL1F404.452   
+                                                                           ORL1F404.453   
+      ELSE                                                                 ORL1F404.454   
+                                                                           ORL1F404.455   
+         DO 150 I=1,IMTM1                                                  ORH1F305.2994  
+           DIAG1=PB(I+1,J+2)-PB(I  ,J+1)                                   ORH1F305.2995  
+           DIAG2=PB(I  ,J+2)-PB(I+1,J+1)                                   ORH1F305.2996  
+           SFUB(I)=-(DIAG1+DIAG2)*DYU2R(J+1)*HR(I,J+1)                     ORH1F305.2997  
+           SFVB(I)= (DIAG1-DIAG2)*DXU2R(I  )*HR(I,J+1)*CSR(J+1)            ORH1F305.2998  
+ 150     CONTINUE                                                          ORH1F305.2999  
+      ENDIF         ! L_OFREESFC                                           ORL1F404.456   
+C                                                                          CLINIC.202   
+C  2ND, COMPUTE FOR TAU TIME LEVEL                                         CLINIC.203   
+C                                                                          CLINIC.204   
+      IF (L_OFREESFC) THEN                                                 ORL1F404.457   
+        DO I=1,IMTM1                                                       ORL1F404.458   
+          SFU(I) = UBT(I,J+1)*HR(I,J+1)                                    ORL1F404.459   
+          SFV(I) = VBT(I,J+1)*HR(I,J+1)                                    ORL1F404.460   
+        ENDDO                                                              ORL1F404.461   
+                                                                           ORL1F404.462   
+      ELSE                                                                 ORL1F404.463   
+                                                                           ORL1F404.464   
+         DO 155 I=1,IMTM1                                                  ORH1F305.3000  
+           DIAG1=P (I+1,J+2)-P (I  ,J+1)                                   ORH1F305.3001  
+           DIAG2=P (I  ,J+2)-P (I+1,J+1)                                   ORH1F305.3002  
+           SFU (I)=-(DIAG1+DIAG2)*DYU2R(J+1)*HR(I,J+1)                     ORH1F305.3003  
+           SFV (I)= (DIAG1-DIAG2)*DXU2R(I  )*HR(I,J+1)*CSR(J+1)            ORH1F305.3004  
+ 155     CONTINUE                                                          ORH1F305.3005  
+      ENDIF         ! L_OFREESFC                                           ORL1F404.465   
+      ELSE                                                                 OOM3F405.936   
+C  COMPUTE EXTERNAL MODE VELOCITIES FOR ROW J+2 AND TWO TIME LEVELS        OOM3F405.937   
+C  1ST, COMPUTE FOR TAU-1 TIME LEVEL                                       OOM3F405.938   
+                                                                           OOM3F405.939   
+      IF (L_OFREESFC) THEN                                                 OOM3F405.940   
+        DO I=1,IMTM1                                                       OOM3F405.941   
+          SFUB(I) = UBTBBC(I,J+1)*HR(I,J+1)                                OOM3F405.942   
+          SFVB(I) = VBTBBC(I,J+1)*HR(I,J+1)                                OOM3F405.943   
+        ENDDO       ! over i                                               OOM3F405.944   
+                                                                           OOM3F405.945   
+      ELSE                                                                 OOM3F405.946   
+         IF (J.LT.J_JMT) THEN                                              OOM3F405.947   
+           DO I=1,IMTM1                                                    OOM3F405.948   
+             DIAG1=PB(I+1,J+3)-PB(I  ,J+2)                                 OOM3F405.949   
+             DIAG2=PB(I  ,J+3)-PB(I+1,J+2)                                 OOM3F405.950   
+             SFUB(I)=-(DIAG1+DIAG2)*DYU2R(J+2)*HR(I,J+2)                   OOM3F405.951   
+             SFVB(I)= (DIAG1-DIAG2)*DXU2R(I  )*HR(I,J+2)*CSR(J+2)          OOM3F405.952   
+           ENDDO                                                           OOM3F405.953   
+         ELSE                                                              OOM3F405.954   
+           DO I=1,IMTM1                                                    OOM3F405.955   
+             DIAG1=PBJP(I+1)-PB(I  ,J+2)                                   OOM3F405.956   
+             DIAG2=PBJP(I)-PB(I+1,J+2)                                     OOM3F405.957   
+             SFUB(I)=-(DIAG1+DIAG2)*DYU2RJP*HRJP(I)                        OOM3F405.958   
+             SFVB(I)= (DIAG1-DIAG2)*DXU2R(I  )*HRJP(I)*CSRJP               OOM3F405.959   
+           ENDDO                                                           OOM3F405.960   
+         ENDIF                                                             OOM3F405.961   
+      ENDIF  ! L_OFREESFC                                                  OOM3F405.962   
+C                                                                          OOM3F405.963   
+C  2ND, COMPUTE FOR TAU TIME LEVEL                                         OOM3F405.964   
+C                                                                          OOM3F405.965   
+      IF (L_OFREESFC) THEN                                                 OOM3F405.966   
+        DO I=1,IMTM1                                                       OOM3F405.967   
+          SFU(I) = UBT(I,J+1)*HR(I,J+1)                                    OOM3F405.968   
+          SFV(I) = VBT(I,J+1)*HR(I,J+1)                                    OOM3F405.969   
+        ENDDO                                                              OOM3F405.970   
+                                                                           OOM3F405.971   
+      ELSE                                                                 OOM3F405.972   
+                                                                           OOM3F405.973   
+         IF (J.LT.J_JMT) THEN                                              OOM3F405.974   
+           DO I=1,IMTM1                                                    OOM3F405.975   
+             DIAG1=P(I+1,J+3)-P(I  ,J+2)                                   OOM3F405.976   
+             DIAG2=P(I  ,J+3)-P(I+1,J+2)                                   OOM3F405.977   
+             SFU(I)=-(DIAG1+DIAG2)*DYU2R(J+2)*HR(I,J+2)                    OOM3F405.978   
+             SFV(I)= (DIAG1-DIAG2)*DXU2R(I  )*HR(I,J+2)*CSR(J+2)           OOM3F405.979   
+           ENDDO                                                           OOM3F405.980   
+         ELSE                                                              OOM3F405.981   
+           DO I=1,IMTM1                                                    OOM3F405.982   
+             DIAG1=PJP(I+1)-P(I  ,J+2)                                     OOM3F405.983   
+             DIAG2=PJP(I)-P(I+1,J+2)                                       OOM3F405.984   
+             SFU(I)=-(DIAG1+DIAG2)*DYU2RJP*HRJP(I)                         OOM3F405.985   
+             SFV(I)= (DIAG1-DIAG2)*DXU2R(I  )*HRJP(I)*CSRJP                OOM3F405.986   
+           ENDDO                                                           OOM3F405.987   
+         ENDIF                                                             OOM3F405.988   
+      ENDIF  ! L_OFREESFC                                                  OOM3F405.989   
+                                                                           OOM3F405.990   
+      ENDIF  ! L_OBIMOM.or.L_OBIHARMGM                                     OOM3F405.991   
+                                                                           OOM3F405.992   
+        ENDIF   ! barotropic solution not selected                         ORH0F401.51    
+      ENDIF                                                                ORH1F305.3006  
+                                                                           ORH1F305.3007  
+      IF ((.NOT.(L_ONOCLIN)).AND.L_OCYCLIC) THEN                           ORH1F305.3008  
+C                                                                          CLINIC.213   
+C  3RD, SET CYCLIC BOUNDARY CONDITIONS                                     CLINIC.214   
+C                                                                          CLINIC.215   
+         SFUB(IMT)=SFUB(2)                                                 ORH1F305.3009  
+         SFVB(IMT)=SFVB(2)                                                 ORH1F305.3010  
+         SFU (IMT)=SFU (2)                                                 ORH1F305.3011  
+         SFV (IMT)=SFV (2)                                                 ORH1F305.3012  
+      ENDIF                                                                ORH1F305.3013  
+                                                                           ORH1F305.3014  
+      IF (.NOT.(L_ONOCLIN)) THEN                                           ORH1F305.3015  
+C                                                                          CLINIC.222   
+C-----------------------------------------------------------------------   CLINIC.223   
+C     SAVE EXTERNAL MODE FOR USE IN TIME FILTER                            CLINIC.224   
+C-----------------------------------------------------------------------   CLINIC.225   
+C                                                                          CLINIC.226   
+        IF (.NOT.(L_OBIMOM.or.L_OBIHARMGM)) THEN                           OOM3F405.993   
+         DO 156 I=1,IMT                                                    ORH1F305.3016  
+            SSFUBP(I)=SFUB(I)                                              ORH1F305.3017  
+            SSFVBP(I)=SFVB(I)                                              ORH1F305.3018  
+ 156     CONTINUE                                                          ORH1F305.3019  
+        ELSE                                                               OOM3F405.994   
+          DO I=1,IMT                                                       OOM3F405.995   
+            SSFUBPP(I)=SFUB(I)                                             OOM3F405.996   
+            SSFVBPP(I)=SFVB(I)                                             OOM3F405.997   
+          ENDDO                                                            OOM3F405.998   
+        ENDIF  ! L_OBIMOM.or.L_OBIHARMGM                                   OOM3F405.999   
+                                                                           OOM3F405.1000  
+C                                                                          CLINIC.231   
+        IF (.NOT.(L_OBIMOM.or.L_OBIHARMGM)) THEN                           OOM3F405.1001  
+C---------------------------------------------------------------------     CLINIC.232   
+C  ADD EXTERNAL MODE TO INTERNAL MODE FOR ROW J+1  (OCEAN PTS. ONLY)       CLINIC.233   
+C---------------------------------------------------------------------     CLINIC.234   
+C                                                                          CLINIC.235   
+         DO 170 K=1,KM                                                     ORH1F305.3020  
+         DO 170 I=1,IMU                                                    ORH1F305.3021  
+           IF(KMUP(I).GE.KAR(K)) THEN                                      ORH1F305.3022  
+             UBP(I,K)=UBP(I,K)+SFUB(I)                                     ORH1F305.3023  
+             VBP(I,K)=VBP(I,K)+SFVB(I)                                     ORH1F305.3024  
+             UP (I,K)=UP (I,K)+SFU (I)                                     ORH1F305.3025  
+             VP (I,K)=VP (I,K)+SFV (I)                                     ORH1F305.3026  
+           ENDIF                                                           ORH1F305.3027  
+ 170     CONTINUE                                                          ORH1F305.3028  
+        ELSE                                                               OOM3F405.1002  
+C---------------------------------------------------------------------     OOM3F405.1003  
+C  ADD EXTERNAL MODE TO INTERNAL MODE FOR ROW J+2  (OCEAN PTS. ONLY)       OOM3F405.1004  
+C---------------------------------------------------------------------     OOM3F405.1005  
+          DO K=1,KM                                                        OOM3F405.1006  
+            DO I=1,IMT                                                     OOM3F405.1007  
+              IF (KMUPP(I).GE.KAR(K)) THEN                                 OOM3F405.1008  
+                UBPP(I,K)=(UBPP(I,K)+SFUB(I))                              OOM3F405.1009  
+                VBPP(I,K)=(VBPP(I,K)+SFVB(I))                              OOM3F405.1010  
+                U PP(I,K)=(U PP(I,K)+SFU (I))                              OOM3F405.1011  
+                V PP(I,K)=(V PP(I,K)+SFV (I))                              OOM3F405.1012  
+              ENDIF                                                        OOM3F405.1013  
+            ENDDO                                                          OOM3F405.1014  
+          ENDDO                                                            OOM3F405.1015  
+        ENDIF  ! L_OBIMOM.or.L_OBIHARMGM                                   OOM3F405.1016  
+                                                                           OOM3F405.1017  
+      ENDIF                                                                ORH1F305.3029  
+                                                                           ORH1F305.3030  
+                                                                           ORH1F305.3031  
+C                                                                          CLINIC.247   
+C-----------------------------------------------------------------------   CLINIC.248   
+C  ADD DATA ASSIMILATION INCREMENTS                                        CLINIC.249   
+C-----------------------------------------------------------------------   CLINIC.250   
+C                                                                          CLINIC.251   
+      IF (LL_ASS_BTRP) THEN                                                CLINIC.252   
+        DO 171 K=1,KM                                                      CLINIC.253   
+        DO 171 I=1,IMU                                                     CLINIC.254   
+          IF (KMUP(I).GE.KAR(K)) THEN                                      CLINIC.255   
+            UP(I,K)=UP(I,K)+DU_ASS_BTRP(I,J+1)                             CLINIC.256   
+            VP(I,K)=VP(I,K)+DV_ASS_BTRP(I,J+1)                             CLINIC.257   
+          END IF                                                           CLINIC.258   
+ 171    CONTINUE                                                           CLINIC.259   
+      END IF                                                               CLINIC.260   
+C                                                                          CLINIC.262   
+C---------------------------------------------------------------------     CLINIC.263   
+C  ACCUMULATE KINETIC ENERGY FROM ROW J+1 EVERY NTSI TIMESTEPS             CLINIC.264   
+C---------------------------------------------------------------------     CLINIC.265   
+C                                                                          CLINIC.266   
+      IF(MOD(ITT,NTSI).EQ.0) THEN                                          CLINIC.267   
+        FX=0.25*CS(J+1)*DYU(J+1)                                           CLINIC.268   
+        IF (L_OSYMM) THEN                                                  ORH1F305.3032  
+C                                                                          CLINIC.270   
+C  WEIGHT SYMMETRY ROW BY ONE HALF                                         CLINIC.271   
+C                                                                          CLINIC.272   
+         IF(J+J_OFFSET.EQ.JMTM2_GLOBAL) FX=FX*0.5                          ORH3F402.33    
+        ENDIF                                                              ORH1F305.3034  
+        DO 173 K=1,KM                                                      CLINIC.275   
+        DO 173 I=1,IMT                                                     CLINIC.276   
+          UENG(I,K)=(FX*(UP(I,K)*UP(I,K)+VP(I,K)*VP(I,K)))                 CLINIC.277   
+     *              *C2DZQ(I,K)*DXUQ(I,K)                                  CLINIC.278   
+ 173    CONTINUE                                                           CLINIC.279   
+        DO 175 K=1,KM                                                      CLINIC.280   
+        DO 175 I=2,IMUM1                                                   CLINIC.281   
+          EKTOT=EKTOT+UENG(I,K)                                            CLINIC.282   
+ 175    CONTINUE                                                           CLINIC.283   
+      ENDIF                                                                CLINIC.284   
+ 176  CONTINUE                                                             CLINIC.285   
+C                                                                          CLINIC.286   
+      IF (L_OSYMM) THEN                                                    ORH1F305.3035  
+C---------------------------------------------------------------------     CLINIC.288   
+C  SET SYMMETRY CONDITIONS ON THE LAST ROW                                 CLINIC.289   
+C---------------------------------------------------------------------     CLINIC.290   
+C                                                                          CLINIC.291   
+      IF (L_OBIMOM) THEN                                                   OOM3F405.1018  
+        IF(J+J_OFFSET.EQ.JMTM1_GLOBAL) THEN                                OOM3F405.1019  
+          DO K=1,KM                                                        OOM3F405.1020  
+            DO I=1,IMT                                                     OOM3F405.1021  
+              D2U(I,K,3)=  D2U(I,K,1)                                      OOM3F405.1022  
+              D2V(I,K,3)= -D2V(I,K,1)                                      OOM3F405.1023  
+            ENDDO                                                          OOM3F405.1024  
+          ENDDO                                                            OOM3F405.1025  
+        ENDIF                                                              OOM3F405.1026  
+      ENDIF  ! L_OBIMOM                                                    OOM3F405.1027  
+                                                                           OOM3F405.1028  
+                                                                           OOM3F405.1029  
+        IF (J+J_OFFSET.EQ.JMTM1_GLOBAL) THEN                               ORH3F402.34    
+          DO 178 K=1,KM                                                    ORH1F305.3037  
+          DO 178 I=1,IMT                                                   ORH1F305.3038  
+            FVN(I,K)=-FVSU(I,K)                                            ORH1F305.3039  
+            UBP(I,K)= UBM (I,K)                                            ORH1F305.3040  
+            UP (I,K)= UM  (I,K)                                            ORH1F305.3041  
+ 178      CONTINUE                                                         ORH1F305.3042  
+C                                                                          CLINIC.299   
+C  ON 1ST PASS OF MIXING TSTEP, REPLACE TAU-1 U VEL. WITH TAU U VEL.       CLINIC.300   
+C                                                                          CLINIC.301   
+          IF(MIX.NE.0) THEN                                                ORH1F305.3043  
+            DO 179 K=1,KM                                                  ORH1F305.3044  
+            DO 179 I=1,IMT                                                 ORH1F305.3045  
+              UBP(I,K)=UP(I,K)                                             ORH1F305.3046  
+ 179        CONTINUE                                                       ORH1F305.3047  
+          ENDIF                                                            ORH1F305.3048  
+        ENDIF                                                              CLINIC.307   
+      ENDIF                                                                CLINIC.308   
+      IF (L_OBIMOM) THEN                                                   OOM3F405.1030  
+                                                                           OOM3F405.1031  
+C---------------------------------------------------------------           OOM3F405.1032  
+C  COMPUTE J+1 ROW OF LAPLACIANS ON U,V                                    OOM3F405.1033  
+C---------------------------------------------------------------           OOM3F405.1034  
+C                                                                          OOM3F405.1035  
+      IF(J+J_OFFSET.LT.JMTM1_GLOBAL) THEN                                  OOM3F405.1036  
+        DO K=1,KM                                                          OOM3F405.1037  
+          DO I=2,IMTM1                                                     OOM3F405.1038  
+            pt1=(BBUD*DXU2RQ(I,K))*                                        OOM3F405.1039  
+     *      (DXT4RQ(I,K)*((UBP(I+1,K)-UBP(I,K))+(UBP(I-1,K)-UBP(I,K))))    OOM3F405.1040  
+            pt2=CCUD*(UBPP(I,K)-UBP(I,K))                                  OOM3F405.1041  
+     *                           +DDUD*(UB(I,K)-UBP(I,K))                  OOM3F405.1042  
+            pt3=GGUD*UBP(I,K)                                              OOM3F405.1043  
+     *       -(HHUD*DXU2RQ(I,K))*(VBP(I+1,K)-VBP(I-1,K))                   OOM3F405.1044  
+            D2U(I,K,3)=pt1+pt2+pt3                                         OOM3F405.1045  
+          ENDDO                                                            OOM3F405.1046  
+C put in cyclic condition if appropriate                                   OOM3F405.1047  
+          IF (L_OCYCLIC) THEN                                              OOM3F405.1048  
+            D2U(  1,K,3)=D2U(IMTM1,K,3)                                    OOM3F405.1049  
+            D2V(  1,K,3)=D2V(IMTM1,K,3)                                    OOM3F405.1050  
+            D2U(IMT,K,3)=D2U(    2,K,3)                                    OOM3F405.1051  
+            D2V(IMT,K,3)=D2V(    2,K,3)                                    OOM3F405.1052  
+          ELSE                                                             OOM3F405.1053  
+            D2U(  1,K,3)=0.                                                OOM3F405.1054  
+            D2V(  1,K,3)=0.                                                OOM3F405.1055  
+            D2U(IMT,K,3)=0.                                                OOM3F405.1056  
+            D2V(IMT,K,3)=0.                                                OOM3F405.1057  
+          ENDIF                                                            OOM3F405.1058  
+        ENDDO                                                              OOM3F405.1059  
+                                                                           OOM3F405.1060  
+        DO K=1,KM                                                          OOM3F405.1061  
+          DO I=2,IMTM1                                                     OOM3F405.1062  
+            pt1=(BBUD*DXU2RQ(I,K))*                                        OOM3F405.1063  
+     *      (DXT4RQ(I,K)*((VBP(I+1,K)-VBP(I,K))+(VBP(I-1,K)-VBP(I,K))))    OOM3F405.1064  
+            pt2=CCUD*(VBPP(I,K)-VBP(I,K))                                  OOM3F405.1065  
+     *                           +DDUD*(VB(I,K)-VBP(I,K))                  OOM3F405.1066  
+            pt3=GGUD*VBP(I,K)                                              OOM3F405.1067  
+     *       +(HHUD*DXU2RQ(I,K))*(UBP(I+1,K)-UBP(I-1,K))                   OOM3F405.1068  
+            D2V(I,K,3)=pt1+pt2+pt3                                         OOM3F405.1069  
+          ENDDO                                                            OOM3F405.1070  
+          IF (L_OCYCLIC) THEN                                              OOM3F405.1071  
+            D2V(  1,K,3)=D2V(IMTM1,K,3)                                    OOM3F405.1072  
+            D2V(IMT,K,3)=D2V(    2,K,3)                                    OOM3F405.1073  
+          ELSE                                                             OOM3F405.1074  
+            D2V(  1,K,3)=0.                                                OOM3F405.1075  
+            D2V(IMT,K,3)=0.                                                OOM3F405.1076  
+          ENDIF                                                            OOM3F405.1077  
+        ENDDO                                                              OOM3F405.1078  
+C set the values to zero on the last velocity row                          OOM3F405.1079  
+      ELSE                                                                 OOM3F405.1080  
+        DO K=1,KM                                                          OOM3F405.1081  
+          DO I=1,IMT                                                       OOM3F405.1082  
+            D2U(I,K,3)=0.                                                  OOM3F405.1083  
+            D2V(I,K,3)=0.                                                  OOM3F405.1084  
+          ENDDO                                                            OOM3F405.1085  
+        ENDDO                                                              OOM3F405.1086  
+      ENDIF                                                                OOM3F405.1087  
+                                                                           OOM3F405.1088  
+      ENDIF  ! L_OBIMOM                                                    OOM3F405.1089  
+                                                                           OOM3F405.1090  
+C                                                                          CLINIC.310   
+C---------------------------------------------------------------------     CLINIC.311   
+C  COMPUTE DENSITY OF ROW J+1                                              CLINIC.312   
+C---------------------------------------------------------------------     CLINIC.313   
+C                                                                          CLINIC.314   
+         CALL STATE(TP(1,1,1),TP(1,1,2),RHON,                              ORH1F305.3057  
+     &           TDIF(1,1,1),TDIF(1,1,2),IMT,KM                            JA121293.80    
+     &,J+1,JMT                                                             ORH7F404.49    
+     &)                                                                    JA121293.83    
+      IF (L_OCYCLIC) THEN                                                  ORH1F305.3058  
+C                                                                          CLINIC.317   
+C  SET CYCLIC BOUNDARY CONDITIONS                                          CLINIC.318   
+C                                                                          CLINIC.319   
+          DO 232 K=1,KM                                                    ORH1F305.3059  
+             RHON(IMT,K)=RHON(2,K)                                         ORH1F305.3060  
+ 232      CONTINUE                                                         ORH1F305.3061  
+      ENDIF                                                                ORH1F305.3062  
+C                                                                          CLINIC.324   
+C---------------------------------------------------------------------     CLINIC.325   
+C  COMPUTE VERTICAL VELOCITY IN U,V COLUMNS                                CLINIC.326   
+C---------------------------------------------------------------------     CLINIC.327   
+C                                                                          CLINIC.328   
+C 1ST, SET VERTICAL VELOCITY K=KM+1 (IE THE DEEPEST MODEL LEVEL) TO        ORL1F404.466   
+C ZERO. GEOMETRICAL CONSIDERATIONS SHOW THAT THIS IS THE CORRECT           ORL1F404.467   
+C CONDITION AT POINTS HAVING THE MAX DEPTH, BUT NOT AT OTHER U,V           ORL1F404.468   
+C POINTS.                                                                  ORL1F404.469   
+C                                                                          ORL1F404.470   
+C SET VERTICAL VELOCITY AT THE TOP LEVEL (ZERO FOR THE RIGID LID           ORL1F404.471   
+C SOLUTION, NON-ZERO FOR THE FREE SURFACE SOLUTION).                       ORL1F404.472   
+C                                                                          CLINIC.333   
+      FX=0.0                                                               CLINIC.334   
+                                                                           ORL1F404.473   
+      IF (L_OFREESFC) THEN                                                 ORL1F404.474   
+        DO I=2,IMTM1                                                       ORL1F404.475   
+          W(I,KMP1)=FX                                                     ORL1F404.476   
+          W(I,1) = -CSR(J)                                                 ORL1F404.477   
+     &              *( DXU2R(I)*(UBT(I+1,J)-UBT(I-1,J))                    ORL1F404.478   
+     &               + DYU2R(J)*( (VBT(I,J+1)+VBT(I,J))*CST(J+1)           ORL1F404.479   
+     &                           -(VBT(I,J)+VBT(I,J-1))*CST(J)  ) )        ORL1F404.480   
+        ENDDO    ! over i                                                  ORL1F404.481   
+                                                                           ORL1F404.482   
+        IF (L_OCYCLIC) THEN                                                ORL1F404.483   
+          W(1,1)=W(IMTM1,1)                                                ORL1F404.484   
+          W(IMT,1)=W(2,1)                                                  ORL1F404.485   
+        ELSE                                                               ORL1F404.486   
+          W(1,1)=0.0                                                       ORL1F404.487   
+          W(IMT,1)=0.0                                                     ORL1F404.488   
+        ENDIF                                                              ORL1F404.489   
+                                                                           ORL1F404.490   
+      ELSE                                                                 ORL1F404.491   
+                                                                           ORL1F404.492   
+      DO 240 I=1,IMT                                                       CLINIC.335   
+        W(I,1)=FX                                                          CLINIC.336   
+        W(I,KMP1)=FX                                                       CLINIC.337   
+ 240  CONTINUE                                                             CLINIC.338   
+                                                                           ORL1F404.493   
+      ENDIF   ! l_ofreesfc                                                 ORL1F404.494   
+C                                                                          CLINIC.339   
+C  2ND, COMPUTE CHANGE OF W BETWEEN LEVELS                                 CLINIC.340   
+C                                                                          CLINIC.341   
+      DO 250 K=1,KMM1                                                      CLINIC.342   
+      DO 251 I=1,IMTM1                                                     CLINIC.343   
+        W(I,K+1)=C2DZQ(I,K)*((FUW(I+1,K)-FUW (I,K))*DXU2RQ(I,K)            CLINIC.344   
+     *                        +FVN(I  ,K)-FVSU(I,K))                       CLINIC.345   
+ 251  CONTINUE                                                             CLINIC.346   
+      W(IMT,K+1)=0.0                                                       CLINIC.347   
+ 250  CONTINUE                                                             CLINIC.348   
+C                                                                          CLINIC.349   
+C  3RD, INTEGRATE DOWNWARD FROM THE SURFACE                                CLINIC.350   
+C                                                                          CLINIC.351   
+      DO 255 K=1,KMM1                                                      CLINIC.352   
+      DO 255 I=1,IMT                                                       CLINIC.353   
+        W(I,K+1)=W(I,K)+W(I,K+1)                                           CLINIC.354   
+ 255  CONTINUE                                                             CLINIC.355   
+C                                                                          CLINIC.356   
+C---------------------------------------------------------------------     CLINIC.357   
+C  COMPUTE HYDROSTATIC PRESSURE GRADIENT                                   CLINIC.358   
+C---------------------------------------------------------------------     CLINIC.359   
+C                                                                          CLINIC.360   
+C  1ST, COMPUTE IT AT THE FIRST LEVEL                                      CLINIC.361   
+C                                                                          CLINIC.362   
+      FXA=GRAV*DZZ(1)*CSR(J)                                               CLINIC.363   
+      FXB=GRAV*DZZ(1)*DYU2R(J)                                             CLINIC.364   
+      DO 260 I=1,IMTM1                                                     CLINIC.365   
+        UDIF(I,1)=RHON(I+1,1)-RHOS(I  ,1)                                  CLINIC.366   
+        VDIF(I,1)=RHON(I  ,1)-RHOS(I+1,1)                                  CLINIC.367   
+        DPDX(I,1)=((UDIF(I,1)-VDIF(I,1))*FXA)*DXU2R(I)                     CLINIC.368   
+        DPDY(I,1)= (UDIF(I,1)+VDIF(I,1))*FXB                               CLINIC.369   
+ 260  CONTINUE                                                             CLINIC.370   
+      DPDX(IMT,1)=0.0                                                      CLINIC.371   
+      DPDY(IMT,1)=0.0                                                      CLINIC.372   
+C                                                                          CLINIC.373   
+C  2ND, COMPUTE THE CHANGE IN PRESSURE GRADIENT BETWEEN LEVELS             CLINIC.374   
+C                                                                          CLINIC.375   
+      FXA=GRAV*CSR(J)*0.5                                                  CLINIC.376   
+      FXB=GRAV*DYU4R(J)                                                    CLINIC.377   
+      DO 270 K=2,KM                                                        CLINIC.378   
+      DO 270 I=1,IMT                                                       CLINIC.379   
+        DPDX(I,K)=RHON(I,K-1)+RHON(I,K)                                    CLINIC.380   
+        DPDY(I,K)=RHOS(I,K-1)+RHOS(I,K)                                    CLINIC.381   
+ 270  CONTINUE                                                             CLINIC.382   
+      DO 273 K=2,KM                                                        CLINIC.383   
+      DO 274 I=1,IMTM1                                                     CLINIC.384   
+        UDIF(I,K)=DPDX(I+1,K)-DPDY(I  ,K)                                  CLINIC.385   
+        VDIF(I,K)=DPDX(I  ,K)-DPDY(I+1,K)                                  CLINIC.386   
+        DPDX(I,K)=(FXA*(UDIF(I,K)-VDIF(I,K)))*DZZQ(I,K)*DXU2RQ(I,K)        CLINIC.387   
+        DPDY(I,K)=(FXB*(UDIF(I,K)+VDIF(I,K)))*DZZQ(I,K)                    CLINIC.388   
+ 274  CONTINUE                                                             CLINIC.389   
+      DPDX(IMT,K)=0.0                                                      CLINIC.390   
+      DPDY(IMT,K)=0.0                                                      CLINIC.391   
+ 273  CONTINUE                                                             CLINIC.392   
+C                                                                          CLINIC.393   
+C  3RD, INTEGRATE DOWNWARD FROM THE FIRST LEVEL                            CLINIC.394   
+C                                                                          CLINIC.395   
+      DO 275 K=1,KMM1                                                      CLINIC.396   
+      DO 275 I=1,IMT                                                       CLINIC.397   
+        DPDX(I,K+1)=DPDX(I,K)+DPDX(I,K+1)                                  CLINIC.398   
+        DPDY(I,K+1)=DPDY(I,K)+DPDY(I,K+1)                                  CLINIC.399   
+ 275  CONTINUE                                                             CLINIC.400   
+C                                                                          CLINIC.401   
+      IF ((.NOT.(L_OIMPDIF)).AND.(.NOT.(L_OIMPADDF))) THEN                 ORH1F305.3063  
+C---------------------------------------------------------------------     CLINIC.403   
+C  SET BOUNDARY CONDITIONS FOR THE COMPUTATION OF                          CLINIC.404   
+C       VERTICAL DIFFUSION OF MOMENTUM                                     CLINIC.405   
+C---------------------------------------------------------------------     CLINIC.406   
+C                                                                          CLINIC.407   
+C  1ST, TRANSFER INTERIOR POINTS INTO DIFFUSION COMPUTATION ARRAYS         CLINIC.408   
+C                                                                          CLINIC.409   
+      DO 280 K=1,KM                                                        CLINIC.410   
+      DO 280 I=1,IMT                                                       CLINIC.411   
+        UDIF(I,K)=UB(I,K)                                                  CLINIC.412   
+        VDIF(I,K)=VB(I,K)                                                  CLINIC.413   
+ 280  CONTINUE                                                             CLINIC.414   
+C                                                                          CLINIC.415   
+C  2ND, SET K=0 ELEMENTS OF DIFF. COMP. ARRAYS TO REFLECT WIND STRESS      CLINIC.416   
+C                                                                          CLINIC.417   
+C INCLUDE CONVERSION FACTOR FOR WIND STRESS. NM-2 TO DYNCM-2               CLINIC.418   
+      CONV=10.                                                             CLINIC.419   
+      FX=DZZ(1)*CONV/FKPM                                                  CLINIC.420   
+                                                                           ORH1F305.3064  
+      IF (L_ICEFREEDR) THEN                                                ODC1F405.155   
+          DO I=1,IMT                                                       ORH1F305.3066  
+             UOVER(I) = UB(I,1) + XSTRESS_ICE(I)*FX                        ORH1F305.3067  
+             VOVER(I) = VB(I,1) + YSTRESS_ICE(I)*FX                        ORH1F305.3068  
+          ENDDO                                                            ORH1F305.3069  
+      ELSE                                                                 ORH1F305.3070  
+          DO I=1,IMT                                                       ORH1F305.3071  
+             UOVER(I)=UB(I,1)+WSX(I)*FX                                    ORH1F305.3072  
+             VOVER(I)=VB(I,1)+WSY(I)*FX                                    ORH1F305.3073  
+          ENDDO                                                            ORH1F305.3074  
+      ENDIF                                                                ORH1F305.3075  
+                                                                           ORH1F305.3076  
+                                                                           ORH1F305.3077  
+C  3RD, SET FIRST LAND LEVEL IN EACH COLUMN TO REFLECT BOTTOM CONDITION    CLINIC.426   
+C                                                                          CLINIC.427   
+      DO 295 I=1,IMT                                                       CLINIC.428   
+        KZ=KMU(I)                                                          CLINIC.429   
+        IF (KZ.EQ.0) THEN                                                  CLINIC.430   
+          UDIF(I,1)=0.0                                                    CLINIC.431   
+          VDIF(I,1)=0.0                                                    CLINIC.432   
+        ELSE IF (KZ.EQ.KM) THEN                                            CLINIC.433   
+          UUNDER(I)=UB(I,KZ)                                               CLINIC.434   
+          VUNDER(I)=VB(I,KZ)                                               CLINIC.435   
+        ELSE                                                               CLINIC.436   
+        UDIF(I,KZ+1)=UB(I,KZ)                                              CLINIC.437   
+        VDIF(I,KZ+1)=VB(I,KZ)                                              CLINIC.438   
+        END IF                                                             CLINIC.439   
+ 295  CONTINUE                                                             CLINIC.440   
+                                                                           ORH1F305.3078  
+      ENDIF                                                                ORH1F305.3079  
+                                                                           ORH1F305.3080  
+      IF (L_OIMPDIF.AND.(.NOT.(L_ORICHARD))) THEN                          ORH1F305.3081  
+          DO K=1,KM                                                        ORH1F305.3082  
+             DO I=1,IMT                                                    ORH1F305.3083  
+                gnu(I,K)=FKPM                                              ORH1F305.3084  
+             END DO                                                        ORH1F305.3085  
+          END DO                                                           ORH1F305.3086  
+      ENDIF                                                                ORH1F305.3087  
+C                                                                          CLINIC.449   
+C=======================================================================   CLINIC.450   
+C  END INTRODUCTORY SECTION  ===========================================   CLINIC.451   
+C=======================================================================   CLINIC.452   
+C                                                                          CLINIC.453   
+C=======================================================================   CLINIC.454   
+C  BEGIN COMPUTATION OF THE INTERNAL MODES.                 ============   CLINIC.455   
+C  THE NEW VALUES "UA" AND "VA", WILL FIRST BE LOADED WITH  ============   CLINIC.456   
+C  THE TIME RATE OF CHANGE, AND THEN UPDATED.               ============   CLINIC.457   
+C=======================================================================   CLINIC.458   
+C                                                                          CLINIC.459   
+C---------------------------------------------------------------------     CLINIC.460   
+C  COMPUTE TOTAL ADVECTION OF MOMENTUM                                     CLINIC.461   
+C---------------------------------------------------------------------     CLINIC.462   
+C                                                                          CLINIC.463   
+C  1ST, COMPUTE FLUX THROUGH WEST FACE OF U,V BOX                          CLINIC.464   
+C                                                                          CLINIC.465   
+      DO 300 K=1,KM                                                        CLINIC.466   
+      DO 301 I=2,IMT                                                       CLINIC.467   
+        TEMPA(I,K)=FUW(I,K)*(U(I-1,K)+U(I,K))                              CLINIC.468   
+        TEMPB(I,K)=FUW(I,K)*(V(I-1,K)+V(I,K))                              CLINIC.469   
+ 301  CONTINUE                                                             CLINIC.470   
+      TEMPA(1,K)=0.0                                                       CLINIC.471   
+      TEMPB(1,K)=0.0                                                       CLINIC.472   
+ 300  CONTINUE                                                             CLINIC.473   
+C                                                                          CLINIC.474   
+C  2ND, COMPUTE ZONAL FLUX DIVERGENCE                                      CLINIC.475   
+C                                                                          CLINIC.476   
+      DO 303 K=1,KM                                                        CLINIC.477   
+      DO 304 I=1,IMTM1                                                     CLINIC.478   
+        UA(I,K)=(TEMPA(I,K)-TEMPA(I+1,K))*DXU2RQ(I,K)                      CLINIC.479   
+        VA(I,K)=(TEMPB(I,K)-TEMPB(I+1,K))*DXU2RQ(I,K)                      CLINIC.480   
+ 304  CONTINUE                                                             CLINIC.481   
+      UA(IMT,K)=0.0                                                        CLINIC.482   
+      VA(IMT,K)=0.0                                                        CLINIC.483   
+ 303  CONTINUE                                                             CLINIC.484   
+C                                                                          CLINIC.485   
+C  3RD, ADD IN MERIDIONAL FLUX DIVERGENCE                                  CLINIC.486   
+C                                                                          CLINIC.487   
+      DO 305 K=1,KM                                                        CLINIC.488   
+      DO 305 I=1,IMT                                                       CLINIC.489   
+        UA(I,K)=UA(I,K)-FVN (I,K)*(UP(I,K)+U (I,K))                        CLINIC.490   
+     *                 +FVSU(I,K)*(U (I,K)+UM(I,K))                        CLINIC.491   
+        VA(I,K)=VA(I,K)-FVN (I,K)*(VP(I,K)+V (I,K))                        CLINIC.492   
+     *                 +FVSU(I,K)*(V (I,K)+VM(I,K))                        CLINIC.493   
+ 305  CONTINUE                                                             CLINIC.494   
+                                                                           ORH1F305.3088  
+      IF (.NOT.(L_OIMPADDF)) THEN                                          ORH1F305.3089  
+C                                                                          CLINIC.496   
+C  4TH, COMPUTE FLUX THROUGH TOP OF U,V BOX                                CLINIC.497   
+C                                                                          CLINIC.498   
+      DO 340 K=2,KM                                                        CLINIC.499   
+      DO 340 I=1,IMT                                                       CLINIC.500   
+        TEMPA(I,K)=W(I,K)*(U(I,K-1)+U(I,K))                                CLINIC.501   
+        TEMPB(I,K)=W(I,K)*(V(I,K-1)+V(I,K))                                CLINIC.502   
+ 340  CONTINUE                                                             CLINIC.503   
+      DO 341 I=1,IMT                                                       CLINIC.504   
+        TEMPA(I,KMP1)=0.0                                                  CLINIC.507   
+        TEMPB(I,KMP1)=0.0                                                  CLINIC.508   
+                                                                           ORL1F404.495   
+        IF (L_OFREESFC) THEN                                               ORL1F404.496   
+                                                                           ORL1F404.497   
+          TEMPA(I,1)=W(I,1)*2.0*U(I,1)                                     ORL1F404.498   
+          TEMPB(I,1)=W(I,1)*2.0*V(I,1)                                     ORL1F404.499   
+                                                                           ORL1F404.500   
+        ELSE                                                               ORL1F404.501   
+                                                                           ORL1F404.502   
+          TEMPA(I,1)=0.0                                                   ORL1F404.503   
+          TEMPB(I,1)=0.0                                                   ORL1F404.504   
+                                                                           ORL1F404.505   
+        ENDIF    ! L_OFREESFC                                              ORL1F404.506   
+ 341  CONTINUE                                                             CLINIC.509   
+C                                                                          CLINIC.510   
+C  5TH, ADD IN VERTICAL FLUX DIVERGENCE                                    CLINIC.511   
+C                                                                          CLINIC.512   
+      DO 343 K=1,KM                                                        CLINIC.513   
+      DO 343 I=1,IMT                                                       CLINIC.514   
+        UA(I,K)=UA(I,K)+(TEMPA(I,K+1)-TEMPA(I,K))*DZ2RQ(I,K)               CLINIC.515   
+        VA(I,K)=VA(I,K)+(TEMPB(I,K+1)-TEMPB(I,K))*DZ2RQ(I,K)               CLINIC.516   
+ 343  CONTINUE                                                             CLINIC.517   
+                                                                           OMB3F401.217   
+C store total flux divergence for diagnostics                              OMB3F401.218   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.219   
+        DO K=1,KM                                                          OMB3F401.220   
+          DO  I=1,IMT                                                      OMB3F401.221   
+            UCONA(I,K,1)=UA(I,K)                                           OMB3F401.222   
+            VCONA(I,K,1)=VA(I,K)                                           OMB3F401.223   
+          END DO                                                           OMB3F401.224   
+        END DO                                                             OMB3F401.225   
+      END IF ! L_OZVRT                                                     OMB3F401.226   
+      ENDIF                                                                ORH1F305.3090  
+C                                                                          CLINIC.519   
+C---------------------------------------------------------------------     CLINIC.520   
+C  ADD IN HORIZONTAL DIFFUSION OF MOMENTUM (EVAL. AT TAU-1 TSTEP)          CLINIC.521   
+C---------------------------------------------------------------------     CLINIC.522   
+C                                                                          CLINIC.523   
+C  1ST, COMPUTE SEVERAL COEFFICIENTS DEPENDENT ONLY ON LATITUDE            CLINIC.524   
+C                                                                          CLINIC.525   
+      IF (.NOT.(L_OLATVISC)) THEN                                          ORH1F305.3091  
+         BBUJ=8.0*AM*CSR(J)*CSR(J)                                         ORH1F305.3092  
+         CCUJ=AM*CST(J+1)*DYTR(J+1)*DYUR(J)*CSR(J)                         ORH1F305.3093  
+         DDUJ=AM*CST(J  )*DYTR(J  )*DYUR(J)*CSR(J)                         ORH1F305.3094  
+         GGUJ=AM*(1.0-TNG(J)*TNG(J))/(RADIUS*RADIUS)                       ORH1F305.3095  
+         HHUJ=2.0*AM*SINE(J)/(RADIUS*CS(J)*CS(J))                          ORH1F305.3096  
+      ELSE                                                                 ORH1F305.3097  
+C                                                                          CLINIC.534   
+C                                                                          CLINIC.535   
+C        (This code is for latitude-dependent viscosity case)              CLINIC.536   
+C                                                                          CLINIC.537   
+         BBUJ=8.0*AMU(J)*CSR(J)*CSR(J)                                     ORH1F305.3098  
+         CCUJ=AMT(J+1)*CST(J+1)*DYTR(J+1)*DYUR(J)*CSR(J)                   ORH1F305.3099  
+         DDUJ=AMT(J)*CST(J  )*DYTR(J  )*DYUR(J)*CSR(J)                     ORH1F305.3100  
+         GGUJ=AMU(J)*(1.0-TNG(J)*TNG(J))/(RADIUS*RADIUS)                   ORH1F305.3101  
+         HHUJ=2.0*AMU(J)*SINE(J)/(RADIUS*CS(J)*CS(J))                      ORH1F305.3102  
+      ENDIF                                                                ORH1F305.3103  
+C                                                                          CLINIC.544   
+C  2ND, COMPUTE GRADIENTS AT WEST FACE OF U,V BOX                          CLINIC.545   
+C                                                                          CLINIC.546   
+      DO 320 K=1,KM                                                        CLINIC.547   
+      DO 321 I=2,IMT                                                       CLINIC.548   
+        TEMPA(I,K)=DXT4RQ(I,K)*(UB(I,K)-UB(I-1,K))                         CLINIC.549   
+        TEMPB(I,K)=DXT4RQ(I,K)*(VB(I,K)-VB(I-1,K))                         CLINIC.550   
+ 321  CONTINUE                                                             CLINIC.551   
+      TEMPA(1,K)=0.0                                                       CLINIC.552   
+      TEMPB(1,K)=0.0                                                       CLINIC.553   
+ 320  CONTINUE                                                             CLINIC.554   
+      IF (L_OBIMOM) THEN                                                   OOM3F405.1091  
+        DO K=1,KM                                                          OOM3F405.1092  
+          DO I=2,IMT                                                       OOM3F405.1093  
+            TEMPAP(I,K)=DXT4RQ(I,K)*(D2U(I,K,2)-D2U(I-1,K,2))              OOM3F405.1094  
+            TEMPBP(I,K)=DXT4RQ(I,K)*(D2V(I,K,2)-D2V(I-1,K,2))              OOM3F405.1095  
+          ENDDO                                                            OOM3F405.1096  
+          TEMPAP(1,K)=0.                                                   OOM3F405.1097  
+          TEMPBP(1,K)=0.                                                   OOM3F405.1098  
+        ENDDO                                                              OOM3F405.1099  
+                                                                           OOM3F405.1100  
+       DO K=1,KM                                                           OOM3F405.1101  
+         DO I=2,IMTM1                                                      OOM3F405.1102  
+C calculate the diffusion of momentum using biharmonic coeffs              OOM3F405.1103  
+          Uxx(I,K)=BBUB*(DXU2RQ(I,K)*(TEMPAP(I+1,K)-TEMPAP(I,K)))          OOM3F405.1104  
+          Vxx(I,K)=BBUB*(DXU2RQ(I,K)*(TEMPBP(I+1,K)-TEMPBP(I,K)))          OOM3F405.1105  
+                                                                           OOM3F405.1106  
+          Uyy(I,K)=CCUB*(D2U(I,K,3)-D2U(I,K,2))                            OOM3F405.1107  
+     *          +DDUB*(D2U(I,K,1)-D2U(I,K,2))                              OOM3F405.1108  
+          Vyy(I,K)=CCUB*(D2V(I,K,3)-D2V(I,K,2))                            OOM3F405.1109  
+     *          +DDUB*(D2V(I,K,1)-D2V(I,K,2))                              OOM3F405.1110  
+                                                                           OOM3F405.1111  
+          Umet(I,K)=GGUB*D2U(I,K,2)                                        OOM3F405.1112  
+     *          -HHUB*DXU2RQ(I,K)*(D2V(I+1,K,2)-D2V(I-1,K,2))              OOM3F405.1113  
+          Vmet(I,K)=GGUB*D2V(I,K,2)                                        OOM3F405.1114  
+     *          +HHUB*DXU2RQ(I,K)*(D2U(I+1,K,2)-D2U(I-1,K,2))              OOM3F405.1115  
+         ENDDO                                                             OOM3F405.1116  
+          Uxx(1,K)=0.                                                      OOM3F405.1117  
+          Uxx(IMT,K)=0.                                                    OOM3F405.1118  
+          Vxx(1,K)=0.                                                      OOM3F405.1119  
+          Vxx(IMT,K)=0.                                                    OOM3F405.1120  
+          Uyy(1,K)=0.                                                      OOM3F405.1121  
+          Uyy(IMT,K)=0.                                                    OOM3F405.1122  
+          Vyy(1,K)=0.                                                      OOM3F405.1123  
+          Vyy(IMT,K)=0.                                                    OOM3F405.1124  
+          Umet(1,K)=0.                                                     OOM3F405.1125  
+          Umet(IMT,K)=0.                                                   OOM3F405.1126  
+          Vmet(1,K)=0.                                                     OOM3F405.1127  
+          Vmet(IMT,K)=0.                                                   OOM3F405.1128  
+       ENDDO                                                               OOM3F405.1129  
+      ENDIF  ! L_OBIMOM                                                    OOM3F405.1130  
+                                                                           OOM3F405.1131  
+C                                                                          CLINIC.555   
+C  3RD, ADD IN FINAL CONTRIBUTION FROM HOR. DIFF. OF MOMENTUM              CLINIC.556   
+C                                                                          CLINIC.557   
+      DO 323 K=1,KM                                                        CLINIC.558   
+      DO 324 I=2,IMTM1                                                     CLINIC.559   
+        UA(I,K)=UA(I,K)+BBUJ*(DXU2RQ(I,K)*(TEMPA(I+1,K)-TEMPA(I,K)))       CLINIC.560   
+     *          +CCUJ*(UBP(I,K)-UB(I,K))+DDUJ*(UBM(I,K)-UB(I,K))           CLINIC.561   
+     *          +GGUJ*UB(I,K)-HHUJ*DXU2RQ(I,K)*(VB(I+1,K)-VB(I-1,K))       CLINIC.562   
+        VA(I,K)=VA(I,K)+BBUJ*(DXU2RQ(I,K)*(TEMPB(I+1,K)-TEMPB(I,K)))       CLINIC.563   
+     *          +CCUJ*(VBP(I,K)-VB(I,K))+DDUJ*(VBM(I,K)-VB(I,K))           CLINIC.564   
+     *          +GGUJ*VB(I,K)+HHUJ*DXU2RQ(I,K)*(UB(I+1,K)-UB(I-1,K))       CLINIC.565   
+ 324  CONTINUE                                                             CLINIC.566   
+      UA(1,K)=0.0                                                          CLINIC.567   
+      UA(IMT,K)=0.0                                                        CLINIC.568   
+      VA(1,K)=0.0                                                          CLINIC.569   
+      VA(IMT,K)=0.0                                                        CLINIC.570   
+ 323  CONTINUE                                                             CLINIC.571   
+      IF (L_OBIMOM) THEN                                                   OOM3F405.1132  
+        DO K=1,KM                                                          OOM3F405.1133  
+          DO I=2,IMTM1                                                     OOM3F405.1134  
+             UA(I,K)=UA(I,K)+(Uxx(I,K)+Uyy(I,K)+Umet(I,K))*GM(i,k)         OOM3F405.1135  
+             VA(I,K)=VA(I,K)+(Vxx(I,K)+Vyy(I,K)+Vmet(I,K))*GM(i,k)         OOM3F405.1136  
+          ENDDO                                                            OOM3F405.1137  
+          UA(1,K)=0.0                                                      OOM3F405.1138  
+          UA(IMT,K)=0.0                                                    OOM3F405.1139  
+          VA(1,K)=0.0                                                      OOM3F405.1140  
+          VA(IMT,K)=0.0                                                    OOM3F405.1141  
+        ENDDO                                                              OOM3F405.1142  
+      ENDIF                                                                OOM3F405.1143  
+                                                                           OOM3F405.1144  
+      IF (L_OFREESFC) THEN                                                 ORL1F404.507   
+C---------------------------------------------------------------------     ORL1F404.508   
+C  RECALCULATE THE HORIZONTAL DIFFUSION COMPONENTS FOR USE WITH THE        ORL1F404.509   
+C  FREE SURFACE SOLUTION. THE VERTICAL AVERAGE HORIZONTAL DIFFUSION        ORL1F404.510   
+C  COMPONENTS ARE REQUIRED TO BE REMOVED FROM THE FORCING COMPONENTS       ORL1F404.511   
+C  ZU,ZV AT THE END OF CLINIC FOR USE IN TROPIC.                           ORL1F404.512   
+C                                                                          ORL1F404.513   
+C  NOTE THAT TO ACHIEVE BIT COMPARISON FOR NON FREE SURFACE RUNS THE       ORL1F404.514   
+C  CALCULATION OF THE HORIZONTAL DIFFUSION COMPONENTS HAS TO BE            ORL1F404.515   
+C  REPEATED. THIS PART OF CODE CAN BE REORGANISED AT A LATER DATE WHEN     ORL1F404.516   
+C  BIT COMPARISON CAN BE LOST.                                             ORL1F404.517   
+C---------------------------------------------------------------------     ORL1F404.518   
+                                                                           ORL1F404.519   
+C INITIALISE UDFNTOT(I)                                                    ORL1F404.520   
+                                                                           ORL1F404.521   
+      DO I=1,IMT                                                           ORL1F404.522   
+                                                                           ORL1F404.523   
+        UDFNTOT(I) = 0.0                                                   ORL1F404.524   
+        VDFNTOT(I) = 0.0                                                   ORL1F404.525   
+                                                                           ORL1F404.526   
+      ENDDO      ! over i                                                  ORL1F404.527   
+                                                                           ORL1F404.528   
+      DO K=1,KM                                                            ORL1F404.529   
+        DO I=2,IMTM1                                                       ORL1F404.530   
+                                                                           ORL1F404.531   
+C  CALCULATE THE HORIZONTAL DIFFN COMPONENTS                               ORL1F404.532   
+                                                                           ORL1F404.533   
+        UDFN(I)=BBU(J)*(DXU2RQ(I,K)*(TEMPA(I+1,K)-TEMPA(I,K)))             ORL1F404.534   
+     *          +CCU(J)*(UBP(I,K)-UB(I,K))+DDU(J)*(UBM(I,K)-UB(I,K))       ORL1F404.535   
+     *          +GGU(J)*UB(I,K)-HHU(J)*DXU2RQ(I,K)*(VB(I+1,K)-VB(I-1,K))   ORL1F404.536   
+        VDFN(I)=BBU(J)*(DXU2RQ(I,K)*(TEMPB(I+1,K)-TEMPB(I,K)))             ORL1F404.537   
+     *          +CCU(J)*(VBP(I,K)-VB(I,K))+DDU(J)*(VBM(I,K)-VB(I,K))       ORL1F404.538   
+     *          +GGU(J)*VB(I,K)+HHU(J)*DXU2RQ(I,K)*(UB(I+1,K)-UB(I-1,K))   ORL1F404.539   
+                                                                           ORL1F404.540   
+C  INTEGRATE THE HORIZONTAL DIFFUSION THROUGH THE DEPTH                    ORL1F404.541   
+                                                                           ORL1F404.542   
+          UDFNTOT(I) = UDFNTOT(I) + ( UDFN(I)*DZ(K)*GM(I,K) )              ORL1F404.543   
+          VDFNTOT(I) = VDFNTOT(I) + ( VDFN(I)*DZ(K)*GM(I,K) )              ORL1F404.544   
+                                                                           ORL1F404.545   
+        ENDDO    ! OVER I                                                  ORL1F404.546   
+      ENDDO      ! OVER K                                                  ORL1F404.547   
+C                                                                          ORL1F404.548   
+C  DIVIDE BY THE OCEAN DEPTH TO GET VERTICAL AVERAGE (BAROTROPIC)          ORL1F404.549   
+C  HORIZONTAL DIFFUSION COMPONENT                                          ORL1F404.550   
+C                                                                          ORL1F404.551   
+                                                                           ORL1F404.552   
+      DO I=2,IMTM1                                                         ORL1F404.553   
+                                                                           ORL1F404.554   
+        UDFNTOT(I) = UDFNTOT(I)*HR(I,J)                                    ORL1F404.555   
+        VDFNTOT(I) = VDFNTOT(I)*HR(I,J)                                    ORL1F404.556   
+                                                                           ORL1F404.557   
+      ENDDO                                                                ORL1F404.558   
+                                                                           ORL1F404.559   
+      ENDIF    ! (L_OFREESFC)                                              ORL1F404.560   
+                                                                           OMB3F401.227   
+C store horizontal diffusion of momentum for diagnostics                   OMB3F401.228   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.229   
+        DO  K=1,KM                                                         OMB3F401.230   
+          DO  I=2,IMTM1                                                    OMB3F401.231   
+            UCONA(I,K,2)=( UA(I,K)-UCONA(I,K,1) ) * GM(I,K)                ORH0F405.24    
+            VCONA(I,K,2)=( VA(I,K)-VCONA(I,K,1) ) * GM(I,K)                ORH0F405.25    
+          END DO   ! I loop                                                OMB3F401.234   
+                                                                           OMB3F401.235   
+          UCONA(1,K,2)=0.0                                                 OMB3F401.236   
+          UCONA(IMT,K,2)=0.0                                               OMB3F401.237   
+          VCONA(1,K,2)=0.0                                                 OMB3F401.238   
+          VCONA(IMT,K,2)=0.0                                               OMB3F401.239   
+        END DO   ! K loop                                                  OMB3F401.240   
+      END IF ! L_OZVRT                                                     OMB3F401.241   
+C                                                                          CLINIC.572   
+      IF ((.NOT.(L_OIMPDIF)).AND.(.NOT.(L_OIMPADDF))) THEN                 ORH1F305.3104  
+C---------------------------------------------------------------------     CLINIC.574   
+C  ADD IN VERTICAL DIFFUSION OF MOMENTUM                                   CLINIC.575   
+C---------------------------------------------------------------------     CLINIC.576   
+C                                                                          CLINIC.577   
+C  1ST, COMPUTE GRADIENTS AT TOP OF U,V BOX                                CLINIC.578   
+C                                                                          CLINIC.579   
+      DO 345 K=2,KM                                                        CLINIC.580   
+      DO 345 I=1,IMT                                                       CLINIC.581   
+        TEMPA(I,K)=UDIF(I,K-1)-UDIF(I,K)                                   CLINIC.582   
+        TEMPB(I,K)=VDIF(I,K-1)-VDIF(I,K)                                   CLINIC.583   
+ 345  CONTINUE                                                             CLINIC.584   
+      DO 346 I=1,IMT                                                       CLINIC.585   
+        TEMPA(I,1)=UOVER(I)-UDIF(I,1)                                      CLINIC.586   
+        TEMPB(I,1)=VOVER(I)-VDIF(I,1)                                      CLINIC.587   
+        TEMPA(I,KMP1)=UDIF(I,KM)-UUNDER(I)                                 CLINIC.588   
+        TEMPB(I,KMP1)=VDIF(I,KM)-VUNDER(I)                                 CLINIC.589   
+ 346  CONTINUE                                                             CLINIC.590   
+C                                                                          CLINIC.591   
+C  2ND, ADD IN FINAL CONTRIBUTION FROM VERT. DIFF. OF MOMENTUM             CLINIC.592   
+C                                                                          CLINIC.593   
+      DO 348 K=1,KM                                                        CLINIC.594   
+      DO 348 I=1,IMT                                                       CLINIC.595   
+        UA(I,K)=UA(I,K)+EEMQ(I,K)*TEMPA(I,K)-FFMQ(I,K)*TEMPA(I,K+1)        CLINIC.596   
+        VA(I,K)=VA(I,K)+EEMQ(I,K)*TEMPB(I,K)-FFMQ(I,K)*TEMPB(I,K+1)        CLINIC.597   
+ 348  CONTINUE                                                             CLINIC.598   
+                                                                           OMB3F401.242   
+C store vertical diffusion of momentum for diagnostics                     OMB3F401.243   
+                                                                           OMB3F401.244   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.245   
+        DO K=1,KM                                                          OMB3F401.246   
+          DO I=1,IMT                                                       OMB3F401.247   
+            UCONA(I,K,3)=UA(I,K)-UCONA(I,K,2)                              OMB3F401.248   
+            VCONA(I,K,3)=VA(I,K)-VCONA(I,K,2)                              OMB3F401.249   
+          END DO                                                           OMB3F401.250   
+        END DO                                                             OMB3F401.251   
+      END IF ! L_OZVRT                                                     OMB3F401.252   
+                                                                           ORH1F305.3105  
+      ENDIF                                                                ORH1F305.3106  
+C                                                                          CLINIC.600   
+C---------------------------------------------------------------------     CLINIC.601   
+C  ADD IN CORIOLIS FORCE (EVAL. ON TAU   TSTEP FOR EXPLICIT TRTMNT;        CLINIC.602   
+C                         EVAL. ON TAU-1 TSTEP FOR IMPLICIT TRTMNT         CLINIC.603   
+C                         WITH REMAINDER OF TERM TO BE ADDED LATER)        CLINIC.604   
+C---------------------------------------------------------------------     CLINIC.605   
+C                                                                          CLINIC.606   
+C store UA and VA for diagnostics before calculating CORIOLIS force        OMB3F401.253   
+                                                                           OMB3F401.254   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.255   
+        DO K=1,KM                                                          OMB3F401.256   
+          DO I=1,IMT                                                       OMB3F401.257   
+            UCONA(I,K,4)=UA(I,K)                                           OMB3F401.258   
+            VCONA(I,K,4)=VA(I,K)                                           OMB3F401.259   
+          END DO                                                           OMB3F401.260   
+        END DO                                                             OMB3F401.261   
+      END IF ! L_OZVRT                                                     OMB3F401.262   
+                                                                           OMB3F401.263   
+      IF (.NOT.(L_OROTATE)) FX=2.0*OMEGA*SINE(J)                           ORH1F305.3107  
+                                                                           ORH1F305.3108  
+      IF (L_OROTATE) THEN                                                  ORH1F305.3109  
+          IF(ACOR.EQ.0.) THEN                                              ORH1F305.3110  
+             DO K=1,KM                                                     ORH1F305.3111  
+                DO I=1,IMT                                                 ORH1F305.3112  
+                   FX=CORIOLIS(I,J)                                        ORH1F305.3113  
+                      UCOR(I,K) = FX*V(I,K)                                ORL1F404.561   
+                      VCOR(I,K) =-FX*U(I,K)                                ORL1F404.562   
+                      UA(I,K)=UA(I,K)+UCOR(I,K)                            ORL1F404.563   
+                      VA(I,K)=VA(I,K)+VCOR(I,K)                            ORL1F404.564   
+                ENDDO                                                      ORH1F305.3116  
+             ENDDO                                                         ORH1F305.3117  
+          ELSE                                                             ORH1F305.3118  
+             DO K=1,KM                                                     ORH1F305.3119  
+                DO I=1,IMT                                                 ORH1F305.3120  
+                   FX=CORIOLIS(I,J)                                        ORH1F305.3121  
+                      UCOR(I,K)= FX*VB(I,K)                                ORL1F404.565   
+                      VCOR(I,K)=-FX*UB(I,K)                                ORL1F404.566   
+                      UA(I,K)=UA(I,K)+UCOR(I,K)                            ORL1F404.567   
+                      VA(I,K)=VA(I,K)+VCOR(I,K)                            ORL1F404.568   
+                ENDDO                                                      ORH1F305.3124  
+             ENDDO                                                         ORH1F305.3125  
+          ENDIF                                                            ORH1F305.3126  
+      ELSE                                                                 CLINIC.619   
+          IF(ACOR.EQ.0.) THEN                                              ORH1F305.3127  
+             DO K=1,KM                                                     ORH1F305.3128  
+                DO I=1,IMT                                                 ORH1F305.3129  
+                      UCOR(I,K)= FX*V(I,K)                                 ORL1F404.569   
+                      VCOR(I,K)=-FX*U(I,K)                                 ORL1F404.570   
+                      UA(I,K)=UA(I,K)+UCOR(I,K)                            ORL1F404.571   
+                      VA(I,K)=VA(I,K)+VCOR(I,K)                            ORL1F404.572   
+                ENDDO                                                      ORH1F305.3132  
+             ENDDO                                                         ORH1F305.3133  
+          ELSE                                                             ORH1F305.3134  
+             DO K=1,KM                                                     ORH1F305.3135  
+                DO I=1,IMT                                                 ORH1F305.3136  
+                      UCOR(I,K)= FX*VB(I,K)                                ORL1F404.573   
+                      VCOR(I,K)=-FX*UB(I,K)                                ORL1F404.574   
+                      UA(I,K)=UA(I,K)+UCOR(I,K)                            ORL1F404.575   
+                      VA(I,K)=VA(I,K)+VCOR(I,K)                            ORL1F404.576   
+                ENDDO                                                      ORH1F305.3139  
+             ENDDO                                                         ORH1F305.3140  
+          ENDIF                                                            ORH1F305.3141  
+      ENDIF                                                                CLINIC.628   
+                                                                           OMB3F401.264   
+C store CORIOLIS force for vorticity diagnostics                           OMB3F401.265   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.266   
+        DO K=1,KM                                                          OMB3F401.267   
+          DO I=1,IMT                                                       OMB3F401.268   
+            UCONA(I,K,4)=UA(I,K) - UCONA(I,K,4)                            OMB3F401.269   
+            VCONA(I,K,4)=VA(I,K) - VCONA(I,K,4)                            OMB3F401.270   
+          END DO                                                           OMB3F401.271   
+        END DO                                                             OMB3F401.272   
+      END IF ! L_OZVRT                                                     OMB3F401.273   
+                                                                           OMB3F401.274   
+                                                                           ORH1F305.3142  
+                                                                           ORL1F404.577   
+      IF (L_OFREESFC) THEN                                                 ORL1F404.578   
+C                                                                          ORL1F404.579   
+C----------------------------------------------------------------------    ORL1F404.580   
+C  FOR THE FREE SURFACE SOLUTION CALCULATE THE DEPTH AVERAGED CORIOLIS     ORL1F404.581   
+C  COMPONENT. THIS MUST BE REMOVED FROM THE FORCING TERMS ZU,ZV BEFORE     ORL1F404.582   
+C  THE FORCINGS ARE USED IN CLINIC.                                        ORL1F404.583   
+C----------------------------------------------------------------------    ORL1F404.584   
+C                                                                          ORL1F404.585   
+C  CALCULATE THE DEPTH INTEGRATED CORIOLIS COMPONENT                       ORL1F404.586   
+C                                                                          ORL1F404.587   
+      DO I=1,IMT                                                           ORL1F404.588   
+                                                                           ORL1F404.589   
+        UCORTOT(I)=0.0                                                     ORL1F404.590   
+        VCORTOT(I)=0.0                                                     ORL1F404.591   
+                                                                           ORL1F404.592   
+      ENDDO                                                                ORL1F404.593   
+                                                                           ORL1F404.594   
+      DO K=1,KM                                                            ORL1F404.595   
+        DO I=1,IMT                                                         ORL1F404.596   
+          UCORTOT(I) = UCORTOT(I) + ( UCOR(I,K)*DZ(K)*GM(I,K) )            ORL1F404.597   
+          VCORTOT(I) = VCORTOT(I) + ( VCOR(I,K)*DZ(K)*GM(I,K) )            ORL1F404.598   
+        ENDDO    ! over i                                                  ORL1F404.599   
+      ENDDO      ! over k                                                  ORL1F404.600   
+C                                                                          ORL1F404.601   
+C  DIVIDE BY DEPTH TO GET DEPTH AVERAGED                                   ORL1F404.602   
+C                                                                          ORL1F404.603   
+      DO I=1,IMT                                                           ORL1F404.604   
+        UCORTOT(I) = UCORTOT(I)*HR(I,J)                                    ORL1F404.605   
+        VCORTOT(I) = VCORTOT(I)*HR(I,J)                                    ORL1F404.606   
+      ENDDO      ! over i                                                  ORL1F404.607   
+                                                                           ORL1F404.608   
+      ENDIF      ! L_OFREESFC                                              ORL1F404.609   
+C                                                                          CLINIC.629   
+C---------------------------------------------------------------------     CLINIC.630   
+C  ADD IN PRESSURE TERM AND MASK OUT LAND                                  CLINIC.631   
+C---------------------------------------------------------------------     CLINIC.632   
+C                                                                          CLINIC.633   
+      DO 360 K=1,KM                                                        CLINIC.634   
+      DO 360 I=1,IMT                                                       CLINIC.635   
+        UA(I,K)=GM(I,K)*(UA(I,K)-DPDX(I,K))                                CLINIC.636   
+        VA(I,K)=GM(I,K)*(VA(I,K)-DPDY(I,K))                                CLINIC.637   
+ 360  CONTINUE                                                             CLINIC.638   
+                                                                           OMB3F401.275   
+C store pressure term also for diagnostics; does not include surface       OMB3F401.276   
+C pressure; land is masked out for all terms together later                OMB3F401.277   
+                                                                           OMB3F401.278   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.279   
+        DO K=1,KM                                                          OMB3F401.280   
+          DO I=1,IMT                                                       OMB3F401.281   
+            UCONA(I,K,5)= -DPDX(I,K)                                       OMB3F401.282   
+            VCONA(I,K,5)= -DPDY(I,K)                                       OMB3F401.283   
+          END DO                                                           OMB3F401.284   
+        END DO                                                             OMB3F401.285   
+      END IF ! L_OZVRT                                                     OMB3F401.286   
+                                                                           OMB3F401.287   
+                                                                           ORH1F305.3143  
+      IF (L_ORICHARD) THEN                                                 ORH1F305.3144  
+C                                                                          CLINIC.640   
+C --------------------------------------------------------------           CLINIC.641   
+C  Call subroutine to calculate vertical coefficient of viscosity          CLINIC.642   
+C  using the "K-theory" of Philander & Pacanowski                          CLINIC.643   
+C --------------------------------------------------------------           CLINIC.644   
+C                                                                          CLINIC.645   
+C                                                                          CLINIC.646   
+      IF (L_ICEFREEDR) THEN                                                ODC1F405.156   
+      CALL VERTCOFC (                                                      OLA0F404.135   
+     &  J,IMT,KM,KMM1,NT,                                                  OLA0F404.136   
+     &  JMT,                                                               OLA0F404.137   
+     &  TB,TBP,UB,VB,                                                      OLA0F404.138   
+     &  DZZ2RQ,DZ2RQ,                                                      OLA0F404.139   
+     &  NERGY,GRAV_SI,GM,                                                  OLA0F404.140   
+     &  RHOSRN,RHOSRNA,RHOSRNB,                                            OOM1F405.776   
+     &  XSTRESS_ICE, YSTRESS_ICE,                                          OLA0F404.142   
+     &  ZDZZ,ZDZ,DZ,DZZ,                                                   OOM1F405.770   
+     &  Rim,hm,max_qLarge_depth,crit_Ri,                                   OLA0F404.144   
+     &  L_M,MAX_LARGE_DEPTH,MAX_LARGE_LEVELS,RHO_WATER_SI,                 OOM1F405.771   
+     &  MLD_LARGE,MLD_LARGEP,HTN,HTNP,PME,PMEP,SOL,SOLP,                   OOM1F405.772   
+     &  WATERFLUX_ICE,WATERFLUX_ICEP,LAMBDA_LARGE,SPECIFIC_HEAT_SI,        OOM1F405.773   
+     &  WME,WMEP,L_OWINDMIX,L_OBULKMAXMLD,                                 OOM1F405.774   
+     &  PHI(J),                                                            OOM1F405.775   
+     &  GNU(1,1),FNU0_SI,FNUB_SI,STABLM_SI,GNUMINC_SI                      OOM1F405.777   
+     &,OCEANHEATFLUX,OCEANHEATFLUXP                                        OOM1F405.778   
+     &,CARYHEAT,CARYHEATP                                                  OOM1F405.779   
+     &,FLXTOICE,FLXTOICEP)                                                 OOM1F405.780   
+      ELSE                                                                 OLA0F404.146   
+      CALL VERTCOFC (                                                      @DYALLOC.4014  
+     &  J,IMT,KM,KMM1,NT,                                                  @DYALLOC.4015  
+     &  JMT,                                                               ORH7F404.50    
+     &  TB,TBP, UB,VB,                                                     CLINIC.649   
+     &  DZZ2RQ,DZ2RQ,                                                      OLA3F403.39    
+     &  NERGY,GRAV_SI,GM,                                                  CLINIC.651   
+     &  RHOSRN,RHOSRNA,RHOSRNB,                                            OOM1F405.787   
+     &  WSX, WSY,                                                          OLA3F403.40    
+     &  ZDZZ,ZDZ,DZ,DZZ,                                                   OOM1F405.781   
+     &  Rim,hm,max_qLarge_depth,crit_Ri,                                   OLA0F404.148   
+     &  L_M,MAX_LARGE_DEPTH,MAX_LARGE_LEVELS,RHO_WATER_SI,                 OOM1F405.782   
+     &  MLD_LARGE,MLD_LARGEP,HTN,HTNP,PME,PMEP,SOL,SOLP,                   OOM1F405.783   
+     &  WATERFLUX_ICE,WATERFLUX_ICEP,LAMBDA_LARGE,SPECIFIC_HEAT_SI,        OOM1F405.784   
+     &  WME,WMEP,L_OWINDMIX,L_OBULKMAXMLD,                                 OOM1F405.785   
+     &  PHI(J),                                                            OOM1F405.786   
+     &  GNU(1,1),FNU0_SI,FNUB_SI,STABLM_SI,GNUMINC_SI                      OOM1F405.788   
+     &,OCEANHEATFLUX,OCEANHEATFLUXP                                        OOM1F405.789   
+     &,CARYHEAT,CARYHEATP                                                  OOM1F405.790   
+     &,FLXTOICE,FLXTOICEP)                                                 OOM1F405.791   
+      ENDIF                                                                OOM1F405.792   
+        do k=1,KM_GNU_ARG-1                                                OLA3F403.43    
+          do i=1,IMT_GNU_ARG                                               OLA3F403.44    
+            gnum(i,k)=gnu(i,k+1)                                           OLA3F403.45    
+          enddo                                                            OLA3F403.46    
+        enddo                                                              OLA3F403.47    
+      ENDIF                                                                ORH1F305.3145  
+                                                                           ORH1F305.3146  
+      IF (L_OIMPDIF) THEN                                                  ORH1F305.3147  
+C                                                                          CLINIC.656   
+C                                                                          CLINIC.657   
+C --------------------------------------------------------------           CLINIC.658   
+C  Call subroutine to solve vertical diffusion equation for                CLINIC.659   
+C  momentum.                                                               CLINIC.660   
+C --------------------------------------------------------------           CLINIC.661   
+C                                                                          CLINIC.662   
+C store values of UA and VA in UCONA, VCONA before the call so that        OMB3F401.288   
+C increment to UA and VA during call can be calculated for diagnostics     OMB3F401.289   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.290   
+        DO K = 1, KM                                                       OMB3F401.291   
+          DO I = 1, IMT                                                    OMB3F401.292   
+            UCONA(I,K,3)= UA(I,K)                                          OMB3F401.293   
+            VCONA(I,K,3)= VA(I,K)                                          OMB3F401.294   
+          END DO                                                           OMB3F401.295   
+        END DO                                                             OMB3F401.296   
+      END IF ! L_OZVRT                                                     OMB3F401.297   
+C                                                                          OMB3F401.298   
+         IF (L_ICEFREEDR) THEN                                             ODC1F405.157   
+                                                                           ORH1F305.3149  
+      CALL VDIFCALC                                                        CLINIC.663   
+     &  ( J,IMT,IMTM1,KM,KMP1,KMM1,NT,                                     CLINIC.664   
+     &  UA,UB,VA,VB,                                                       CLINIC.665   
+     &  DZ,DZZ2RQ,DZ2RQ,C2DTUV,                                            CLINIC.666   
+     &  XSTRESS_ICE,YSTRESS_ICE,GM,gnu)                                    JT161193.364   
+         ELSE                                                              ORH1F305.3150  
+      CALL VDIFCALC                                                        ORH1F305.3151  
+     &  ( J,IMT,IMTM1,KM,KMP1,KMM1,NT,                                     ORH1F305.3152  
+     &  UA,UB,VA,VB,                                                       ORH1F305.3153  
+     &  DZ,DZZ2RQ,DZ2RQ,C2DTUV,                                            ORH1F305.3154  
+     &  WSX,WSY,GM,gnu)                                                    CLINIC.667   
+         ENDIF                                                             ORH1F305.3155  
+                                                                           ORH1F305.3156  
+      ENDIF                                                                ORH1F305.3157  
+                                                                           ORH1F305.3158  
+C calculate diagnostic of vertical diffusive flux as difference between    OMB3F401.299   
+C UA and VB after and before call to VDIFCALC                              OMB3F401.300   
+C                                                                          OMB3F401.301   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.302   
+        DO K = 1, KM                                                       OMB3F401.303   
+          DO I = 1, IMT                                                    OMB3F401.304   
+            UCONA(I,K,3)= UA(I,K)-UCONA(I,K,3)                             OMB3F401.305   
+            VCONA(I,K,3)= VA(I,K)-VCONA(I,K,3)                             OMB3F401.306   
+          END DO                                                           OMB3F401.307   
+        END DO                                                             OMB3F401.308   
+      END IF ! L_OZVRT                                                     OMB3F401.309   
+                                                                           OMB3F401.310   
+      IF (L_OISOPYC) THEN                                                  ORH1F305.3159  
+          fxa=4.                                                           ORH1F305.3160  
+          fxb=1.                                                           ORH1F305.3161  
+      ENDIF                                                                ORH1F305.3162  
+                                                                           ORH1F305.3163  
+      IF (L_OIMPADDF) THEN                                                 ORH1F305.3164  
+C                                                                          CLINIC.675   
+C                                                                          CLINIC.676   
+C --------------------------------------------------------------           CLINIC.677   
+C  Call subroutine to solve vertical advection/diffusion                   CLINIC.678   
+C  equation for momentum - implicitly.                                     CLINIC.679   
+C --------------------------------------------------------------           CLINIC.680   
+C                                                                          CLINIC.681   
+C     Set up arrays used by implicit code.                                 CLINIC.682   
+C                                                                          CLINIC.683   
+      scale(1) = 10.0                                                      CLINIC.684   
+      scale(2) = 10.0                                                      CLINIC.685   
+C     Use array TF to hold UB/VB contiguously                              CLINIC.686   
+      DO K = 1, KM                                                         CLINIC.687   
+         DO I = 1, IMT                                                     CLINIC.688   
+            TF(I,K,1)=UB(I,K)+C2DTUV*UA(I,K)                               SF020993.3     
+            TF(I,K,2)=VB(I,K)+C2DTUV*VA(I,K)                               SF020993.4     
+                                                                           ORH1F305.3165  
+            IF (.NOT.(L_ORICHARD))THEN                                     ORH1F305.3166  
+                gnu(I,K) = FKPM                                            ORH1F305.3167  
+            ENDIF                                                          ORH1F305.3168  
+                                                                           ORH1F305.3169  
+         END DO                                                            CLINIC.696   
+      END DO                                                               CLINIC.697   
+C                                                                          CLINIC.698   
+C     Use aray TEMPA to hold surface fluxes (level 1= WSX)                 CLINIC.699   
+C                                                                          CLINIC.700   
+      DO I=1, IMT                                                          CLINIC.701   
+         TEMPA(I,1) = WSX(I)                                               CLINIC.702   
+         TEMPA(I,2) = WSY(I)                                               CLINIC.703   
+      END DO                                                               CLINIC.704   
+C                                                                          CLINIC.705   
+C     Scaled timesteps                                                     CLINIC.706   
+C                                                                          CLINIC.707   
+      DO K = 1, KM                                                         CLINIC.708   
+         tscale(K)= C2DTUV                                                 CLINIC.709   
+      END DO                                                               CLINIC.710   
+C                                                                          CLINIC.711   
+C Removed call to VERTSOLV                                                 ORH1F305.3170  
+C     Update increments                                                    CLINIC.728   
+C                                                                          CLINIC.729   
+      DO K= 1, KM                                                          CLINIC.730   
+       FXA = 1.0/tscale(K)                                                 CLINIC.731   
+       DO I = 1, IMT                                                       CLINIC.732   
+        UA(I,K)=UA(I,K) + FXA*(TA(I,K,1)-TF(I,K,1))                        SF020993.8     
+        VA(I,K)=VA(I,K) + FXA*(TA(I,K,2)-TF(I,K,2))                        SF020993.9     
+       END DO                                                              CLINIC.735   
+      END DO                                                               CLINIC.736   
+                                                                           ORH1F305.3171  
+      ENDIF     ! L_OIMPADDF = true                                        ORH1F305.3172  
+C                                                                          CLINIC.738   
+      ! Calculate ZU and ZV if barotropic mode included                    OFRAF404.69    
+      ! or the rigid-lid surface pressure diagnostic is required           OFRAF404.70    
+      IF (.NOT.(L_ONOCLIN) .OR. SF_RLIDP) THEN                             OFRAF404.71    
+C---------------------------------------------------------------------     CLINIC.740   
+C  FORM TIME CHANGE OF VERTICALLY AVERAGED FORCING                         CLINIC.741   
+C---------------------------------------------------------------------     CLINIC.742   
+C                                                                          CLINIC.743   
+C  1ST, INTEGRATE TIME CHANGE VERTICALLY                                   CLINIC.744   
+C                                                                          CLINIC.745   
+      DO 380 K=1,KM                                                        CLINIC.751   
+        IF (L_OFREESFC) THEN                                               ORL1F404.610   
+        FX=DZ(K)                                                           ORL1F404.611   
+        ELSE                                                               ORL1F404.612   
+      IF (.NOT.(L_ONOCLIN)) THEN                                           OFRAF404.72    
+        FX=C2DTSF*DZ(K)                                                    OFRAF404.73    
+      ELSE                                                                 OFRAF404.74    
+        FX=C2DTUV*DZ(K)                                                    OFRAF404.75    
+      ENDIF                                                                OFRAF404.76    
+        ENDIF        ! L_OFREESFC                                          ORL1F404.613   
+      DO 380 I=1,IMT                                                       CLINIC.753   
+        ZU(I,J)=ZU(I,J)+UA(I,K)*FX                                         ORH1F304.146   
+        ZV(I,J)=ZV(I,J)+VA(I,K)*FX                                         ORH1F304.147   
+ 380  CONTINUE                                                             CLINIC.756   
+                                                                           OMB3F401.311   
+C form vertical integral also for diagnostics; mask out land at same       OMB3F401.312   
+C time. Do not multiply through by C2DTSF                                  OMB3F401.313   
+                                                                           OMB3F401.314   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.315   
+        DO ID = 1,5                                                        OMB3F401.316   
+          DO I=1,IMT                                                       OMB3F401.317   
+            ZCONU(I,J,ID)=0.0                                              OMB3F401.318   
+            ZCONV(I,J,ID)=0.0                                              OMB3F401.319   
+          END DO ! I                                                       OMB3F401.320   
+          DO K=1,KM                                                        OMB3F401.321   
+            FX=DZ(K)                                                       OMB3F401.322   
+            DO I=1,IMT                                                     OMB3F401.323   
+              ZCONU(I,J,ID) = ZCONU(I,J,ID) + UCONA(I,K,ID)*FX*GM(I,K)     OMB3F401.324   
+              ZCONV(I,J,ID) = ZCONV(I,J,ID) + VCONA(I,K,ID)*FX*GM(I,K)     OMB3F401.325   
+            END DO                                                         OMB3F401.326   
+          END DO                                                           OMB3F401.327   
+        END DO                                                             OMB3F401.328   
+      END IF ! L_OZVRT                                                     OMB3F401.329   
+                                                                           OMB3F401.330   
+                                                                           ORH1F305.3174  
+      IF (L_OSYMM) THEN                                                    ORH1F305.3175  
+C                                                                          CLINIC.759   
+C  (SET SYMMETRY ROW TO ZERO)                                              CLINIC.760   
+C                                                                          CLINIC.761   
+        IF (J+J_OFFSET.EQ.JMTM1_GLOBAL) THEN                               ORH3F402.35    
+        DO 382 I=1,IMT                                                     CLINIC.763   
+        ZV(I,J)=0.0                                                        ORH1F304.148   
+ 382    CONTINUE                                                           CLINIC.765   
+                                                                           OMB3F401.331   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.332   
+        DO ID = 1,5                                                        OMB3F401.333   
+          DO I=1,IMT                                                       OMB3F401.334   
+            ZCONV(I,J,ID) = 0.0                                            OMB3F401.335   
+          END DO                                                           OMB3F401.336   
+        END DO                                                             OMB3F401.337   
+      END IF ! L_OZVRT                                                     OMB3F401.338   
+                                                                           OMB3F401.339   
+      ENDIF                                                                CLINIC.766   
+                                                                           ORH1F305.3176  
+      ENDIF     ! L_OSYMM                                                  ORH1F305.3177  
+C                                                                          OMB3F401.340   
+C   copy integrals to second set of diagnostics                            OMB3F401.341   
+C                                                                          OMB3F401.342   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.343   
+        DO ID = 1,4                                                        OMB3F401.344   
+          DO I=1,IMT                                                       OMB3F401.345   
+            ZCONU(I,J,ID+5) = ZCONU(I,J,ID)                                OMB3F401.346   
+            ZCONV(I,J,ID+5) = ZCONV(I,J,ID)                                OMB3F401.347   
+          END DO                                                           OMB3F401.348   
+        END DO                                                             OMB3F401.349   
+C                                                                          OMB3F401.350   
+C   put minus one times the sum of all terms other than the                OMB3F401.351   
+C   "pressure" term into the bottom pressure torque diagnostic.            OMB3F401.352   
+C   The contribution from the streamfunction tendency is added in          OMB3F401.353   
+C   (to SWZVRT) later by RELAX                                             OMB3F401.354   
+C                                                                          OMB3F401.355   
+        DO I=1,IMT                                                         OMB3F401.356   
+          ZCONU(I,J,N_ZVRT)= - ZCONU(I,J,6)                                OMB3F401.357   
+          ZCONV(I,J,N_ZVRT)= - ZCONV(I,J,6)                                OMB2F404.18    
+        END DO                                                             OMB3F401.358   
+        DO ID = 7,9                                                        OMB3F401.359   
+          DO  I=1,IMT                                                      OMB3F401.360   
+          ZCONU(I,J,N_ZVRT)=ZCONU(I,J,N_ZVRT) - ZCONU(I,J,ID)              OMB3F401.361   
+          ZCONV(I,J,N_ZVRT)=ZCONV(I,J,N_ZVRT) - ZCONV(I,J,ID)              OMB2F404.19    
+          END DO                                                           OMB3F401.362   
+        END DO                                                             OMB3F401.363   
+      END IF ! L_OZVRT                                                     OMB3F401.364   
+                                                                           OMB3F401.365   
+C                                                                          CLINIC.769   
+C  2ND, FORM AVERAGE BY DIVIDING BY DEPTH                                  CLINIC.770   
+C                                                                          CLINIC.771   
+      DO 390 I=1,IMT                                                       CLINIC.772   
+        ZU(I,J)=ZU(I,J)*HR(I,J)                                            ORH1F304.149   
+        ZV(I,J)=ZV(I,J)*HR(I,J)                                            ORH1F304.150   
+ 390  CONTINUE                                                             CLINIC.775   
+                                                                           OMB3F401.366   
+C   form vertical average for first set of 5 diagnostics                   OMB3F401.367   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.368   
+        DO ID = 1,5                                                        OMB3F401.369   
+          DO I=1,IMT                                                       OMB3F401.370   
+            ZCONU(I,J,ID) = ZCONU(I,J,ID)*HR(I,J)                          OMB3F401.371   
+            ZCONV(I,J,ID) = ZCONV(I,J,ID)*HR(I,J)                          OMB3F401.372   
+          END DO                                                           OMB3F401.373   
+        END DO                                                             OMB3F401.374   
+      END IF ! L_OZVRT                                                     OMB3F401.375   
+                                                                           ORL1F404.614   
+      IF (L_OFREESFC) THEN                                                 ORL1F404.615   
+C======================================================================    ORL1F404.616   
+C  PREPARE FORCING ARRAYS FOR INPUT TO TROPIC                              ORL1F404.617   
+C======================================================================    ORL1F404.618   
+C                                                                          ORL1F404.619   
+C  TROPIC REQUIRES THE FORCING TERMS TO HAVE THE HORIZONTAL DIFFUSION      ORL1F404.620   
+C  AND THE BAROTROPIC CORIOLIS TERMS CALCULATED AT EACH INDIVIDUAL         ORL1F404.621   
+C  BAROTROPIC TIMESTEP. IT IS THEREFORE NECEESSARY TO REMOVE THESE         ORL1F404.622   
+C  HORIZONTAL DIFFUSION AND CORIOLIS COMPONENTS AT THIS POINT.             ORL1F404.623   
+C                                                                          ORL1F404.624   
+        DO I=1,IMT                                                         ORL1F404.625   
+                                                                           ORL1F404.626   
+          XF(I,J) = ZU(I,J) - ( UDFNTOT(I) + UCORTOT(I) )                  ORL1F404.627   
+          YF(I,J) = ZV(I,J) - ( VDFNTOT(I) + VCORTOT(I) )                  ORL1F404.628   
+                                                                           ORL1F404.629   
+        ENDDO                                                              ORL1F404.630   
+                                                                           ORL1F404.631   
+      ENDIF      !  (L_OFREESFC)                                           ORL1F404.632   
+                                                                           OMB3F401.376   
+      ENDIF   ! NOT L_ONOCLIN OR SF_RLIDP                                  OFRAF404.77    
+C---------------------------------------------------------------------     CLINIC.778   
+C  DO ANALYSIS OF INTERNAL MODE FORCING ON ENERGY TIMESTEP                 CLINIC.779   
+C  ALSO, FORM VERT AVE. FOR USE LATER IN EXT. MODE ANALYSIS                CLINIC.780   
+C---------------------------------------------------------------------     CLINIC.781   
+C                                                                          CLINIC.782   
+      IF(NERGY.EQ.0) GO TO 550                                             CLINIC.783   
+      FX=0.0                                                               CLINIC.784   
+      DO 395 LL=1,8                                                        CLINIC.785   
+      DO 395 I=1,IMT                                                       CLINIC.786   
+      ZUENG(I,LL,J)=FX                                                     ORH1F304.156   
+      ZVENG(I,LL,J)=FX                                                     ORH1F304.157   
+ 395  CONTINUE                                                             CLINIC.789   
+C                                                                          CLINIC.790   
+C  1ST, COMPUTE KE CHANGE DUE TO PRESSURE TERM                             CLINIC.791   
+C                                                                          CLINIC.792   
+      FX=CS(J)*DYU(J)                                                      CLINIC.793   
+                                                                           ORH1F305.3179  
+      IF (L_OSYMM) THEN                                                    ORH1F305.3180  
+C                                                                          CLINIC.795   
+C  (WEIGHT SYMMETRY ROW BY ONE HALF)                                       CLINIC.796   
+C                                                                          CLINIC.797   
+        IF (J+J_OFFSET.EQ.JMTM1_GLOBAL) FX=FX*0.5                          ORH3F402.36    
+      ENDIF                                                                ORH1F305.3182  
+                                                                           ORH1F305.3183  
+      DO 400 K=1,KM                                                        CLINIC.800   
+      DO 400 I=2,IMUM1                                                     CLINIC.801   
+        UENG(I,K)=GM(I,K)*(-DPDX(I,K))                                     CLINIC.802   
+        VENG(I,K)=GM(I,K)*(-DPDY(I,K))                                     CLINIC.803   
+        ENGINT(6)=ENGINT(6)+(USAV(I,K)*UENG(I,K)                           CLINIC.804   
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          CLINIC.805   
+      ZUENG(I,6,J)=ZUENG(I,6,J)+UENG(I,K)*DZ(K)*HR(I,J)                    ORH1F304.158   
+      ZVENG(I,6,J)=ZVENG(I,6,J)+VENG(I,K)*DZ(K)*HR(I,J)                    ORH1F304.159   
+ 400  CONTINUE                                                             CLINIC.808   
+C                                                                          CLINIC.809   
+C  2ND, COMPUTE KE CHANGE DUE TO ADVECTION OF MOMENTUM                     CLINIC.810   
+C                                                                          CLINIC.811   
+      DO 430 K=1,KM                                                        CLINIC.812   
+      DO 430 I=2,IMUM1                                                     CLINIC.813   
+        UENG(I,K)=GM(I,K)*((-FUW (I+1,K)*(U (I+1,K)+U (I  ,K))             CLINIC.814   
+     *                      +FUW (I  ,K)*(U (I  ,K)+U (I-1,K)))*DXU2R(I)   CLINIC.815   
+     *                      -FVN (I  ,K)*(UP(I  ,K)+U (I  ,K))             CLINIC.816   
+     *                      +FVSU(I  ,K)*(U (I  ,K)+UM(I  ,K)))            CLINIC.817   
+        VENG(I,K)=GM(I,K)*((-FUW (I+1,K)*(V (I+1,K)+V (I  ,K))             CLINIC.818   
+     *                      +FUW (I  ,K)*(V (I  ,K)+V (I-1,K)))*DXU2R(I)   CLINIC.819   
+     *                      -FVN (I  ,K)*(VP(I  ,K)+V (I  ,K))             CLINIC.820   
+     *                      +FVSU(I  ,K)*(V (I  ,K)+VM(I  ,K)))            CLINIC.821   
+        ENGINT(2)=ENGINT(2)+(USAV(I,K)*UENG(I,K)                           CLINIC.822   
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          CLINIC.823   
+      ZUENG(I,2,J)=ZUENG(I,2,J)+UENG(I,K)*DZ(K)*HR(I,J)                    ORH1F304.160   
+      ZVENG(I,2,J)=ZVENG(I,2,J)+VENG(I,K)*DZ(K)*HR(I,J)                    ORH1F304.161   
+ 430  CONTINUE                                                             CLINIC.826   
+                                                                           ORH1F305.3184  
+      IF (L_OIMPADDF) THEN                                                 ORH1F305.3185  
+         DO K=1,KM                                                         ORH1F305.3186  
+            KM1=MAX(1,K-1)                                                 ORH1F305.3187  
+            KP1=MIN(KM,K+1)                                                ORH1F305.3188  
+            DO I=2,IMUM1                                                   ORH1F305.3189  
+               UENG(I,K)=GM(I,K)*(-(W(I,K  )*(U(I,KM1)+U(I,K  )+           ORH1F305.3190  
+     *                                 TF(I,K,1)+TF(I,KM1,1)    )          CLINIC.837   
+     *                      -W(I,K+1)*(U(I,K  )+U(I,KP1) +                 CLINIC.838   
+     *                                 TF(I,K,1)+TF(I,KP1,1))))*           CLINIC.839   
+     *                                 (0.5*DZ2RQ(I,K))                    CLINIC.840   
+               VENG(I,K)=GM(I,K)*(-W(I,K  )*(V(I,KM1)+V(I,K  )+            ORH1F305.3191  
+     *                                 TF(I,K,2)+TF(I,KM1,2))              CLINIC.848   
+     *                      -W(I,K+1)*(V(I,K  )+V(I,KP1)+                  CLINIC.849   
+     *                                 TF(I,K,2)+TF(I,KP1,2)))*            CLINIC.850   
+     *                                 (0.5*DZ2RQ(I,K))                    CLINIC.851   
+               ENGINT(3)=ENGINT(3)+(USAV(I,K)*UENG(I,K)                    ORH1F305.3192  
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          CLINIC.854   
+               ZUENG(I,3,J)=ZUENG(I,3,J)+UENG(I,K)*DZ(K)*HR(I,J)           ORH1F305.3193  
+               ZVENG(I,3,J)=ZVENG(I,3,J)+VENG(I,K)*DZ(K)*HR(I,J)           ORH1F305.3194  
+            ENDDO  ! over I                                                ORH1F305.3195  
+         ENDDO     ! over K                                                ORH1F305.3196  
+      ELSE                                                                 ORH1F305.3197  
+         DO K=1,KM                                                         ORH1F305.3198  
+            KM1=MAX(1,K-1)                                                 ORH1F305.3199  
+            KP1=MIN(KM,K+1)                                                ORH1F305.3200  
+            DO I=2,IMUM1                                                   ORH1F305.3201  
+               UENG(I,K)=GM(I,K)*(-(W(I,K  )*(U(I,KM1)+U(I,K  ))           ORH1F305.3202  
+     *                      -W(I,K+1)*(U(I,K  )+U(I,KP1)))*DZ2RQ(I,K))     ORH1F305.3203  
+               VENG(I,K)=GM(I,K)*(-(W(I,K  )*(V(I,KM1)+V(I,K  ))           ORH1F305.3204  
+     *                      -W(I,K+1)*(V(I,K  )+V(I,KP1)))*DZ2RQ(I,K))     ORH1F305.3205  
+               ENGINT(3)=ENGINT(3)+(USAV(I,K)*UENG(I,K)                    ORH1F305.3206  
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          ORH1F305.3207  
+               ZUENG(I,3,J)=ZUENG(I,3,J)+UENG(I,K)*DZ(K)*HR(I,J)           ORH1F305.3208  
+               ZVENG(I,3,J)=ZVENG(I,3,J)+VENG(I,K)*DZ(K)*HR(I,J)           ORH1F305.3209  
+            ENDDO  ! over I                                                ORH1F305.3210  
+         ENDDO     ! over K                                                ORH1F305.3211  
+      ENDIF                                                                ORH1F305.3212  
+C                                                                          CLINIC.858   
+C  3RD, COMPUTE KE CHANGE DUE TO HOR. DIFFUSION OF MOMENTUM                CLINIC.859   
+C                                                                          CLINIC.860   
+      DO 490 K=1,KM                                                        CLINIC.861   
+      DO 490 I=2,IMUM1                                                     CLINIC.862   
+        UENG(I,K)=GM(I,K)*(                                                CLINIC.863   
+     *            +BBUJ*DXU2R(I)*(DXT4R(I+1)*(UB(I+1,K)-UB(I,K))           CLINIC.864   
+     *                           +DXT4R(I  )*(UB(I-1,K)-UB(I,K)))          CLINIC.865   
+     *            +CCUJ*(UBP(I,K)-UB(I,K))+DDUJ*(UBM(I,K)-UB(I,K))         CLINIC.866   
+     *            +GGUJ*UB(I,K)-HHUJ*DXU2R(I)*(VB(I+1,K)-VB(I-1,K)))       CLINIC.867   
+        VENG(I,K)=GM(I,K)*(                                                CLINIC.868   
+     *            +BBUJ*DXU2R(I)*(DXT4R(I+1)*(VB(I+1,K)-VB(I,K))           CLINIC.869   
+     *                           +DXT4R(I  )*(VB(I-1,K)-VB(I,K)))          CLINIC.870   
+     *            +CCUJ*(VBP(I,K)-VB(I,K))+DDUJ*(VBM(I,K)-VB(I,K))         CLINIC.871   
+     *            +GGUJ*VB(I,K)+HHUJ*DXU2R(I)*(UB(I+1,K)-UB(I-1,K)))       CLINIC.872   
+        ENGINT(4)=ENGINT(4)+(USAV(I,K)*UENG(I,K)                           CLINIC.873   
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          CLINIC.874   
+      ZUENG(I,4,J)=ZUENG(I,4,J)+UENG(I,K)*DZ(K)*HR(I,J)                    ORH1F304.164   
+      ZVENG(I,4,J)=ZVENG(I,4,J)+VENG(I,K)*DZ(K)*HR(I,J)                    ORH1F304.165   
+ 490  CONTINUE                                                             CLINIC.877   
+       IF (L_OBIMOM) THEN                                                  OOM3F405.1145  
+         DO K=1,KM                                                         OOM3F405.1146  
+           DO I=2,IMUM1                                                    OOM3F405.1147  
+             UENG(I,K)=GM(I,K)*(Uxx(I,K)+Uyy(I,K)+Umet(I,K))               OOM3F405.1148  
+             VENG(I,K)=GM(I,K)*(Vxx(I,K)+Vyy(I,K)+Vmet(I,K))               OOM3F405.1149  
+             ENGINT(4)=ENGINT(4)+(USAV(I,K)*UENG(I,K)                      OOM3F405.1150  
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          OOM3F405.1151  
+             ZUENG(I,4,J)=ZUENG(I,4,J)+(UENG(I,K)*DZ(K)*HR(I,J))           OOM3F405.1152  
+             ZVENG(I,4,J)=ZVENG(I,4,J)+(VENG(I,K)*DZ(K)*HR(I,J))           OOM3F405.1153  
+           ENDDO                                                           OOM3F405.1154  
+         ENDDO                                                             OOM3F405.1155  
+       ENDIF ! L_OBIMOM                                                    OOM3F405.1156  
+                                                                           ORH1F305.3213  
+      IF (L_OIMPDIF) THEN                                                  ORH1F305.3214  
+C                                                                          CLINIC.879   
+C   The energy calculation has not yet been coded for when the             CLINIC.880   
+C   implicit vertical mixing is selected without implicit advection.       CLINIC.881   
+C   gnu1z and gnu2z are set to zero here to reflect this.                  CLINIC.882   
+C                                                                          CLINIC.883   
+         DO K=1,KMP1                                                       ORH1F305.3215  
+           DO I=1,IMU                                                      ORH1F305.3216  
+             gnu1z(I,K)=0.                                                 ORH1F305.3217  
+             gnu2z(I,K)=0.                                                 ORH1F305.3218  
+           END DO                                                          ORH1F305.3219  
+         END DO                                                            ORH1F305.3220  
+      ENDIF                                                                ORH1F305.3221  
+C                                                                          CLINIC.894   
+C  4TH, COMPUTE KE CHANGE DUE TO WIND STRESS                               CLINIC.895   
+C                                                                          CLINIC.896   
+                                                                           ORH1F305.3222  
+      IF (L_OIMPADDF) THEN                                                 ORH1F305.3223  
+                                                                           ORH1F305.3224  
+         DO I=2,IMUM1                                                      ORH1F305.3225  
+           UENG(I,1)=GM(I,1)*(scale(1)/DZ(1))*WSX(I)                       ORH1F305.3226  
+           VENG(I,1)=GM(I,1)*(scale(2)/DZ(1))*WSY(I)                       ORH1F305.3227  
+           ENGINT(7)=ENGINT(7)+(USAV(I,1)*UENG(I,1)                        ORH1F305.3228  
+     *                      +VSAV(I,1)*VENG(I,1))*FX*DXU(I)*DZ(1)          CLINIC.907   
+           ZUENG(I,7,J)=ZUENG(I,7,J)+UENG(I,1)*DZ(1)*HR(I,J)               ORH1F305.3229  
+           ZVENG(I,7,J)=ZVENG(I,7,J)+VENG(I,1)*DZ(1)*HR(I,J)               ORH1F305.3230  
+         ENDDO                                                             ORH1F305.3231  
+                                                                           ORH1F305.3232  
+      ELSE                                                                 ORH1F305.3233  
+                                                                           ORH1F305.3234  
+         IF ((.NOT.(L_ORICHARD)).AND.(.NOT.(L_OIMPDIF))) THEN              ORH1F305.3235  
+            DO I=2,IMUM1                                                   ORH1F305.3236  
+              UENG(I,1)=GM(I,1)*EEM(1)*(UOVER(I)-UDIF(I,1))                ORH1F305.3237  
+              VENG(I,1)=GM(I,1)*EEM(1)*(VOVER(I)-VDIF(I,1))                ORH1F305.3238  
+              ENGINT(7)=ENGINT(7)+(USAV(I,1)*UENG(I,1)                     ORH1F305.3239  
+     *                      +VSAV(I,1)*VENG(I,1))*FX*DXU(I)*DZ(1)          ORH1F305.3240  
+              ZUENG(I,7,J)=ZUENG(I,7,J)+UENG(I,1)*DZ(1)*HR(I,J)            ORH1F305.3241  
+              ZVENG(I,7,J)=ZVENG(I,7,J)+VENG(I,1)*DZ(1)*HR(I,J)            ORH1F305.3242  
+            ENDDO                                                          ORH1F305.3243  
+         ELSE                                                              ORH1F305.3244  
+                                                                           ORH1F305.3245  
+            ! Catch all other conditions                                   ORH1F305.3246  
+            DO I=2,IMUM1                                                   ORH1F305.3247  
+               ENGINT(7)=ENGINT(7)+(USAV(I,1)*UENG(I,1)                    ORH1F305.3248  
+     *                      +VSAV(I,1)*VENG(I,1))*FX*DXU(I)*DZ(1)          ORH1F305.3249  
+               ZUENG(I,7,J)=ZUENG(I,7,J)+UENG(I,1)*DZ(1)*HR(I,J)           ORH1F305.3250  
+               ZVENG(I,7,J)=ZVENG(I,7,J)+VENG(I,1)*DZ(1)*HR(I,J)           ORH1F305.3251  
+            ENDDO                                                          ORH1F305.3252  
+         ENDIF                                                             ORH1F305.3253  
+                                                                           ORH1F305.3254  
+      ENDIF                                                                ORH1F305.3255  
+                                                                           ORH1F305.3256  
+C                                                                          CLINIC.911   
+C  5TH, COMPUTE KE CHANGE DUE TO BOTTOM DRAG                               CLINIC.912   
+C                                                                          CLINIC.913   
+      IF (L_OIMPDIF) THEN                                                  ORH1F305.3257  
+                                                                           ORH1F305.3258  
+         DO 524 I=2,IMUM1                                                  ORH1F305.3259  
+            KZ=KMU(I)                                                      ORH1F305.3260  
+            IF(KZ.EQ.0)GO TO 524                                           ORH1F305.3261  
+            UENG(I,KZ)=-GM(I,KZ)*gnu1z(I,KZ+1)/DZ(KZ)                      ORH1F305.3262  
+            VENG(I,KZ)=-GM(I,KZ)*gnu2z(I,KZ+1)/DZ(KZ)                      ORH1F305.3263  
+            ENGINT(8)=ENGINT(8)+(USAV(I,KZ)*UENG(I,KZ)                     ORH1F305.3264  
+     *                      +VSAV(I,KZ)*VENG(I,KZ))*FX*DXU(I)*DZ(KZ)       CLINIC.926   
+            ZUENG(I,8,J)=ZUENG(I,8,J)+UENG(I,KZ)*DZ(KZ)*HR(I,J)            ORH1F305.3265  
+            ZVENG(I,8,J)=ZVENG(I,8,J)+VENG(I,KZ)*DZ(KZ)*HR(I,J)            ORH1F305.3266  
+ 524     CONTINUE                                                          ORH1F305.3267  
+                                                                           ORH1F305.3268  
+      ELSE                                                                 ORH1F305.3269  
+C                                                                          ORH1F305.3270  
+         IF ((.NOT.(L_ORICHARD)).AND.(.NOT.(L_OIMPADDF))) THEN             ORH1F305.3271  
+            DO 525 I=2,IMUM1                                               ORH1F305.3272  
+               KZ=KMU(I)                                                   ORH1F305.3273  
+               IF(KZ.EQ.0)GO TO 525                                        ORH1F305.3274  
+               UENG(I,KZ)=GM(I,KZ)*FFM(KZ)*(UDIF(I,KZ+1)-UDIF(I,KZ))       ORH1F305.3275  
+               VENG(I,KZ)=GM(I,KZ)*FFM(KZ)*(VDIF(I,KZ+1)-VDIF(I,KZ))       ORH1F305.3276  
+               ENGINT(8)=ENGINT(8)+(USAV(I,KZ)*UENG(I,KZ)                  ORH1F305.3277  
+     *                      +VSAV(I,KZ)*VENG(I,KZ))*FX*DXU(I)*DZ(KZ)       ORH1F305.3278  
+               ZUENG(I,8,J)=ZUENG(I,8,J)+UENG(I,KZ)*DZ(KZ)*HR(I,J)         ORH1F305.3279  
+               ZVENG(I,8,J)=ZVENG(I,8,J)+VENG(I,KZ)*DZ(KZ)*HR(I,J)         ORH1F305.3280  
+ 525        CONTINUE                                                       ORH1F305.3281  
+         ELSE                                                              ORH1F305.3282  
+            ! Catch all other conditions                                   ORH1F305.3283  
+            DO 526 I=2,IMUM1                                               ORH1F305.3284  
+               KZ=KMU(I)                                                   ORH1F305.3285  
+               IF(KZ.EQ.0)GO TO 526                                        ORH1F305.3286  
+               ENGINT(8)=ENGINT(8)+(USAV(I,KZ)*UENG(I,KZ)                  ORH1F305.3287  
+     *                      +VSAV(I,KZ)*VENG(I,KZ))*FX*DXU(I)*DZ(KZ)       ORH1F305.3288  
+               ZUENG(I,8,J)=ZUENG(I,8,J)+UENG(I,KZ)*DZ(KZ)*HR(I,J)         ORH1F305.3289  
+               ZVENG(I,8,J)=ZVENG(I,8,J)+VENG(I,KZ)*DZ(KZ)*HR(I,J)         ORH1F305.3290  
+ 526        CONTINUE                                                       ORH1F305.3291  
+         ENDIF                                                             ORH1F305.3292  
+      ENDIF                                                                ORH1F305.3293  
+                                                                           ORH1F305.3294  
+                                                                           ORH1F305.3295  
+C                                                                          CLINIC.930   
+C  6TH, COMPUTE KE CHANGE DUE TO VERT. DIFFUSION OF MOMENTUM               CLINIC.931   
+C                                                                          CLINIC.932   
+      IF (.NOT.(L_ORICHARD)) THEN                                          ORH1F305.3296  
+                                                                           ORH1F305.3297  
+         DO 540 I=2,IMUM1                                                  ORH1F305.3298  
+            KZ=KMU(I)                                                      ORH1F305.3299  
+            IF(KZ.EQ.0)GO TO 540                                           ORH1F305.3300  
+            DO 541 K=1,KZ                                                  ORH1F305.3301  
+               FXA=1.0                                                     ORH1F305.3302  
+               FXB=1.0                                                     ORH1F305.3303  
+               IF(K.EQ.1) FXA=0.0                                          ORH1F305.3304  
+               IF(K.EQ.KZ) FXB=0.0                                         ORH1F305.3305  
+        UENG(I,K)=GM(I,K)*( FXA*EEM(K)*(UDIF(I,K-1)-UDIF(I,K  ))           CLINIC.942   
+     *                     -FXB*FFM(K)*(UDIF(I,K  )-UDIF(I,K+1)))          CLINIC.943   
+        VENG(I,K)=GM(I,K)*( FXA*EEM(K)*(VDIF(I,K-1)-VDIF(I,K  ))           CLINIC.944   
+     *                     -FXB*FFM(K)*(VDIF(I,K  )-VDIF(I,K+1)))          CLINIC.945   
+        ENGINT(5)=ENGINT(5)+(USAV(I,K)*UENG(I,K)                           ORH1F305.3306  
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          ORH1F305.3307  
+        ZUENG(I,5,J)=ZUENG(I,5,J)+UENG(I,K)*DZ(K)*HR(I,J)                  ORH1F305.3308  
+        ZVENG(I,5,J)=ZVENG(I,5,J)+VENG(I,K)*DZ(K)*HR(I,J)                  ORH1F305.3309  
+ 541        CONTINUE                                                       ORH1F305.3310  
+ 540     CONTINUE                                                          ORH1F305.3311  
+                                                                           ORH1F305.3312  
+      ELSE                                                                 ORH1F305.3313  
+                                                                           ORH1F305.3314  
+         IF (L_OIMPADDF) THEN                                              ORH1F305.3315  
+           DO 542 I=2,IMUM1                                                ORH1F305.3316  
+             KZ=KMU(I)                                                     ORH1F305.3317  
+             IF(KZ.EQ.0)GO TO 542                                          ORH1F305.3318  
+             DO 543 K=1,KZ                                                 ORH1F305.3319  
+                FXA=1.0                                                    ORH1F305.3320  
+                FXB=1.0                                                    ORH1F305.3321  
+                IF(K.EQ.1) FXA=0.0                                         ORH1F305.3322  
+                IF(K.EQ.KZ) FXB=0.0                                        ORH1F305.3323  
+                                                                           ORH1F305.3324  
+          UENG(I,K)=GM(I,K)*(gnu(I,KP1)*(                                  NB151293.4     
+     +                       (UB(I,KP1) - UB(I,K))                         CLINIC.949   
+     +         + (TF(I,KP1,1) - TF(I,K,1)))*(2.0*DZZ2R(K)*DZ2R(K))         NB151293.5     
+     +            -gnu(I,K)*(                                              NB151293.6     
+     +             (UB(I,K)-UB(I,KM1))+                                    CLINIC.952   
+     +          (TF(I,K,1) - TF(I,KM1,1)))*(2.0*DZZ2R(KM1)*DZ2R(K)))       CLINIC.953   
+          VENG(I,K)=GM(I,K)*(gnu(I,KP1)*(          -                       NB151293.7     
+     +                      (VB(I,KP1) -VB(I,K)) +                         CLINIC.955   
+     +         (TF(I,KP1,2)-TF(I,K,2)) )*(2.0*DZZ2R(K)*DZ2R(K))            CLINIC.956   
+     +            -gnu(I,K)*(                                              NB151293.8     
+     +             (VB(I,K)- VB(I,KM1)) +                                  CLINIC.958   
+     +         (TF(I,K,2) - TF(I,KM1,2)))*(2.0*DZZ2R(KM1)*DZ2R(K)))        CLINIC.959   
+          ENGINT(5)=ENGINT(5)+(USAV(I,K)*UENG(I,K)                         ORH1F305.3325  
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          CLINIC.962   
+          ZUENG(I,5,J)=ZUENG(I,5,J)+UENG(I,K)*DZ(K)*HR(I,J)                ORH1F305.3326  
+          ZVENG(I,5,J)=ZVENG(I,5,J)+VENG(I,K)*DZ(K)*HR(I,J)                ORH1F305.3327  
+ 543         CONTINUE                                                      ORH1F305.3328  
+ 542       CONTINUE                                                        ORH1F305.3329  
+         ELSE                                                              ORH1F305.3330  
+           DO 544 I=2,IMUM1                                                ORH1F305.3331  
+             KZ=KMU(I)                                                     ORH1F305.3332  
+             IF(KZ.EQ.0)GO TO 544                                          ORH1F305.3333  
+             DO 545 K=1,KZ                                                 ORH1F305.3334  
+                FXA=1.0                                                    ORH1F305.3335  
+                FXB=1.0                                                    ORH1F305.3336  
+                IF(K.EQ.1) FXA=0.0                                         ORH1F305.3337  
+                IF(K.EQ.KZ) FXB=0.0                                        ORH1F305.3338  
+                ENGINT(5)=ENGINT(5)+(USAV(I,K)*UENG(I,K)                   ORH1F305.3339  
+     *                      +VSAV(I,K)*VENG(I,K))*FX*DXU(I)*DZ(K)          ORH1F305.3340  
+                ZUENG(I,5,J)=ZUENG(I,5,J)+UENG(I,K)*DZ(K)*HR(I,J)          ORH1F305.3341  
+                ZVENG(I,5,J)=ZVENG(I,5,J)+VENG(I,K)*DZ(K)*HR(I,J)          ORH1F305.3342  
+ 545         CONTINUE                                                      ORH1F305.3343  
+ 544       CONTINUE                                                        ORH1F305.3344  
+         ENDIF                                                             ORH1F305.3345  
+      ENDIF                                                                ORH1F305.3346  
+ 550  CONTINUE                                                             CLINIC.967   
+C                                                                          CLINIC.968   
+C---------------------------------------------------------------------     CLINIC.969   
+C  COMPUTE NEW VELOCITIES (WITH INCORRECT VERTICAL MEANS)                  CLINIC.970   
+C  ALSO, ADD IN REMAINDER OF CORIOLIS TERM IF TREATED IMPLICITLY           CLINIC.971   
+C---------------------------------------------------------------------     CLINIC.972   
+C                                                                          CLINIC.973   
+      IF(ACOR.EQ.0.) THEN                                                  CLINIC.974   
+        DO 560 K=1,KM                                                      CLINIC.975   
+        DO 560 I=1,IMT                                                     CLINIC.976   
+          UA(I,K)=UB(I,K)+C2DTUV*UA(I,K)                                   CLINIC.977   
+          VA(I,K)=VB(I,K)+C2DTUV*VA(I,K)                                   CLINIC.978   
+ 560    CONTINUE                                                           CLINIC.979   
+      ELSE                                                                 CLINIC.980   
+        IF (.NOT.(L_OROTATE))THEN                                          ORH1F305.3347  
+           FX=C2DTUV*ACOR*2.0*OMEGA*SINE(J)                                ORH1F305.3348  
+           DETMR=1.0/(1.0+FX*FX)                                           ORH1F305.3349  
+        ENDIF                                                              ORH1F305.3350  
+        DO 565 K=1,KM                                                      CLINIC.985   
+        DO 565 I=1,IMT                                                     CLINIC.986   
+          IF (L_OROTATE) THEN                                              ORH1F305.3351  
+             FX=C2DTUV*ACOR*CORIOLIS(I,J)                                  ORH1F305.3352  
+             DETMR=1.0/(1.0+FX*FX)                                         ORH1F305.3353  
+          ENDIF                                                            ORH1F305.3354  
+          UDIF(I,K)=(UA(I,K)+FX*VA(I,K))*DETMR                             CLINIC.991   
+          VDIF(I,K)=(VA(I,K)-FX*UA(I,K))*DETMR                             CLINIC.992   
+          UA(I,K)=UB(I,K)+C2DTUV*UDIF(I,K)                                 CLINIC.993   
+          VA(I,K)=VB(I,K)+C2DTUV*VDIF(I,K)                                 CLINIC.994   
+ 565    CONTINUE                                                           CLINIC.995   
+      ENDIF                                                                CLINIC.996   
+C                                                                          CLINIC.997   
+C---------------------------------------------------------------------     CLINIC.998   
+C  DETERMINE THE INCORRECT VERTICAL MEANS OF THE NEW VELOCITIES            CLINIC.999   
+C---------------------------------------------------------------------     CLINIC.1000  
+C                                                                          CLINIC.1001  
+      FX=0.0                                                               CLINIC.1002  
+      DO 575 I=1,IMT                                                       CLINIC.1003  
+        SFU(I)=FX                                                          CLINIC.1004  
+        SFV(I)=FX                                                          CLINIC.1005  
+ 575  CONTINUE                                                             CLINIC.1006  
+      DO 580 K=1,KM                                                        CLINIC.1007  
+      DO 580 I=1,IMT                                                       CLINIC.1008  
+        SFU(I)=SFU(I)+UA(I,K)*DZ(K)                                        CLINIC.1009  
+        SFV(I)=SFV(I)+VA(I,K)*DZ(K)                                        CLINIC.1010  
+ 580  CONTINUE                                                             CLINIC.1011  
+      DO 590 I=1,IMT                                                       CLINIC.1012  
+        SFU(I)=SFU(I)*HR(I,J)                                              CLINIC.1013  
+        SFV(I)=SFV(I)*HR(I,J)                                              CLINIC.1014  
+ 590  CONTINUE                                                             CLINIC.1015  
+C                                                                          CLINIC.1016  
+C---------------------------------------------------------------------     CLINIC.1017  
+C  SUBTRACT INCORRECT VERTICAL MEAN TO GET INTERNAL MODE                   CLINIC.1018  
+C---------------------------------------------------------------------     CLINIC.1019  
+C                                                                          CLINIC.1020  
+      DO 600 K=1,KM                                                        CLINIC.1021  
+      DO 600 I=1,IMT                                                       CLINIC.1022  
+        UA(I,K)=UA(I,K)-SFU(I)                                             CLINIC.1023  
+        VA(I,K)=VA(I,K)-SFV(I)                                             CLINIC.1024  
+ 600  CONTINUE                                                             CLINIC.1025  
+      DO 602 K=1,KM                                                        CLINIC.1026  
+      DO 602 I=1,IMT                                                       CLINIC.1027  
+        UA(I,K)=GM(I,K)*UA(I,K)                                            CLINIC.1028  
+        VA(I,K)=GM(I,K)*VA(I,K)                                            CLINIC.1029  
+ 602  CONTINUE                                                             CLINIC.1030  
+C                                                                          CLINIC.1031  
+C---------------------------------------------------------------------     CLINIC.1032  
+C  COMPUTE TOTAL CHANGE OF K.E. OF INTERNAL MODE ON ENERGY TIMESTEP        CLINIC.1033  
+C---------------------------------------------------------------------     CLINIC.1034  
+C                                                                          CLINIC.1035  
+      IF(NERGY.EQ.1) THEN                                                  CLINIC.1036  
+      DO 605 K=1,KM                                                        CLINIC.1037  
+        FX=CS(J)*DYU(J)*DZ(K)/C2DTUV                                       CLINIC.1038  
+        IF (L_OSYMM) THEN                                                  ORH1F305.3355  
+        IF (J+J_OFFSET.EQ.JMTM1_GLOBAL) FX=FX*0.5                          ORH3F402.37    
+        ENDIF                                                              ORH1F305.3357  
+        DO 605 I=2,IMUM1                                                   CLINIC.1042  
+          ENGINT(1)=ENGINT(1)+(USAV(I,K)*(UA(I,K)-UB(I,K))                 CLINIC.1043  
+     *                        +VSAV(I,K)*(VA(I,K)-VB(I,K)))*FX*DXU(I)      CLINIC.1044  
+ 605    CONTINUE                                                           CLINIC.1045  
+      ENDIF                                                                CLINIC.1046  
+C                                                                          CLINIC.1047  
+C=======================================================================   CLINIC.1048  
+C  END COMPUTATION OF INTERNAL MODES  ==================================   CLINIC.1049  
+C=======================================================================   CLINIC.1050  
+C                                                                          CLINIC.1051  
+      IF ((.NOT.L_ONOCLIN).AND.(.NOT.L_OFREESFC)) THEN                     ORL1F404.633   
+C=======================================================================   CLINIC.1053  
+C  BEGIN COMPUTATION OF VORTICITY FOR INPUT TO "RELAX"  ================   CLINIC.1054  
+C=======================================================================   CLINIC.1055  
+C                                                                          CLINIC.1056  
+      IF (L_OCYCLIC) THEN                                                  ORH1F305.3359  
+C---------------------------------------------------------------------     CLINIC.1059  
+C  SET CYCLIC BOUNDARY CONDITIONS ON EXT. MODE FORCING FUNCTIONS           CLINIC.1060  
+C---------------------------------------------------------------------     CLINIC.1061  
+C                                                                          CLINIC.1062  
+      ZU(1,J)=ZU(IMUM1,J)                                                  ORH1F304.151   
+      ZV(1,J)=ZV(IMUM1,J)                                                  ORH1F304.152   
+      IF ( L_OZVRT ) THEN                                                  OMB3F401.377   
+        DO ID = 1,N_ZVRT                                                   OMB3F401.378   
+          ZCONU(1,J,ID)=ZCONU(IMUM1,J,ID)                                  OMB3F401.379   
+          ZCONV(1,J,ID)=ZCONV(IMUM1,J,ID)                                  OMB3F401.380   
+        END DO                                                             OMB3F401.381   
+      END IF ! L_OZVRT                                                     OMB3F401.382   
+      IF(NERGY.EQ.0) GO TO 613                                             CLINIC.1065  
+      DO 612 LL=2,8                                                        CLINIC.1066  
+      ZUENG(1,LL,J)=ZUENG(IMUM1,LL,J)                                      ORH1F304.154   
+      ZVENG(1,LL,J)=ZVENG(IMUM1,LL,J)                                      ORH1F304.155   
+ 612  CONTINUE                                                             CLINIC.1069  
+ 613  CONTINUE                                                             CLINIC.1070  
+C                                                                          CLINIC.1071  
+      ENDIF                                                                ORH1F305.3360  
+                                                                           ORH1F305.3361  
+C---------------------------------------------------------------------     CLINIC.1074  
+C  FORM CURL OF TIME CHANGE IN VERTICALLY AVERAGED EQUATIONS               CLINIC.1075  
+C---------------------------------------------------------------------     CLINIC.1076  
+C                                                                          CLINIC.1077  
+C                                                                          CLINIC.1106  
+C---------------------------------------------------------------------     CLINIC.1107  
+C  DO ANALYSIS OF EXTERNAL MODE FORCING ON ENERGY TIMESTEP                 CLINIC.1108  
+C---------------------------------------------------------------------     CLINIC.1109  
+C                                                                          CLINIC.1110  
+C                                                                          CLINIC.1138  
+C=======================================================================   CLINIC.1139  
+C  END COMPUTATION OF VORTICITY  =======================================   CLINIC.1140  
+C=======================================================================   CLINIC.1141  
+C                                                                          CLINIC.1142  
+      ENDIF  ! ((.NOT.L_ONOCLIN).AND.(.NOT.L_OFREESFC))                    ORL1F404.634   
+                                                                           ORH1F305.3363  
+C---------------------------------------------------------------------     CLINIC.1291  
+C  TRANSFER QUANTITIES COMPUTED TO THE NORTH OF THE PRESENT ROW            CLINIC.1292  
+C  TO BE DEFINED TO THE SOUTH IN THE COMPUTATION OF THE NEXT ROW           CLINIC.1293  
+C---------------------------------------------------------------------     CLINIC.1294  
+C                                                                          CLINIC.1295  
+      ! NOTE: The following calculation may appear to contain              ORH3F403.223   
+      ! superfluous brackets, but they are needed to force                 ORH3F403.224   
+      ! the order of calculation on the t3e.                               ORH3F403.225   
+      FX=(CS(J)*DYU(J))*(CSR(J+1)*DYUR(J+1))                               ORH3F403.226   
+      DO 644 K=1,KM                                                        CLINIC.1297  
+      DO 644 I=1,IMT                                                       CLINIC.1298  
+        FVSU(I,K)=FVN(I,K)*FX                                              CLINIC.1299  
+ 644  CONTINUE                                                             CLINIC.1300  
+C                                                                          CLINIC.1314  
+                                                                           ORH1F403.90    
+          ENDIF ! (L_OSYMM.OR.(J+J_OFFSET.NE.JMTM1_GLOBAL))                ORH1F403.91    
+                                                                           ORH1F403.92    
+      ENDIF ! (J.GE.J_2.AND.J.LE.J_JMTM1)                                  ORH1F403.93    
+                                                                           ORH1F305.3394  
+      IF (L_OTIMER) THEN                                                   ORH1F305.3395  
+          CALL TIMER('CLINIC  ',104)                                       GPB8F405.87    
+      ENDIF                                                                ORH1F305.3397  
+      RETURN                                                               CLINIC.1345  
+      END                                                                  CLINIC.1346  
+*ENDIF                                                                     @DYALLOC.4028  
