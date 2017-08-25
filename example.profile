@@ -1,4 +1,4 @@
-#Location of unpacked tarball. Path must end with um_famous
+#Location of unpacked tarball/git directory.
 export UMDIR=/where/the/installation/is/um_famous
 
 #Location of where the model will write its output files to.
