@@ -6,3 +6,5 @@ UM vn4.5 and be can used to build any UM vn4.5 configuration.
 Access to puma.nerc.ac.uk is required. The Intel fortran compiler is required
 for any new model builds.
 
+Please see: http://cms.ncas.ac.uk/wiki/UmFamous
+
