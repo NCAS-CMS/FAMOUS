@@ -210,7 +210,7 @@ CPPFLAGS=-P -traditional
 # Fortran compiler, flags and include files
 #Both a f77 and f90 compiler are required
 FORT=mpif77 -fp-model source -g -traceback
-F90=mpif90  -fp-model source -g -traceback
+F90=$(MPIF90_UM)  -fp-model source -g -traceback
 #F90=${FORT}
 FLAGS=
 
