@@ -24,7 +24,9 @@ gcom :
 do_makelib:
 	@${ECHO} \*\*\* "Creating ${GC_DESCRIP} version of ${UPACKAGE} (version ${GC_VERSION})"
 	@${ECHO} \*\*\* Library name is ${GC_LIB}
-	@${ECHO} 
+	@${ECHO}
+	@${MKDIR} -p ${LOGDIR}
+	@${TOUCH} ${GC_LOG}
 	@${ECHO} >> ${GC_LOG}
 	@${ECHO} \*\*\* make started at `date` >> ${GC_LOG}
 	@cd src/gcom/mpl ; ${MAKE} GC_VERSION=${GC_VERSION} \

@@ -13,9 +13,9 @@ export UMDIR=/work/n02/n02/simon/git/FAMOUS
 . $UMDIR/setvars_4.5
 
 #Override standard mpif90 command for singularity container.
-export MPIF90_UM="singularity exec -B /work/n02/n02,/opt/cray,/usr/lib64:/usr/lib/host,/var/spool/slurmd /work/n02/n02/simon/famous_sing/lfric_env.sif /container/mpich/bin/mpif90"
+export MPIF90_UM="singularity exec -B /work/n02/n02,/opt/cray,/usr/lib64:/usr/lib/host /work/n02/n02/simon/famous_sing/lfric_env.sif /container/mpich/bin/mpif90"
 
-#If shared exec required set MPIF90_SHARED
+#Shared exec required so set MPIF90_SHARED
 export MPIF90_SHARED=1
 
 #Set LD path to MPICH for singularity built exec.

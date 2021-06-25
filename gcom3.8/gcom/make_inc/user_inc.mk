@@ -295,3 +295,5 @@ MOVE=/bin/mv
 DELETE=/bin/rm -f
 ECHO=/bin/echo
 BASENAME=basename
+TOUCH=touch
+MKDIR=mkdir
