@@ -7,7 +7,7 @@ export SRUN_OPTS="--cpu-bind=cores"
 
 #Extra stuff to account for $HOME not being available in slurm so
 #.profile etc cannot be used in batch.
-export DATA_DIR=$WORKDIR
+export DATA_DIR=/work/n02/n02/$USER
 export UMDIR=/work/n02/n02/simon/FAMOUS
 . $UMDIR/setvars_4.5
 
