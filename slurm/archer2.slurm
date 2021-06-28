@@ -1,15 +1,14 @@
 #SBATCH --account=n02-cms
 #SBATCH --partition=standard
 #SBATCH --qos=standard
-#SBTACH --chdir=/work/n02/n02/simon
 
 #Extra options required for srun
 export SRUN_OPTS="--cpu-bind=cores"
 
 #Extra stuff to account for $HOME not being available in slurm so
 #.profile etc cannot be used in batch.
-export DATA_DIR=/work/n02/n02/simon
-export UMDIR=/work/n02/n02/simon/git/FAMOUS
+export DATA_DIR=$WORKDIR
+export UMDIR=/work/n02/n02/simon/FAMOUS
 . $UMDIR/setvars_4.5
 
 #Override standard mpif90 command for singularity container.
